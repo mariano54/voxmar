@@ -622,7 +622,7 @@
             xp: (kill: 16.0, skill: "hunter"),
             loot: [
                 (item: "raw_pork", count: (2, 3)),
-                (item: "hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]),
+                (item: "raw_hide", chance: 0.8, tools: [(tag: "knife", chance: 1.25)]),
                 (item: "lard", chance: 0.7),
             ],
         ),
@@ -646,7 +646,7 @@
             xp: (kill: 30.0, skill: "hunter"),
             loot: [
                 (item: "raw_venison", count: (1, 2)),
-                (item: "hide", tools: [(tag: "knife", chance: 1.0, extra: 1)]),
+                (item: "raw_hide", tools: [(tag: "knife", chance: 1.0, extra: 1)]),
                 (item: "antler", chance: 0.25, rarity: Uncommon),
             ],
         ),

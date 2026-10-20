@@ -50,11 +50,12 @@
             loot: [
                 (item: "great_tusk"),
                 (item: "raw_pork", count: (3, 5)),
-                (item: "hide", count: (2, 3)),
+                (item: "raw_hide", count: (2, 3)),
                 (item: "lard", count: (1, 2)),
                 (item: "bone", count: (2, 3)),
                 (item: "gold_coin", count: (2, 5)),
                 (item: "flint_spear", chance: 0.11, rarity: Uncommon),
+                (item: "charge_charm", chance: 0.0154, rarity: VeryRare),
             ],
         ),
         (

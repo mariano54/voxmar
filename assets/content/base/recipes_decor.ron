@@ -47,6 +47,7 @@
         // What cloth is made into, in its own dye.
         (pattern: [["{name}_cloth", "{name}_cloth"]], output: "{name}_rug", count: 3, skill: "core:crafting", level: 3, xp: 3.0),
         (pattern: [["{name}_cloth", "{name}_cloth"], ["stick", ""]], output: "{name}_curtain", count: 2, skill: "core:crafting", level: 3, xp: 3.0),
+        (pattern: [["stick", "stick"], ["{name}_cloth", "{name}_cloth"]], output: "{name}_wall_hanging", count: 1, skill: "core:crafting", level: 4, xp: 4.0),
         (pattern: [["{name}_cloth", "{name}_cloth"], ["feather", "feather"]], output: "{name}_cushion", skill: "core:crafting", level: 4, xp: 4.0),
         (pattern: [["{name}_cloth", "{name}_cloth"], ["{name}_cloth", "{name}_cloth"], ["stick", ""]], output: "{name}_banner", count: 2, skill: "core:crafting", level: 5, xp: 6.0),
         (pattern: [["stick"], ["{name}_cloth"], ["torch"]], output: "{name}_paper_lantern", skill: "core:crafting", level: 6, xp: 5.0),
@@ -70,7 +71,7 @@
         // A skep: wheat straw coiled into a dome, bound with twine; a swarm is taken into it.
         (pattern: [["wheat", "wheat", "wheat"], ["wheat", "twine", "wheat"], ["twine", "", "twine"]], output: "skep", skill: "core:crafting", level: 6, xp: 10.0),
         // A drying rack (stations.ron): two sticks a side and a row of twine to hang meat on.
-        (pattern: [["stick", "", "stick"], ["twine", "twine", "twine"], ["stick", "", "stick"]], output: "drying_rack", skill: "core:crafting", level: 3, xp: 8.0),
+        (pattern: [["stick", "", "stick"], ["twine", "twine", "twine"], ["stick", "", "stick"]], output: "drying_rack", skill: "core:crafting", level: 1, xp: 8.0),
         // A snare (traps.ron): a loop of twine on two pegs.
         (pattern: [["twine", "twine"], ["stick", "stick"]], output: "snare", skill: "core:hunter", level: 1, xp: 4.0),
         // A compost heap (stations.ron): boards round three sides and the bottom.

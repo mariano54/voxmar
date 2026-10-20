@@ -5070,6 +5070,7 @@ dependencies = [
  "crossbeam-channel",
  "image",
  "libc",
+ "naga_oil",
  "parley",
  "rayon",
  "rodio",

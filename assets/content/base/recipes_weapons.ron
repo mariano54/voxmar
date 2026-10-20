@@ -9,8 +9,8 @@
         // A sling is a hide pouch on two cords; a short bow a bent stick strung with twine,
         // and its arrows a head of flint or stone on a stick, fletched with a feather.
         (pattern: [["twine", "hide", "twine"]], output: "sling", skill: "core:crafting", level: 1, xp: 8.0),
-        (pattern: [["", "stick", "twine"], ["stick", "", "twine"], ["", "stick", "twine"]], output: "short_bow", skill: "core:crafting", level: 5, xp: 16.0),
-        (pattern: [["flint|cobblestone"], ["stick"], ["feather"]], output: "arrow", count: 4, skill: "core:crafting", level: 5, xp: 4.0),
+        (pattern: [["", "stick", "twine"], ["stick", "", "twine"], ["", "stick", "twine"]], output: "short_bow", skill: "core:crafting", level: 3, xp: 16.0),
+        (pattern: [["flint|cobblestone"], ["stick"], ["feather"]], output: "arrow", count: 4, skill: "core:crafting", level: 3, xp: 4.0),
         (pattern: [["copper_ingot"], ["copper_ingot"], ["stick"]], output: "copper_sword", skill: "core:engineering", level: 5, xp: 16.0),
         (pattern: [["fang"], ["stick"]], output: "fang_dagger", skill: "core:crafting", level: 10, xp: 20.0),
         (pattern: [["bronze_ingot"], ["bronze_ingot"], ["stick"]], output: "bronze_sword", skill: "core:engineering", level: 12, xp: 24.0),

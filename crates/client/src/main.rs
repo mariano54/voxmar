@@ -33,11 +33,13 @@
 
 mod ambience;
 mod breaking;
+mod fx;
 mod butterflies;
 mod capture;
 mod creature_sounds;
 mod creatures;
 mod drops;
+mod figures;
 mod emitters;
 mod fight;
 mod creature_motion;
@@ -348,16 +350,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let look = hud::target::LookStyle::load(&content.files)?;
     let night_light = render::night_light::NightLight::load(&content.files)?;
+    let player_look = figures::PlayerLook::load(&content.files)?;
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
     recorded.covers(&content.actions)?;
+    let creature_bank = creature_sounds::Bank::load(&content.files, &content.creatures)?;
+    let unbarked = creature_bank.unbarked(&content.creatures);
+    if !unbarked.is_empty() {
+        return Err(format!("{}: settlement people with no greet, alarm or content of their own: {}", creature_sounds::defs::FILE, unbarked.join(", ")).into());
+    }
     recorded.check_materials(&content.blocks)?;
+    recorded.check_fire(&content.fire)?;
+    // Every roof's rain patters or is silent (ambience.ron's `roofs`), by its building
+    // material or else its family sound.
+    let ambience = ambience::defs::Ambience::load(&content.files)?;
+    let materials: Vec<&str> = recorded.materials.iter().map(|m| m.name.as_str()).collect();
+    let roof_patters = ambience.roof_patters(&content.blocks, &materials, |id| {
+        recorded.material_of(&content.blocks, id).map_or_else(|| ambience::defs::family(content.blocks.info(id).sound), |m| recorded.materials[m].name.clone())
+    })?;
+    // Every shelter tag on a block says how it sounds: muffling the rain, or whistling.
+    ambience.check_shelter_tags(&content.blocks)?;
+    recorded.check_ways(&content.blocks)?;
+    recorded.check_way_files(&assets)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
+    fx::ActionFx::load(&content.files)?.check(&content.actions)?;
+    if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
+        return Err(format!("effects.ron: the effect {effect} has no icon in any bundled texture pack").into());
+    }
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
     let world_content = Arc::new(WorldContent::load(&content)?);
+    // Every building an ambient sound comes from is one settlements have (ambience.ron).
+    ambience.check_buildings(&world_content.settlements.building_names())?;
     let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings,
     // unless a configuration directory is given explicitly.
@@ -445,8 +471,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
-    app.add_plugins(emitters::EmittersPlugin);
+    app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);
+    app.add_plugins(figures::FiguresPlugin);
     app.add_plugins(fight_fx::FightFxPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.
@@ -496,7 +523,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light).insert_resource(player_look);
+    app.insert_resource(creature_sounds::Checked(creature_bank));
+    app.insert_resource(ambience::Checked(ambience, roof_patters));
     if options.loading {
         app.insert_resource(menu::HoldCover);
     }

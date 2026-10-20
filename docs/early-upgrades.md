@@ -11,7 +11,8 @@ thread's (docs/home.md).
 ## The pattern: a quest taught you something, and it stays
 
 Tools are a ladder in data (`blocks_tools.ron`, `tools.ron`): wooden (speed 2), stone (4,
-yield 0.05), copper (6, yield 0.1), iron (8, yield 0.15), in five kinds. That ladder was
+yield 0.05), copper (7, yield 0.1), iron (14, yield 0.15), in five kinds (speeds from the
+Oct 14 tier audit, docs/tools-and-crafting.md). That ladder was
 quick already; what was missing was a reward for climbing it that the player *feels*. Now an
 effect can wait on a finished quest (`Done`, docs/status-effects.md), so finishing the
 gathering quests is itself the upgrade:

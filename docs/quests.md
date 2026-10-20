@@ -18,7 +18,16 @@ against what a player has done, so they complete retroactively. The quest book s
 ## Content
 
 `base/quests.ron` (engine `quest.rs`): name, age, branch, title, why (the reason and the
-reward, shown first), tasks, after, rewards. Goals:
+reward, shown first), tasks, after, rewards. A book of its own can go in a
+`quests_<topic>.ron` beside it (`quests_nomad.ron`, `quests_farm.ron`), like `blocks_` and
+`recipes_`: a package's files are read in name (byte) order, so `quests.ron` comes first and
+the topics follow in byte order (uppercase before lowercase), and the quests are held in that
+order. A quest may come `after` one in any file. A quest name written twice, in one file or
+two, fails the load naming both files, across packages too: a mod cannot replace a quest by
+writing its name. A file no part of the game reads (a misspelt `quest.ron`) still loads, and
+the load notes it with the likeliest name meant (`zz_mod/quest.ron is read by nothing (meant
+quests.ron?)`); the names other crates read are `content::READ_ELSEWHERE`.
+Goals:
 
 | Goal | Reads |
 | --- | --- |
@@ -346,7 +355,7 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 | Hitpoints | **Hard to Put Down** (Nomad, new) | Twice your level in health; 12 is 24 | None: it grows with blows landed |
 | Magic | A Place to Pray (Farm) | Bark Skin at 1, Ember Arm 4, Mending 10 | The stone altar |
 | Alchemy | **Herb Lore** (Nomad, new) | A taste only: herb lore from three kinds of wanderer | None yet |
-| Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 5 | Sling to short bow |
+| Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 3 | Sling to short bow |
 
 Two new side quests fill the skills that had nothing before:
 - **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 3 and Hitpoints 12. Both
@@ -400,9 +409,9 @@ base/recipes_weapons.ron), checked at load:
 
 | Weapon | Age | Level | Max hit | Cooldown | Reach | Ammo | Recipe |
 |---|---|---|---|---|---|---|---|
-| Sling | Nomad | Ranged 1 | 2 | 0.53 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
-| Short Bow | Farm | Ranged 5 | 4 | 0.6 s | 20 | Arrows | Three sticks, three twine (Crafting 5) |
-| Arrow (x4) | Farm | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 5) |
+| Sling | Nomad | Ranged 1 | 2 | 0.8 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
+| Short Bow | Nomad (late) | Ranged 3 | 4 | 1.0 s | 20 | Arrows | Three sticks, three twine (Crafting 3) |
+| Arrow (x4) | Nomad (late) | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 3) |
 
 Next to early melee: fists hit 1, a stone sword 3, copper swords 5 and a copper axe 6. The
 sling (2) is a step above fists that keeps you out of reach; the bow (4) sits just under

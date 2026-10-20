@@ -24,6 +24,49 @@
             Paint(palette: "main", base: 0.55, shade: [Noise(cells: (8, 8), amount: 0.35), Noise(cells: (32, 32), amount: 0.6), Border(width: 1, amount: -0.35)], clean: true),
             Paint(palette: "tie", base: 0.5, mask: [Stripes(period: 16.0, width: 0.0625, amount: 1.0, vertical: true, phase: 7.0)], above: 0.5, shadow: -1),
         ]),
+        // Thatch on a roof: straw running down the slope in fine streaks, laid in courses a
+        // quarter of the face high (as the roof shape steps, shapes.ron "roof"), each
+        // course's ragged lower edge dark where it hangs over the next.
+        "block/thatch": (size: (32, 32), palettes: {"main": "hay_straw"}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [
+                Noise(cells: (16, 2), octaves: 2, amount: 0.35), Noise(cells: (32, 8), amount: 0.45),
+                Stripes(period: 8.0, width: 0.25, amount: -0.55, warp: 1.0, phase: 6.0),
+                Stripes(period: 8.0, width: 0.125, amount: 0.25, phase: 0.0),
+            ], clean: true),
+        ]),
+        // The home's ladder (blocks_building.ron). Hide stretched over a lean-to's
+        // rafters, a seam where each course laps the next (a quarter of the face, as the
+        // lean_to shape steps).
+        "block/hide_cover": (palettes: {"main": ["#6e4628", "#865834", "#9c6a3e", "#b27e4c", "#c6925c"]}, layers: [
+            Paint(palette: "main", base: 0.55, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.45), Noise(cells: (16, 16), amount: 0.25), Stripes(period: 4.0, width: 0.0625, amount: -0.4, phase: 3.0)], clean: true),
+        ]),
+        // Sticks woven through stakes: dark gaps between the weave's rows, the stakes paler.
+        "block/wattle": (palettes: {"main": ["#43301e", "#5a4028", "#715234", "#886442", "#9e7850"]}, layers: [
+            Paint(palette: "main", base: 0.5, shade: [Stripes(period: 4.0, width: 0.25, amount: -0.6, warp: 0.5, phase: 0.0), Stripes(period: 8.0, width: 0.125, amount: 0.3, vertical: true, phase: 3.0), Noise(cells: (8, 8), amount: 0.3)], clean: true),
+        ]),
+        // Clay and straw smoothed over wattle: pale, uneven, flecked with straw.
+        "block/daub": (palettes: {"main": ["#a28e68", "#b6a17b", "#c8b48e", "#d7c5a0", "#e4d4b1"]}, layers: [
+            Paint(palette: "main", base: 0.6, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.4), Speckle(chance: 0.08, amount: -0.3), Speckle(chance: 0.05, amount: 0.25, seed: 1)], clean: true),
+        ]),
+        // Daub in a dark timber frame with a brace across it.
+        "block/half_timber": (base: "block/daub", layers: [Grid(legend: {'d': "#4a3222", 'b': "#5a3e2a"}, rows: [
+                "dddddddddddddddd",
+                "dddddddddddddddd",
+                "dd..........bbdd",
+                "dd.........bbbdd",
+                "dd........bbb.dd",
+                "dd.......bbb..dd",
+                "dd......bbb...dd",
+                "dd.....bbb....dd",
+                "dd....bbb.....dd",
+                "dd...bbb......dd",
+                "dd..bbb.......dd",
+                "dd.bbb........dd",
+                "ddbbb.........dd",
+                "ddbb..........dd",
+                "dddddddddddddddd",
+                "dddddddddddddddd",
+            ])]),
         // Four staves round, their seams dark, grain running up them, darker towards the
         // edges where the barrel turns away. Its iron hoops are drawn where the barrel
         // shape's hoop boxes are (shaped.ron, block/barrel_side).

@@ -27,9 +27,10 @@ use std::time::{Duration, Instant};
 
 use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
+use voxmar_engine::combat::Slot;
 use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
-use voxmar_engine::glam::{IVec3, Vec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec3};
 use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
@@ -46,6 +47,11 @@ struct Timed {
     due: Instant,
     /// The player's client shows it done: nothing cancels it now.
     finished: bool,
+    /// For a break, what the player held when their client showed it done: what it is
+    /// judged by at its time, and draws its tool's bonus with, whatever they take in hand
+    /// meanwhile (the next block's tool). Anything else (a bite, a cook, a cast) uses what
+    /// is in hand when it completes, so it is judged by that.
+    held: Option<Option<BlockId>>,
 }
 
 impl Timed {
@@ -71,6 +77,14 @@ pub struct Executor {
 }
 
 impl Server {
+    /// A move put on or took off a charm (`was` the one worn before): its effect is judged
+    /// at once, not at the next once-a-second pass.
+    fn charm_changed(&mut self, agent: PlayerId, was: Option<BlockId>) {
+        if self.players.get(&agent).is_some_and(|p| p.inventory.worn[Slot::Charm.index()].map(|s| s.item) != was) {
+            crate::process::Survival::refresh(self, agent);
+        }
+    }
+
     /// Whether `player` is part way through a timed action that eats (a bite of food). A bite
     /// the client has shown done early still runs to its time, so it still counts.
     pub(crate) fn eating(&self, player: PlayerId) -> bool {
@@ -82,13 +96,15 @@ impl Server {
 
 /// The validation view of the world from `agent`'s point of view.
 pub(crate) fn context(server: &Server, agent: PlayerId) -> impl ActionContext + '_ {
-    Context { server, agent }
+    Context { server, agent, held: None }
 }
 
 /// Validation view of the world from one agent's point of view.
 struct Context<'a> {
     server: &'a Server,
     agent: PlayerId,
+    /// What the agent is taken to hold in place of what is in their hand now.
+    held: Option<Option<BlockId>>,
 }
 
 impl ActionContext for Context<'_> {
@@ -125,7 +141,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn actor_held(&self) -> Option<BlockId> {
-        self.server.players[&self.agent].held()
+        self.held.unwrap_or_else(|| self.server.players[&self.agent].held())
     }
 
     fn actor_pouched(&self) -> Vec<BlockId> {
@@ -142,7 +158,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn occupied(&self, cell: IVec3) -> bool {
-        self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
+        self.server.player_in(cell)
     }
 
     fn creature_in(&self, cell: IVec3) -> bool {
@@ -200,24 +216,24 @@ impl Server {
             std::thread::sleep(stall);
         }
         let Some(def) = self.action_def(action) else { return };
-        let context = Context { server: self, agent };
+        let context = Context { server: self, agent, held: None };
         let seconds = def.seconds(&context, target);
         let timed = seconds >= INSTANT;
         if timed {
             self.supersede_action(agent, at);
         }
-        let context = Context { server: self, agent };
+        let context = Context { server: self, agent, held: None };
         if let Err(why) = def.validate(&context, target) {
             tracing::debug!("player {agent}: {} refused at {target:?}: {why:?}", def.name);
             self.reject(agent, target);
         } else if !timed {
-            self.commit(agent, &def, target);
+            self.commit(agent, &def, target, None);
         } else {
             if def.effects.contains(&Effect::EatHeld) {
                 self.bite_started(agent);
             }
             let due = at + Duration::from_secs_f32(seconds);
-            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false });
+            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false, held: None });
         }
     }
 
@@ -235,9 +251,12 @@ impl Server {
         };
         if self.executor.timed[i].mostly_done(at) {
             let timed = self.executor.timed.swap_remove(i);
-            self.finish(timed.agent, timed.action, timed.target);
+            self.finish(&timed);
         } else {
-            self.executor.timed[i].finished = true;
+            let mining = self.content.actions.get(self.executor.timed[i].action).is_some_and(|def| def.duration == voxmar_engine::action::Duration::TargetHardness);
+            let held = mining.then(|| self.players[&agent].held());
+            let timed = &mut self.executor.timed[i];
+            (timed.finished, timed.held) = (true, held);
         }
     }
 
@@ -247,18 +266,21 @@ impl Server {
         let Some(i) = self.executor.timed.iter().position(|t| t.agent == agent && !t.finished) else { return };
         let timed = self.executor.timed.swap_remove(i);
         if timed.mostly_done(at) {
-            self.finish(timed.agent, timed.action, timed.target);
+            self.finish(&timed);
         }
     }
 
-    /// Commits an action whose time is up, if its requirements still hold.
-    fn finish(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget) {
+    /// Commits an action whose time is up, if its requirements still hold: a break with
+    /// what the player held when their client showed it done, if it did (`Timed::held`).
+    fn finish(&mut self, timed: &Timed) {
+        let (agent, target) = (timed.agent, timed.target);
         if !self.players.contains_key(&agent) {
             return;
         }
-        let Some(def) = self.action_def(action) else { return };
-        if def.validate(&Context { server: self, agent }, target).is_ok() {
-            self.commit(agent, &def, target);
+        let Some(def) = self.action_def(timed.action) else { return };
+        let held = timed.held;
+        if def.validate(&Context { server: self, agent, held }, target).is_ok() {
+            self.commit(agent, &def, target, held);
         } else {
             self.reject(agent, target);
         }
@@ -285,12 +307,24 @@ impl Server {
         self.executor.timed = rest;
         due.sort_by_key(|t| (t.due, t.agent));
         for timed in due {
-            self.finish(timed.agent, timed.action, timed.target);
+            self.finish(&timed);
         }
     }
 
+    /// Applies an action's effects, as `agent`'s doing (`fire_origin`, `changed_by`) whenever
+    /// it commits: as their message arrives or later, when it falls due in the run loop.
+    /// `held`, if given, is what the agent is taken to hold (`Timed::held`).
+    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>) {
+        let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+        let fire_was = std::mem::replace(&mut self.fire_origin, by.clone());
+        let changed_was = std::mem::replace(&mut self.changed_by, by);
+        self.commit_effects(agent, def, target, held);
+        self.fire_origin = fire_was;
+        self.changed_by = changed_was;
+    }
+
     /// Applies an action's effects. Validation already guaranteed they can all apply.
-    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
+    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>) {
         for &effect in &def.effects {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
@@ -307,13 +341,13 @@ impl Server {
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
                     // What a player put there teaches, counts and forages nothing: taken
                     // before `picked` and `reward_break` clear the mark.
-                    let plants = supported_by(&Context { server: self, agent }, block);
+                    let plants = supported_by(&Context { server: self, agent, held: None }, block);
                     let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
                     if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
                         self.discover_broken(agent, broken);
                     }
                     self.picked(agent, block);
-                    let instead = self.reward_break(agent, block);
+                    let instead = self.reward_break(agent, block, held);
                     // A block that gave something else instead (gravel's flint) drops nothing of its own.
                     let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
                     self.drop_loot(agent, &cells, &placed);
@@ -331,18 +365,18 @@ impl Server {
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
                 (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
-                    let plants = supported_by(&Context { server: self, agent }, block);
+                    let plants = supported_by(&Context { server: self, agent, held: None }, block);
                     for pos in std::iter::once(block).chain(plants) {
                         self.set_block(pos, BlockId::AIR);
                     }
                 }
                 (Effect::PlaceHeld, ActionTarget::Block { block, face }) => {
-                    let cell = placement_cell(&Context { server: self, agent }, block, face);
+                    let cell = placement_cell(&Context { server: self, agent, held: None }, block, face);
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
-                    let placed = placed_block(&Context { server: self, agent }, item, block, face);
+                    let placed = placed_block(&Context { server: self, agent, held: None }, item, block, face);
                     self.set_block(cell, placed);
                     // Its upper half goes in above with it (a door's top).
                     if let Some(upper) = self.content.blocks.upper(placed) {
@@ -359,17 +393,21 @@ impl Server {
                     // An open store's slots as it holds them now, and what moved written back.
                     self.pull_store(agent);
                     let player = self.players.get_mut(&agent).unwrap();
+                    let charm = player.inventory.worn[Slot::Charm.index()].map(|s| s.item);
                     if player.inventory.move_items(from as usize, to as usize, count) {
                         player.changed(traits::INVENTORY);
                         self.push_store(agent);
+                        self.charm_changed(agent, charm);
                     }
                 }
                 (Effect::QuickMove, ActionTarget::Slot(slot)) => {
                     self.pull_store(agent);
                     let player = self.players.get_mut(&agent).unwrap();
+                    let charm = player.inventory.worn[Slot::Charm.index()].map(|s| s.item);
                     if player.inventory.quick_move(slot as usize) {
                         player.changed(traits::INVENTORY);
                         self.push_store(agent);
+                        self.charm_changed(agent, charm);
                     }
                 }
                 (Effect::StowCursor, _) => {
@@ -395,15 +433,23 @@ impl Server {
                     player.changed(traits::HEALTH);
                     player.changed(traits::VITALS);
                     player.teleport(spawn);
+                    // Alive again: effects judged afresh, so none of the last life's (a
+                    // charm left in the grave) outlasts it.
+                    crate::process::Survival::refresh(self, agent);
                 }
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
                 (Effect::LayRecipe, ActionTarget::Recipe { first, ways, count }) => self.lay_recipe(agent, first as usize, ways as usize, count),
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
                 (Effect::Swap, ActionTarget::Block { block, .. }) => {
                     // Opened or shut here first: the clients follow what the server holds.
-                    let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
+                    let changes = voxmar_engine::action::swapping(&Context { server: self, agent, held: None }, block);
+                    // A swap is the same thing in another state: a player's door or curtain
+                    // stays theirs (it gives itself back when broken), a wild one stays wild.
+                    let placed: Vec<IVec3> = changes.iter().map(|&(pos, _)| pos).filter(|pos| self.placed.contains(pos)).collect();
                     self.set_blocks(&changes);
+                    self.placed.extend(placed);
                 }
+                (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
@@ -461,9 +507,20 @@ impl Server {
 
     /// `agent` sleeps at the bed at `bed`: it is where they wake after dying (their hearth
     /// first, once they have one), and they wake rested, as well as the home around the
-    /// bed allows (effects.ron's `sleeps`). A bed always works, as a bed; the rest is held back
-    /// while one is still on them, so the buff cannot be had again until it wears off.
+    /// bed allows (effects.ron's `sleeps`; the better rests only by night). A bed a village
+    /// home was furnished with is its resident's and turns them away, but in creative. A bed
+    /// always works, as a bed; the rest is held back while it or a better one is still on
+    /// them, or the last sleep's mend still runs (`EffectRegistry::rested`): a nap's lesser
+    /// rest does not keep a night's better one away, and a bed after a bed mends no more.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
+        // A bed a village furnished a home with (its settlement's plan says so, and no player
+        // has set one down there since) is its resident's; any other works, however it came
+        // to be (placed, /setblock, an older save). In creative nothing stops them.
+        let creative = self.players.get(&agent).is_some_and(|p| p.allow_flight);
+        if !creative && !self.placed.contains(&bed) && self.planned_bed(bed) {
+            self.refuse(agent, Words::key("bed.someones"));
+            return;
+        }
         let player = self.players.get_mut(&agent).unwrap();
         player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
@@ -474,21 +531,25 @@ impl Server {
             return;
         }
         let effects = self.content.effects.clone();
-        if effects.rested(&self.players[&agent].timed_effects) {
-            let player = &self.players[&agent];
-            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.not_tired") });
-            return;
-        }
         let home = self.home_survey(agent);
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], worn: &[], seated: false, night: self.night() };
         // A proper bed rests better than a bag on the ground (effects.ron's `bed` tags).
         let bed_tags = self.block(bed).map(|b| self.content.blocks.def(b).tags.clone()).unwrap_or_default();
         let given = effects.given_by_sleep(&situation, &bed_tags);
+        // The rest is held back while it, or a better one, is still on them; a nap's lesser
+        // rest does not keep a night's better one away.
+        if effects.rested(&self.players[&agent].timed_effects, &given) {
+            let player = &self.players[&agent];
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.not_tired") });
+            return;
+        }
         // The best rest it gives (the one the others are hidden by) is the one it says.
-        let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
+        let best = effects.best_rest(&given);
+        // By day, the better rest a night's sleep here would give (effects.ron's `night`).
+        let at_night = if situation.night { None } else { effects.best_rest(&effects.given_by_sleep(&voxmar_engine::effect::Situation { night: true, ..situation }, &bed_tags)).filter(|&night| Some(night) != best) };
         let player = self.players.get_mut(&agent).unwrap();
         player.give_effects(&given);
         player.changed(traits::VITALS);
@@ -498,6 +559,21 @@ impl Server {
             let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
+        if let Some(night) = at_night {
+            let def = effects.get(night);
+            let key = voxmar_engine::lang::def_key("effect", &def.name);
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.night_rest").with("name", Words::Own(key, def.title.clone())) });
+        }
+    }
+
+    /// Whether a settlement's plan furnished one of its homes with a bed at `bed`, and that
+    /// very bed still stands there: one set down in its place (a bag, another bed, by hand
+    /// or by command) is not the village's.
+    fn planned_bed(&self, bed: IVec3) -> bool {
+        let Some(now) = self.block(bed) else { return false };
+        self.content.blocks.def(now).has_tag("bed")
+            && self.overworld.settlement_holding(IVec2::new(bed.x, bed.z)).is_some_and(|s| s.buildings.iter().any(|b| b.beds.contains(&bed)))
+            && voxmar_worldgen::Generator::generate(&*self.overworld, voxmar_engine::coords::ColumnPos::of_block(bed)).block(bed) == now
     }
 
     /// Why `agent` cannot lie down now, if they cannot: a creature that hunts players (but
@@ -574,8 +650,9 @@ impl Server {
     /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:
     /// more often with the skill's level above what the block asks and a better tool. A
     /// block a player placed teaches nothing and gives nothing extra.
-    /// Returns whether it gave something else instead of the block's own drop.
-    fn reward_break(&mut self, agent: PlayerId, pos: IVec3) -> bool {
+    /// Returns whether it gave something else instead of the block's own drop. `held`, if
+    /// given, is the tool it was broken with in place of what is in hand now.
+    fn reward_break(&mut self, agent: PlayerId, pos: IVec3, held: Option<Option<BlockId>>) -> bool {
         let Some(block) = self.block(pos) else { return false };
         let tools = self.content.tools.clone();
         let Some(rule) = tools.rule(block) else { return false };
@@ -586,7 +663,7 @@ impl Server {
         // By the player's count of blocks broken, and where a drop pops by the world's count
         // of drops, never by the tick it breaks on.
         let [roll, other] = player.draw(crate::save::Draw::Mine);
-        let held = player.held();
+        let held = held.unwrap_or_else(|| player.held());
         let level = rule.skill.map_or(1, |skill| self.content.skills.level(player.skills.xp(skill)));
         let bonus = voxmar_engine::crop::level_bonus(level, rule.level, self.content.skills.max_level()) + tools.yield_bonus(held, block) + player.modifiers.finds;
         let info = self.content.blocks.info(block);
@@ -700,7 +777,7 @@ mod tests {
             let instead: Vec<bool> = (0..64)
                 .map(|_| {
                     server.set_block(pos, gravel);
-                    server.reward_break(1, pos)
+                    server.reward_break(1, pos, None)
                 })
                 .collect();
             let gravel_drops = server.content.blocks.def(server.content.blocks.info(gravel).drops).name.clone();
@@ -736,10 +813,139 @@ mod tests {
                 if server.marks_placed(leaves, leaves) {
                     server.placed.insert(pos);
                 }
-                server.reward_break(1, pos)
+                server.reward_break(1, pos, None)
             })
             .count();
         assert_eq!(sticks, 0, "placed leaves gave a stick");
         assert!(!server.placed.contains(&pos), "the mark goes with the break");
+    }
+}
+
+#[cfg(test)]
+mod finished_tests {
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use voxmar_engine::action::ActionTarget;
+    use voxmar_engine::coords::{ColumnPos, Face};
+    use voxmar_engine::glam::{IVec3, Vec3};
+    use voxmar_engine::inventory::ItemStack;
+    use voxmar_engine::world::Column;
+
+    const FLOOR: i32 = 199;
+
+    /// A stone floor, and player 1 on it with a stone pickaxe in the first slot.
+    fn fixture() -> crate::Server {
+        let mut server = crate::test_server();
+        server.world = Default::default();
+        let stone = server.content.blocks.expect("base:stone");
+        let mut column = Column::default();
+        for x in 0..32 {
+            for z in 0..32 {
+                column.set_block(IVec3::new(x, FLOOR, z), stone);
+            }
+        }
+        server.world.insert(ColumnPos::new(0, 0), Arc::new(column));
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let at = Vec3::new(7.5, (FLOOR + 1) as f32, 8.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        let pick = server.content.blocks.expect("base:stone_pickaxe");
+        player.inventory.slots[0] = Some(ItemStack { item: pick, count: 1 });
+        player.selected = 0;
+        server.players.insert(1, player);
+        server
+    }
+
+    /// A block the client shows broken before most of its time is up (its proposal reached
+    /// the server late) still breaks when its time comes, whatever the player takes in hand
+    /// next: the next block's tool, or the bare hand once the pickaxe is put away. Stone
+    /// refuses the bare hand, so judged by what is held at its time, it came back.
+    #[test]
+    fn a_break_shown_done_early_stays_broken_whatever_is_held_next() {
+        let take_up: [(&str, fn(&mut crate::player::Player)); 2] = [
+            ("the next slot's bare hand", |p| p.selected = 1),
+            ("the pickaxe put away", |p| p.inventory.slots[0] = None),
+        ];
+        for (next, take_up) in take_up {
+            let mut server = fixture();
+            let cell = IVec3::new(10, FLOOR, 8);
+            let target = ActionTarget::Block { block: cell, face: Face::PosY };
+            let mine = server.content.actions.expect("core:mine");
+            let at = Instant::now();
+            server.propose(1, mine, target, at);
+            let due = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break").due;
+            server.finished_action(1, target, at + (due - at).mul_f32(0.3));
+            assert!(server.executor.timed.iter().any(|t| t.target == target && t.finished), "shown done early, it waits for its time");
+            take_up(server.players.get_mut(&1).unwrap());
+            server.complete_actions(due);
+            let now = server.block(cell).map(|b| server.content.blocks.def(b).name.clone());
+            assert_eq!(now.as_deref(), Some("core:air"), "the stone came back with {next}");
+        }
+    }
+
+    /// What the player held when the client showed it done is what the break is judged by,
+    /// not a pass: begun with the pickaxe but shown done by hand, stone still refuses it,
+    /// though the pickaxe is back in hand at its time.
+    #[test]
+    fn a_break_shown_done_is_judged_by_what_was_held_then() {
+        let mut server = fixture();
+        let cell = IVec3::new(10, FLOOR, 8);
+        let target = ActionTarget::Block { block: cell, face: Face::PosY };
+        let mine = server.content.actions.expect("core:mine");
+        let at = Instant::now();
+        server.propose(1, mine, target, at);
+        let due = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break").due;
+        server.players.get_mut(&1).unwrap().selected = 1;
+        server.finished_action(1, target, at + (due - at).mul_f32(0.3));
+        server.players.get_mut(&1).unwrap().selected = 0;
+        server.complete_actions(due);
+        let now = server.block(cell).map(|b| server.content.blocks.def(b).name.clone());
+        assert_eq!(now.as_deref(), Some("base:stone"), "stone broke by hand once the pickaxe was taken up");
+    }
+
+    /// The world is judged again all the same: a block gone by its time (someone else broke
+    /// it) is not broken twice, and gives nothing.
+    #[test]
+    fn a_break_shown_done_whose_block_went_meanwhile_is_refused() {
+        let mut server = fixture();
+        let cell = IVec3::new(10, FLOOR, 8);
+        let target = ActionTarget::Block { block: cell, face: Face::PosY };
+        let mine = server.content.actions.expect("core:mine");
+        let at = Instant::now();
+        server.propose(1, mine, target, at);
+        let due = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break").due;
+        server.finished_action(1, target, at + (due - at).mul_f32(0.3));
+        server.set_block(cell, voxmar_engine::block::BlockId::AIR);
+        server.complete_actions(due);
+        assert!(server.executor.timed.is_empty(), "it was judged at its time");
+        let had = server.players[&1].inventory.slots.iter().flatten().filter(|s| server.content.blocks.def(s.item).name != "base:stone_pickaxe").count();
+        assert_eq!(had, 0, "a break of a block already gone gave something");
+        assert_eq!(server.items.saved(|_| String::new()).len(), 0, "a break of a block already gone dropped something");
+    }
+
+    /// Only a break keeps what was held: a bite shown done early and then swapped for
+    /// something that is not food is judged by what is in hand at its time, and refused,
+    /// eating neither.
+    #[test]
+    fn a_bite_shown_done_early_is_judged_by_what_is_held_at_its_time() {
+        let mut server = fixture();
+        let (stew, stone) = (server.content.blocks.expect("base:stew"), server.content.blocks.expect("base:stone"));
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[0] = Some(ItemStack { item: stew, count: 1 });
+        player.inventory.slots[1] = Some(ItemStack { item: stone, count: 1 });
+        // Hurt, or a bite is refused.
+        player.health.current = 1;
+        let eat = server.content.actions.expect("core:eat");
+        let at = Instant::now();
+        server.propose(1, eat, ActionTarget::None, at);
+        let due = server.executor.timed.iter().find(|t| t.target == ActionTarget::None).expect("a timed bite").due;
+        server.finished_action(1, ActionTarget::None, at + (due - at).mul_f32(0.3));
+        server.players.get_mut(&1).unwrap().selected = 1;
+        server.complete_actions(due);
+        let slots = &server.players[&1].inventory.slots;
+        assert_eq!((slots[0], slots[1]), (Some(ItemStack { item: stew, count: 1 }), Some(ItemStack { item: stone, count: 1 })), "a bite swapped for stone ate something");
+        assert_eq!(server.players[&1].health.current, 1, "a bite swapped for stone healed");
     }
 }

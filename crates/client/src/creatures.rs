@@ -106,7 +106,7 @@ fn heart_image() -> Image {
 }
 
 /// One clear texel of skin, worn while the real one is painted.
-fn blank_skin() -> Image {
+pub(crate) fn blank_skin() -> Image {
     Image::new(Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, TextureDimension::D3, vec![0; 4], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD)
 }
 
@@ -128,7 +128,7 @@ const SPAWNS: usize = 3;
 const DRAWN_WITHIN: f32 = 96.0;
 /// Steps a creature's light is rounded to, so the slow change of daylight rewrites its
 /// material now and then rather than every frame.
-const LIGHT_STEPS: f32 = 128.0;
+pub(crate) const LIGHT_STEPS: f32 = 128.0;
 
 pub struct CreaturesPlugin;
 
@@ -185,13 +185,13 @@ impl MaterialExtension for CreatureSkin {
 }
 
 /// A species' body: its mesh, weighted to one joint per part, and its shape for painting.
-struct SpeciesBody {
-    mesh: Handle<Mesh>,
-    binds: Handle<SkinnedMeshInverseBindposes>,
+pub(crate) struct SpeciesBody {
+    pub(crate) mesh: Handle<Mesh>,
+    pub(crate) binds: Handle<SkinnedMeshInverseBindposes>,
     shape: std::sync::Arc<Shape>,
     /// The skin's volume: its corner and size in texels.
-    origin: Vec3,
-    dims: [u32; 3],
+    pub(crate) origin: Vec3,
+    pub(crate) dims: [u32; 3],
 }
 
 /// A boss's wind-up begun: which creature, its blow's name (`rootmother.grasp`, or its
@@ -457,6 +457,8 @@ pub struct Creatures {
     waiting: Vec<CreatureView>,
     /// Creatures our blows landed on since the last frame, to cry out.
     cries: Vec<u32>,
+    /// Barks the server told of since the last frame (`ServerMessage::Bark`): who, and which.
+    barks: Vec<(u32, voxmar_engine::creature::Bark)>,
     /// Our blows the server answered since the last frame: at whom, for how much, what kind,
     /// and whether it killed. Each jolts its creature (`fight_fx`).
     jolts: Vec<(u32, u16, Blow, bool)>,
@@ -549,6 +551,21 @@ pub enum Keeper {
 }
 
 impl Creatures {
+    /// Creature `id` barked, as the server says: heard next frame, if it is shown.
+    pub fn bark(&mut self, id: u32, bark: voxmar_engine::creature::Bark) {
+        self.barks.push((id, bark));
+    }
+
+    /// The barks to hear now, of creatures shown; those of creatures told of but not yet
+    /// built (with their first view, or behind the spawns a frame allows) wait for them,
+    /// and those of creatures not here at all are dropped.
+    fn barks_heard(&mut self) -> Vec<(u32, voxmar_engine::creature::Bark)> {
+        let (heard, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.barks).into_iter().partition(|(id, _)| self.shown.contains_key(id));
+        let coming = |id: u32| self.waiting.iter().chain(&self.inbox).any(|view| view.id == id);
+        self.barks = rest.into_iter().filter(|&(id, _)| coming(id)).collect();
+        heard
+    }
+
     /// Takes what the server sent.
     pub fn receive(&mut self, changed: Vec<CreatureView>, gone: Vec<CreatureGone>) {
         self.inbox.extend(changed);
@@ -790,7 +807,7 @@ fn body_mesh(body: &BodyMesh) -> Mesh {
 }
 
 /// Builds a species' body from its parts.
-fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<SkinnedMeshInverseBindposes>) -> SpeciesBody {
+pub(crate) fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<SkinnedMeshInverseBindposes>) -> SpeciesBody {
     let anatomy = creature::anatomy::of(model, parts);
     let body = volume::build(parts, anatomy.as_ref());
     let shape = std::sync::Arc::new(Shape::new(parts, anatomy.as_ref()));
@@ -804,7 +821,7 @@ fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mes
 
 /// Paints an individual's skin through its species' body volume, off the main thread, so
 /// a herd coming into view never holds a frame: the body shows once its skin is ready.
-fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32, inspect: bool) -> Task<Image> {
+pub(crate) fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32, inspect: bool) -> Task<Image> {
     let (shape, origin, dims) = (body.shape.clone(), body.origin, body.dims);
     AsyncComputeTaskPool::get().spawn(async move {
         let shell = shape.cell * 0.75 + 1.5 / skin::TEXELS;
@@ -997,6 +1014,11 @@ fn show(
     for &id in &cried {
         if let Some(shown) = creatures.shown.get(&id) {
             sounds.push(sound(Sound::Hurt, id, &shown.view, shown.position, 0.0));
+        }
+    }
+    for (id, bark) in creatures.barks_heard() {
+        if let Some(shown) = creatures.shown.get(&id) {
+            sounds.push(sound(Sound::of_bark(bark), id, &shown.view, shown.position, 0.0));
         }
     }
     // Our blows that landed: a freeze, a white flash and a flinch away from us, as large as
@@ -1862,6 +1884,11 @@ pub fn aim(
         net.propose_from(&player, attack, ActionTarget::Creature(id));
         fighting.strikes += 1;
     }
+    // A left click at one out of reach swings at the air (`Fighting::whiff`): the hand and
+    // a whoosh say the click was heard, and nothing is struck.
+    if target.creature.is_some() && !in_reach && ui.cursor_locked && !player.dead && mouse.just_pressed(MouseButton::Left) {
+        fighting.whiff(time.elapsed_secs_f64(), &combat.timing(&weapon));
+    }
 }
 
 /// A wind-up begun: the coil starts (its end is the blow), and it is told by sound and,
@@ -2081,6 +2108,14 @@ mod tests {
         creatures.receive(vec![], vec![CreatureGone { id: 2, died: false }]);
         creatures.receive(vec![view(2)], vec![]);
         assert_eq!(creatures.inbox.iter().map(|v| v.id).collect::<Vec<_>>(), [2]);
+        // A bark from one told of but not yet built waits for it; one from a stranger goes.
+        creatures.bark(2, voxmar_engine::creature::Bark::Greet);
+        creatures.bark(9, voxmar_engine::creature::Bark::Alarm);
+        assert_eq!(creatures.barks_heard(), []);
+        assert_eq!(creatures.barks, [(2, voxmar_engine::creature::Bark::Greet)]);
+        creatures.inbox.clear();
+        assert_eq!(creatures.barks_heard(), []);
+        assert!(creatures.barks.is_empty(), "a bark kept for one never coming");
     }
 
     #[test]

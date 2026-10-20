@@ -324,15 +324,21 @@ fn model_across(w0: u32) -> vec2<f32> {
     return plant_across(w0);
 }
 
+// A shape quad's number in the table: its low 12 bits where a plant has its tint, its high 2
+// where a plant has which quad of its model it is (mesh.rs `shape_quad_index`).
+fn shape_index(w0: u32, w1: u32) -> u32 {
+    return ((w1 >> 12u) & 0xFFFu) | (((w0 >> PLANT_PIECE_SHIFT) & 3u) << 12u);
+}
+
 // A shape quad's corner: where it lies in its cell (xyz) and its u (w).
 fn shape_corner(w0: u32, w1: u32) -> vec4<f32> {
-    return shape_quads[(w1 >> 12u) & 0xFFFu].corners[(w0 >> 21u) & 3u];
+    return shape_quads[shape_index(w0, w1)].corners[(w0 >> 21u) & 3u];
 }
 
 // The cube face a vertex is lit as: its own, a shape quad's nearest, or a plant's.
 fn lit_face(w0: u32, w1: u32) -> u32 {
     if face_of(w0) >= FACE_PLANT && plant_model(w0) == MODEL_SHAPE {
-        return u32(shape_quads[(w1 >> 12u) & 0xFFFu].normal.w);
+        return u32(shape_quads[shape_index(w0, w1)].normal.w);
     }
     return face_of(w0);
 }
@@ -344,7 +350,7 @@ fn vertex_uv(w0: u32, w1: u32) -> vec2<f32> {
         return face_uv(local_position(w0), face_of(w0));
     }
     if plant_model(w0) == MODEL_SHAPE {
-        let quad = shape_quads[(w1 >> 12u) & 0xFFFu];
+        let quad = shape_quads[shape_index(w0, w1)];
         let corner = (w0 >> 21u) & 3u;
         return vec2(quad.corners[corner].w, quad.v[corner]);
     }

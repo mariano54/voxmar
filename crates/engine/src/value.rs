@@ -32,6 +32,9 @@ pub struct Value {
     pub raw: f32,
     /// Things worth a set number of coins whatever their level (a gold coin is one).
     pub fixed: BTreeMap<String, u32>,
+    /// Things priced on the curve at a set level, where nothing wears, wields or makes them
+    /// at one (a boss's keepsake at its boss's level).
+    pub levels: BTreeMap<String, u8>,
     /// What dying keeps.
     pub death: Death,
 }
@@ -72,7 +75,7 @@ impl Death {
 
 impl Default for Value {
     fn default() -> Self {
-        Self { base: 2.0, growth: 2.5, per: 15.0, round_above: 100, step: 5, rarity: [1, 2, 5, 12, 30], crafted: 1.25, raw: 0.5, fixed: BTreeMap::new(), death: Death::default() }
+        Self { base: 2.0, growth: 2.5, per: 15.0, round_above: 100, step: 5, rarity: [1, 2, 5, 12, 30], crafted: 1.25, raw: 0.5, fixed: BTreeMap::new(), levels: BTreeMap::new(), death: Death::default() }
     }
 }
 
@@ -89,6 +92,7 @@ pub struct ValueFile {
     pub crafted: Option<f32>,
     pub raw: Option<f32>,
     pub fixed: BTreeMap<String, u32>,
+    pub levels: BTreeMap<String, u8>,
     pub death: Option<SetDeath>,
 }
 
@@ -137,6 +141,8 @@ impl Value {
             }
             set.extend(file.fixed.keys().map(|item| format!("fixed.{item}")));
             value.fixed.extend(file.fixed);
+            set.extend(file.levels.keys().map(|item| format!("levels.{item}")));
+            value.levels.extend(file.levels);
             laid.set(&package, "value.ron", "worth", set, notes);
         }
         value
@@ -203,6 +209,8 @@ pub fn worth_in(content: &crate::content::Content, item: BlockId, known: &mut Ha
 }
 
 /// Whether `item` is a raw material: worth no set price, and nothing makes, wears or wields it.
+/// Cobblestone is not, since four loose stones make two: what is made of it (a campfire,
+/// about 3 to 6; a stone sword, about 4 to 8) is worth a little more for what death keeps.
 fn raw(content: &crate::content::Content, item: BlockId) -> bool {
     !content.value.fixed.contains_key(&content.blocks.def(item).name)
         && content.combat.wear_level(item).is_none()
@@ -210,13 +218,21 @@ fn raw(content: &crate::content::Content, item: BlockId) -> bool {
         && !content.recipes.iter().any(|r| r.output == item)
 }
 
-/// The level of `item` for its worth: the most of what wears or wields it, and the least
-/// level of a recipe that makes it (1 when nothing says).
+/// The level of `item` for its worth: what `levels` sets, else the most of what wears or
+/// wields it, the Fishing level that lands it, and the least level of a way to make it, at
+/// the grid or at a station, a dish's Cooking level among them (1 when nothing says). A fish
+/// and the dish cooked of it are worth alike: a glimmer koi caught at 75 and cooked at 75.
 pub fn level_of(content: &crate::content::Content, item: BlockId) -> u8 {
+    if let Some(&level) = content.value.levels.get(&content.blocks.def(item).name) {
+        return level.max(1);
+    }
     let worn = content.combat.wear_level(item);
     let wielded = content.combat.weapon(item).map(|w| w.level);
-    let made = content.recipes.iter().filter(|r| r.output == item).map(|r| r.level).min();
-    [worn, wielded, made].into_iter().flatten().max().unwrap_or(1).max(1)
+    let caught = content.fishing.iter().filter(|c| c.item == item).map(|c| c.def.level).min();
+    let crafted = content.recipes.iter().filter(|r| r.output == item).map(|r| r.level);
+    let cooked = content.cooking.iter().filter(|(_, r)| r.output == item).map(|(_, r)| r.def.level);
+    let made = crafted.chain(cooked).min();
+    [worn, wielded, caught, made].into_iter().flatten().max().unwrap_or(1).max(1)
 }
 
 #[cfg(test)]
@@ -255,9 +271,19 @@ mod tests {
         assert!(of("iron_sword") >= content.value.of(20, Rarity::Common), "a sword is worth at least the level that wields it");
         assert!(of("chainmail_shirt") > of("bread") && of("chainmail_shirt") > of("dirt"));
         assert_eq!(of("gold_coin"), 1, "a coin is worth itself");
+        // Old Tusk's charm: priced at his level, set in data, as nothing wears it at one.
+        let tusk = content.creatures.id("base:old_tusk").map(|id| content.creatures.get(id).def.level).expect("Old Tusk");
+        assert_eq!(level_of(&content, id("charge_charm")), tusk, "the charm is priced at its boss's level");
+        assert_eq!(of("charge_charm"), content.value.of(tusk, Rarity::VeryRare));
         // The wiki's P51 (draft 73): raw materials count 0.5 each inside a made thing.
         let pinned = ["hearthstone", "iron_ingot", "iron_sword", "iron_pickaxe", "chainmail_shirt", "bread"].map(of);
         assert_eq!(pinned, [5, 5, 15, 24, 50, 2], "hearthstone, ingot, sword, pickaxe, chainmail shirt, bread");
+        // A cured hide took ten minutes on a rack: worth more than the raw one (value.ron).
+        assert_eq!([of("raw_hide"), of("hide")], [2, 3], "raw hide, cured hide");
+        // A fish is worth the Fishing level that lands it, and the dish cooked of it its
+        // Cooking level, the same: neither is a raw material's half.
+        let fish = ["raw_trout", "cooked_trout", "raw_tuna", "cooked_tuna", "raw_glimmer_koi", "cooked_glimmer_koi", "bronze_ingot"].map(of);
+        assert_eq!(fish, [5, 5, 40, 40, 2220, 2220, 4], "trout, tuna and glimmer koi, raw and cooked; a bronze ingot at its crucible's level");
         // Every item has a worth, and none is worth nothing.
         let mut known = HashMap::new();
         for item in (0..content.blocks.len() as u16).map(BlockId) {

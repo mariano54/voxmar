@@ -2,7 +2,9 @@
 //! content-defined fuel charge and smelts only while that fire and its structure hold.
 //! The fire uses server ticks and is saved with the world, so reconnecting cannot refuel it.
 
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
+use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::lang::{Words, def_key};
 use voxmar_engine::multiblock::Multiblock;
@@ -17,6 +19,37 @@ pub struct Lit {
     pub position: [i32; 3],
     pub structure: String,
     pub until: u64,
+    /// Whose it is, by key (`player_key`): a home hearth's kept owner (`hearth_owners`, the one
+    /// who first lit it, whoever relit it), whose home it is for fire (fire.ron's
+    /// `homes_catch_only_from_owner`); for any other fire, who lit it. None for a fire lit
+    /// before this was kept.
+    #[serde(default, deserialize_with = "crate::blaze::keyed")]
+    pub owner: Option<String>,
+}
+
+/// Whose a home hearth is, saved: its core and its owner's key, None for one lit before
+/// fires were kept by owner (which keeps every fire out, and stays no one's).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HearthOwner {
+    pub position: [i32; 3],
+    #[serde(default, deserialize_with = "crate::blaze::keyed")]
+    pub owner: Option<String>,
+}
+
+impl HearthOwner {
+    /// The saved owners, and for a world from before they were kept, those of the home
+    /// hearths still lit (each fire kept its owner).
+    pub(crate) fn restore(saved: &[HearthOwner], lit: &FxHashMap<IVec3, Lit>, home: impl Fn(&str) -> bool) -> FxHashMap<IVec3, Option<String>> {
+        let mut owners: FxHashMap<IVec3, Option<String>> = lit.iter().filter(|(_, fire)| home(&fire.structure)).map(|(&core, fire)| (core, fire.owner.clone())).collect();
+        owners.extend(saved.iter().map(|h| (IVec3::from_array(h.position), h.owner.clone())));
+        owners
+    }
+
+    pub(crate) fn saved(owners: &FxHashMap<IVec3, Option<String>>) -> Vec<HearthOwner> {
+        let mut saved: Vec<HearthOwner> = owners.iter().map(|(core, owner)| HearthOwner { position: core.to_array(), owner: owner.clone() }).collect();
+        saved.sort_by_key(|h| h.position);
+        saved
+    }
 }
 
 fn structure_words(structure: &Multiblock) -> Words {
@@ -41,6 +74,9 @@ impl Server {
             return;
         };
         self.tally(agent, "built", &structure.name, 1);
+        // What catches by it as it is lit is the lighter's fire, whoever's home it is: lit by a
+        // stranger, it never catches their thatch in its owner's home.
+        let lighter = self.players.get(&agent).map(|p| crate::player_key(&p.name));
         if !structure.fuels.is_empty() && !self.station_lit(core) {
             let fuel = self.players.get(&agent).and_then(|p| p.inventory.get(p.selected))
                 .and_then(|stack| structure.fuels.iter().find(|&&(item, count)| item == stack.item && stack.count >= count).copied());
@@ -53,12 +89,16 @@ impl Server {
             player.inventory.take(player.selected, count);
             player.changed(traits::INVENTORY);
             let until = self.tick.saturating_add((seconds * TICKS_PER_SECOND as f32).ceil() as u64);
-            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until });
+            let owner = self.hearth_owner(agent, core, structure);
+            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until, owner });
+            self.hearth_blaze(core, lighter.clone());
             self.tally(agent, "lit", &structure.name, 1);
         } else if structure.fuels.is_empty() && !self.lit.contains_key(&core) {
             // A fire that needs no fuel burns until the structure breaks; lit again while it
             // burns, it is the same fire (and the same lighting, for quests).
-            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX });
+            let owner = self.hearth_owner(agent, core, structure);
+            self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX, owner });
+            self.hearth_blaze(core, lighter);
             self.tally(agent, "lit", &structure.name, 1);
         }
         self.send_fires();
@@ -67,6 +107,25 @@ impl Server {
         }
         let key = if structure.home { "multiblock.home" } else { "multiblock.lit" };
         self.structure_reply(agent, Words::key(key).with("structure", structure_words(structure)));
+    }
+
+    /// Whose a fire `agent` lights at `core` is: a home hearth's is the one it was first lit
+    /// by, kept while it is out, broken by others and relit by anyone, until its owner breaks
+    /// its hearthstone (`home_changed`), so a stranger who breaks and mends it to relight it
+    /// never takes it.
+    fn hearth_owner(&mut self, agent: PlayerId, core: IVec3, structure: &Multiblock) -> Option<String> {
+        let lighter = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+        if !structure.home {
+            return lighter;
+        }
+        if let Some(owner) = self.hearth_owners.get(&core) {
+            return owner.clone();
+        }
+        // One home hearth each: a player's hearth elsewhere is theirs no more, so the kept
+        // owners stay one a player (and the old ones no one owns).
+        self.hearth_owners.retain(|_, owner| owner.is_none() || *owner != lighter);
+        self.hearth_owners.insert(core, lighter.clone());
+        lighter
     }
 
     fn structure_reply(&self, agent: PlayerId, words: Words) {
@@ -79,7 +138,13 @@ impl Server {
     pub(crate) fn station_hint(&self, agent: PlayerId, core: IVec3) {
         let Some(block) = self.block(core) else { return };
         let structures = &self.content.multiblocks;
-        let words = match structures.with_core(block).find(|m| m.stands(core, |p| self.block(p))) {
+        let standing = structures.with_core(block).find(|m| m.stands(core, |p| self.block(p)));
+        // A piece in land not yet loaded never matches: that is no reason to call it unbuilt.
+        if standing.is_none() && !self.structure_loaded(core) {
+            self.refuse(agent, Words::key("station.unloaded"));
+            return;
+        }
+        let words = match standing {
             // Cold: said where refusals are, with the soft no.
             Some(standing) => {
                 let words = Words::key("multiblock.cold").with("structure", structure_words(standing)).with("fuel", fuel_words(standing, &self.content.blocks));
@@ -93,6 +158,17 @@ impl Server {
             }
         };
         self.structure_reply(agent, words);
+    }
+
+    /// Whether every column a structure with its core at `at` reaches into is loaded.
+    pub(crate) fn structure_loaded(&self, at: IVec3) -> bool {
+        let reach = self.block(at).and_then(|block| self.content.multiblocks.with_core(block).map(|m| m.reach()).max()).unwrap_or(0);
+        self.land_loaded(at, reach)
+    }
+
+    /// Whether every column within `reach` blocks of `at` (across, not up) is loaded.
+    pub(crate) fn land_loaded(&self, at: IVec3, reach: i32) -> bool {
+        (-reach..=reach).all(|x| (-reach..=reach).all(|z| self.world.contains(ColumnPos::of_block(at + IVec3::new(x, 0, z)))))
     }
 
     /// A station core must stand in its structure; ordinary stations work on their own.
@@ -135,6 +211,16 @@ impl Server {
     /// told. They wake at what is left (the bed, the hearth, else the world's spawn), and the
     /// home mark goes with it.
     pub(crate) fn home_changed(&mut self, pos: IVec3, block: voxmar_engine::block::BlockId) {
+        // The hearthstone broken by its owner, the home hearth is no one's any more: whoever
+        // builds one there next lights it as theirs. Broken by anyone else (a stranger, a
+        // flood, a command) it stays its owner's, and their home stays theirs.
+        if let Some(owner) = self.hearth_owners.get(&pos)
+            && owner.is_some()
+            && *owner == self.changed_by
+            && !self.content.multiblocks.with_core(block).any(|m| m.home)
+        {
+            self.hearth_owners.remove(&pos);
+        }
         let at = |spot: Option<Vec3>| spot.is_some_and(|spot| (spot - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3() == pos);
         // A flood changes thousands of cells a tick: one that is no online player's bed or
         // hearth goes no further than these compares (two a player, no lookups).
@@ -201,7 +287,16 @@ impl Server {
         }
         self.players.get_mut(&id).unwrap().kindled = true;
         if let Some(structure) = standing.filter(|_| !self.lit.contains_key(&core)) {
-            self.lit.insert(core, Lit { position: core.to_array(), structure, until: u64::MAX });
+            // Relit, it is whose it was, or no one's: whoever's home is at it now need not be
+            // who built it, and an unowned home hearth keeps every fire out.
+            let owner = self.hearth_owners.entry(core).or_insert(None).clone();
+            let owned = owner.is_some();
+            self.lit.insert(core, Lit { position: core.to_array(), structure, until: u64::MAX, owner });
+            // Relit for them, not by them: nothing they changed starts a fire, but they are
+            // told, once, what by it would catch if it did. One no one owns catches nothing.
+            if owned {
+                self.hearth_hint(id, core);
+            }
         }
     }
 }
@@ -411,6 +506,66 @@ mod tests {
         server.set_block(core + IVec3::new(1, 0, 1), stone);
         server.kindle_home(1);
         assert!(server.fires().is_empty(), "joining again lit a hearth left cold");
+    }
+
+    /// A kiln standing across a column border, the far column still loading: lighting it or
+    /// cooking at it is refused with a line saying the land is loading, not a guide to
+    /// building it, and takes nothing; loaded, it lights.
+    #[test]
+    fn a_kiln_on_land_still_loading_says_so_and_takes_nothing() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.insert(1, Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits));
+        // On the column's east edge: its east bricks stand in the next column.
+        let column = ColumnPos::of_block(server.spawn.floor().as_ivec3());
+        let core = column.origin() + IVec3::new(31, server.spawn.y as i32 + 4, 8);
+        server.load_area(core - IVec3::splat(2), core + IVec3::splat(2));
+        let (brick, crucible, coal) = (server.content.blocks.expect("base:kiln_bricks"), server.content.blocks.expect("base:crucible"), server.content.blocks.expect("base:coal_ore"));
+        for x in -1..=1 { for z in -1..=1 {
+            server.set_block(core + IVec3::new(x, 0, z), brick);
+        }}
+        for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
+        server.set_block(core, crucible);
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: coal, count: 24 });
+        let east = column.offset(1, 0);
+        let held = server.world.remove(east).expect("loaded");
+        server.light(1, core);
+        server.cook(1, core);
+        // Every refusal and chat line, a refusal's words first.
+        let told: Vec<(bool, Words)> = std::iter::from_fn(|| client.try_recv().ok().flatten())
+            .filter_map(|m| match m { ServerMessage::Refused { why } => Some((true, why)), ServerMessage::Chat { text, .. } => Some((false, text)), _ => None })
+            .collect();
+        let unloaded = (true, Words::key("station.unloaded"));
+        assert_eq!(told, [unloaded.clone(), unloaded], "not told the land is loading");
+        assert!(!server.lit.contains_key(&core) && server.players[&1].inventory.get(0).unwrap().count == 24, "lit or took fuel on land still loading");
+        server.world.insert(east, held);
+        server.light(1, core);
+        assert!(server.lit.contains_key(&core), "not lit once loaded");
+    }
+
+    /// A structure that stands is told as standing, though land within its reach on a side
+    /// it does not use is still loading.
+    #[test]
+    fn a_standing_structure_by_land_still_loading_is_told_cold_not_loading() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.insert(1, Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits));
+        // A mod's hearth one block wide, built along the column's east edge.
+        let source = r#"(multiblocks: [(name: "edge_hearth", title: "Edge Hearth", hint: "A stone each side.", layers: [["s", "H", "s"]], key: {'s': "tag:stone", 'H': "hearthstone"}, core: 'H')])"#;
+        let file = voxmar_engine::multiblock::MultiblockRegistry::read("base", source).expect("reads");
+        server.content.multiblocks = std::sync::Arc::new(voxmar_engine::multiblock::MultiblockRegistry::new(vec![file], &server.content.blocks).expect("resolves"));
+        let column = ColumnPos::of_block(server.spawn.floor().as_ivec3());
+        let core = column.origin() + IVec3::new(31, server.spawn.y as i32 + 4, 8);
+        server.load_area(core - IVec3::splat(2), core + IVec3::splat(2));
+        let stone = server.content.blocks.expect("base:cobblestone");
+        server.set_block(core + IVec3::Z, stone);
+        server.set_block(core - IVec3::Z, stone);
+        server.set_block(core, server.content.blocks.expect("base:hearthstone"));
+        server.world.remove(column.offset(1, 0)).expect("loaded");
+        assert!(server.station_stands(core) && !server.structure_loaded(core), "the case is a standing structure short of loaded land");
+        server.station_hint(1, core);
+        let told: Vec<Words> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Refused { why } => Some(why), _ => None }).collect();
+        assert!(matches!(told.as_slice(), [Words::Key(key, _)] if key == "multiblock.cold"), "told {told:?}");
     }
 
     /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks; a

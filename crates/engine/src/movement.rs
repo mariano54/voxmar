@@ -22,7 +22,7 @@ use serde::Deserialize;
 
 use crate::block::{BlockId, BlockRegistry, RegistryError};
 use crate::fluid;
-use crate::physics::{Aabb, move_and_slide, player as dims};
+use crate::physics::{Aabb, CUBE, move_and_slide_boxes, move_axis_boxes, player as dims};
 
 /// Longest step of the simulation, in seconds; longer frames are split, which keeps
 /// collision stable at low frame rates.
@@ -56,9 +56,9 @@ pub struct Tuning {
     /// How much of a wall-blocked step must have been heading into the wall for it to stop
     /// a sprint (a share, at most 1); glancing off a wall keeps it.
     pub head_on: f32,
-    /// How high a walker steps up onto a block without jumping (at most 1), for blocks
-    /// shorter than a whole one. Kept here for the client and the server's move checks
-    /// to read alike; nothing steps up yet.
+    /// How high a walker on the ground steps up onto a block without jumping (at most 1):
+    /// onto a slab, up a stair, over a low roof's courses, but not a whole block. The client
+    /// steps by it and the server's move checks allow for it.
     pub step_up: f32,
     /// How much the server lets a player's moves get away with.
     pub checks: Checks,
@@ -89,15 +89,20 @@ pub struct Checks {
     /// Longest step, in blocks, a move is checked for walls in.
     pub sweep_step: f32,
     /// The player's box, as shares of their width and height, that must stay out of
-    /// walls: a little smaller than theirs, for rounding.
+    /// walls: a little smaller than theirs, for rounding, raised `wall_margin` off their
+    /// feet and inside their box less `wall_margin` all round. Only among whole blocks: a
+    /// share would let a player through a gap beside a shape narrower than they are.
     pub wall_box: (f32, f32),
+    /// Blocks the player's box is shrunk by on every side, for rounding, wherever a shaped
+    /// block is near (`wall_box` among whole blocks only).
+    pub wall_margin: f32,
 }
 
 crate::content::settable! {
     /// What one package's `movement.ron` sets of the `checks`.
     SetChecks for Checks {
         speed_margin: f32, burst: f32, slack: f32, rise_slack: f32, hover_grace: f32, hover_sink: f32,
-        let_down_pause: f32, near_ground: f32, sweep_step: f32, wall_box: (f32, f32),
+        let_down_pause: f32, near_ground: f32, sweep_step: f32, wall_box: (f32, f32), wall_margin: f32,
     }
 }
 
@@ -151,6 +156,7 @@ impl crate::content::Settable for Tuning {
                 "let_down_pause" => "checks.let_down_pause",
                 "near_ground" => "checks.near_ground",
                 "sweep_step" => "checks.sweep_step",
+                "wall_margin" => "checks.wall_margin",
                 _ => "checks.wall_box",
             }));
         }
@@ -160,8 +166,8 @@ impl crate::content::Settable for Tuning {
 
 impl Checks {
     fn check(&self) -> Result<(), String> {
-        let Checks { speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, wall_box: (width, height) } = *self;
-        let numbers = [speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, width, height];
+        let Checks { speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, wall_box: (width, height), wall_margin } = *self;
+        let numbers = [speed_margin, burst, slack, rise_slack, hover_grace, hover_sink, let_down_pause, near_ground, sweep_step, width, height, wall_margin];
         if numbers.iter().any(|n| !n.is_finite() || *n < 0.0) {
             Err("every number must be zero or more".into())
         } else if speed_margin < 1.0 {
@@ -174,6 +180,12 @@ impl Checks {
             Err("let_down_pause must be no more than hover_grace".into())
         } else if !(0.5..=1.0).contains(&width) || !(0.5..=1.0).contains(&height) {
             Err("wall_box shares must be from 0.5 to 1".into())
+        } else if wall_margin > 0.015 {
+            Err("wall_margin must be at most 0.015 (more lets a player through a gap of 9/16 of a block, narrower than they are)".into())
+        } else if width * dims::WIDTH > dims::WIDTH - 2.0 * wall_margin || height * dims::HEIGHT > dims::HEIGHT - 2.0 * wall_margin {
+            // The server judges a spot by one box or the other as shapes come and go beside
+            // it; one inside the other, a spot clear by the margin is clear by the share too.
+            Err("wall_box must fit inside the player's box less wall_margin on every side".into())
         } else {
             Ok(())
         }
@@ -292,6 +304,11 @@ pub struct Controls {
 pub trait Surroundings {
     /// Whether a cell stops movement.
     fn solid(&self, cell: IVec3) -> bool;
+    /// What a cell stops movement with, in blocks from its lower corner (see
+    /// [`BlockRegistry::collision`]): by default the whole cell if it is solid.
+    fn boxes(&self, cell: IVec3) -> &[Aabb] {
+        if self.solid(cell) { &CUBE } else { &[] }
+    }
     /// How deep the water around a box is over its feet (0 out of water), and its mean
     /// flow (blocks per second along x, z).
     fn water(&self, aabb: &Aabb) -> (f32, Vec2);
@@ -366,8 +383,31 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
         }
     }
 
-    let mut aabb = body.aabb();
-    let blocked = move_and_slide(&mut aabb, body.velocity * dt, |p| world.solid(p));
+    let start = body.aabb();
+    let motion = body.velocity * dt;
+    let mut aabb = start;
+    let mut blocked = move_and_slide_boxes(&mut aabb, motion, |p| world.boxes(p));
+    // Stopped across while on the ground: stepping up onto what stopped it (a slab, a stair)
+    // goes further, as in Minecraft, if it fits; whole blocks are still jumped onto.
+    if (blocked[0] || blocked[2])
+        && body.on_ground
+        && !body.flying
+        && !swimming
+        && motion.y <= 0.0
+        && tuning.step_up > 0.0
+        && let Some((stepped, across)) = step_up(start, motion, tuning.step_up, world)
+    {
+        // Up and further across; or not yet over the step but no longer stopped by it,
+        // so the walker keeps its speed and goes up next time: one starting off against
+        // the step moves less in a short frame, far from the origin less than positions
+        // round to, than it takes to come down on it.
+        let gone = |b: &Aabb| (b.min - start.min).with_y(0.0).length_squared();
+        let freed = [0, 2].into_iter().any(|k| blocked[k] && !across[k]);
+        if freed || (stepped.min.y > start.min.y && gone(&stepped) > gone(&aabb) + 1e-8) {
+            aabb = stepped;
+            blocked = [across[0], true, across[2]];
+        }
+    }
     body.on_ground = blocked[1] && body.velocity.y <= 0.0;
     body.against_wall = blocked[0] || blocked[2];
     // Running head-on into a wall stops a sprint on the ground; glancing along one, or
@@ -387,12 +427,25 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
     body.position = Vec3::new((aabb.min.x + aabb.max.x) / 2.0, aabb.min.y, (aabb.min.z + aabb.max.z) / 2.0);
 }
 
+/// Where a box at `start` moving by `motion` ends if it first rises by up to `step_up`, then
+/// goes across, then comes down onto what it stepped onto (and by `motion`'s own fall), with
+/// which axes across stopped it; none if it would come down on nothing.
+fn step_up(start: Aabb, motion: Vec3, step_up: f32, world: &impl Surroundings) -> Option<(Aabb, [bool; 3])> {
+    let boxes = |p: IVec3| world.boxes(p);
+    let mut aabb = start;
+    move_axis_boxes(&mut aabb, 1, step_up, &boxes);
+    let risen = aabb.min.y - start.min.y;
+    let across = [move_axis_boxes(&mut aabb, 0, motion.x, &boxes), false, move_axis_boxes(&mut aabb, 2, motion.z, &boxes)];
+    let landed = move_axis_boxes(&mut aabb, 1, -(risen - motion.y), &boxes);
+    landed.then_some((aabb, across))
+}
+
 /// Whether the body, raised by `step_out` (`Tuning::step_out`), would have room a little
 /// further along `wish`: the wall it is pushing against ends within a step of its feet.
 fn can_step_out(body: &Body, world: &impl Surroundings, wish: Vec3, step_out: f32) -> bool {
     let mut raised = body.aabb();
     raised.translate(Vec3::Y * step_out + wish * 0.1);
-    !raised.intersects(|p| world.solid(p))
+    !raised.overlaps(|p| world.boxes(p))
 }
 
 /// How deep the water `aabb` stands in is over its feet (0 out of water), and the mean
@@ -461,7 +514,7 @@ mod tests {
     #[test]
     fn checks_a_mod_could_set_to_hang_or_stop_the_server_are_refused_on_load() {
         let source = include_str!("../../../assets/content/core/movement.ron");
-        for (from, to) in [("sweep_step: 0.25", "sweep_step: 0.0"), ("speed_margin: 1.25", "speed_margin: 0.5"), ("burst: 2.0", "burst: 0.0"), ("let_down_pause: 0.25", "let_down_pause: 3.0"), ("hover_sink: 1.0", "hover_sink: -1.0"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 2.0)")] {
+        for (from, to) in [("sweep_step: 0.25", "sweep_step: 0.0"), ("speed_margin: 1.25", "speed_margin: 0.5"), ("burst: 2.0", "burst: 0.0"), ("let_down_pause: 0.25", "let_down_pause: 3.0"), ("hover_sink: 1.0", "hover_sink: -1.0"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 2.0)"), ("wall_margin: 0.01", "wall_margin: 0.1"), ("wall_margin: 0.01", "wall_margin: 0.02"), ("wall_box: (0.9, 0.95)", "wall_box: (1.0, 0.95)"), ("wall_box: (0.9, 0.95)", "wall_box: (0.9, 0.995)")] {
             assert!(source.contains(from), "{from}");
             assert!(Tuning::from_ron(&source.replace(from, to)).is_err(), "{to} loads");
         }
@@ -492,7 +545,7 @@ mod tests {
             let mut core = body.aabb();
             core.min += 0.01;
             core.max -= 0.01;
-            inside |= core.intersects(|p| world.solid(p));
+            inside |= core.overlaps(|p| world.boxes(p));
         }
         (body, inside)
     }
@@ -539,6 +592,237 @@ mod tests {
         let (body, inside) = run(&scene, at(0.5, 0.0, 0.5), EAST, 2.0, 60.0);
         assert!(!inside);
         assert!((body.position.x - 1.7).abs() < 1e-3);
+    }
+
+    /// Blocks by the boxes they stop movement with: a slab's lower half, a stair facing
+    /// west (climbing east), whole cubes.
+    struct Shaped<F: Fn(IVec3) -> &'static [Aabb]>(F);
+
+    impl<F: Fn(IVec3) -> &'static [Aabb]> Surroundings for Shaped<F> {
+        fn solid(&self, cell: IVec3) -> bool {
+            !(self.0)(cell).is_empty()
+        }
+
+        fn boxes(&self, cell: IVec3) -> &[Aabb] {
+            (self.0)(cell)
+        }
+
+        fn water(&self, _: &Aabb) -> (f32, Vec2) {
+            (0.0, Vec2::ZERO)
+        }
+    }
+
+    const SLAB: [Aabb; 1] = [Aabb { min: Vec3::ZERO, max: Vec3::new(1.0, 0.5, 1.0) }];
+    const STAIR: [Aabb; 2] = [Aabb { min: Vec3::ZERO, max: Vec3::new(1.0, 0.5, 1.0) }, Aabb { min: Vec3::new(0.5, 0.5, 0.0), max: Vec3::ONE }];
+
+    /// Walking east without jumping goes up a slab, a stair and onto a whole block beyond,
+    /// at slow and fast frame rates, near the origin and far out; never inside anything.
+    #[test]
+    fn walking_steps_up_slabs_and_stairs_without_jumping() {
+        for base in [0.0f32, 2_100.0, -5_000.0] {
+            let b = base.floor() as i32;
+            let scene = Shaped(move |c: IVec3| -> &'static [Aabb] {
+                match (c.x - b, c.y) {
+                    (_, y) if y < 0 => &CUBE,
+                    (2, 0) => &SLAB,
+                    (3, 0) => &STAIR,
+                    (4.., 0) => &CUBE,
+                    (6.., 1) => &SLAB,
+                    _ => &[],
+                }
+            });
+            for fps in [30.0, 60.0, 144.0, 500.0] {
+                let (body, inside) = run(&scene, at(base + 0.5, 0.0, 0.5), EAST, 3.0, fps);
+                assert!(!inside, "went into a block at {base}, {fps} fps: {body:?}");
+                assert!(body.on_ground && (body.position.y - 1.5).abs() < 1e-4, "did not climb to the slab on the block at {base}, {fps} fps: {body:?}");
+                assert!(body.position.x - base > 6.0, "stopped at {} at {base}, {fps} fps", body.position.x - base);
+            }
+        }
+    }
+
+    /// The game's own blocks set about the origin, by the boxes they stop movement with;
+    /// stone under y 0 unless `floor` says how deep the ground lies at a cell's x and z.
+    struct Built<'a> {
+        blocks: &'a crate::block::BlockRegistry,
+        cells: rustc_hash::FxHashMap<IVec3, crate::block::BlockId>,
+        floor: fn(IVec3) -> i32,
+    }
+
+    impl Surroundings for Built<'_> {
+        fn solid(&self, cell: IVec3) -> bool {
+            !self.boxes(cell).is_empty()
+        }
+
+        fn boxes(&self, cell: IVec3) -> &[Aabb] {
+            match self.cells.get(&cell) {
+                Some(&id) => self.blocks.collision(id),
+                None if cell.y < (self.floor)(cell) => &CUBE,
+                None => &[],
+            }
+        }
+
+        fn water(&self, _: &Aabb) -> (f32, Vec2) {
+            (0.0, Vec2::ZERO)
+        }
+    }
+
+    fn content() -> crate::content::Content {
+        crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads")
+    }
+
+    fn walking(wish: Vec3, sprint: bool) -> Controls {
+        Controls { wish: wish.normalize(), forward: true, sprint, jump: false, descend: false }
+    }
+
+    /// Every stair in the game, wood or stone, in a flight of three up to a landing walled at
+    /// its far end: walked
+    /// south without jumping, the player climbs it step by step onto the landing, level
+    /// with the top stair, and walked back north comes down it to the ground, never inside
+    /// a block, at a slow and a fast frame rate.
+    #[test]
+    fn every_stair_is_walked_up_to_a_landing_and_down_again() {
+        let content = content();
+        let blocks = &content.blocks;
+        let (stone, landing) = (blocks.expect("base:stone"), blocks.expect("base:oak_landing"));
+        let stairs: Vec<_> = blocks.tagged("stairs").filter(|&id| !["_east", "_south", "_west", "_top"].iter().any(|s| blocks.def(id).name.ends_with(s))).collect();
+        assert!(stairs.len() >= 5, "the woods' stairs and the stone ones: {}", stairs.len());
+        for stair in stairs {
+            let name = &blocks.def(stair).name;
+            let mut cells = rustc_hash::FxHashMap::default();
+            for step in 0..3 {
+                cells.insert(IVec3::new(0, step, 2 + step), stair);
+                for y in 0..step {
+                    cells.insert(IVec3::new(0, y, 2 + step), stone);
+                }
+            }
+            for z in 5..=6 {
+                cells.insert(IVec3::new(0, 2, z), landing);
+                cells.insert(IVec3::new(0, 1, z), stone);
+                cells.insert(IVec3::new(0, 0, z), stone);
+            }
+            // A wall at the landing's far end, so the walk up stops on it.
+            for y in 0..5 {
+                cells.insert(IVec3::new(0, y, 7), stone);
+            }
+            let flight = Built { blocks, cells, floor: |_| 0 };
+            for fps in [30.0, 144.0] {
+                let (up, inside) = run(&flight, at(0.5, 0.0, 0.5), walking(Vec3::Z, false), 4.0, fps);
+                assert!(!inside, "{name}: went into a block going up at {fps} fps: {up:?}");
+                assert!(up.on_ground && (up.position.y - 3.0).abs() < 1e-4 && up.position.z > 5.0, "{name}: did not climb onto the landing at {fps} fps: {up:?}");
+                let (down, inside) = run(&flight, Body { velocity: Vec3::ZERO, ..up }, walking(Vec3::NEG_Z, false), 4.0, fps);
+                assert!(!inside, "{name}: went into a block going down at {fps} fps: {down:?}");
+                assert!(down.on_ground && down.position.y.abs() < 1e-4 && down.position.z < 1.5, "{name}: did not come down to the ground at {fps} fps: {down:?}");
+            }
+        }
+    }
+
+    /// Every roof corner, hip and valley, thatch and shingles, walked up course by course
+    /// from where its eaves meet without jumping, along the diagonal (a hip's ridge, a
+    /// valley's gutter), to its top a block up, never inside it.
+    #[test]
+    fn every_roof_corner_is_walked_up_course_by_course() {
+        let content = content();
+        let blocks = &content.blocks;
+        let stone = blocks.expect("base:stone");
+        let corners: Vec<_> = blocks.tagged("roof_corner").filter(|&id| !["_east", "_south", "_west"].iter().any(|s| blocks.def(id).name.ends_with(s))).collect();
+        assert!(corners.len() >= 8, "a hip and a valley in thatch and three woods: {}", corners.len());
+        for corner in corners {
+            let name = &blocks.def(corner).name;
+            let mut cells = rustc_hash::FxHashMap::default();
+            cells.insert(IVec3::new(0, 0, 0), corner);
+            // A wall behind its top course, so the walk stops on it.
+            for (x, z) in [(1, 0), (0, 1), (1, 1)] {
+                for y in 0..3 {
+                    cells.insert(IVec3::new(x, y, z), stone);
+                }
+            }
+            let roof = Built { blocks, cells, floor: |_| 0 };
+            for fps in [30.0, 144.0] {
+                let (body, inside) = run(&roof, Body { on_ground: true, ..at(-0.6, 0.0, -0.6) }, walking(Vec3::new(1.0, 0.0, 1.0), false), 3.0, fps);
+                assert!(!inside, "{name}: went into it at {fps} fps: {body:?}");
+                assert!(body.on_ground && (body.position.y - 1.0).abs() < 1e-4, "{name}: did not climb to its top at {fps} fps: {body:?}");
+            }
+        }
+    }
+
+    /// A balcony four blocks over the ground, railed along its east and south edges with a
+    /// corner where they meet: walked or sprinted at the railing, straight or across the
+    /// corner, the player stops at it, on the balcony, never inside it and never over.
+    #[test]
+    fn a_railing_keeps_a_walker_on_the_balcony() {
+        let content = content();
+        let blocks = &content.blocks;
+        let mut cells = rustc_hash::FxHashMap::default();
+        for i in -3..3 {
+            cells.insert(IVec3::new(3, 0, i), blocks.expect("base:oak_railing_west"));
+            cells.insert(IVec3::new(i, 0, 3), blocks.expect("base:oak_railing"));
+        }
+        cells.insert(IVec3::new(3, 0, 3), blocks.expect("base:oak_railing_corner"));
+        // The balcony's floor reaches x and z 3; beyond them the ground is four down.
+        let balcony = Built { blocks, cells, floor: |c| if c.x <= 3 && c.z <= 3 { 0 } else { -4 } };
+        for wish in [Vec3::X, Vec3::Z, Vec3::new(1.0, 0.0, 1.0)] {
+            for sprint in [false, true] {
+                for fps in [30.0, 144.0] {
+                    let (body, inside) = run(&balcony, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, walking(wish, sprint), 3.0, fps);
+                    let kept = body.position.x < 4.0 && body.position.z < 4.0 && body.position.y.abs() < 1e-4 && body.on_ground;
+                    assert!(!inside && kept, "walking {wish} (sprint {sprint}) at {fps} fps went past the railing: {body:?}");
+                }
+            }
+        }
+    }
+
+    /// A row of field fences, of fence corners or of shut gates across a field stops a
+    /// walker at it, walked or sprinted, never inside and never over; a row of open gates
+    /// lets it through.
+    #[test]
+    fn a_fence_or_a_shut_gate_stops_a_walker_and_an_open_gate_lets_it_through() {
+        let content = content();
+        let blocks = &content.blocks;
+        for (name, passes) in [("base:oak_fence_east", false), ("base:oak_fence_corner", false), ("base:oak_fence_gate_east", false), ("base:oak_fence_gate_open_east", true)] {
+            let mut cells = rustc_hash::FxHashMap::default();
+            for z in -3..=3 {
+                cells.insert(IVec3::new(3, 0, z), blocks.expect(name));
+            }
+            let field = Built { blocks, cells, floor: |_| 0 };
+            for sprint in [false, true] {
+                for fps in [30.0, 144.0] {
+                    let (body, inside) = run(&field, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, walking(Vec3::X, sprint), 3.0, fps);
+                    let past = body.position.x > 4.0;
+                    assert!(!inside && past == passes, "walking east (sprint {sprint}) at {fps} fps into a row of {name}: past it {past}, inside it {inside}: {body:?}");
+                }
+            }
+        }
+    }
+
+    /// A whole block is no step: walking into it without jumping stops at it, as does a slab
+    /// under a ceiling too low to stand under on it.
+    #[test]
+    fn whole_blocks_and_low_ceilings_are_not_stepped_onto() {
+        let block = Shaped(|c: IVec3| -> &'static [Aabb] { if c.y < 0 || (c.y == 0 && c.x >= 2) { &CUBE } else { &[] } });
+        let (body, _) = run(&block, at(0.5, 0.0, 0.5), EAST, 2.0, 60.0);
+        assert!((body.position.x - 1.7).abs() < 1e-3 && body.position.y == 0.0, "{body:?}");
+        let low = Shaped(|c: IVec3| -> &'static [Aabb] {
+            match (c.x, c.y) {
+                (_, y) if y < 0 => &CUBE,
+                (2.., 0) => &SLAB,
+                (2.., 2) => &CUBE,
+                _ => &[],
+            }
+        });
+        let (body, inside) = run(&low, at(0.5, 0.0, 0.5), EAST, 2.0, 60.0);
+        assert!(!inside && body.position.y == 0.0 && (body.position.x - 1.7).abs() < 1e-3, "{body:?}");
+    }
+
+    /// Stepping up is for walkers on the ground: one falling past a slab's side, or flying,
+    /// is stopped by it.
+    #[test]
+    fn only_walkers_on_the_ground_step_up() {
+        let scene = Shaped(|c: IVec3| -> &'static [Aabb] { if c.y < 0 { &CUBE } else if c.x >= 2 && c.y == 3 { &SLAB } else { &[] } });
+        let tuning = tuning();
+        let mut body = at(1.5, 3.2, 0.5);
+        body.velocity = Vec3::new(4.0, -2.0, 0.0);
+        step(&mut body, &scene, &tuning, EAST, 1.0 / 60.0);
+        assert!(body.position.y < 3.2 && body.position.x <= 1.7 + 1e-4, "{body:?}");
     }
 
     #[test]

@@ -178,7 +178,8 @@ fn walk(seed: u64, hours: f32) -> Walk {
             }
             continue;
         }
-        let roll = mix(mix(server.meta.seed, server.tick), 0x3a9d);
+        // As `try_wandering` casts it: by the world's count of rolls.
+        let roll = mix(server.meta.roll_seed(crate::save::ROLL_PARTY), 0x3a9d);
         if unit_from(mix(roll, 1)) >= rules.chance {
             out.no_chance += 1;
             continue;

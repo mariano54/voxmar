@@ -5,7 +5,8 @@
 //
 // - A voice is the sounds of one kind of animal, each event several recordings, one
 //   picked at random each time at a slightly different pitch. Events: step, idle,
-//   graze, alert, rest, call, ready (to breed), attack, hurt, death. A voice lacking one
+//   graze, alert, rest, call, ready (to breed), attack, hurt, death, and the barks of
+//   settlements' people: greet, alarm, content. A voice lacking one
 //   takes it from the voice it is `like`, then falls back to the nearest event it has
 //   (alert and ready to call, call to idle, attack and hurt to alert, death to hurt).
 // - `size` is the height in blocks of the animal recorded: a species of another height
@@ -312,6 +313,11 @@
             alert: (clips: ["sounds/creatures/person/alert_1.ogg", "sounds/creatures/person/alert_2.ogg"], gain: 0.6),
             hurt: (clips: ["sounds/creatures/person/hurt_1.ogg", "sounds/creatures/person/hurt_2.ogg", "sounds/creatures/person/hurt_3.ogg"]),
             death: (clips: ["sounds/creatures/person/death_1.ogg"]),
+            // Barks, when something makes them react (every settlement voice gives all three,
+            // or the game does not start): a bright hum of greeting, a sharp "hey!", a sigh.
+            greet: (clips: ["sounds/creatures/person/greet_1.ogg", "sounds/creatures/person/greet_2.ogg", "sounds/creatures/person/greet_3.ogg"]),
+            alarm: (clips: ["sounds/creatures/person/alarm_1.ogg", "sounds/creatures/person/alarm_2.ogg"]),
+            content: (clips: ["sounds/creatures/person/content_1.ogg", "sounds/creatures/person/content_2.ogg"]),
         ),
         // Groans and gargles.
         "zombie": (

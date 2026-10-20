@@ -8,7 +8,10 @@ weather; base's: what food does), read by `crates/engine/src/effect.rs`.
 
 - a **kind**, buff or debuff, and an **icon**: `ui/effect/<icon>` in the packs (ten texels
   across, `assets/packs/default/recipes/effects.ron` and the interface's `ui.ron`), the
-  effect's own name unless given, and the plain buff or debuff icon if the packs have none;
+  effect's own name unless given. Every effect has one of its own: the launch refuses an
+  effect no bundled pack (the default pack, or a mod's pack without a `pack.ron`) draws,
+  naming it (`Source::unpictured`; test `every_effect_has_an_icon_of_its_own`, which also
+  finds no two alike; gate "effects: icons");
 - its name and a line on what it does, as language keys `effect.<package>.<name>` and
   `effect.<package>.<name>.description` (English and Japanese, with a hiragana reading
   for a Japanese name with kanji);
@@ -26,13 +29,19 @@ weather; base's: what food does), read by `crates/engine/src/effect.rs`.
   your head; wind reaches you anywhere. `replaces` hides milder effects while a stronger
   one is on (freezing hides chilly, drenched hides soaked).
 
+**After dark.** `Night` holds from sunset to sunrise (the sun below the horizon,
+`calendar::night`); base's `evening_in` (Evening in: heal x1.2, 2° warmer) asks for it
+indoors at home by a fire, and a sleep rule marked `night: true` gives its rest only after
+dark (docs/home.md "Nights").
+
 Biomes give their own (base effects.ron): waterside (sea, river and marsh: casts land a
 fifth more often), forest calm (heal a fifth faster), rich rock (mountains: mine a tenth
 faster), aether-touched (fantastical biomes: a twentieth more experience) and mired
 (marsh: a little slower), so where you go matters as well as what you eat.
 
 **What is in hand and what is near.** `Holding("tag")` holds while the item in hand carries
-the tag; `Near("tag", reach)` while a block carrying it lies within `reach` blocks (1 to 8,
+the tag, and `Wearing("tag")` while something worn carries it (the charm slot: base's
+`tusk_stride`, from Old Tusk's Charge Charm, never from it held in hand); `Near("tag", reach)` while a block carrying it lies within `reach` blocks (1 to 8,
 every way) of the player's feet. A tag no block carries is refused at launch. `Seated` holds
 while the player sits on a seat (`base:sit`, right click on a stool, chair, bench or cushion
 with no block in hand; they sit until they move off it); base's `fireside` (By the Fire: heal

@@ -26,6 +26,8 @@
 //! Bit 27 marks the same quads used as leaf cards (`ChunkMesh::fringe`), with flag 2 for a
 //! flat card, bit 28 for a conifer's needles and bits 29..31 for the face of the crown it is
 //! shaded as; their top edge is flag 1, as on a plant.
+//! A block's shape goes as plant faces of the shape model (`PLANT_SHAPE`): its quad's number in
+//! the renderer's shape table in word 1 bits 12..23 and, above those, word 0 bits 30..31.
 //!
 //! Faces of translucent fluids (water) carry the fluid's state instead of ambient
 //! occlusion, which their shading has no use for:
@@ -1140,29 +1142,34 @@ fn emit_plant(out: &mut MeshBuffers, registry: &BlockRegistry, column: &Column, 
 
 /// The quads of a block drawn as its shape (`RenderKind::Model`), each a quad of the
 /// renderer's shape table (`BlockRegistry::shapes`, in order). A quad inside the cell is lit
-/// by the cell's own light; one on its boundary by the brighter of the cell's and the
+/// by the cell's own light, or, in a block that stops light (a roof, which holds none), by
+/// the neighbour's it faces; one on its boundary by the brighter of the cell's and the
 /// neighbour's (the one beyond, for a shape that fills its cell and so holds no light), and
 /// it hides, if it may, behind a neighbour that hides faces. They go as plant faces of the
-/// shape model (`PLANT_SHAPE`), with the table's quad in word 1 bits 12..23 where a plant
-/// has its tint and height.
+/// shape model (`PLANT_SHAPE`), with the table's quad numbered in 14 bits: its low 12 in
+/// word 1 bits 12..23, where a plant has its tint and height, its high 2 in word 0 bits
+/// 30..31, where a plant has which quad of its model it is (see [`shape_quad_index`]).
 fn emit_model(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], padded: usize, pos: IVec3) {
     let cell = &cells[padded];
     let Some(first) = registry.shape_first_quad(cell.block) else { return };
     let Some(shape) = registry.shape(cell.block) else { return };
     let layers = registry.shape_layers(cell.block);
+    // A block that dims light (a roof holds none, a drawn curtain little) lights its faces
+    // inside the cell by the side they face, not by the dim light it holds.
+    let dims = registry.info(cell.block).attenuation > 1;
     let at = IVec3::new((padded % P) as i32, (padded / (P * P)) as i32, (padded / P % P) as i32);
     for (q, quad) in shape.quads.iter().enumerate() {
         let mut light = cell.light;
-        if let Some(face) = quad.boundary {
+        if let Some(face) = quad.boundary.or(if dims { Some(quad.face) } else { None }) {
             let n = at + face.normal();
             let beyond = &cells[pidx(n.x as usize, n.y as usize, n.z as usize)];
-            if quad.cull && beyond.occludes {
+            if quad.boundary.is_some() && quad.cull && beyond.occludes {
                 continue;
             }
             light = (light & 0xF0).max(beyond.light & 0xF0) | (light & 0x0F).max(beyond.light & 0x0F);
         }
-        let index = (first + q) as u32;
-        let w1 = layers[q] as u32 | (index & 0xFFF) << 12 | (light as u32) << 24;
+        let (high, low) = shape_quad_bits((first + q) as u32);
+        let w1 = layers[q] as u32 | low | (light as u32) << 24;
         let base = out.vertices.len() as u32;
         for corner in 0..4u32 {
             let w0 = pos.x as u32
@@ -1171,11 +1178,25 @@ fn emit_model(out: &mut MeshBuffers, registry: &BlockRegistry, cells: &[Cell], p
                 | PLANT_DIAGONAL << 18
                 | corner << 21
                 | (PLANT_SHAPE & 3) << PLANT_MODEL_SHIFT
-                | (PLANT_SHAPE >> 2) << PLANT_MODEL_HIGH_SHIFT;
+                | (PLANT_SHAPE >> 2) << PLANT_MODEL_HIGH_SHIFT
+                | high;
             out.vertices.push([w0, w1]);
         }
         out.indices.extend([0, 1, 2, 0, 2, 3].map(|i| base + i));
     }
+}
+
+/// A shape quad's number in the renderer's table as a vertex keeps it: (word 0 bits, word 1
+/// bits). See [`shape_quad_index`].
+fn shape_quad_bits(index: u32) -> (u32, u32) {
+    debug_assert!((index as usize) < crate::shape::MAX_SHAPE_QUADS);
+    ((index >> 12 & 3) << PLANT_PIECE_SHIFT, (index & 0xFFF) << 12)
+}
+
+/// The number in the renderer's table of a shape quad's vertex, from its two words, as
+/// voxel.wgsl `shape_index` reads it.
+pub fn shape_quad_index(w0: u32, w1: u32) -> usize {
+    ((w1 >> 12 & 0xFFF) | (w0 >> PLANT_PIECE_SHIFT & 3) << 12) as usize
 }
 
 /// A blade seed for every grass block whose top is open to the air (or a plant).
@@ -1359,7 +1380,7 @@ mod tests {
             .map(|quad| {
                 let [w0, w1] = quad[0];
                 let at = IVec3::new((w0 & 63) as i32, ((w0 >> 6) & 63) as i32, ((w0 >> 12) & 63) as i32);
-                (at, &shape.quads[((w1 >> 12) & 0xFFF) as usize - first], (w1 >> 24) as u8)
+                (at, &shape.quads[shape_quad_index(w0, w1) - first], (w1 >> 24) as u8)
             })
             .collect();
         let quad = |at: IVec3, face: Face| drawn.iter().find(|(p, q, _)| *p == at && q.face == face).map(|&(_, _, light)| light);
@@ -1375,6 +1396,101 @@ mod tests {
         // Beside the other slab, both sides are drawn.
         assert!(quad(a, Face::PosX).is_some() && quad(b, Face::NegX).is_some());
         assert_eq!(drawn.iter().filter(|(p, ..)| *p == a).count(), 5);
+    }
+
+    /// A roof stops the sky's light: under it the room is dark, while its courses' faces
+    /// inside its cell (each step's top and front) take the light of the open side they
+    /// face, not the dark of the cell they are in.
+    #[test]
+    fn a_roof_darkens_under_it_and_its_inner_faces_take_the_light_they_face() {
+        let file = crate::shape::ShapeFile::read(
+            "test",
+            r#"(shapes: {"roof": (boxes: [(to: (16, 8, 16), cull: true), (from: (0, 8, 8), to: (16, 16, 16), cull: true)])})"#,
+        )
+        .unwrap();
+        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file)], crate::shape::ShapeLimits { boxes: 2, quads: 64 }).unwrap();
+        let block = |name: &str, render| BlockDef { name: format!("test:{name}"), render, textures: Textures::All(name.into()), ..Default::default() };
+        let reg = BlockRegistry::with_shapes(
+            vec![block("stone", RenderKind::Opaque), BlockDef { shape: Some("test:roof".into()), light_filter: 14, ..block("roof", RenderKind::Model) }],
+            &shapes,
+        )
+        .unwrap();
+        let (stone, roof) = (reg.expect("test:stone"), reg.expect("test:roof"));
+        let mut column = Column::default();
+        for z in 0..32 {
+            for x in 0..32 {
+                column.set_block(IVec3::new(x, 0, z), stone);
+            }
+        }
+        // A roof five by five, three up, over open ground.
+        for z in 8..13 {
+            for x in 8..13 {
+                column.set_block(IVec3::new(x, 3, z), roof);
+            }
+        }
+        let column = Arc::new(column);
+        let region = LitRegion::compute(&reg, &std::array::from_fn(|_| column.clone()));
+        let (centre, under, open) = (IVec3::new(10, 3, 10), IVec3::new(10, 1, 10), IVec3::new(2, 1, 2));
+        assert_eq!(region.light(centre) >> 4, 0, "the roof holds no light");
+        assert!(region.light(under) >> 4 <= (region.light(open) >> 4) - 3, "under the roof {:#x}, in the open {:#x}", region.light(under), region.light(open));
+        let mesh = mesh_chunk(&reg, &region, &column, 0, 1);
+        let shape = reg.shape(roof).unwrap();
+        let first = reg.shape_first_quad(roof).unwrap();
+        let drawn: Vec<(IVec3, &crate::shape::ShapeQuad, u8)> = mesh
+            .cutout
+            .vertices
+            .chunks(4)
+            .filter(|quad| is_shape_quad(quad[0][0]))
+            .map(|quad| {
+                let [w0, w1] = quad[0];
+                let at = IVec3::new((w0 & 63) as i32, ((w0 >> 6) & 63) as i32, ((w0 >> 12) & 63) as i32);
+                (at, &shape.quads[((w1 >> 12) & 0xFFF) as usize - first], (w1 >> 24) as u8)
+            })
+            .collect();
+        // The lower course's top lies inside the cell, under the open sky above it.
+        let inner_top = drawn.iter().find(|(p, q, _)| *p == centre && q.face == Face::PosY && q.boundary.is_none()).expect("the lower course's top is drawn");
+        assert_eq!(inner_top.2, region.light(centre + IVec3::Y), "the inner top takes the light above it");
+        assert_eq!(inner_top.2 >> 4, 15);
+    }
+
+    /// A cloth that dims light (a drawn curtain, `light_filter` 8) holds little of it, but
+    /// its face inside the cell takes the light of the open side it faces, so it is not drawn
+    /// dark in a lit room.
+    #[test]
+    fn a_dimming_cloths_inner_face_takes_the_light_it_faces() {
+        let file = crate::shape::ShapeFile::read("test", r#"(shapes: {"cloth": (boxes: [(to: (2, 16, 16))])})"#).unwrap();
+        let shapes = crate::shape::Shapes::gather(vec![("test".into(), file)], crate::shape::ShapeLimits { boxes: 2, quads: 64 }).unwrap();
+        let block = |name: &str, render| BlockDef { name: format!("test:{name}"), render, textures: Textures::All(name.into()), ..Default::default() };
+        let reg = BlockRegistry::with_shapes(
+            vec![block("stone", RenderKind::Opaque), BlockDef { shape: Some("test:cloth".into()), light_filter: 8, solid: false, ..block("cloth", RenderKind::Model) }],
+            &shapes,
+        )
+        .unwrap();
+        let (stone, cloth) = (reg.expect("test:stone"), reg.expect("test:cloth"));
+        let mut column = Column::default();
+        for z in 0..32 {
+            for x in 0..32 {
+                column.set_block(IVec3::new(x, 0, z), stone);
+            }
+        }
+        let at = IVec3::new(10, 1, 10);
+        column.set_block(at, cloth);
+        let column = Arc::new(column);
+        let region = LitRegion::compute(&reg, &std::array::from_fn(|_| column.clone()));
+        let beside = region.light(at + IVec3::X);
+        assert!(region.light(at) >> 4 < beside >> 4, "the cloth holds {:#x}, beside it {beside:#x}", region.light(at));
+        let mesh = mesh_chunk(&reg, &region, &column, 0, 1);
+        let shape = reg.shape(cloth).unwrap();
+        let first = reg.shape_first_quad(cloth).unwrap();
+        let inner = mesh
+            .cutout
+            .vertices
+            .chunks(4)
+            .filter(|quad| is_shape_quad(quad[0][0]))
+            .map(|quad| (&shape.quads[((quad[0][1] >> 12) & 0xFFF) as usize - first], (quad[0][1] >> 24) as u8))
+            .find(|(q, _)| q.face == Face::PosX && q.boundary.is_none())
+            .expect("the cloth's inner face is drawn");
+        assert_eq!(inner.1, beside, "the inner face takes the light beside it");
     }
 
     #[test]
@@ -1418,6 +1534,28 @@ mod tests {
         let top = |v: &Vertex| (v[0] >> 6) & 63;
         let highest = mesh.opaque.vertices.iter().map(top).max().unwrap();
         assert_eq!(highest, 10, "the top faces of 10-high ground sit at y = 10");
+    }
+
+    /// Every number the shape table may hold comes back out of a vertex as it went in, past
+    /// the twelve bits word 1 has for it, and the shader reads it the same way.
+    #[test]
+    fn shape_quads_number_up_to_the_whole_table() {
+        for index in [0, 1, 4095, 4096, 5000, crate::shape::MAX_SHAPE_QUADS as u32 - 1] {
+            let (high, low) = shape_quad_bits(index);
+            assert_eq!(high & !(3 << PLANT_PIECE_SHIFT), 0, "{index}: a shape quad's number spills out of word 0 bits 30..31");
+            let w0 = PLANT_DIAGONAL << 18 | (PLANT_SHAPE & 3) << PLANT_MODEL_SHIFT | (PLANT_SHAPE >> 2) << PLANT_MODEL_HIGH_SHIFT | high;
+            assert!(is_shape_quad(w0), "{index}: no longer read as a shape quad");
+            assert_eq!(shape_quad_index(w0, low), index as usize);
+        }
+        // A plant's quad of its model, in the same bits, never reads it as a shape.
+        for model in PLANT_MODELS {
+            for piece in 0..4u32 {
+                let w0 = PLANT_DIAGONAL << 18 | (model as u32 & 3) << PLANT_MODEL_SHIFT | (model as u32 >> 2) << PLANT_MODEL_HIGH_SHIFT | piece << PLANT_PIECE_SHIFT;
+                assert!(!is_shape_quad(w0), "{model:?} quad {piece} read as a shape quad");
+            }
+        }
+        let shader = include_str!("../../client/src/render/voxel.wgsl");
+        assert!(shader.contains("return ((w1 >> 12u) & 0xFFFu) | (((w0 >> PLANT_PIECE_SHIFT) & 3u) << 12u);"), "voxel.wgsl reads a shape quad's number otherwise");
     }
 
     #[test]

@@ -200,7 +200,7 @@ impl Server {
             Role::Processor { water: false, .. } => 0,
             _ => 1,
         };
-        let loaded = (-reach..=reach).all(|x| (-reach..=reach).all(|z| self.world.contains(ColumnPos::of_block(pos + IVec3::new(x, 0, z)))));
+        let loaded = self.land_loaded(pos, reach);
         if !loaded {
             match machine.role {
                 Role::Generator { source: Source::Wind, .. } => {
@@ -338,6 +338,8 @@ impl Server {
         let multiblocks = self.content.multiblocks.clone();
         let structure = multiblocks.with_core(view.block).next();
         match structure {
+            // Not standing as far as can be seen: a piece in land still loading may be there.
+            Some(_) if !self.station_stands(pos) && !self.structure_loaded(pos) => lines.push(Words::key("station.unloaded")),
             Some(structure) if !self.station_stands(pos) => {
                 lines.push(Words::Own(format!("{}.hint", def_key("multiblock", &structure.name)), structure.hint.clone()));
             }
@@ -584,6 +586,28 @@ mod tests {
         assert!((share(0.0, false) - 0.5).abs() < 1e-3, "the poorest kept walker gives half");
         assert!((share(1.0, false) - 1.2).abs() < 1e-3, "the best kept gives six fifths");
         assert_eq!(share(1.0, true), 0.0, "a young one walks nothing");
+    }
+
+    /// A structure's core whose land is still loading says so when used, not how to build
+    /// it: a piece in the next column could be standing there.
+    #[test]
+    fn a_core_on_land_still_loading_says_so_not_how_to_build_it() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.insert(1, crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits));
+        let column = ColumnPos::of_block(server.spawn.floor().as_ivec3());
+        let core = column.origin() + IVec3::new(31, server.spawn.y as i32 + 4, 8);
+        server.load_area(core - IVec3::splat(2), core + IVec3::splat(2));
+        server.set_block(core, server.content.blocks.expect("base:bloomery"));
+        let said = |server: &mut Server| {
+            server.use_machine(1, core);
+            std::iter::from_fn(|| client.try_recv().ok().flatten()).find_map(|m| match m { ServerMessage::Chat { text: Words::Lines(lines), .. } => lines.first().cloned(), _ => None })
+        };
+        let east = column.offset(1, 0);
+        let held = server.world.remove(east).expect("loaded");
+        assert_eq!(said(&mut server), Some(Words::key("station.unloaded")));
+        server.world.insert(east, held);
+        assert!(matches!(said(&mut server), Some(Words::Own(key, _)) if key.ends_with(".hint")), "loaded, it says how to build it");
     }
 
     #[test]

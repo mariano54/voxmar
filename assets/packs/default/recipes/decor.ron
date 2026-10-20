@@ -57,6 +57,11 @@
             Paint(palette: "cloth", base: 0.55, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.14), Stripes(period: 2.0, width: 0.5, amount: 0.14, vertical: true), Noise(cells: (4, 4), amount: 0.12), Grain(0.1)], clean: true),
             Grid(legend: {'d': "cloth:0", 'l': "cloth:5"}, rows: ["................", "................", "dddddddddddddddd", "dddddddddddddddd", "................", "................", ".......ll.......", "......llll......", ".....llddll.....", ".....llddll.....", "......llll......", ".......ll.......", "................", "................", "................", "dddddddddddddddd"]),
         ]),
+        // A woven hanging: a border, and a tree of life down the middle.
+        "block/hanging_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
+            Paint(palette: "cloth", base: 0.5, shade: [Stripes(period: 2.0, width: 0.5, amount: 0.12, vertical: true), Noise(cells: (4, 4), amount: 0.1), Grain(0.1)], clean: true),
+            Grid(legend: {'d': "cloth:0", 'm': "cloth:2", 'l': "cloth:5"}, rows: ["dmdmdmdmdmdmdmdm", "m..............d", "d.......l......m", "m......lll.....d", "d.....lllll....m", "m.......d......d", "d...l...d...l..m", "m..lll..d..lll.d", "d...l.l.d.l.l..m", "m......ldl.....d", "d.......d......m", "m.......d......d", "d.....ddddd....m", "m..............d", "d..............m", "mdmdmdmdmdmdmdmd"]),
+        ]),
         "block/curtain_grey": (palettes: {"cloth": "furn_cloth", "ink": "furn_ink"}, layers: [
             Paint(palette: "cloth", base: 0.6, shade: [Stripes(period: 4.0, width: 0.5, amount: 0.3, vertical: true, warp: 0.6), Stripes(period: 4.0, width: 0.125, amount: -0.25, vertical: true, phase: 3.0), Gradient(from: 0.05, to: -0.1), Grain(0.08)], clean: true),
         ]),
@@ -107,6 +112,10 @@
         ]),
         "block/wind_flags": (palettes: {}, layers: [
             Grid(legend: {'a': "#3a6ac8", 'b': "#f0f0f0", 'c': "#d03a30", 'd': "#3a9a48", 'e': "#f0c030"}, rows: ["aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee", "aaabbbcccdddeeee"]),
+        ]),
+        "block/shingles_grey": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.6, shade: [Noise(cells: (4, 4), amount: 0.2), Stripes(period: 2.0, width: 0.5, amount: -0.08, vertical: true), Grain(0.12)], clean: true),
+            Grid(legend: {'d': "wood:0", 'l': "wood:5"}, rows: ["ldllldllldllldll", ".d...d...d...d..", ".d...d...d...d..", "dddddddddddddddd", "llldllldllldllld", "...d...d...d...d", "...d...d...d...d", "dddddddddddddddd", "ldllldllldllldll", ".d...d...d...d..", ".d...d...d...d..", "dddddddddddddddd", "llldllldllldllld", "...d...d...d...d", "...d...d...d...d", "dddddddddddddddd"]),
         ]),
         "block/basket_grey": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
             Paint(palette: "wood", base: 0.58, shade: [Boards(height: 2, seam: -0.4, joint: -0.3, value: 0.22, bevel: 0.1), Grain(0.12)], clean: true),

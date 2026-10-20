@@ -29,12 +29,13 @@
         (pattern: [["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "campfire", "tag:cobbled"]], output: "pit_kiln", skill: "core:construction", level: 1, xp: 15.0),
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "clay_pot", count: 2, level: 2, xp: 12.0),
         (pattern: [["fired_clay"], ["fired_clay"]], output: "vial", count: 3, level: 4, xp: 8.0),
-        (ingredients: ["fired_clay", "fired_clay", "fired_clay", "fired_clay"], output: "kiln_bricks", level: 5, xp: 6.0),
+        (ingredients: ["fired_clay", "fired_clay", "fired_clay", "fired_clay"], output: "kiln_bricks", count: 2, level: 5, xp: 12.0),
         (pattern: [["kiln_bricks", "", "kiln_bricks"], ["kiln_bricks", "clay_pot", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "crucible", skill: "core:engineering", level: 10, xp: 40.0),
-        // A sleeping bag three ways: wool and hide, pelts, or feathers and hide.
+        // A sleeping bag three ways: wool and hide, pelts, or feathers and hide, which takes a
+        // raw hide off the first night's hunt as well as a cured one.
         (pattern: [["wool", "wool", "wool"], ["hide", "hide", ""]], output: "sleeping_bag", level: 5, xp: 30.0),
         (pattern: [["tag:fur", "tag:fur"], ["tag:fur", "tag:fur"]], output: "sleeping_bag", level: 5, xp: 30.0),
-        (pattern: [["feather", "feather"], ["hide", "hide"]], output: "sleeping_bag", level: 1, xp: 30.0),
+        (pattern: [["feather", "feather"], ["raw_hide|hide", "raw_hide|hide"]], output: "sleeping_bag", level: 1, xp: 30.0),
         // A herb planter: a box of soil herbs grow back in.
         (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:construction", level: 3, xp: 10.0),
         // Ore smelted with coal or charcoal, by hand for now (a furnace comes later).
@@ -92,6 +93,9 @@
         (pattern: [["red_sand", "red_sand"], ["red_sand", "red_sand"]], output: "red_sandstone", xp: 2.0),
         // Moss grows over stonework.
         (ingredients: ["stone_bricks", "moss_block"], output: "mossy_stone_bricks", xp: 3.0),
+        // Cobblestone is made: plain stone breaks into loose stones (blocks.ron), and four
+        // knock together into two.
+        (pattern: [["loose_stone", "loose_stone"], ["loose_stone", "loose_stone"]], output: "cobblestone", count: 2, xp: 1.0),
         (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone", xp: 3.0),
         // Two logs (barked or stripped), or bark-on-all-sides wood blocks, over two
         // cobblestones make a campfire. Removing bark is never a prerequisite.

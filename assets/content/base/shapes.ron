@@ -199,6 +199,11 @@
             (from: (1, 14, 13), to: (15, 16, 15), textures: All("cloth_grey")),
             (from: (2, 0, 13.5), to: (14, 14, 14.5)),
         ]),
+        // A woven hanging on a rod against the south side of its cell, the wall's width.
+        "wall_hanging": (boxes: [
+            (from: (0, 15, 14), to: (16, 16, 15.5), textures: All("cloth_grey")),
+            (from: (1, 1, 14.5), to: (15, 15, 15.5)),
+        ]),
         // A door's leaf, a block's height (a door is two): shut across the middle of its
         // cell, and open, swung back against its jamb on the west side.
         "door": (boxes: [(from: (0, 0, 6.5), to: (16, 16, 9.5))]),
@@ -206,6 +211,12 @@
         "curtain": (boxes: [
             (from: (0, 15, 6), to: (16, 16, 10), textures: All("cloth_grey")),
             (from: (0, 0, 7), to: (16, 15, 9)),
+        ]),
+        // The same curtain drawn back, gathered at each end of its rod.
+        "curtain_open": (boxes: [
+            (from: (0, 15, 6), to: (16, 16, 10), textures: All("cloth_grey")),
+            (from: (0, 0, 6.5), to: (3, 15, 9.5)),
+            (from: (13, 0, 6.5), to: (16, 15, 9.5)),
         ]),
         // A box with a cap above and below and the cord it hangs by.
         "paper_lantern": (boxes: [
@@ -375,6 +386,262 @@
             (from: (4, 2, 3), to: (12, 14, 13)),
             (from: (2, 0, 2), to: (14, 2, 14)),
             (from: (2, 14, 2), to: (14, 16, 14)),
+        ]),
+
+        // Building pieces (blocks_building.ron). Timber takes the grain running along it.
+        // A post six texels square, standing in the middle of its cell.
+        "post": (boxes: [(from: (5, 0, 5), to: (11, 16, 11), cull: true)]),
+        // A beam six texels square lying along the cell from front to back, on its floor
+        // (a sill; turned over, a joist under a ceiling).
+        "beam": (boxes: [(from: (5, 0, 0), to: (11, 6, 16), cull: true)]),
+        // A window of laths: a frame two texels wide and four deep, two laths up and two
+        // across it, thinner, with the light coming through the squares between.
+        "lattice_window": (boxes: [
+            (from: (0, 0, 6), to: (2, 16, 10), cull: true),
+            (from: (14, 0, 6), to: (16, 16, 10), cull: true),
+            (from: (2, 0, 6), to: (14, 2, 10), cull: true),
+            (from: (2, 14, 6), to: (14, 16, 10), cull: true),
+            (from: (5, 2, 7), to: (6.5, 14, 9)),
+            (from: (9.5, 2, 7), to: (11, 14, 9)),
+            (from: (2, 5, 7.5), to: (14, 6.5, 8.5)),
+            (from: (2, 9.5, 7.5), to: (14, 11, 8.5)),
+        ]),
+        // A roof in four courses a quarter of a block high, each set a quarter back from
+        // the one below: its eave faces north, its top course meets the back. Walked up
+        // course by course, as stairs are.
+        "roof": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (0, 4, 4), to: (16, 8, 16), cull: true),
+            (from: (0, 8, 8), to: (16, 12, 16), cull: true),
+            (from: (0, 12, 12), to: (16, 16, 16), cull: true),
+        ]),
+        // A roof's outer corner, a hip: four courses as the roof's, each set a quarter back
+        // from the north and from the west, so eaves run along both and the top course
+        // meets the back corner.
+        "roof_corner": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (4, 4, 4), to: (16, 8, 16), cull: true),
+            (from: (8, 8, 8), to: (16, 12, 16), cull: true),
+            (from: (12, 12, 12), to: (16, 16, 16), cull: true),
+        ]),
+        // A roof's inner corner, a valley: the courses of a roof with its eave north and of
+        // one with its eave west together, meeting along the diagonal.
+        "roof_inner_corner": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (0, 4, 4), to: (16, 8, 16), cull: true),
+            (from: (4, 4, 0), to: (16, 8, 4), cull: true),
+            (from: (0, 8, 8), to: (16, 12, 16), cull: true),
+            (from: (8, 8, 0), to: (16, 12, 8), cull: true),
+            (from: (0, 12, 12), to: (16, 16, 16), cull: true),
+            (from: (12, 12, 0), to: (16, 16, 12), cull: true),
+        ]),
+        // The top of a gable, between a roof facing north one below it on one side and one
+        // facing south on the other: courses rising from both sides to a ridge capping the
+        // middle, running east to west.
+        // A hide lean-to: the hide in four thin courses a quarter of a block apart, stepping
+        // up from the eave at the north (the placer's side) to the back, on two rafters.
+        "lean_to": (boxes: [
+            (from: (0, 3, 0), to: (16, 4, 4)),
+            (from: (0, 7, 4), to: (16, 8, 8)),
+            (from: (0, 11, 8), to: (16, 12, 12)),
+            (from: (0, 15, 12), to: (16, 16, 16)),
+            (from: (1, 0, 0), to: (2.5, 3, 4), textures: All("oak_planks")),
+            (from: (13.5, 0, 0), to: (15, 3, 4), textures: All("oak_planks")),
+            (from: (1, 3, 4), to: (2.5, 7, 8), textures: All("oak_planks")),
+            (from: (13.5, 3, 4), to: (15, 7, 8), textures: All("oak_planks")),
+            (from: (1, 7, 8), to: (2.5, 11, 12), textures: All("oak_planks")),
+            (from: (13.5, 7, 8), to: (15, 11, 12), textures: All("oak_planks")),
+            (from: (1, 11, 12), to: (2.5, 15, 16), textures: All("oak_planks")),
+            (from: (13.5, 11, 12), to: (15, 15, 16), textures: All("oak_planks")),
+        ]),
+        // Wattle across the middle of its cell: the woven sticks, and three stakes standing
+        // proud of them.
+        "wattle": (boxes: [
+            (from: (0, 0, 7), to: (16, 16, 9)),
+            (from: (1, 0, 6.5), to: (2.5, 16, 9.5)),
+            (from: (7.25, 0, 6.5), to: (8.75, 16, 9.5)),
+            (from: (13.5, 0, 6.5), to: (15, 16, 9.5)),
+        ]),
+        // Shutters: shut, two leaves across the middle with a batten on each; open, folded
+        // back flat against the jambs east and west.
+        "shutters": (boxes: [
+            (from: (0, 0, 7), to: (16, 16, 9)),
+            (from: (1, 3, 6), to: (15, 5, 7)),
+            (from: (1, 11, 6), to: (15, 13, 7)),
+        ]),
+        "shutters_open": (boxes: [
+            (from: (0, 0, 1), to: (1, 16, 9)),
+            (from: (15, 0, 1), to: (16, 16, 9)),
+        ]),
+        // A brick flue three quarters of a block across, and a clay pot with a rim.
+        "chimney_stack": (boxes: [(from: (2, 0, 2), to: (14, 16, 14))]),
+        "chimney_pot": (boxes: [
+            (from: (5, 0, 5), to: (11, 9, 11)),
+            (from: (4.5, 9, 4.5), to: (11.5, 11, 11.5)),
+        ]),
+        // A hood: a skirt of brick round the hearth below it, narrowing to the flue above.
+        "chimney_hood": (boxes: [
+            (from: (0, 0, 0), to: (16, 6, 2)),
+            (from: (0, 0, 14), to: (16, 6, 16)),
+            (from: (0, 0, 2), to: (2, 6, 14)),
+            (from: (14, 0, 2), to: (16, 6, 14)),
+            (from: (1, 6, 1), to: (15, 10, 15)),
+            (from: (2, 10, 2), to: (14, 16, 14)),
+        ]),
+        // A jetty beam: a joist along the top of the cell from front (north, the overhang)
+        // to back (the wall it comes out of), its end cut square, and a brace under it
+        // stepping down to the wall.
+        "jetty_beam": (boxes: [
+            (from: (5, 11, 0), to: (11, 16, 16)),
+            (from: (5.5, 7, 9), to: (10.5, 11, 16)),
+            (from: (5.5, 3, 13), to: (10.5, 7, 16)),
+        ]),
+        // A door frame across the middle of the cell: a jamb on either side, and above them
+        // a lintel. The way between is eleven sixteenths across, wider than anyone who walks.
+        "door_frame": (boxes: [
+            (from: (0, 0, 5.5), to: (2.5, 16, 10.5)),
+            (from: (13.5, 0, 5.5), to: (16, 16, 10.5)),
+        ]),
+        "door_frame_top": (boxes: [
+            (from: (0, 0, 5.5), to: (2.5, 13, 10.5)),
+            (from: (13.5, 0, 5.5), to: (16, 13, 10.5)),
+            (from: (0, 13, 5), to: (16, 16, 11)),
+        ]),
+        // A window frame across the middle of the cell: jambs as the door frame's, a sill
+        // under the opening and a lintel over it. The opening is eleven sixteenths across.
+        "window_frame": (boxes: [
+            (from: (0, 0, 5.5), to: (2.5, 16, 10.5)),
+            (from: (13.5, 0, 5.5), to: (16, 16, 10.5)),
+            (from: (2.5, 0, 5), to: (13.5, 3, 11)),
+            (from: (2.5, 13, 5), to: (13.5, 16, 11)),
+        ]),
+        // A lattice window with shutters on its north face. Open, each leaf stands out from
+        // its jamb, square to the wall; shut, the two leaves meet across the opening with a
+        // batten over each.
+        "lattice_shutters_open": (boxes: [
+            (from: (0, 0, 6), to: (2, 16, 10), cull: true),
+            (from: (14, 0, 6), to: (16, 16, 10), cull: true),
+            (from: (2, 0, 6), to: (14, 2, 10), cull: true),
+            (from: (2, 14, 6), to: (14, 16, 10), cull: true),
+            (from: (5, 2, 7), to: (6.5, 14, 9)),
+            (from: (9.5, 2, 7), to: (11, 14, 9)),
+            (from: (2, 5, 7.5), to: (14, 6.5, 8.5)),
+            (from: (2, 9.5, 7.5), to: (14, 11, 8.5)),
+            (from: (0.5, 2, 0), to: (2, 14, 6)),
+            (from: (14, 2, 0), to: (15.5, 14, 6)),
+        ]),
+        "lattice_shutters_shut": (boxes: [
+            (from: (0, 0, 6), to: (2, 16, 10), cull: true),
+            (from: (14, 0, 6), to: (16, 16, 10), cull: true),
+            (from: (2, 0, 6), to: (14, 2, 10), cull: true),
+            (from: (2, 14, 6), to: (14, 16, 10), cull: true),
+            (from: (5, 2, 7), to: (6.5, 14, 9)),
+            (from: (9.5, 2, 7), to: (11, 14, 9)),
+            (from: (2, 5, 7.5), to: (14, 6.5, 8.5)),
+            (from: (2, 9.5, 7.5), to: (14, 11, 8.5)),
+            (from: (2, 2, 4.5), to: (8, 14, 6)),
+            (from: (8, 2, 4.5), to: (14, 14, 6)),
+            (from: (3, 4, 3.5), to: (13, 5.5, 4.5)),
+            (from: (3, 10.5, 3.5), to: (13, 12, 4.5)),
+        ]),
+        // An arrow slit: dressed stone filling the cell but for a slit three texels wide
+        // and ten high running through it from front to back.
+        "arrow_slit": (boxes: [
+            (from: (0, 0, 0), to: (6.5, 16, 16), cull: true),
+            (from: (9.5, 0, 0), to: (16, 16, 16), cull: true),
+            (from: (6.5, 0, 0), to: (9.5, 3, 16), cull: true),
+            (from: (6.5, 13, 0), to: (9.5, 16, 16), cull: true),
+        ]),
+        // A railing along the back (south) of its cell: a bottom rail, a handrail and four
+        // balusters between them, a block high in all. The corner has a second run along
+        // its east side.
+        "railing": (boxes: [
+            (from: (0, 0, 13.5), to: (16, 2, 16), cull: true),
+            (from: (0, 13, 13), to: (16, 16, 16), cull: true),
+            (from: (1.25, 2, 14), to: (2.75, 13, 15.5)),
+            (from: (5.25, 2, 14), to: (6.75, 13, 15.5)),
+            (from: (9.25, 2, 14), to: (10.75, 13, 15.5)),
+            (from: (13.25, 2, 14), to: (14.75, 13, 15.5)),
+        ]),
+        // A field fence across the middle of its cell, running east to west: half a post at
+        // each end (two fences side by side make one whole post) and two rails between. A
+        // block high, as a railing, so nothing steps over it.
+        "fence": (boxes: [
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
+            (from: (14, 0, 6.5), to: (16, 16, 9.5)),
+            (from: (2, 5, 7), to: (14, 7.5, 9)),
+            (from: (2, 11, 7), to: (14, 13.5, 9)),
+        ]),
+        // A fence's corner: a post in the middle with rails out to the west and the north.
+        "fence_corner": (boxes: [
+            (from: (6.5, 0, 6.5), to: (9.5, 16, 9.5)),
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
+            (from: (6.5, 0, 0), to: (9.5, 16, 2)),
+            (from: (2, 5, 7), to: (6.5, 7.5, 9)),
+            (from: (2, 11, 7), to: (6.5, 13.5, 9)),
+            (from: (7, 5, 2), to: (9, 7.5, 6.5)),
+            (from: (7, 11, 2), to: (9, 13.5, 6.5)),
+        ]),
+        // A field gate between two half posts: a frame of two rails and three uprights. Open,
+        // it stands swung out to the north, folded against its west post.
+        "fence_gate": (boxes: [
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
+            (from: (14, 0, 6.5), to: (16, 16, 9.5)),
+            (from: (2, 4, 7.25), to: (14, 6, 8.75)),
+            (from: (2, 11, 7.25), to: (14, 13, 8.75)),
+            (from: (2, 6, 7.25), to: (3.5, 11, 8.75)),
+            (from: (7.25, 6, 7.25), to: (8.75, 11, 8.75)),
+            (from: (12.5, 6, 7.25), to: (14, 11, 8.75)),
+        ]),
+        "fence_gate_open": (boxes: [
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
+            (from: (14, 0, 6.5), to: (16, 16, 9.5)),
+            (from: (2, 4, 0), to: (3.5, 6, 7)),
+            (from: (2, 11, 0), to: (3.5, 13, 7)),
+            (from: (2, 6, 0), to: (3.5, 11, 1.5)),
+            (from: (2, 6, 5.5), to: (3.5, 11, 7)),
+        ]),
+        "railing_corner": (boxes: [
+            (from: (0, 0, 13.5), to: (16, 2, 16), cull: true),
+            (from: (0, 13, 13), to: (16, 16, 16), cull: true),
+            (from: (1.25, 2, 14), to: (2.75, 13, 15.5)),
+            (from: (5.25, 2, 14), to: (6.75, 13, 15.5)),
+            (from: (9.25, 2, 14), to: (10.75, 13, 15.5)),
+            (from: (13.25, 2, 14), to: (14.75, 13, 15.5)),
+            (from: (13.5, 0, 0), to: (16, 2, 13.5), cull: true),
+            (from: (13, 13, 0), to: (16, 16, 13), cull: true),
+            (from: (14, 2, 1.25), to: (15.5, 13, 2.75)),
+            (from: (14, 2, 5.25), to: (15.5, 13, 6.75)),
+            (from: (14, 2, 9.25), to: (15.5, 13, 10.75)),
+        ]),
+        // A newel post: a post five texels square and a cap over it.
+        "newel_post": (boxes: [
+            (from: (5.5, 0, 5.5), to: (10.5, 13, 10.5)),
+            (from: (4.5, 13, 4.5), to: (11.5, 16, 11.5)),
+        ]),
+        // A landing: boards across the top of the cell, level with a stair's top, on two
+        // joists running front to back.
+        "landing": (boxes: [
+            (from: (0, 13, 0), to: (16, 16, 16), cull: true),
+            (from: (1, 9, 0), to: (4, 13, 16), cull: true),
+            (from: (12, 9, 0), to: (15, 13, 16), cull: true),
+        ]),
+        // A door's upper half glazed with a lattice: stiles and rails round two laths up
+        // and two across, in the door's thickness.
+        "door_lattice": (boxes: [
+            (from: (0, 0, 6.5), to: (2.5, 16, 9.5), cull: true),
+            (from: (13.5, 0, 6.5), to: (16, 16, 9.5), cull: true),
+            (from: (2.5, 0, 6.5), to: (13.5, 2.5, 9.5), cull: true),
+            (from: (2.5, 13.5, 6.5), to: (13.5, 16, 9.5), cull: true),
+            (from: (5.5, 2.5, 7.25), to: (7, 13.5, 8.75)),
+            (from: (9, 2.5, 7.25), to: (10.5, 13.5, 8.75)),
+            (from: (2.5, 6, 7.5), to: (13.5, 7.5, 8.5)),
+            (from: (2.5, 9.5, 7.5), to: (13.5, 11, 8.5)),
+        ]),
+        "roof_ridge": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (0, 4, 4), to: (16, 8, 12), cull: true),
+            (from: (0, 8, 6), to: (16, 10, 10), cull: true),
         ]),
     },
 )

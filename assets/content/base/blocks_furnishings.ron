@@ -36,7 +36,7 @@
         "furniture": [
             (name: "{name}_stool", render: Model, shape: "stool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
             (name: "{name}_chair", render: Model, shape: "chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
-            (name: "{name}_bench", render: Model, shape: "bench", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
+            (name: "{name}_bench", render: Model, shape: "bench", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood", "yard"]),
             (name: "{name}_table", render: Model, shape: "table", sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
             (name: "{name}_bed", render: Model, shape: "bed", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "bed", "decor", "wood"]),
             (name: "{name}_shelf", render: Model, shape: "shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
@@ -52,14 +52,21 @@
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
         // of cloth_grey and its kin, multiplied by the dye. Broken, a placed piece gives itself back.
         "dyed": [
-            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}"]),
+            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}", "shelter:draughty"]),
             (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "decor", "colour:{name}"]),
             (name: "{name}_banner", render: Model, shape: "banner", facing: true, solid: false, sound: Moss, textures: All("banner_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "banner", "decor", "colour:{name}"]),
-            (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "curtain", "decor", "colour:{name}"]),
+            (name: "{name}_wall_hanging", render: Model, shape: "wall_hanging", facing: true, solid: false, sound: Moss, textures: All("hanging_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "drape", "decor", "colour:{name}"]),
+            // A curtain drawn across, and drawn back (a right click, `swaps`, as a door). Drawn
+            // across a window it keeps most of the room's light in (`light_filter`), so a lit
+            // home's window glows low at night; drawn back, the light goes through as air.
+            (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, light_filter: 8, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
+                swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
+            (name: "{name}_curtain_open", render: Model, shape: "curtain_open", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
+                swaps: "{name}_curtain", drops: "{name}_curtain", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
             (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
             (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),
-            (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "colour:{name}"]),
-            (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}"]),
+            (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "yard", "colour:{name}"]),
+            (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}", "shelter:draughty"]),
         ],
         // Crockery in one glaze: a plate, a bowl, a jar, a jug and a basket for tables and
         // shelves; broken, a placed piece gives itself back.
@@ -78,7 +85,9 @@
                 drops: "{name}_ingot", hardness: 0.5, color: (170, 170, 180), tags: ["lantern", "light", "decor", "metal"],
             ),
         ],
-        // A stone lantern or a column of one stone (`{name}`), in that stone's own texture.
+        // A stone lantern or a column of one stone (`{name}`), in that stone's own texture. A
+        // column walls a room as soundly as the stone it is cut from (calcite, sandstone and
+        // stone, all `shelter:sound`).
         "stone_lantern": [
             (
                 name: "{name}_lantern", render: Model, shape: "stone_lantern", light: 10, sound: Stone, textures: All("{name}"),
@@ -88,7 +97,7 @@
         "column": [
             (
                 name: "{name}_column", render: Model, shape: "column", sound: Stone, textures: All("{name}"),
-                drops: "core:air", hardness: 2.0, color: (125, 125, 125), tags: ["column", "decor", "building", "stone"],
+                drops: "core:air", hardness: 2.0, color: (125, 125, 125), tags: ["column", "decor", "building", "stone", "shelter:sound"],
             ),
         ],
     },
@@ -102,11 +111,11 @@
         // gives itself back too.
         (
             name: "wooden_door", render: Model, shape: "door", facing: true, sound: Wood, textures: All("oak_planks"),
-            upper: "wooden_door_top", swaps: "wooden_door_open", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_shut", "wood", "building"],
+            upper: "wooden_door_top", swaps: "wooden_door_open", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_shut", "wood", "building", "shelter:sound"],
         ),
         (
             name: "wooden_door_top", render: Model, shape: "door", facing: true, support: Below, sound: Wood, textures: All("oak_planks"),
-            swaps: "wooden_door_open_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_shut", "wood", "building"],
+            swaps: "wooden_door_open_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_shut", "wood", "building", "shelter:sound"],
         ),
         (
             name: "wooden_door_open", render: Model, shape: "door_open", facing: true, solid: false, sound: Wood, textures: All("oak_planks"),
@@ -119,7 +128,7 @@
         // A bale of straw, tied in two places.
         (
             name: "hay_bale", sound: Grass, textures: Column(end: "hay_bale_top", side: "hay_bale_side"),
-            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "building"],
+            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "yard", "building", "shelter:draughty"],
         ),
         // A barrel of staves held by two iron hoops.
         (

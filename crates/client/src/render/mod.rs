@@ -48,6 +48,8 @@ pub mod pack;
 pub mod particles;
 pub mod post;
 pub mod scale;
+#[cfg(test)]
+mod shader_check;
 pub mod precipitation;
 pub mod resolve;
 pub mod terrain;

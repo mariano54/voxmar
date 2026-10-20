@@ -21,7 +21,7 @@
         ),
         (
             name: "chimney", sound: Stone, textures: Sides(top: "chimney_top", bottom: "cobblestone", side: "chimney_side"),
-            hardness: 2.0, color: (130, 100, 90), tags: ["chimney", "building"],
+            hardness: 2.0, color: (130, 100, 90), tags: ["chimney", "building", "shelter:fine"],
             particles: [(style: Smoke, rate: 3.0, at: (0.5, 1.0, 0.5), spread: 0.2, size: 1.8, height: Some(7.0), range: Some(96.0), over: Some(("hearth", 3)), color: Some((150, 146, 140)))],
         ),
         // The Farm age's fire (multiblocks.ron): a pit kiln fires clay into pots, vials and
@@ -33,7 +33,7 @@
         ),
         (
             name: "kiln_bricks", sound: Stone, textures: All("kiln_bricks"),
-            hardness: 2.0, color: (160, 90, 60), tags: ["kiln_bricks", "bricks", "building"],
+            hardness: 2.0, color: (160, 90, 60), tags: ["kiln_bricks", "bricks", "building", "shelter:fine"],
         ),
         (
             name: "crucible", sound: Stone, textures: Sides(top: "crucible_top", bottom: "kiln_bricks", side: "crucible_side"),
@@ -91,17 +91,17 @@
         (template: "drop", name: "stone_hoe", tags: ["hoe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125), action: Some("base:till"))),
         (template: "drop", name: "stone_knife", tags: ["knife", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         // Copper: tier 3.
-        (template: "drop", name: "copper_pickaxe", tags: ["pickaxe", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),
-        (template: "drop", name: "copper_axe", tags: ["axe", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),
-        (template: "drop", name: "copper_shovel", tags: ["shovel", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),
-        (template: "drop", name: "copper_hoe", tags: ["hoe", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70), action: Some("base:till"))),
-        (template: "drop", name: "copper_knife", tags: ["knife", "tool", "tier:3", "speed:6", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_pickaxe", tags: ["pickaxe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_axe", tags: ["axe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_shovel", tags: ["shovel", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_hoe", tags: ["hoe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70), action: Some("base:till"))),
+        (template: "drop", name: "copper_knife", tags: ["knife", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
         // Iron: tier 4.
-        (template: "drop", name: "iron_pickaxe", tags: ["pickaxe", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
-        (template: "drop", name: "iron_axe", tags: ["axe", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
-        (template: "drop", name: "iron_shovel", tags: ["shovel", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
-        (template: "drop", name: "iron_hoe", tags: ["hoe", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215), action: Some("base:till"))),
-        (template: "drop", name: "iron_knife", tags: ["knife", "tool", "tier:4", "speed:8", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_pickaxe", tags: ["pickaxe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_axe", tags: ["axe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_shovel", tags: ["shovel", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_hoe", tags: ["hoe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215), action: Some("base:till"))),
+        (template: "drop", name: "iron_knife", tags: ["knife", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
         // Fishing rods (fishing.ron): a better rod lands more and rarer fish.
         (template: "drop", name: "fishing_rod", tags: ["rod", "tool", "tier:1"], all: (color: (130, 95, 55), action: Some("base:fish"))),
         (template: "drop", name: "fine_rod", tags: ["rod", "tool", "tier:3", "yield:0.15"], all: (color: (200, 205, 215), action: Some("base:fish"))),

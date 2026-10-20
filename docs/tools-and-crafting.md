@@ -8,11 +8,31 @@ grow faster. Everything is content a mod adds the same way.
 
 A tool is an item (`base/blocks_tools.ron`) tagged `tool`, its kind (`pickaxe`, `axe`,
 `shovel`, `hoe`, `knife`, `shears`), a `tier:N`, a `speed:X` and maybe a `yield:Y`. Five
-kinds come in four tiers: flint (1), stone (2), copper (3) and iron (4), speed 2, 4, 6
-and 8, yield 0 to 0.15. Tier 1 has a flint pickaxe, axe and knife and a digging stick (a
-shovel), but no hoe: tilling waits for a stone edge. There are no wooden tools (Oct 15:
+kinds come in four tiers: flint (1), stone (2), copper (3) and iron (4), speed 2, 4, 7
+and 14, yield 0 to 0.15. The tooltip says it ("Works 7× as fast as a bare hand"). Tier 1
+has a flint pickaxe, axe and knife and a digging stick (a shovel), but no hoe: tilling waits for a stone edge. There are no wooden tools (Oct 15:
 a plank's edge cuts nothing); an older save's come back as the flint tool, the digging
 stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`).
+
+**Why those speeds** (Oct 14 tier audit). A block takes its hardness over the speed, and
+after each break the hand waits a quarter second before the next (`mine_cooldown`,
+Minecraft's five ticks), so what a player feels sweeping a wall is hardness / speed + 0.25 s.
+With 2, 4, 6, 8 the copper and iron steps were near that floor: on a log (hardness 2)
+0.75 to 0.58 to 0.50 s a block, 1.29x then 1.17x, and on stone 1.25x then 1.14x, under the
+1.4x a step needs to be felt. Copper 7 and iron 14 make each step about 1.4x on what tools
+are for (log, cobblestone, ore; stone 1.35x and 1.30x):
+
+| Seconds a block (with the 0.25 s wait) | Hand | Flint | Stone | Copper | Iron |
+| --- | --- | --- | --- | --- | --- |
+| Log (needs an axe), cobblestone (2.0) | 2.25 (cobblestone) | 1.25 | 0.75 | 0.54 | 0.39 |
+| Stone (1.5, needs a pickaxe) | | 1.00 | 0.63 | 0.46 | 0.36 |
+| Ore (3.0, needs a pickaxe) | | 1.75 | 1.00 | 0.68 | 0.46 |
+| Clay, gravel (0.6) | 0.85 | 0.55 | 0.40 | 0.34 | 0.29 |
+| Dirt (0.5) | 0.75 | 0.50 | 0.38 | 0.32 | 0.29 |
+
+Soft ground stays near the quarter-second floor whatever the tool (1.2x a step past
+stone): it was already quick, and only the wait could change that, which is not a tier's
+to change.
 
 Bare hands break neither natural stone nor a standing log: their rules in `base/tools.ron`
 ask for a pickaxe and an axe of tier 1 (Mariano, Oct 15: the early game was too easy, and
@@ -35,6 +55,12 @@ diorite, andesite and basalt, which only some rock provinces bare (`rocks.ron`),
 deepslate under every province, so a player in limestone or sandstone country walks to find
 it or mines down. Plain stone and cobblestone will not take an edge. A stone pickaxe or axe
 takes three heads, a hoe two, a shovel or knife one.
+
+Cobblestone is made too. Plain stone breaks into two **loose stones** (`drops` and
+`drop_count` in `blocks.ron`), and four loose stones knock together into two cobblestone in
+the hand's grid, so a block mined is still a cobblestone, one craft later. Hard rock
+(granite and the other rock families) breaks straight to its own cobbles, which the
+grindstone takes whole; cobblestone set down and broken again gives itself back.
 
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a
 pickaxe for stone and ore, an axe for logs and planks, a shovel for soil, sand, gravel,
@@ -59,7 +85,9 @@ player's effects' `mining`; client and server work it out the same way.
 ## Crafting
 
 Recipes (`base/recipes.ron`, engine/src/craft.rs) are shaped (up to three rows of three)
-or shapeless (up to nine ingredients). The inventory's grid is two by two; a **crafting
+or shapeless (up to nine ingredients). A shape may sit anywhere in the grid and is also
+made mirrored left to right (an axe's head on either side), so the load refuses a recipe
+whose mirror image is another recipe's pattern that makes something else. The inventory's grid is two by two; a **crafting
 table** (four planks) gives three by three: right click one and the inventory opens with
 the bigger grid, for as long as you are within reach of it and the screen is open.
 Anything bigger than two by two, or with more than four ingredients, needs a table; the

@@ -121,6 +121,9 @@
         // Whooshes: lighter weapons quicker and higher, heavy ones lower and longer; a sword
         // swings the plain one, which any other class without its own falls back to.
         "swing": (gain: 0.32, layers: [Sweep(from: 500, to: 2300, seconds: 0.2, gain: 1.0)]),
+        // A swing at the air, at a creature out of reach: lighter and airier than a swing
+        // that meets something (`whiff.<class>` for a class's own).
+        "whiff": (gain: 0.26, layers: [Sweep(from: 700, to: 2800, seconds: 0.16, gain: 1.0)]),
         "swing.fist": (gain: 0.24, layers: [Sweep(from: 380, to: 1500, seconds: 0.14, gain: 1.0)]),
         "swing.dagger": (gain: 0.28, layers: [Sweep(from: 900, to: 3600, seconds: 0.13, gain: 1.0)]),
         "swing.spear": (gain: 0.3, layers: [Sweep(from: 600, to: 2600, seconds: 0.17, gain: 1.0)]),
@@ -347,6 +350,8 @@
         "wolf": (sound: "tell.snarl", peak: 0.44, ducks: false),
         "badger": (sound: "tell.hiss", peak: 0.3, ducks: false),
         "fox": (sound: "tell.yip", peak: 0.3, ducks: false),
+        // A wild boar gores as Old Tusk does, smaller and further off.
+        "wild_boar": (sound: "tell.gore", peak: 0.36, ducks: false),
         "aurochs": (sound: "tell.bellow", peak: 0.6, ducks: false),
         "brown_bear": (sound: "tell.roar", peak: 0.6, ducks: false),
         "style.stab": (sound: "tell.growl", peak: 0.3, ducks: false),

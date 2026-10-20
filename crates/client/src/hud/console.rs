@@ -77,16 +77,16 @@ impl Console {
         }
     }
 
-    /// The lines received at or after `since` (seconds since startup), oldest first: what
-    /// the gate reads the server's replies from.
+    /// The lines received strictly after `since` (seconds since startup), oldest first: what
+    /// the gate reads the server's replies to an ask sent at `since` from. A line that came in
+    /// the frame the ask went out is the answer to something asked before it, never to it.
     pub fn since(&self, since: f32) -> impl Iterator<Item = &str> {
-        self.lines.iter().filter(move |line| line.at >= since).map(|line| line.text.as_str())
+        self.lines.iter().filter(move |line| line.at > since).map(|line| line.text.as_str())
     }
 
-    /// The lines received after `after` (seconds since startup), oldest first: the answers
-    /// to what was sent at that moment, never a line that came in the same frame.
-    pub fn after(&self, after: f32) -> impl Iterator<Item = &str> {
-        self.lines.iter().filter(move |line| line.at > after).map(|line| line.text.as_str())
+    /// Every line kept, oldest first.
+    pub fn all(&self) -> impl Iterator<Item = &str> {
+        self.lines.iter().map(|line| line.text.as_str())
     }
 
     /// Runs these lines (commands with a `/`) as soon as the game has started.

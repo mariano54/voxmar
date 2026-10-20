@@ -70,6 +70,13 @@ pub struct Target {
     mine_cooldown: f32,
 }
 
+impl Target {
+    /// How long the block being mined takes to break, as worked out when the mining began.
+    pub fn mining_seconds(&self) -> Option<f32> {
+        self.mining.is_some().then_some(self.mining_seconds)
+    }
+}
+
 /// The number keys pick a hotbar slot, and so does the wheel unless it is zooming.
 fn select_slot(
     keys: Res<ButtonInput<KeyCode>>,
@@ -368,12 +375,13 @@ fn break_and_place(
         // stands); a sleeping bag is slept in; a seat is sat on; a locked chest's lock is picked; bees give a
         // swarm to a skep held up to them, or a full skep its honey; a home station is
         // loaded or emptied; a sprung trap's catch is taken; a fertiliser is spread on a
-        // growing crop; a door is opened or shut, as the server turns it (never predicted:
-        // it holds the collision).
+        // growing crop; a wattle panel is daubed with clay in hand (as the server turns it); a
+        // door is opened or shut, as the server turns it (never predicted: it holds the
+        // collision).
         // One of these plainly meant (a door, a hive, a station aimed at, a fertiliser in
         // hand) but refused says why, unless something else below takes the click.
         let mut unmet = None;
-        for name in ["base:light", "base:sleep", "base:sit", "base:pick_lock", "base:tend_bees", "base:use_station", "base:take_from_trap", "base:fertilise", "base:open"] {
+        for name in ["base:light", "base:sleep", "base:sit", "base:pick_lock", "base:tend_bees", "base:use_station", "base:take_from_trap", "base:fertilise", "base:coat", "base:open"] {
             if let (Some(hit), Some(action)) = (hit, actions.0.id(name)) {
                 let context = ClientContext { world: &world, player: &player, content };
                 let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
@@ -381,10 +389,15 @@ fn break_and_place(
                 let cooks = actions.0.id("base:cook").and_then(|cook| actions.0.get(cook)).is_some_and(|def| def.validate(&context, action_target).is_ok());
                 match actions.0.get(action).map(|def| def.validate(&context, action_target)) {
                     Some(Ok(())) if !cooks => {
-                        net.propose_from(&player, action, action_target);
+                        net.propose_from_with(&player, action, action_target, worked(&context, hit.block));
                         target.used_right = true;
                         // A lock picked opens the chest's slots.
                         player.store_asked |= name == "base:pick_lock";
+                        // The clay a coat spends stays in hand until the server turns the
+                        // wall, so the held press must not lay it as a block meanwhile.
+                        if name == "base:coat" {
+                            target.place_cooldown = 0.4;
+                        }
                         return;
                     }
                     Some(Err(Rejection::Unmet(need))) if unmet.is_none() && meant(&context, hit.block, need) => {
@@ -416,7 +429,7 @@ fn break_and_place(
                 Some(Ok(())) if time.elapsed_secs() < target.cooking_until => return,
                 Some(Ok(())) => {
                     let seconds = actions.0.get(cook).map_or(0.0, |def| def.seconds(&context, action_target));
-                    net.propose_from(&player, cook, action_target);
+                    net.propose_from_with(&player, cook, action_target, worked(&context, hit.block));
                     target.used_right = true;
                     target.place_cooldown = 0.4;
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
@@ -622,6 +635,13 @@ fn predict_use(world: &mut ClientWorld, player: &mut LocalPlayer, content: &Cont
 /// The water block at `pos`, for its splash.
 fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
     world.block(pos).unwrap_or(BlockId::AIR)
+}
+
+/// What an action at `block` is done with, to be heard by (`sounds.ron`'s `ways`): the block
+/// worked (a hearthstone lit, a drying rack loaded, a pit kiln fed), not what is in hand,
+/// so holding a station's item never sounds as loading one.
+fn worked(context: &ClientContext, block: IVec3) -> Vec<BlockId> {
+    context.world.block(block).into_iter().collect()
 }
 
 /// What to tell a player whose click was refused because `need` failed, at `block` if it

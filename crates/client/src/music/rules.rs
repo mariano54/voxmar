@@ -25,6 +25,18 @@ pub enum Context {
     /// Near a boss that is alive (a creature `boss: true`), or in a boss's room (`boss` in
     /// `music.ron`). Only tracks for it play then, and the others never do.
     Boss,
+    /// Stepping inside the player's own lit home at night (`home` in `music.ron`), the
+    /// first time that night: a short cue, never in the rotation of the others.
+    Home,
+    /// Stepping inside a settlement's bounds by day, the first time that game day (the
+    /// home motif's day, `home` in `music.ron`): a short cue as `Home`'s is, and never over
+    /// it.
+    Settlement,
+}
+
+impl Context {
+    /// The cues that play alone, once, as the player arrives: never in the rotation.
+    pub const MOTIFS: [Context; 2] = [Context::Home, Context::Settlement];
 }
 
 /// The rules, merged across packages.
@@ -63,8 +75,57 @@ pub struct MusicRules {
     /// How many tracks played lately are passed over while others suit.
     pub recent: usize,
     pub underground: Underground,
+    /// When the home motif plays.
+    pub home: HomeMotif,
     pub prism: Discovery,
     pub rules: Vec<Rule>,
+}
+
+/// The home motif: a track for `Home` (one of that context's, picked as others are) plays
+/// as the player steps inside their own lit home (the hearth `Vitals::home` names, burning)
+/// between `dusk` and `dawn`, once a night. Inside is within `reach` blocks of the hearth
+/// each way, with a roof (a solid block) within `roof` blocks over the head. A boss fight
+/// holds it back, and one starting fades it as it fades any calm track.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HomeMotif {
+    pub reach: i32,
+    pub roof: i32,
+    /// Ticks after sunrise (as `/time` counts) the night starts and ends; one running past
+    /// midnight wraps.
+    pub dusk: u64,
+    pub dawn: u64,
+}
+
+impl HomeMotif {
+    /// Which night `ticks` (since the world began) falls in, counted from the first dusk;
+    /// none by day.
+    pub fn night(&self, ticks: u64) -> Option<u64> {
+        let day = voxmar_protocol::TICKS_PER_DAY;
+        let since_dusk = (ticks + day - self.dusk) % day;
+        let long = (self.dawn + day - self.dusk) % day;
+        (since_dusk < long).then(|| (ticks + day - self.dusk) / day)
+    }
+
+    /// Which game day `ticks` falls in, counted from the first dawn; none by night. The
+    /// settlement motif plays once in each.
+    pub fn day(&self, ticks: u64) -> Option<u64> {
+        let day = voxmar_protocol::TICKS_PER_DAY;
+        self.night(ticks).is_none().then(|| (ticks + day - self.dawn) / day)
+    }
+}
+
+/// The night is part of a day and has some length; inside is a box and a roof of a few
+/// blocks, as a home's are.
+fn check_home(home: &HomeMotif) -> Result<(), String> {
+    let day = voxmar_protocol::TICKS_PER_DAY;
+    if home.dusk >= day || home.dawn >= day || home.dusk == home.dawn {
+        return Err(format!("home: dusk {} and dawn {} must differ, each under {day} ticks", home.dusk, home.dawn));
+    }
+    if !(1..=32).contains(&home.reach) || !(1..=32).contains(&home.roof) {
+        return Err(format!("home: reach {} and roof {} must be 1 to 32 blocks", home.reach, home.roof));
+    }
+    Ok(())
 }
 
 /// The line naming a track as it starts, and its category, at the top right.
@@ -207,6 +268,7 @@ struct File {
     categories: Vec<Category>,
     recent: Option<usize>,
     underground: Option<Underground>,
+    home: Option<HomeMotif>,
     prism: Option<Discovery>,
     rules: Vec<Rule>,
 }
@@ -231,6 +293,7 @@ impl Default for MusicRules {
             categories: Vec::new(),
             recent: 0,
             underground: Underground { depth: f32::INFINITY, max_sky: 0.0 },
+            home: HomeMotif { reach: 7, roof: 12, dusk: 16500, dawn: 23500 },
             prism: Discovery::default(),
             rules: Vec::new(),
         }
@@ -250,7 +313,10 @@ impl MusicRules {
             if read.loudness.is_some() {
                 rules.loudness = read.loudness;
             }
-            replace!(volume, borrowed_volume, first_menu_delay, gap, menu_gap, now_playing, boss, fade_out, retry_after, resume_after, own_share, recent, underground, prism);
+            if let Some(home) = &read.home {
+                check_home(home).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
+            }
+            replace!(volume, borrowed_volume, first_menu_delay, gap, menu_gap, now_playing, boss, fade_out, retry_after, resume_after, own_share, recent, underground, home, prism);
             for category in read.categories {
                 check_category(&category).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
                 match rules.categories.iter_mut().find(|known| known.name == category.name) {
@@ -262,6 +328,18 @@ impl MusicRules {
         }
         if let Some(rule) = rules.categories.iter().flat_map(|c| &c.tracks).find(|rule| !rule.category.is_empty()) {
             return Err(format!("{FILE}: the category's track rule for {:?} names a category; it is the one it is in", rule.paths));
+        }
+        // The home and settlement motifs are cues of their own, never also in the rotation
+        // nor each other.
+        for motif in Context::MOTIFS {
+            let lists = rules.categories.iter().map(|c| (c.name.as_str(), &c.contexts)).chain(rules.categories.iter().flat_map(|c| c.tracks.iter().map(move |r| (c.name.as_str(), &r.contexts))));
+            if let Some((category, _)) = lists.chain(rules.rules.iter().map(|r| (r.category.as_str(), &r.contexts))).find(|(_, contexts)| contexts.contains(&motif) && contexts.len() > 1) {
+                return Err(format!("{FILE}: category {category:?} plays tracks both as the {motif:?} motif and elsewhere; {motif:?} plays alone"));
+            }
+            // A cue starts at once, and a borrowed track is read first.
+            if let Some(rule) = rules.rules.iter().find(|rule| rule.contexts.contains(&motif)) {
+                return Err(format!("{FILE}: the rule for {:?} makes borrowed tracks the {motif:?} motif; it is a category's own tracks", rule.paths));
+            }
         }
         if let Some(rule) = rules.rules.iter().find(|rule| rules.category(&rule.category).is_none()) {
             return Err(format!("{FILE}: the rule for {:?} puts tracks in category {:?}, which no categories list has", rule.paths, rule.category));
@@ -404,6 +482,45 @@ mod tests {
         assert_eq!(MusicRules::load(&[base, mod_]).unwrap().rule("x:y").unwrap().category, "world");
     }
 
+    /// The home motif's nights are counted from dusk, one wrapping past midnight as one, and
+    /// its numbers and contexts are checked as they load: a night of some length within a
+    /// day, a home-sized box and roof, and `Home` alone, a category's own tracks.
+    #[test]
+    fn the_home_motif_counts_nights_and_is_checked_as_it_loads() {
+        let home = HomeMotif { reach: 7, roof: 12, dusk: 16500, dawn: 23500 };
+        let day = voxmar_protocol::TICKS_PER_DAY;
+        assert_eq!(home.night(6000), None, "noon");
+        assert_eq!(home.night(20000), home.night(23000));
+        assert_ne!(home.night(20000), home.night(day + 20000), "the next night is another");
+        assert_eq!(home.night(23600), None, "after dawn");
+        let wraps = HomeMotif { dusk: 22000, dawn: 2000, ..home };
+        assert_eq!(wraps.night(23000), wraps.night(day + 1000), "past midnight is the same night");
+        assert_eq!(wraps.night(day + 3000), None);
+        // Its days, the settlement motif's: one from dawn to dusk, none by night, the next
+        // dawn another.
+        assert_eq!(home.day(20000), None, "night");
+        assert_eq!(home.day(23600), home.day(day + 6000), "dawn and the noon after are one day");
+        assert_ne!(home.day(6000), home.day(day + 6000), "the next noon is another");
+        assert_eq!(wraps.day(day + 3000), wraps.day(day + 12000));
+        for (bad, says) in [
+            ("(home: (reach: 7, roof: 12, dusk: 16500, dawn: 16500))", "must differ"),
+            ("(home: (reach: 7, roof: 12, dusk: 24000, dawn: 100))", "must differ"),
+            ("(home: (reach: 0, roof: 12, dusk: 16500, dawn: 23500))", "1 to 32"),
+            ("(home: (reach: 7, roof: 99, dusk: 16500, dawn: 23500))", "1 to 32"),
+            (r#"(categories: [(name: "home", folder: "home", contexts: [Home, Game])])"#, "Home plays alone"),
+            (r#"(categories: [(name: "x", folder: "x", tracks: [(paths: ["*"], contexts: [Game, Home])])])"#, "Home plays alone"),
+            (r#"(categories: [(name: "x")], rules: [(paths: ["*"], category: "x", contexts: [Home])])"#, "a category's own tracks"),
+            (r#"(categories: [(name: "x", folder: "x", contexts: [Settlement, Home])])"#, "plays alone"),
+            (r#"(categories: [(name: "x", folder: "x", contexts: [Settlement, Game])])"#, "Settlement plays alone"),
+            (r#"(categories: [(name: "x")], rules: [(paths: ["*"], category: "x", contexts: [Settlement])])"#, "a category's own tracks"),
+        ] {
+            let error = MusicRules::load(&[package("zmod", bad)]).map(|_| ()).unwrap_err();
+            assert!(error.contains(says), "{bad}: {error}");
+        }
+        let fine = MusicRules::load(&[package("zmod", r#"(home: (reach: 5, roof: 8, dusk: 22000, dawn: 2000), categories: [(name: "home", folder: "home", contexts: [Home])])"#)]).unwrap();
+        assert_eq!(fine.home, HomeMotif { reach: 5, roof: 8, ..wraps });
+    }
+
     /// The shipped rules place each kind of track the GT New Horizons soundtrack and the
     /// asset store hold.
     #[test]
@@ -491,5 +608,15 @@ mod tests {
         let all: Vec<_> = walk(&assets.join("music")).into_iter().filter(audio).collect();
         assert_eq!(placed, all.len(), "tracks outside every category's folder: {all:?}");
         assert!(!rules.prism.instances.is_empty() && !rules.prism.sources.is_empty());
+        // The home motif: its own category, its tracks for `Home` alone, at night by the
+        // way-home mark's clock, inside the home's reach (survival.ron's).
+        let home = rules.category("home").expect("no category home");
+        assert_eq!((home.folder.as_deref(), home.contexts.as_slice()), (Some("home"), [Home].as_slice()));
+        assert!(rules.home.night(20000).is_some() && rules.home.night(6000).is_none(), "{:?}", rules.home);
+        let home_reach = content.files.iter().filter(|f| f.name == "survival.ron").filter_map(|f| f.source.split("home_reach:").nth(1)?.split(',').next()?.trim().parse::<i32>().ok()).last();
+        assert_eq!(Some(rules.home.reach), home_reach, "the server's home and the motif's");
+        // The settlement motif: its own category too, for `Settlement` alone.
+        let settlement = rules.category("settlement").expect("no category settlement");
+        assert_eq!((settlement.folder.as_deref(), settlement.contexts.as_slice()), (Some("settlement"), [Context::Settlement].as_slice()));
     }
 }

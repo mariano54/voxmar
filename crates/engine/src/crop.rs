@@ -479,6 +479,21 @@ mod tests {
         }
     }
 
+    /// Daily Bread wants eight wheat, and before a crop ripens a Nomad's only wheat is wild:
+    /// lone tufts some twenty-five blocks apart on open grassland, and none in most woods
+    /// (the first-hour pacing audit, design/first-hour-pacing.md). At three ears in ten it
+    /// took about twenty-seven tufts, five minutes and more of walking; eight wheat must take
+    /// no more than fourteen.
+    #[test]
+    fn wild_wheat_bakes_bread_in_a_short_walk() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base/crops.ron");
+        let crops = CropRegistry::read("base", &std::fs::read_to_string(dir).unwrap()).unwrap();
+        let wheat = crops.iter().find(|c| c.name == "base:wheat").unwrap();
+        let ears: f32 = wheat.forage.iter().filter(|l| l.item.trim_start_matches("base:") == "wheat").map(|l| l.chance * (l.count.0 + l.count.1) as f32 / 2.0).sum();
+        let tufts = 8.0 / ears;
+        assert!(tufts <= 14.0, "eight wheat take {tufts:.1} wild tufts on average");
+    }
+
     #[test]
     fn levels_raise_rare_finds_a_little_and_common_yields_now_and_then() {
         assert_eq!(level_bonus(20, 20, 99), 0.0);

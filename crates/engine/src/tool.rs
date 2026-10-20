@@ -356,6 +356,29 @@ mod tests {
         }
     }
 
+    /// Each tier of each kind is felt (Oct 14 tier audit, docs/tools-and-crafting.md): on
+    /// the blocks tools are for (a log, cobblestone, an ore), a block with the next tier
+    /// takes at most 1/1.35 of the time with the one before, counting the quarter second the
+    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to flint, flint to
+    /// stone, stone to copper, copper to iron.
+    #[test]
+    fn every_tool_tier_is_felt() {
+        const BREAK_WAIT: f32 = 0.25;
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        for (kind, blocks) in [("axe", ["oak_log"].as_slice()), ("pickaxe", ["cobblestone", "coal_ore"].as_slice())] {
+            for block in blocks {
+                let hardness = content.blocks.info(id(block)).hardness;
+                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["flint", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
+                let seconds: Vec<f32> = held.iter().map(|&item| hardness / content.tools.speed(item, id(block)) + BREAK_WAIT).collect();
+                for (step, pair) in seconds.windows(2).enumerate() {
+                    assert!(pair[0] / pair[1] >= 1.35, "{block}: tier {step} to {} with a {kind} is only {:.2}x ({seconds:?})", step + 1, pair[0] / pair[1]);
+                }
+            }
+        }
+    }
+
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower
     /// level breaks pays more than what a higher one does, so stone and coal never outpay
     /// the ores above them.

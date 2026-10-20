@@ -45,6 +45,8 @@
         "elevenlabs/round5/general/03-a-quiet-moment-between-adventures.mp3": -27.0,
         "elevenlabs/round5/general/05-a-calm-harbor-town.mp3": -14.9,
         "elevenlabs/round5/snow/boss-01-a-frost-giant-on-a-frozen-glacier.mp3": -16.3,
+        "home/hearth_welcome.ogg": -20.0,
+        "settlement/market_day.ogg": -20.0,
     },
     // Seconds before the title screen's first track.
     first_menu_delay: (2.0, 6.0),
@@ -88,6 +90,12 @@
             (paths: ["*/desert/*"], contexts: [Game], biomes: ["desert", "dunes", "mesa"]),
             (paths: ["*/fantasy/*"], contexts: [Game], biomes: ["fantastical"]),
         ]),
+        // The home motif: composed by tools/generate_home_motif.py, played only as `home`
+        // below says, never in the rotation.
+        (name: "home", folder: "home", contexts: [Home]),
+        // The settlement motif: composed by tools/generate_settlement_motif.py, played only
+        // as `home` below says of it, never in the rotation.
+        (name: "settlement", folder: "settlement", contexts: [Settlement]),
         // Borrowed from the Prism instance, so only with Minecraft assets on.
         (name: "minecraft_menu"),
         (name: "minecraft_world"),
@@ -106,6 +114,17 @@
         // Underground: this many blocks below the surface, with this little of the air
     // around open to the sky.
     underground: (depth: 12.0, max_sky: 0.05),
+    // The home motif: the first time each night (`dusk` to `dawn`, ticks after sunrise as
+    // /time counts, the way-home mark's night in interface.ron) the player steps inside their
+    // own lit home, a `Home` track plays (the `home` category's). Inside is within `reach`
+    // blocks of the burning hearth each way (survival.ron's home_reach) under a roof within
+    // `roof` blocks of the head. The track playing fades for it; a boss fight holds it
+    // back, and one starting fades it.
+    // The settlement motif keeps the same clock: the first time each day (`dawn` to `dusk`)
+    // the player steps within a settlement's bounds (the ground its buildings stand on and
+    // six blocks round), a `Settlement` track plays (the `settlement` category's). Never over
+    // a motif playing, home's or its own, nor in a boss fight.
+    home: (reach: 7, roof: 12, dusk: 16500, dawn: 23500),
 
     prism: (
         // Instances whose folder or display name contains one of these, any case; the

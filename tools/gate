@@ -189,6 +189,11 @@ fi
 tools/bench --self-check || fail "tools/bench's self-check"
 reach_self_check || fail "the map from files to the crates they reach"
 tools/test-waits --self-check || fail "tools/test-waits' self-check"
+# A minute of scratch repos, so only when this branch changes it (what lands goes live on
+# the Mac within the hour), and only on a Mac, the one place it runs.
+if [[ $(uname -s) == Darwin ]] && ! git diff --quiet "$(git merge-base HEAD "$hygiene_base")" -- tools/tidy; then
+  tools/tidy --self-check || fail "tools/tidy's self-check"
+fi
 [[ $(git rev-parse HEAD) == $(git rev-parse "$hygiene_base") ]] && hygiene_base=origin/main
 tools/test-waits "$(git merge-base HEAD "$hygiene_base")" || fail "a test waits on the wall clock"
 [[ -z $(git status --porcelain --untracked-files=no) ]] && clean=1 || clean=0
@@ -249,7 +254,8 @@ if ((!full)); then
   for p in ${packages[@]+"${packages[@]}"}; do test_args+=(-p "$p"); done
   for ((i = 0; i + 1 < ${#SLOW_TESTS[@]}; i += 2)); do skips+=(--skip "${SLOW_TESTS[i + 1]}"); done
 fi
-# The test binaries (already built) and the session run side by side, under one memcap
+# The test binaries (already built) and the session run side by side (the tests from when the
+# session's distant land is in, below), under one memcap
 # (one heavy slot, held as a game run's: `--gate` names the script), rather than one after another as `cargo test` runs them; each test
 # binary runs from its crate's directory as cargo would.
 # The tests run at the lowest priority there is (nice 19), below the session: the session's
@@ -270,6 +276,25 @@ run='
   out=$1 session=$2; shift 2
   if [[ $session == 1 ]]; then
     (VOXMAR_MUTE=1 $GATE_PREFIX target/iter/voxmar --gate "$out" $GATE_ARGS >"$out/game.txt" 2>&1; echo $? >"$out/game.status") &
+    # The tests begin once the session'"'"'s distant land is in (it writes `land-in`, gate.rs
+    # `LAND_IN`) or it ended: the land is built on the game'"'"'s own low-priority workers, and
+    # with the tests beside it from the start a loaded Mac had 20 of its 568 tiles in when
+    # placing began, and breaking waited 42 s for it. A session that tells no land in
+    # $LAND_WAIT s (counted while not paused) fails the gate, its tests not run.
+    if [[ -s $out/tests.list ]]; then
+      waited=0
+      while [[ ! -e $out/land-in && ! -e $out/game.status ]]; do
+        if ((waited >= LAND_WAIT)); then
+          echo "the session told no distant land in $waited s" >"$out/land.timeout"
+          cat "$out/land.timeout"
+          wait
+          exit 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
+      echo "gate: the tests began $waited s into the session ($([[ -e $out/land-in ]] && echo "the distant land in at $(cat "$out/land-in") game s" || echo "the session ended first"))"
+    fi
   fi
   lower=(nice -n 19 env RAYON_NUM_THREADS=$TEST_POOL)
   while IFS=$(printf "\t") read -r dir exe; do
@@ -337,7 +362,10 @@ TEST_POOL=$(( $(getconf _NPROCESSORS_ONLN) / 2 > 1 ? $(getconf _NPROCESSORS_ONLN
 # is stopped and fails the gate. A loaded Mac's slowest, the full gate's worldgen binary,
 # took about 11 minutes; past 30 a binary is stuck, not slow.
 TEST_TIMEOUT=${VOXMAR_TEST_TIMEOUT:-1800}
-export TEST_POOL TEST_TIMEOUT
+# Seconds the tests wait for the session's distant land at most: alone, it is in within
+# seconds of the world loading (the Mac took 56 s with the tests beside it).
+LAND_WAIT=120
+export TEST_POOL TEST_TIMEOUT LAND_WAIT
 VOXMAR_CONFIG=$out/config VOXMAR_GATE_FULL=$full GATE_ARGS=$( ((full)) || echo --view-distance 4) RUST_TEST_THREADS=${RUST_TEST_THREADS:-8} \
   VOXMAR_FOREGROUND=1 $memcap 24 -- bash -c "$run" --gate "$out" "$session" ${skips[@]+"${skips[@]}"} >"$out/run.txt" 2>&1
 kill "$sampler" 2>/dev/null
@@ -373,6 +401,7 @@ if [[ $(fingerprint) != "$his_before" ]]; then
   ps -A -o args= | awk '{ n = split($1, p, "/") } p[n] == "voxmar" && !/--capture|--gate/ { found = 1 } END { exit !found }' ||
     fail "Mariano's settings ($his_settings) changed during the run, and his game was not running"
 fi
+[[ -e $out/land.timeout ]] && fail "$(cat "$out/land.timeout"), so its tests were not run ($out/game.txt)"
 tests_failed=0
 for f in "$out"/test-*.status; do
   [[ -e $f ]] || continue

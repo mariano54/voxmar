@@ -158,6 +158,9 @@ struct Flora {
     /// Those of them whose habitat runs along the edge of water (`Habitat::edge`), whose
     /// patches start from it (`Ecology::edge_patches`).
     edge_herbs: Vec<(PlantId, f32)>,
+    /// The biome's name hashed, which keys its edge herbs' patches: the same whatever order
+    /// the biomes load in.
+    name: u64,
 }
 
 /// What a plant is good for, for gameplay (cooking, alchemy, dyeing).
@@ -636,11 +639,12 @@ impl Ecology {
     /// blocks whose first column is `first`, as each one's column (its index in the cell,
     /// row by row) and plant. A patch at a random spot, as other rare herbs have
     /// (`in_patch`), would seldom touch so thin a line, so these start from it: each such
-    /// herb that the biomes of the cell name takes patches in proportion to the columns of
-    /// its habitat there (its rate counts plants per million of them, times the naming
+    /// herb takes patches in each biome of the cell naming it, in proportion to that biome's
+    /// columns of its habitat there (its rate counts plants per million of them, times the
     /// biome's weight), each started at one of those columns chosen by hash, at least
-    /// `EDGE_SPACING` blocks from the others, of as many of the nearest such columns within
-    /// `EDGE_REACH` as its size. `column(i)` gives the site and ground of the cell's i-th
+    /// `EDGE_SPACING` blocks from the herb's other patches in the cell (of any biome, so two
+    /// at a border never run together), of as many of the nearest such columns of the
+    /// same biome within `EDGE_REACH` as its size. `column(i)` gives the site and ground of the cell's i-th
     /// column, or none where nothing may grow (under water, under a tree, on a trail). Only
     /// the cell's own columns decide, so a cell is the same whatever generated it.
     pub fn edge_patches<'s>(&self, first: IVec2, column: impl Fn(usize) -> Option<(&'s Site, Ground)>) -> Vec<(usize, Plant)> {
@@ -649,26 +653,30 @@ impl Ecology {
             return out;
         }
         let side = PATCH_CELL as usize;
-        // The columns of each herb's habitat, with the weight their biome names it with.
-        let mut found: Vec<(PlantId, Vec<(usize, f32)>)> = Vec::new();
+        // The columns of each herb's habitat, by herb and biome, with the weight their biome
+        // names it with: each biome's columns make and hold its own patches, so a biome
+        // naming the herb heavily does not grow it on a lighter neighbour's bank.
+        let mut found: Vec<((PlantId, BiomeId), Vec<(usize, f32)>)> = Vec::new();
         for i in 0..side * side {
             let Some((site, ground)) = column(i) else { continue };
             for &(plant, weight) in &self.flora[site.home.0 as usize].edge_herbs {
                 if self.rooted(plant, ground) == 0.0 || habitat(self.plants[plant.0 as usize].habitat, site) < 0.5 {
                     continue;
                 }
-                match found.iter_mut().find(|(p, _)| *p == plant) {
+                match found.iter_mut().find(|(p, _)| *p == (plant, site.home)) {
                     Some((_, columns)) => columns.push((i, weight)),
-                    None => found.push((plant, vec![(i, weight)])),
+                    None => found.push(((plant, site.home), vec![(i, weight)])),
                 }
             }
         }
         let cell = first.div_euclid(IVec2::splat(PATCH_CELL));
         let unit = |bits: u64| (bits & 0xff_ffff) as f32 / (1u32 << 24) as f32;
         let at = |i: usize| IVec2::new(first.x + (i % side) as i32, first.y + (i / side) as i32);
-        for (plant, columns) in found {
+        // Each herb's patch starts in the cell, whichever biome's they are.
+        let mut started: Vec<(PlantId, Vec<IVec2>)> = Vec::new();
+        for ((plant, home), columns) in found {
             let Some((rate, least, most)) = self.plants[plant.0 as usize].patches else { continue };
-            let seed = self.seed ^ EDGES ^ (plant.0 as u64) << 24;
+            let seed = self.seed ^ EDGES ^ (plant.0 as u64) << 24 ^ self.flora[home.0 as usize].name;
             // As many patches as the habitat's columns make on average, rounded up or down
             // by a roll.
             let mean = (least + most) as f32 / 2.0;
@@ -679,10 +687,17 @@ impl Ecology {
             }
             let mut order: Vec<(u64, usize)> = columns.iter().map(|&(i, _)| (hash3(seed, at(i).x, 1, at(i).y), i)).collect();
             order.sort_unstable();
-            let mut starts: Vec<IVec2> = Vec::new();
+            let starts = match started.iter().position(|(p, _)| *p == plant) {
+                Some(k) => &mut started[k].1,
+                None => {
+                    started.push((plant, Vec::new()));
+                    &mut started.last_mut().expect("just pushed").1
+                }
+            };
             let mut taken: Vec<usize> = Vec::new();
+            let mut made = 0;
             for &(hash, i) in &order {
-                if starts.len() >= count {
+                if made >= count {
                     break;
                 }
                 let start = at(i);
@@ -690,6 +705,7 @@ impl Ecology {
                     continue;
                 }
                 starts.push(start);
+                made += 1;
                 let size = least as usize + (hash >> 40) as usize % (most - least + 1) as usize;
                 let mut near: Vec<(i32, u64, usize)> = order
                     .iter()
@@ -853,7 +869,7 @@ impl Flora {
         // Plants much brighter or more saturated than the grass are rarer accents.
         let contrast = |block: &str| 1.0 - hue::ACCENT_RARITY * (1.0 - hue::harmony(shown(block), grass, hue::CONTRAST_SPREAD));
         let wonders = def.wonders.clone().unwrap_or_else(|| vec![Select::Tag("wonder".into(), 1.0)]);
-        let mut flora = Flora { forest: def.forest, cover: def.cover, flowers: def.flowers, bloom: def.bloom, ..Default::default() };
+        let mut flora = Flora { forest: def.forest, cover: def.cover, flowers: def.flowers, bloom: def.bloom, name: crate::rarity::name_hash(&biome.name), ..Default::default() };
         for (i, tree) in content.trees.iter().enumerate() {
             let tags = tree.tags.iter().map(String::as_str);
             let id = TreeId(i as u16);
@@ -1073,6 +1089,44 @@ mod tests {
         assert!((0.8 * wants..=1.2 * wants).contains(&rate), "{rate:.0} per million columns of bank, wants {wants:.0}");
         let size = plants as f32 / starts.max(1) as f32;
         assert!((2.5..=6.5).contains(&size), "{size:.1} a patch");
+    }
+
+    /// Where a bank runs from one biome into another, each biome's stretch grows the herb at
+    /// its own weight: a heavy neighbour's patches do not spill onto a light one's bank.
+    /// Here the bank of the test above runs through alpine meadow (sky lotus 1.7) for the
+    /// first half of each cell and snowy peaks (0.33) for the second.
+    #[test]
+    fn bank_herbs_keep_to_their_own_biome() {
+        let world = crate::Overworld::new(1, std::sync::Arc::new(registry()));
+        let ecology = &world.ecology;
+        let lotus = PlantId(ecology.plant_names.iter().position(|n| n == "base:sky_lotus").unwrap() as u16);
+        let biomes = [world.biomes.id("base:alpine_meadow").unwrap(), world.biomes.id("base:snowy_peaks").unwrap()];
+        let weight = |b: crate::BiomeId| ecology.flora[b.0 as usize].edge_herbs.iter().find(|(p, _)| *p == lotus).expect("the biome grows sky lotus").1;
+        let template = world.site(0, 0);
+        let side = PATCH_CELL as usize;
+        let bank = |i: usize| (14..=15).contains(&(i / side));
+        let half = |i: usize| usize::from(i % side >= side / 2);
+        let sites: Vec<Site> = (0..side * side)
+            .map(|i| {
+                let (height, body) = if bank(i) { (201, crate::Body::Lake) } else { (210, crate::Body::Sea) };
+                let home = biomes[half(i)];
+                Site { height, water: 200, body, home, biome: home, forest: 0.0, ..template }
+            })
+            .collect();
+        let (cells, mut plants) = (4000, [0usize; 2]);
+        for c in 0..cells {
+            let first = IVec2::new((c % 64) as i32 * PATCH_CELL, (c / 64) as i32 * PATCH_CELL);
+            for (i, _) in ecology.edge_patches(first, |i| Some((&sites[i], Ground::Soil))) {
+                assert!(bank(i), "a sky lotus off the bank");
+                plants[half(i)] += 1;
+            }
+        }
+        let rate = ecology.plants[lotus.0 as usize].patches.unwrap().0;
+        for (k, &biome) in biomes.iter().enumerate() {
+            let per_million = plants[k] as f32 * 1e6 / (cells * side) as f32;
+            let wants = rate * weight(biome);
+            assert!((0.8 * wants..=1.2 * wants).contains(&per_million), "{}: {per_million:.0} per million columns of its bank, wants {wants:.0}", world.biomes.get(biome).name);
+        }
     }
 
     #[test]

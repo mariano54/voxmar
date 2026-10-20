@@ -17,7 +17,7 @@ pub struct ScreensPlugin;
 
 impl Plugin for ScreensPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (switch, click_hotkeys, label_hotkeys).chain().in_set(ScreenSystems).run_if(in_state(Screen::InGame)));
+        app.add_systems(Update, ((switch, click_hotkeys, label_hotkeys).chain(), clear_of_hud).in_set(ScreenSystems).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -112,9 +112,13 @@ pub struct HotkeyBar(pub GameScreen);
 #[derive(Component)]
 struct Hotkey(GameScreen);
 
+/// A look-up key's hint in a bar: hover an item and press it.
+#[derive(Component)]
+pub struct LookKey;
+
 /// A bar of the in-game screens' keys, for the foot of `current`.
 pub fn spawn_hotkeys(parent: &mut ChildSpawnerCommands, current: GameScreen) -> Entity {
-    let bar = Node { margin: UiRect::top(Val::Px(space::GAP)), justify_content: JustifyContent::Center, column_gap: Val::Px(space::SECTION), ..default() };
+    let bar = Node { margin: UiRect::top(Val::Px(space::GAP)), flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(space::HAIR), ..default() };
     parent.spawn((HotkeyBar(current), bar)).id()
 }
 
@@ -139,18 +143,57 @@ fn label_hotkeys(
         if !added.is_added() && !settings.is_changed() && !locale.is_changed() {
             continue;
         }
-        commands.entity(entity).despawn_children().with_children(|row| {
-            for screen in GameScreen::ALL {
-                let current = screen == bar.0;
-                let node = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
-                row.spawn((Button, Hotkey(screen), node)).with_children(|key| {
-                    let cap = Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), min_width: Val::Px(crate::ui::skin::CAP_MIN), justify_content: JustifyContent::Center, ..default() };
-                    let piece = if current { Piece::ButtonSelected } else { Piece::Button };
-                    let label = shadowed(&font.0, screen.key_label(&settings, &locale), BODY, if current { GOLD } else { TEXT });
-                    key.spawn((cap, piece.image(), crate::ui::widgets::HoverLight)).with_child((label, crate::lang::TightLine));
-                    key.spawn((Localized(screen.title()), text(&font.0, "", BODY, if current { GOLD } else { MUTED })));
+        let keys = || Node { justify_content: JustifyContent::Center, column_gap: Val::Px(space::SECTION), ..default() };
+        let cap = || Node { padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), min_width: Val::Px(crate::ui::skin::CAP_MIN), justify_content: JustifyContent::Center, ..default() };
+        let pair = || Node { align_items: AlignItems::Center, column_gap: Val::Px(space::INNER), ..default() };
+        commands.entity(entity).despawn_children().with_children(|rows| {
+            rows.spawn(keys()).with_children(|row| {
+                for screen in GameScreen::ALL {
+                    let current = screen == bar.0;
+                    row.spawn((Button, Hotkey(screen), pair())).with_children(|key| {
+                        let piece = if current { Piece::ButtonSelected } else { Piece::Button };
+                        let label = shadowed(&font.0, screen.key_label(&settings, &locale), BODY, if current { GOLD } else { TEXT });
+                        key.spawn((cap(), piece.image(), crate::ui::widgets::HoverLight)).with_child((label, crate::lang::TightLine));
+                        key.spawn((Localized(screen.title()), text(&font.0, "", BODY, if current { GOLD } else { MUTED })));
+                    });
+                }
+            });
+            // Where items show that can be looked up, the keys that look them up, on a row
+            // of their own under the screens'.
+            if matches!(bar.0, GameScreen::Inventory | GameScreen::Quests) {
+                rows.spawn(keys()).with_children(|row| {
+                    for (binding, title) in [(&settings.recipes_key, "screen.look.recipes"), (&settings.uses_key, "screen.look.uses")] {
+                        row.spawn((LookKey, pair())).with_children(|key| {
+                            key.spawn((cap(), Piece::Well.image())).with_child((shadowed(&font.0, binding.name(&locale), BODY, TEXT), crate::lang::TightLine));
+                            key.spawn((Localized(title), text(&font.0, "", BODY, MUTED)));
+                        });
+                    }
                 });
             }
         });
+    }
+}
+
+/// Keeps every screen, and the keys under it, clear of what stays in sight along the bottom
+/// edge with a screen open (the hotbar, health, the prayer strip and effects): each screen's
+/// root leaves that much room at its foot, however tall the HUD there grows. The menu, the
+/// tallest screen, pauses the game instead and puts the HUD away while it is up.
+fn clear_of_hud(
+    ui: Res<UiState>,
+    mut hud: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &mut Visibility), With<super::Bottom>>,
+    bars: Query<(&HotkeyBar, &ChildOf)>,
+    mut roots: Query<(&mut Node, &ComputedNode)>,
+) {
+    let Ok((bottom, at, mut shown)) = hud.single_mut() else { return };
+    shown.set_if_neq(if ui.menu_open { Visibility::Hidden } else { Visibility::Inherited });
+    let scale = bottom.inverse_scale_factor();
+    let top = at.translation.y - bottom.size().y / 2.0;
+    for (bar, root) in &bars {
+        let Ok((mut node, root)) = roots.get_mut(root.parent()) else { continue };
+        // From the HUD's top to the foot of the screen, in interface pixels, and a gap.
+        let room = if bar.0 == GameScreen::Menu { 0.0 } else { ((root.size().y - top) * scale).max(0.0) + space::GAP };
+        if !matches!(node.padding.bottom, Val::Px(now) if (now - room).abs() < 0.5) {
+            node.padding.bottom = Val::Px(room);
+        }
     }
 }

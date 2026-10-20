@@ -156,6 +156,21 @@ pub struct ClassDef {
     /// again (an arrow pulled from a kill, a stone in the grass): 0 to 1.
     #[serde(default)]
     pub recover: f32,
+    /// The chance a shot that misses lands where it flew, to be picked up again: 0 to 1.
+    #[serde(default)]
+    pub recover_miss: f32,
+    /// A hit taken while a shot is drawn spoils it, as raising a guard does
+    /// (`Rhythm::cancel`): the shot is not loosed, and the meter starts again from
+    /// [`Feel::cancel_to`].
+    #[serde(default)]
+    pub spoiled_by_hits: bool,
+    /// The speed on foot while a shot is drawn (its wind-up), as a share: 0.1 to 1.
+    #[serde(default = "one")]
+    pub drawing_speed: f32,
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 fn buffer() -> f32 {
@@ -793,10 +808,12 @@ pub enum Slot {
     Feet,
     /// The off-hand: a shield, which guards in place of the weapon.
     Shield,
+    /// One charm: a rare keepsake whose effect holds while it is worn (`effect::Condition::Wearing`).
+    Charm,
 }
 
 impl Slot {
-    pub const ALL: [Slot; 6] = [Slot::Head, Slot::Body, Slot::Legs, Slot::Hands, Slot::Feet, Slot::Shield];
+    pub const ALL: [Slot; 7] = [Slot::Head, Slot::Body, Slot::Legs, Slot::Hands, Slot::Feet, Slot::Shield, Slot::Charm];
 
     /// Its worn slot, counted from the first (`inventory::WORN`).
     pub fn index(self) -> usize {
@@ -812,6 +829,7 @@ impl Slot {
             Slot::Hands => "hands",
             Slot::Feet => "feet",
             Slot::Shield => "shield",
+            Slot::Charm => "charm",
         }
     }
 }
@@ -1013,7 +1031,7 @@ impl Weapon {
 }
 
 /// Every class and weapon, with each item's weapon worked out once.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CombatRegistry {
     classes: Vec<ClassDef>,
     /// Each block id's weapon, if it is one.
@@ -1101,6 +1119,9 @@ impl CombatRegistry {
             for (slot, name) in &set.pieces {
                 let error = |why: &str| RegistryError(format!("combat.ron: set `{}`: {name}: {why}", set.name));
                 let item = blocks.id(name).ok_or_else(|| error("no such item"))?;
+                if *slot == Slot::Charm {
+                    return Err(error("the charm slot holds a charm, never a piece of a set"));
+                }
                 if pieces[item.0 as usize].is_some() {
                     return Err(error("listed twice"));
                 }
@@ -1150,6 +1171,15 @@ impl CombatRegistry {
             };
             if !(0.0..=1.0).contains(&class.recover) || (class.recover > 0.0 && class.ammo.is_none()) {
                 return Err(RegistryError(format!("combat.ron: class `{}` recovers {} of its shots: it must shoot something, and recover 0 to 1", class.name, class.recover)));
+            }
+            if !(0.0..=1.0).contains(&class.recover_miss) || (class.recover_miss > 0.0 && class.ammo.is_none()) {
+                return Err(RegistryError(format!("combat.ron: class `{}` recovers {} of its misses: it must shoot something, and recover_miss 0 to 1", class.name, class.recover_miss)));
+            }
+            if class.spoiled_by_hits && class.ammo.is_none() {
+                return Err(RegistryError(format!("combat.ron: class `{}` has its shots spoiled by hits, but shoots nothing", class.name)));
+            }
+            if !(0.1..=1.0).contains(&class.drawing_speed) || (class.drawing_speed < 1.0 && class.ammo.is_none()) {
+                return Err(RegistryError(format!("combat.ron: class `{}` moves at {} while drawing: it must shoot something, and drawing_speed 0.1 to 1", class.name, class.drawing_speed)));
             }
             if class.ammo.is_some() && items.is_empty() {
                 return Err(RegistryError(format!("combat.ron: class `{}` shoots {:?}, which no item is", class.name, class.ammo.as_deref().unwrap_or_default())));
@@ -1269,6 +1299,23 @@ impl CombatRegistry {
     /// that strikes).
     pub fn recover(&self, weapon: &Weapon) -> f32 {
         self.class_of(weapon).map_or(0.0, |class| class.recover)
+    }
+
+    /// The chance a miss by `weapon` lands to be picked up again (0 for a weapon that
+    /// strikes).
+    pub fn recover_miss(&self, weapon: &Weapon) -> f32 {
+        self.class_of(weapon).map_or(0.0, |class| class.recover_miss)
+    }
+
+    /// Whether a hit taken spoils `weapon`'s shot being drawn.
+    pub fn spoiled_by_hits(&self, weapon: &Weapon) -> bool {
+        self.class_of(weapon).is_some_and(|class| class.spoiled_by_hits)
+    }
+
+    /// The share of their speed a player keeps while drawing a shot with `weapon` (1 for
+    /// a weapon that strikes).
+    pub fn drawing_speed(&self, weapon: &Weapon) -> f32 {
+        self.class_of(weapon).map_or(1.0, |class| class.drawing_speed)
     }
 
     /// `weapon`'s rhythm.
@@ -1547,6 +1594,17 @@ mod tests {
         assert!(registry(r#"(classes: [(name: "sling", style: Ranged, cooldown: 0.5, ammo: "nothing")])"#).is_err(), "ammo that is no item");
         assert!(registry(r#"(classes: [(name: "sling", style: Ranged, cooldown: 0.5, ammo: "stone", recover: 1.5)])"#).is_err(), "recover above 1");
         assert!(registry(r#"(classes: [(name: "sword", style: Slash, cooldown: 0.6, recover: 0.5)])"#).is_err(), "recovering with nothing to shoot");
+        let (combat, blocks) = registry(r#"(classes: [(name: "bow", style: Ranged, cooldown: 1.0, windup: 0.5, ammo: "stone", recover_miss: 0.8, spoiled_by_hits: true, drawing_speed: 0.4)], weapons: [(item: "stick", class: "bow", max_hit: 2)])"#).unwrap();
+        let bow = combat.wielded(blocks.id("t:stick"), |_| 1);
+        assert_eq!((combat.recover_miss(&bow), combat.spoiled_by_hits(&bow), combat.drawing_speed(&bow)), (0.8, true, 0.4));
+        let fists = combat.wielded(None, |_| 1);
+        assert_eq!((combat.recover_miss(&fists), combat.spoiled_by_hits(&fists), combat.drawing_speed(&fists)), (0.0, false, 1.0));
+        for bad in ["recover_miss: 1.5", "drawing_speed: 0.05", "drawing_speed: 1.2"] {
+            assert!(registry(&format!(r#"(classes: [(name: "bow", style: Ranged, cooldown: 1.0, ammo: "stone", {bad})])"#)).is_err(), "{bad} is accepted");
+        }
+        for bad in ["recover_miss: 0.5", "spoiled_by_hits: true", "drawing_speed: 0.5"] {
+            assert!(registry(&format!(r#"(classes: [(name: "sword", style: Slash, cooldown: 0.6, {bad})])"#)).is_err(), "{bad} with nothing to shoot is accepted");
+        }
     }
 
     #[test]

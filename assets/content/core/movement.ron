@@ -55,5 +55,9 @@
         sweep_step: 0.25,
         // The share of the player's width and height that must stay out of walls.
         wall_box: (0.9, 0.95),
+        // Near shaped blocks the player's own box, shrunk this much on every side (at most
+        // 0.015, under which a 9/16 gap stays shut): a share would let them through gaps
+        // narrower than they are.
+        wall_margin: 0.01,
     ),
 )

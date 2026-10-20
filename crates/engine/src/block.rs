@@ -202,6 +202,10 @@ pub struct BlockDef {
     /// Seconds to break by hand. Negative means unbreakable.
     pub hardness: f32,
     pub sound: Sound,
+    /// The building material it sounds as (a `materials` entry of sounds.ron, by name),
+    /// whatever its tags say: cut cobblestone is not `cobbled` for recipes but still sounds
+    /// like cobblestone. Only sounds read it; nothing else may.
+    pub material: Option<String>,
     /// Name of the block dropped when broken, `core:air` for nothing. Defaults to the
     /// block itself.
     pub drops: Option<String>,
@@ -279,6 +283,18 @@ pub struct BlockDef {
     /// The block placed in the cell above along with it, by name, in the same facing, and
     /// broken with it: a door's top half, which rests on it (`support: Below`).
     pub upper: Option<String>,
+    /// What coats it in place (`with`, a block held, one used up) and what it is then
+    /// (`into`): clay on a wattle panel daubs it. It takes the level of the recipe that makes
+    /// `into` and teaches its experience a piece (server `coat.rs`).
+    pub coat: Option<Coat>,
+}
+
+/// A coating (see [`BlockDef::coat`]): the block held to coat it, and the block it becomes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Coat {
+    pub with: String,
+    pub into: String,
 }
 
 /// The name suffix of a block made upside down (see [`BlockDef::flips`]), before any facing's.
@@ -383,6 +399,22 @@ pub struct Emission {
 pub const MAX_EMISSION_RANGE: f32 = 128.0;
 /// The deepest a block looks for what it smokes over (`Emission::over`), in blocks.
 pub const MAX_EMISSION_OVER: u8 = 8;
+
+/// Tags of a window, a block light comes in through (a pane, a lattice, a window frame, an
+/// arrow slit, or a wall a draught comes through), refused at load if it keeps light out.
+pub const LIGHT_THROUGH_TAGS: [&str; 5] = ["window", "lattice", "window_frame", "slit", "draught"];
+/// The tag of a railing, refused at load unless it is solid and a block high.
+pub const RAILING_TAG: &str = "railing";
+/// The tag of a chimney piece (a flue, a hood, a pot): stacked straight over a block that
+/// smokes, the client brings its smoke out of the top of the stack, and a piece lines a
+/// hearth's flue against its fire as stone does, so it is refused at load unless solid.
+pub const CHIMNEY_PIECE_TAG: &str = "chimney_piece";
+/// The tag of a landing, refused at load unless it is solid across the whole top of its
+/// cell (level with a stair's top).
+pub const LANDING_TAG: &str = "landing";
+/// The most a window may dim the light through it (`light_filter`): a shut shutter's 14
+/// is a wall's.
+pub const MAX_WINDOW_FILTER: u8 = 2;
 
 /// How a particle is drawn over what lies behind it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -517,6 +549,7 @@ impl Default for BlockDef {
             light_filter: 0,
             hardness: 1.0,
             sound: Sound::Stone,
+            material: None,
             drops: None,
             drop_count: 1,
             color: [255, 0, 255],
@@ -544,6 +577,7 @@ impl Default for BlockDef {
             shape: None,
             swaps: None,
             upper: None,
+            coat: None,
         }
     }
 }
@@ -577,6 +611,10 @@ impl BlockDef {
         self.wall.iter_mut().for_each(fill);
         self.swaps.iter_mut().for_each(fill);
         self.upper.iter_mut().for_each(fill);
+        if let Some(coat) = &mut self.coat {
+            fill(&mut coat.with);
+            fill(&mut coat.into);
+        }
         self.icon.iter_mut().for_each(fill);
         self.tags.iter_mut().for_each(fill);
         for variant in &mut self.variants {
@@ -601,6 +639,10 @@ impl BlockDef {
         self.swaps.iter_mut().for_each(qualify);
         self.upper.iter_mut().for_each(qualify);
         self.shape.iter_mut().for_each(qualify);
+        if let Some(coat) = &mut self.coat {
+            qualify(&mut coat.with);
+            qualify(&mut coat.into);
+        }
         if let Some(fluid) = &mut self.fluid {
             for meeting in &mut fluid.meets {
                 for name in [&mut meeting.fluid, &mut meeting.source, &mut meeting.flowing, &mut meeting.below] {
@@ -663,6 +705,7 @@ pub struct BlockPatch {
     pub light_filter: Option<u8>,
     pub hardness: Option<f32>,
     pub sound: Option<Sound>,
+    pub material: Option<String>,
     pub drops: Option<String>,
     pub drop_count: Option<u8>,
     pub color: Option<[u8; 3]>,
@@ -689,6 +732,7 @@ impl BlockPatch {
             light_filter,
             hardness,
             sound,
+            material,
             drops,
             drop_count,
             color,
@@ -712,6 +756,7 @@ impl BlockPatch {
         light_filter.into_iter().for_each(|v| def.light_filter = v);
         hardness.into_iter().for_each(|v| def.hardness = v);
         sound.into_iter().for_each(|v| def.sound = v);
+        material.into_iter().for_each(|v| def.material = Some(v));
         drops.into_iter().for_each(|v| def.drops = Some(v));
         drop_count.into_iter().for_each(|v| def.drop_count = v);
         color.into_iter().for_each(|v| def.color = v);
@@ -860,6 +905,8 @@ pub struct BlockRegistry {
     shape_starts: Vec<u32>,
     /// The texture layer of each quad of a block's shape, by block.
     shape_layers: Vec<Vec<u16>>,
+    /// What each shape stops movement with: its boxes' unturned bounds, by shape.
+    shape_collision: Vec<Vec<crate::physics::Aabb>>,
     /// By block, whether it is only a form another takes when placed (`placement_form`).
     placement_forms: Vec<bool>,
     /// Every block's looks: itself and its variants (shared by the variants).
@@ -1278,7 +1325,53 @@ impl BlockRegistry {
                 return Err(RegistryError(format!("`{}` drops merged-away `{}`; drop `{into}` (item_of) instead", defs[i].name, defs[dropped.0 as usize].name)));
             }
         }
-        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, placement_forms, looks, fluids, renamed: FxHashMap::default() })
+        // A window lets light through: a pane, a lattice, a frame or a slit, anything a
+        // draught comes through, and anything lit by the light through it. None of them is
+        // a whole cube or dims light as a shut shutter does.
+        for (def, block) in defs.iter().zip(&info) {
+            let tag = def.tags.iter().find(|t| LIGHT_THROUGH_TAGS.contains(&t.as_str()));
+            if (def.lit_through || tag.is_some()) && (block.occludes || def.light_filter > MAX_WINDOW_FILTER) {
+                let why = tag.map_or("`lit_through`".to_owned(), |t| format!("tagged `{t}`"));
+                return Err(RegistryError(format!(
+                    "`{}` is a window ({why}) but keeps the light out: a window is no whole cube, and its `light_filter` is {MAX_WINDOW_FILTER} at most, not {}",
+                    def.name, def.light_filter
+                )));
+            }
+        }
+        // A railing keeps anyone from walking off what it edges: solid, and a block high so
+        // nobody steps onto it. A landing is a floor level with a stair's top: a box across
+        // the whole top of its cell.
+        for (def, block) in defs.iter().zip(&info) {
+            let bounds: &[(glam::Vec3, glam::Vec3)] = match (block.solid, block.shape) {
+                (false, _) => &[],
+                (true, Some(s)) => &shapes[s as usize].bounds,
+                (true, None) => &[(glam::Vec3::ZERO, glam::Vec3::ONE)],
+            };
+            let full_top = bounds.iter().any(|&(min, max)| max.y >= 1.0 && min.x <= 0.0 && min.z <= 0.0 && max.x >= 1.0 && max.z >= 1.0);
+            if def.has_tag(RAILING_TAG) && !bounds.iter().any(|&(_, max)| max.y >= 1.0) {
+                return Err(RegistryError(format!("`{}` is a railing (`{RAILING_TAG}`) but nobody would be kept back by it: a railing is solid and a block high", def.name)));
+            }
+            if def.has_tag(CHIMNEY_PIECE_TAG) && !block.solid {
+                return Err(RegistryError(format!("`{}` is a chimney piece (`{CHIMNEY_PIECE_TAG}`) but not solid: a flue keeps a hearth's fire in", def.name)));
+            }
+            if def.has_tag(LANDING_TAG) && !full_top {
+                return Err(RegistryError(format!("`{}` is a landing (`{LANDING_TAG}`) but no floor level with a stair's top: a landing is solid across the whole top of its cell", def.name)));
+            }
+        }
+        let shape_collision = shapes.iter().map(|s| s.bounds.iter().map(|&(min, max)| crate::physics::Aabb { min, max }).collect()).collect();
+        // A coating names blocks that are, held as an item, and turns it into another.
+        for def in &defs {
+            let Some(coat) = &def.coat else { continue };
+            for (what, name) in [("coated with", &coat.with), ("coats into", &coat.into)] {
+                if !by_name.contains_key(name) {
+                    return Err(RegistryError(format!("`{}` is {what} unknown block `{name}`", def.name)));
+                }
+            }
+            if coat.into == def.name || defs[by_name[&coat.into].0 as usize].coat.is_some() {
+                return Err(RegistryError(format!("`{}` coats into `{}`, which is itself or coats again", def.name, coat.into)));
+            }
+        }
+        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, shape_collision, placement_forms, looks, fluids, renamed: FxHashMap::default() })
     }
 
     /// A block's looks for a generator to choose from: the block itself first, then its
@@ -1297,6 +1390,22 @@ impl BlockRegistry {
                 let def = &self.defs[id.0 as usize];
                 def.variant_of.is_none() && self.info(id).fluid.is_none_or(|f| self.fluids[f.fluid.0 as usize].source == id) && def.has_tag(tag)
             })
+    }
+
+    /// Whether a block is less than a whole block: drawn as a shape (a slab, stairs, a post,
+    /// a column, a headstone), whatever its tags. See [`Self::answers_whole`].
+    pub fn is_piece(&self, id: BlockId) -> bool {
+        self.info(id).shape.is_some()
+    }
+
+    /// Blocks that answer `tag:TAG` where whole blocks are counted (a multiblock's cells):
+    /// every block with the tag, but a piece (see [`Self::is_piece`]) only when no whole
+    /// block has it too, so cobblestone slabs never stand in for cobblestone (six slabs come
+    /// from three blocks) while a tag only pieces carry (`beam`) still takes them.
+    pub fn answers_whole(&self, tag: &str) -> Vec<BlockId> {
+        let all: Vec<BlockId> = (0..self.defs.len() as u16).map(BlockId).filter(|&id| self.def(id).has_tag(tag)).collect();
+        let whole = all.iter().any(|&id| !self.is_piece(id));
+        all.into_iter().filter(|&id| !whole || !self.is_piece(id)).collect()
     }
 
     /// The fluid state a block is, if it is one.
@@ -1423,6 +1532,12 @@ impl BlockRegistry {
         self.id(&format!("{base}{}", facing.suffix())).unwrap_or(block)
     }
 
+    /// What coats `block` in place and what it becomes (see [`BlockDef::coat`]).
+    pub fn coating(&self, block: BlockId) -> Option<(BlockId, BlockId)> {
+        let coat = self.def(block).coat.as_ref()?;
+        Some((*self.by_name.get(&coat.with)?, *self.by_name.get(&coat.into)?))
+    }
+
     /// What `block` turns into when used (see [`BlockDef::swaps`]), in its facing.
     pub fn swapped(&self, block: BlockId) -> Option<BlockId> {
         let to = self.info(block).swaps?;
@@ -1456,6 +1571,19 @@ impl BlockRegistry {
     /// The shape a block drawn as boxes takes, made ready for its facing.
     pub fn shape(&self, id: BlockId) -> Option<&crate::shape::Shape> {
         self.info(id).shape.map(|s| &self.shapes[s as usize])
+    }
+
+    /// What a block stops movement with, in blocks from its cell's lower corner: nothing for
+    /// one walked through, its shape's boxes for a solid block drawn as one (a slab's lower
+    /// half, a table's top and legs), else the whole cell. Players move against these, on the
+    /// client and as the server judges them.
+    pub fn collision(&self, id: BlockId) -> &[crate::physics::Aabb] {
+        let info = self.info(id);
+        match (info.solid, info.shape) {
+            (false, _) => &[],
+            (true, Some(s)) => &self.shape_collision[s as usize],
+            (true, None) => &crate::physics::CUBE,
+        }
     }
 
     /// Where a block's shape's quads start in all shapes' quads, in order, as the renderer's
@@ -1732,6 +1860,46 @@ mod tests {
         assert!(refused(r#"(name: "a", flips: true)"#).contains("upside down"));
         // A torch goes on walls only as a block that rests on a wall, and goes with it.
         assert!(refused(r#"(name: "torch", wall: "lamp"), (name: "lamp", facing: true)"#).contains("does not rest on a wall"));
+    }
+
+    /// A window lets light in: one tagged as a window, a lattice, a frame, a slit or a
+    /// draughty gap, or lit through, is refused if it is a whole cube or dims light as a
+    /// shut shutter does; a slab-thin pane or a lattice of boxes is let through.
+    #[test]
+    fn a_window_that_keeps_the_light_out_is_refused() {
+        let load = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).map(|_| ()).map_err(|e| e.0)
+        };
+        assert_eq!(load(r#"(name: "pane", render: Cutout, tags: ["window"], lit_through: true)"#), Ok(()));
+        assert_eq!(load(r#"(name: "lattice", render: Model, shape: "slab", tags: ["lattice", "draught"])"#), Ok(()));
+        let whole = load(r#"(name: "pane", tags: ["window"])"#).unwrap_err();
+        assert!(whole.contains("`base:pane` is a window (tagged `window`)"), "{whole}");
+        let dim = load(r#"(name: "slit", render: Model, shape: "slab", light_filter: 14, tags: ["slit"])"#).unwrap_err();
+        assert!(dim.contains("`light_filter` is 2 at most, not 14"), "{dim}");
+        assert!(load(r#"(name: "glow", lit_through: true)"#).unwrap_err().contains("(`lit_through`)"));
+        assert!(load(r#"(name: "gap", render: Model, shape: "slab", light_filter: 3, tags: ["draught"])"#).is_err());
+    }
+
+    /// A railing that is not solid or not a block high, or a landing with no floor across
+    /// the top of its cell, is refused; a whole block passes as either.
+    #[test]
+    fn a_railing_or_landing_that_would_let_someone_fall_is_refused() {
+        let load = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).map(|_| ()).map_err(|e| e.0)
+        };
+        assert_eq!(load(r#"(name: "rail", render: Model, shape: "stairs", tags: ["railing"])"#), Ok(()));
+        assert_eq!(load(r#"(name: "floor", tags: ["landing"])"#), Ok(()));
+        let low = load(r#"(name: "rail", render: Model, shape: "slab", tags: ["railing"])"#).unwrap_err();
+        assert!(low.contains("`base:rail` is a railing"), "{low}");
+        assert!(load(r#"(name: "rail", render: Model, shape: "stairs", solid: false, tags: ["railing"])"#).is_err());
+        let sunk = load(r#"(name: "floor", render: Model, shape: "slab", tags: ["landing"])"#).unwrap_err();
+        assert!(sunk.contains("`base:floor` is a landing"), "{sunk}");
+        assert!(load(r#"(name: "floor", render: Model, shape: "stairs", tags: ["landing"])"#).is_err());
+        assert_eq!(load(r#"(name: "flue", render: Model, shape: "slab", tags: ["chimney_piece"])"#), Ok(()));
+        let open = load(r#"(name: "flue", render: Model, shape: "slab", solid: false, tags: ["chimney_piece"])"#).unwrap_err();
+        assert!(open.contains("`base:flue` is a chimney piece"), "{open}");
     }
 
     #[test]

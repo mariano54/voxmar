@@ -49,6 +49,8 @@ const SHADER: &str = "embedded://voxmar/render/items.wgsl";
 const BOX_VERTICES: u32 = 36;
 /// The flag of the item in hand (`FLAG_HELD` in items.wgsl).
 const HELD: u32 = 1 << 10;
+/// The flag of an item held still in the world (`FLAG_POSED` in items.wgsl).
+const POSED: u32 = 1 << 11;
 
 pub struct ItemPlugin;
 
@@ -106,6 +108,9 @@ pub struct ItemModel {
     pub light: [u8; 2],
     /// Set for the item in the player's hand: it is placed in the view, not the world.
     pub held: Option<Held>,
+    /// Set for an item held still in the world, turned by this rotation vector (axis times
+    /// angle) about its `center`: one in another player's hand. It neither turns nor bobs.
+    pub posed: Option<Vec3>,
 }
 
 /// Where the item in the player's hand sits, in the camera's frame. It stands in for the
@@ -135,7 +140,7 @@ struct GpuItem {
     /// Where this copy of a stack sits, or for the item in hand, its rotation vector.
     offset: [f32; 3],
     size: f32,
-    /// shape:4 | tinted faces:6 | held:1 | free:13 | block light:4 | sky light:4.
+    /// shape:4 | tinted faces:6 | held:1 | posed:1 | free:12 | block light:4 | sky light:4.
     flags: u32,
     /// Two faces' layers each, the lower face in the low half.
     layers: [u32; 3],
@@ -154,9 +159,10 @@ impl GpuItem {
         };
         let pair = |i: usize| model.layers[i] as u32 | (model.layers[i + 1] as u32) << 16;
         let [r, g, b] = model.tint;
-        let (center, offset, held) = match model.held {
-            Some(held) => (held.at, held.turn, HELD),
-            None => (model.center, model.offset, 0),
+        let (center, offset, held) = match (model.held, model.posed) {
+            (Some(held), _) => (held.at, held.turn, HELD),
+            (None, Some(turn)) => (model.center, turn, POSED),
+            (None, None) => (model.center, model.offset, 0),
         };
         Self {
             center: center.to_array(),
@@ -391,6 +397,7 @@ mod tests {
             tint: [10, 20, 30],
             light: [14, 3],
             held: None,
+            posed: None,
         };
         let gpu = GpuItem::new(&model);
         assert_eq!(gpu.flags & 15, 1);
@@ -407,5 +414,12 @@ mod tests {
         // And its flag leaves the rest of the word as it was.
         assert_eq!((gpu.flags >> 4) & 63, 0b000100);
         assert_eq!((gpu.flags >> 24 & 15, gpu.flags >> 28), (3, 14));
+        // An item held still in the world (another player's): its place, and its turn in
+        // the offset's field.
+        let turn = Vec3::new(0.1, 0.2, 0.3);
+        let gpu = GpuItem::new(&ItemModel { posed: Some(turn), ..model });
+        assert_eq!((gpu.center, gpu.offset), ([1.0, 2.0, 3.0], [0.1, 0.2, 0.3]));
+        assert_eq!(gpu.flags & (HELD | POSED), POSED);
+        assert_eq!((gpu.flags >> 4) & 63, 0b000100);
     }
 }
