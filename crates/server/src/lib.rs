@@ -1243,6 +1243,12 @@ impl Server {
         self.block(pos).is_some_and(|b| self.content.blocks.info(b).solid)
     }
 
+    /// What a cell stops a player with, in blocks from its lower corner (see
+    /// `BlockRegistry::collision`): the boxes the client moves its player against.
+    pub(crate) fn boxes(&self, pos: IVec3) -> &[voxmar_engine::physics::Aabb] {
+        self.block(pos).map_or(&[], |b| self.content.blocks.collision(b))
+    }
+
     /// Changes many blocks at once (a command's), telling each player about those in columns
     /// they have in one message, and waking any fluid they let flow.
     pub(crate) fn set_blocks(&mut self, changes: &[(IVec3, BlockId)]) {
@@ -1350,6 +1356,10 @@ pub(crate) fn test_server() -> Server {
     test_server_on(test_content())
 }
 
+/// The draw key of every test server's world (`test_server_on`).
+#[cfg(test)]
+pub(crate) const TEST_DRAW_KEY: u64 = 0x0d1a;
+
 /// The game's own content, as `test_server` loads it.
 #[cfg(test)]
 pub(crate) fn test_content() -> Content {
@@ -1360,7 +1370,10 @@ pub(crate) fn test_content() -> Content {
 /// once (a copy shares its tables, so one changed through `Arc::get_mut` must be its own).
 #[cfg(test)]
 pub(crate) fn test_server_on(content: Content) -> Server {
-    let mut config = ServerConfig::default();
+    // One draw key for every test server, as a world's own is random: wandering, grazing
+    // and the world's other keyed rolls draw the same in every run, so a test's outcome
+    // depends on its inputs alone.
+    let mut config = ServerConfig { draw_key: Some(TEST_DRAW_KEY), ..ServerConfig::default() };
     let (save, meta) = open_world(&mut config).expect("no save to open");
     // Every test server is on the one seed: its world, held for the whole run, is the one
     // each shares (`Overworld::shared`), with the land round spawn planned once rather than
@@ -1393,6 +1406,16 @@ mod tests {
         assert_ne!(open_world(&mut config(None)).unwrap().1.draw_key, 0, "an older world given one");
         assert_ne!(WorldMeta::new("a", 1, GameMode::Survival).draw_key, WorldMeta::new("a", 1, GameMode::Survival).draw_key, "random without one asked");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Test servers draw by one key, so wandering and the world's other rolls come out the
+    /// same in every run (a random one left a density test failing one run in eight).
+    #[test]
+    fn test_servers_draw_the_same_every_run() {
+        let content = test_content();
+        let (mut a, mut b) = (test_server_on(content.clone()), test_server_on(content));
+        assert_eq!((a.meta.draw_key, b.meta.draw_key), (TEST_DRAW_KEY, TEST_DRAW_KEY));
+        assert_eq!(a.meta.next_roll(crate::save::ROLL_WANDER), b.meta.next_roll(crate::save::ROLL_WANDER));
     }
 
     /// A drop and its rejoin are queued together before one reading loop: the old
