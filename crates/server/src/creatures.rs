@@ -2459,6 +2459,89 @@ mod density_tests {
         assert!(!server.seen_by_a_player(back, 75.0), "a player who has not joined has no view");
     }
 
+    /// How long a kill of something with meat on it takes in the wild, for the pacing
+    /// audits (design/farm-pacing.md): after the world fills round a player by day, the
+    /// player sprints straight at the nearest wild animal that drops raw meat, over level
+    /// ground (terrain and the animal's flight once struck are left out, so this is a
+    /// floor), swings a stone axe at it, and goes on to the next, giving up on one it has
+    /// chased for 20 s, while the world spawns and moves its animals as it would.
+    /// `cargo test -p voxmar_server hunt_pace_probe -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "prints a table; minutes of server time per row"]
+    fn hunt_pace_probe() {
+        const SPRINT: f32 = 6.1;
+        const KILLS: u32 = 12;
+        // A swing a beat (0.7 s), and about one and a half health a swing with a stone axe.
+        const BEAT: u64 = 14;
+        const HIT: f32 = 1.5;
+        let mut server = crate::test_server();
+        let noon = (0..24_000u64).step_by(100).max_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
+        println!("{:>10} | kills  seconds  s/kill  sprinting s/kill", "biome");
+        for biome in ["plains", "forest", "meadow", "savanna"] {
+            let Some(spot) = find_biome(&server, biome) else {
+                println!("{biome:>10}: none found");
+                continue;
+            };
+            density(&mut server, spot, noon + LATER, 3, false);
+            let meaty: Vec<bool> = (0..server.content.creatures.len())
+                .map(|i| {
+                    let def = server.content.creatures.get(CreatureId(i as _));
+                    def.def.kind == Kind::Animal && def.loot.iter().any(|l| server.content.blocks.def(l.item).name.contains(":raw_"))
+                })
+                .collect();
+            let start = server.tick;
+            let (mut kills, mut running, mut marks) = (0u32, 0u64, Vec::new());
+            // What it gave up on (out-ran it for 20 s, as a player would), and what it is after.
+            let (mut given_up, mut chase) = (FxHashSet::default(), (u32::MAX, 0u64));
+            while kills < KILLS && server.tick - start < 20 * 60 * TICKS_PER_SECOND as u64 {
+                let at = server.players[&1].position;
+                let prey = server
+                    .creatures
+                    .live
+                    .iter()
+                    .filter(|(id, c)| c.owner.is_none() && meaty[c.species.0 as usize] && !given_up.contains(*id))
+                    .map(|(&id, c)| (id, c.body.position, c.species))
+                    .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)));
+                let Some((id, p, species)) = prey else {
+                    for _ in 0..TICKS_PER_SECOND {
+                        server.tick += 1;
+                        server.tick_creatures();
+                    }
+                    continue;
+                };
+                let name = server.content.creatures.get(species).def.name.trim_start_matches("base:").to_owned();
+                if chase.0 != id {
+                    chase = (id, server.tick);
+                } else if server.tick - chase.1 > 20 * TICKS_PER_SECOND as u64 {
+                    given_up.insert(id);
+                    marks.push(format!("(gave up on a {name})"));
+                    continue;
+                }
+                let gap = Vec2::new(p.x - at.x, p.z - at.z);
+                if gap.length() <= 2.0 {
+                    let health = server.content.creatures.get(species).def.health as f32;
+                    for _ in 0..(health / HIT).ceil() as u64 * BEAT {
+                        server.tick += 1;
+                        server.tick_creatures();
+                    }
+                    server.creatures.live.remove(&id);
+                    kills += 1;
+                    marks.push(format!("{name}@{:.0}", (server.tick - start) as f32 / TICKS_PER_SECOND as f32));
+                    continue;
+                }
+                let step = gap.normalize() * (SPRINT / TICKS_PER_SECOND as f32).min(gap.length());
+                server.players.get_mut(&1).unwrap().position = Vec3::new(at.x + step.x, p.y, at.z + step.y);
+                running += 1;
+                server.tick += 1;
+                server.tick_creatures();
+            }
+            let seconds = (server.tick - start) as f32 / TICKS_PER_SECOND as f32;
+            let sprint = running as f32 / TICKS_PER_SECOND as f32;
+            println!("{biome:>10} | {kills:>5} {seconds:>8.1} {:>7.1} {:>16.1}", seconds / kills.max(1) as f32, sprint / kills.max(1) as f32);
+            println!("{:>10}   {}", "", marks.join(" "));
+        }
+    }
+
     #[test]
     #[ignore = "prints a table; minutes of server time per row"]
     fn wild_density_probe() {
@@ -2658,7 +2741,7 @@ mod cornered_tests {
 }
 
 /// Movement over the land a player meets in the first ages: hunters come at a player round
-/// trees, up steps and through doorways (never through a shut door); a sheep after wheat
+/// trees, up steps and through doorways and open doors (never a shut one); a sheep after wheat
 /// follows through a doorway too; prey runs along a cliff edge or a lake shore rather than
 /// off it; and none is ever made with its head in a trunk.
 #[cfg(test)]
@@ -2683,11 +2766,12 @@ mod way_tests {
         None
     }
 
-    /// A wall across the pen at x = 1, with a gap at z = 3 that `door` fills (shut) or not.
-    fn walled(server: &mut Server, c: IVec3, door: bool) {
+    /// A wall across the pen at x = 1, with a gap at z = 3 that `door` (a door's lower half,
+    /// shut or open, its upper half named after it) fills, or nothing.
+    fn walled(server: &mut Server, c: IVec3, door: Option<&str>) {
         wall(server, (-14..=14).filter(|&z| z != 3).map(|z| c + IVec3::new(1, 0, z)).collect::<Vec<_>>(), 3);
-        if door {
-            let (lower, upper) = (server.content.blocks.expect("base:wooden_door"), server.content.blocks.expect("base:wooden_door_top"));
+        if let Some(door) = door {
+            let (lower, upper) = (server.content.blocks.expect(door), server.content.blocks.expect(&format!("{door}_top")));
             server.world.set_block(c + IVec3::new(1, 0, 3), lower);
             server.world.set_block(c + IVec3::new(1, 1, 3), upper);
         }
@@ -2729,13 +2813,14 @@ mod way_tests {
 
     #[test]
     fn a_hunter_finds_the_doorway_in_a_wall_but_not_through_a_shut_door() {
-        let doorway = |door: bool| move |server: &mut Server, c: IVec3| {
+        let doorway = |door: Option<&'static str>| move |server: &mut Server, c: IVec3| {
             walled(server, c, door);
             c.as_vec3() + Vec3::new(5.5, 0.0, 0.5)
         };
         for name in ["base:wolf", "base:badger"] {
-            assert!(hunter(name, doorway(false), 8).is_some(), "{name} never found the doorway");
-            assert_eq!(hunter(name, doorway(true), 8), None, "{name} came through a shut door");
+            assert!(hunter(name, doorway(None), 8).is_some(), "{name} never found the doorway");
+            assert!(hunter(name, doorway(Some("base:wooden_door_open")), 8).is_some(), "{name} never came through an open door");
+            assert_eq!(hunter(name, doorway(Some("base:wooden_door")), 8), None, "{name} came through a shut door");
         }
     }
 
@@ -2743,7 +2828,7 @@ mod way_tests {
     fn a_sheep_after_wheat_follows_through_a_doorway() {
         let mut server = crate::test_server();
         let c = pen(&mut server, 14);
-        walled(&mut server, c, false);
+        walled(&mut server, c, None);
         let to = c.as_vec3() + Vec3::new(5.5, 0.0, 0.5);
         let player = join(&mut server, to);
         let wheat = server.content.blocks.expect("base:wheat");

@@ -6,8 +6,9 @@
         // A flint point on a long haft: the Nomad's spear, which braces against a charge.
         (template: "drop", name: "flint_spear", tags: ["weapon", "stack:1", "uses:100", "mend:flint", "spear"], all: (color: (70, 70, 76))),
         // Old Tusk's great tusk on a haft (combat.ron): Attack 5, a mace's daze. A trophy is
-        // kept by care, not by killing the boss again: mended with a new haft.
-        (template: "drop", name: "tusk_club", tags: ["weapon", "stack:1", "uses:300", "mend:stick", "bone", "mace"], all: (color: (236, 226, 200))),
+        // kept by care, not by killing the boss again: mended with twine, one of its two
+        // bindings, for half its uses.
+        (template: "drop", name: "tusk_club", tags: ["weapon", "stack:1", "uses:300", "mend:twine", "bone", "mace"], all: (color: (236, 226, 200))),
         (template: "drop", name: "stone_sword", tags: ["weapon", "stack:1", "uses:150", "mend:cobblestone", "sword"], all: (color: (120, 120, 125))),
         // Ranged: a sling shoots cobbled stone, a short bow arrows (combat.ron).
         (template: "drop", name: "sling", tags: ["weapon", "stack:1", "uses:200", "mend:twine", "sling"], all: (color: (150, 110, 75))),
