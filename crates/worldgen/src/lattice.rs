@@ -81,7 +81,10 @@ impl Lattice {
     }
 
     /// The values above the block column at (x, z) like `profile`, for heights up to `high`
-    /// only: the layers above it are left out.
+    /// only: the layers above it are left out. The profile may then be read at heights up
+    /// to `high` and no higher: past it, `Profile::at` and `Profile::fill` read layers this
+    /// call did not fill, which only debug builds check, and release builds return what an
+    /// earlier profile left there.
     pub fn profile_to(&self, x: i32, z: i32, high: i32, out: &mut Profile) {
         let (gx, gz) = ((x / STEP) as usize, (z / STEP) as usize);
         let (fx, fz) = ((x % STEP) as f32 / STEP as f32, (z % STEP) as f32 / STEP as f32);
