@@ -586,7 +586,9 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
                     pen.set(x, y, z, mats.wall);
                 }
             }
-            if flat && wall && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
+            // A flat roof's low parapet, but not on a side a neighbour's roof runs on from.
+            let against = (x == x0 && !open_left) || (x == x0 + w - 1 && !open_right);
+            if flat && wall && !against && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
                 pen.set(x, top + 2, z, mats.trim);
             }
         }

@@ -3489,19 +3489,26 @@ fn jettied_storeys_stand_out_on_their_beams() {
 #[test]
 fn row_houses_stand_wall_to_wall_under_one_roof() {
     use voxmar_engine::coords::ColumnPos;
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
-    let content = voxmar_engine::content::Content::load(&dir).unwrap();
-    let world_content = crate::content::WorldContent::load(&content).unwrap();
-    let registry = content.blocks.clone();
+    let registry = crate::full_content().0.blocks.clone();
     let solid = |b: BlockId| registry.info(b).solid;
     let glass = |b: BlockId| registry.def(b).name.contains("glass") || registry.def(b).name.contains("window");
     let (mut places, mut joins, mut rows, mut wrong) = (0, 0, 0, Vec::new());
-    for seed in [42u64, 7] {
-        let world = Overworld::with_content(seed, registry.clone(), &world_content);
+    // Seeds 42 and 7 near spawn are counted; more seeds, and the gate's walled town on
+    // 0x5eed (Wenworth), are judged too, every join there under one roof.
+    let wenworth = IVec2::new(-9680, 6416);
+    let mut judged = 0;
+    for (seed, counted, also) in [(42u64, true, None), (7, true, None), (0x5eed, false, Some(wenworth)), (3, false, None), (11, false, None)] {
+        let world = crate::shared_full_world(seed);
         let spawn = world.spawn_point();
-        for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
+        let mut slots = world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500);
+        if let Some(c) = also {
+            slots.extend(world.settlements.near(&world, c, 64));
+        }
+        for slot in slots {
             let Some(plan) = slot.0.as_ref() else { continue };
-            places += 1;
+            if counted {
+                places += 1;
+            }
             let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
             let mut at = |p: IVec3| -> BlockId {
                 let pos = ColumnPos::of_block(p);
@@ -3518,11 +3525,14 @@ fn row_houses_stand_wall_to_wall_under_one_roof() {
                 let side: Vec<IVec2> = a.room.iter().copied().filter(|&p| key(p) == edge).collect();
                 // The house built on to its right: its room starts past two walls.
                 let Some(b) = homes.iter().find(|b| b.facing == a.facing && b.floor == a.floor && b.room.iter().any(|&p| side.contains(&(p - along * 3)))) else { continue };
-                joins += 1;
-                in_row.insert(a.min);
-                if !in_row.contains(&b.min) {
-                    rows += 1;
+                judged += 1;
+                if counted {
+                    joins += 1;
+                    if !in_row.contains(&b.min) {
+                        rows += 1;
+                    }
                 }
+                in_row.insert(a.min);
                 in_row.insert(b.min);
                 // Where both have room either side of the join (a wing behind stands out
                 // past its neighbour's back wall, into its yard).
@@ -3545,7 +3555,7 @@ fn row_houses_stand_wall_to_wall_under_one_roof() {
             }
         }
     }
-    eprintln!("{places} places, {rows} rows, {joins} joins");
+    eprintln!("{places} places, {rows} rows, {joins} joins; {judged} joins judged in all");
     assert!(joins >= 12, "only {joins} houses built on to in {places} places");
     assert!(wrong.is_empty(), "row houses not wall to wall under one roof: {wrong:?}");
 }
