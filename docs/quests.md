@@ -409,6 +409,22 @@ tasks changed count from what a save already tallied: Brick by Brick now counts 
 crafted rather than held, The Crucible and A Pit Kiln also want theirs set down, and A
 Kiln Yard is gone. A save part way along may have a step to do again.
 
+## Fishing in the Farm book (Oct 20)
+
+Fishing was the Farm book's thinnest path (Patient Angler and Many Kinds of Fish). Five
+side quests (`side: true`) now run along it. Each one teaches where or how a fish bites,
+or what a catch is for, and each pays in food or comfort, never in what another quest asks for:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
+| Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, a cream rug |
+| Cold Water Trout | Still Water Perch | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked | Fishing 120, 4 bread |
+| Three Waters | Salt and Sardines, Still Water Perch | Minnows, sardines and perch: three kinds caught | Fishing 150, a red cushion |
+| Fish on the Table | Salt and Sardines | A lit hearth, eight fish cooked and six eaten | Cooking 120, 4 bread |
+
+None of them is in a capstone's `after`, so Many Kinds of Fish still closes the path.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text
