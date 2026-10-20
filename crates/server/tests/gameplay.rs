@@ -164,8 +164,11 @@ fn keep_world(seed: u64, content: &Content) {
     }
 }
 
+/// The game's content, loaded and checked once for the whole run: every server a test
+/// starts gets the same, as a player's game gives each world it opens.
 fn content() -> Content {
-    load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")
+    static LOADED: std::sync::OnceLock<Content> = std::sync::OnceLock::new();
+    LOADED.get_or_init(|| load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")).clone()
 }
 
 /// Opens and registers a local connection only once its Hello is ready.
