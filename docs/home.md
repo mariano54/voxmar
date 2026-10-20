@@ -258,6 +258,9 @@ Right clicking a bed used to only set where you wake. It now also gives a **rest
 `sleeps` rules): Rested (10 minutes) anywhere, Well rested (15) if the bed is in a Snug home,
 Deep rest (20) in a Cosy one (a game day is 20 minutes). Rest gives a little heal, xp,
 mining and speed wherever you go, and a bed always works as a bed (it sets where you wake and your home) but gives no new rest
+(save a bed a village furnished a home with, where its plan put one, while that very bed
+stands there: it is its resident's, and sleeping in it is refused with `bed.someones`, outside
+creative; any other bed works, placed, another player's, or set by command)
 while one lasts, so the buff is a once-a-day habit, not a button to hold. Timed effects count down
 online only.
 
@@ -268,7 +271,8 @@ Sleep (heal x4) for a minute, two in a proper bed, so coming home hurt and sleep
 It is no way to heal in a fight: a bed refuses sleep with a creature that hunts players
 (wild, or kept by another player) within `sleep_threat_reach` blocks (12), or within
 `sleep_after_hurt` seconds (15) of a wound (a blow, a fall, a sting; not the cold or heat
-wearing at one) (`core/survival.ron`). A refused sleep still claims the bed. And it stays slower than eating, since food is the heal (design
+wearing at one) (`core/survival.ron`). A sleep refused for a threat or a wound still claims the bed; a
+village's bed is never claimed. And it stays slower than eating, since food is the heal (design
 draft 63): however many heal buffs and prayers are on, healing by itself is held at
 `heal_most` (1 a second, `survival.ron`), which loading checks is below what the slowest
 food heals a second, a 0.6 s bite at a time; time past a point is never banked to pay out
