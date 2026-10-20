@@ -270,6 +270,8 @@ mod tests {
         // clay make two kiln bricks (Farm pacing), so a brick is half what it was.
         let fired = ["crucible", "bloomery", "bronze_ingot", "kiln_bricks"].map(of);
         assert_eq!(fired, [51, 46, 4, 5], "crucible, bloomery, bronze ingot, kiln bricks");
+        // A cured hide took ten minutes on a rack: worth more than the raw one (value.ron).
+        assert_eq!([of("raw_hide"), of("hide")], [2, 3], "raw hide, cured hide");
         // A fish is worth the Fishing level that lands it, and the dish cooked of it its
         // Cooking level, the same: neither is a raw material's half.
         let fish = ["raw_trout", "cooked_trout", "raw_tuna", "cooked_tuna", "raw_glimmer_koi", "cooked_glimmer_koi", "bronze_ingot"].map(of);

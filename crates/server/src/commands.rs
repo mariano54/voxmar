@@ -579,6 +579,12 @@ impl Server {
             }
             return Ok(Words::key("command.creatures.dispersed").with("count", Words::text(wild.len())));
         }
+        // One of a settlement's people near makes a bark: `/creatures bark greet`.
+        if what == "bark" {
+            let (name, made) = species.and_then(|name| Some((name, self.bark_command(at, name)?))).ok_or_else(|| Words::key("command.creatures.bark_what"))?;
+            let reach = Words::text(crate::barks::BARK_COMMAND_REACH as u32);
+            return Ok(Words::key(if made > 0 { "command.creatures.barked" } else { "command.creatures.no_one_to_bark" }).with("bark", name).with("reach", reach));
+        }
         let only = match species {
             Some(species) => Some(self.content.creatures.find(species).ok_or_else(|| Words::key("command.summon.unknown").with("name", species))?),
             None => None,
@@ -1413,6 +1419,7 @@ fn home_needs(lacks: &[voxmar_engine::effect::Lack]) -> Words {
                 Lack::Roof => Words::key("home.lack.roof"),
                 Lack::Away => Words::key("home.lack.away"),
                 Lack::Tag { tag, have, need } => Words::key("home.lack.tag").with("tag", Words::Own(format!("home.tag.{tag}"), tag.replace('_', " "))).with("have", Words::text(have)).with("need", Words::text(need)),
+                Lack::Walls { shelter, have, need } => Words::key("home.lack.walls").with("shelter", Words::key(&format!("home.shelter.{}", shelter.name()))).with("have", Words::text(have)).with("need", Words::text(need)),
                 Lack::OneOf(options) => Words::key("home.lack.either").with("options", Words::List(options.iter().map(|o| home_needs(o)).collect())),
             })
             .collect(),

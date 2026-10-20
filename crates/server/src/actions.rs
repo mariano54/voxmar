@@ -305,9 +305,20 @@ impl Server {
         self.players.get(&agent).map_or((0, None), |p| (p.selected, p.held()))
     }
 
-    /// Applies an action's effects, `tool` being the slot in hand when it began and what
-    /// was in it. Validation already guaranteed they can all apply.
+    /// Applies an action's effects, as `agent`'s doing (`fire_origin`, `changed_by`) whenever
+    /// it commits: as their message arrives or later, when it falls due in the run loop.
+    /// `tool` is the slot in hand when it began and what was in it.
     fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, tool: Tool) {
+        let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+        let fire_was = std::mem::replace(&mut self.fire_origin, by.clone());
+        let changed_was = std::mem::replace(&mut self.changed_by, by);
+        self.commit_effects(agent, def, target, tool);
+        self.fire_origin = fire_was;
+        self.changed_by = changed_was;
+    }
+
+    /// Applies an action's effects. Validation already guaranteed they can all apply.
+    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, tool: Tool) {
         for &effect in &def.effects {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
