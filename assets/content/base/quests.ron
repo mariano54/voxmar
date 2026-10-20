@@ -1001,7 +1001,7 @@
         ),
         (
             name: "a_lit_corner", age: "nomad", branch: "home", title: "A Lit Corner",
-            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and sleeping in it you wake well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
+            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and a night's sleep in it wakes you well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
             tasks: [[Built("home_bedside", 1)]],
             after: ["make_camp"],
             rewards: [Xp("construction", 40.0), Xp("crafting", 20.0)],

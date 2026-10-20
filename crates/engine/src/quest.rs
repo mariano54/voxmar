@@ -161,6 +161,9 @@ pub struct QuestFile {
     /// changes what it gives, field by field.
     #[serde(default)]
     pub tracker: Option<TrackerPatch>,
+    /// Where it was read from, `package/file`, for the load checks to name.
+    #[serde(skip)]
+    pub source: String,
 }
 
 /// What a package changes of how pinned quests are followed.
@@ -320,7 +323,9 @@ impl QuestRegistry {
     /// errors.
     pub fn read_named(namespace: &str, file: &str, source: &str) -> Result<QuestFile, RegistryError> {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
-        let mut file: QuestFile = options.from_str(source).map_err(|e| RegistryError(format!("{namespace}/{file}: {e}")))?;
+        let from = format!("{namespace}/{file}");
+        let mut file: QuestFile = options.from_str(source).map_err(|e| RegistryError(format!("{from}: {e}")))?;
+        file.source = from;
         let qualify = |name: &mut String| {
             if !name.contains(':') {
                 *name = format!("{namespace}:{name}");
@@ -344,9 +349,13 @@ impl QuestRegistry {
         // Packages in order, each changing what it gives.
         let mut tracker = Tracker::default();
         let mut start_pins = Vec::new();
-        for patch in files.iter().filter_map(|f| f.tracker.as_ref()) {
+        // The files that last changed the tracker and set the start pins, for their errors.
+        let (mut tracker_from, mut pins_from) = ("quests.ron", "quests.ron");
+        for (patch, source) in files.iter().filter_map(|f| Some((f.tracker.as_ref()?, f.source.as_str()))) {
+            tracker_from = source;
             if let Some(names) = &patch.start_pins {
                 start_pins = names.clone();
+                pins_from = source;
             }
             tracker.pins = patch.pins.unwrap_or(tracker.pins);
             tracker.done_stays = patch.done_stays.unwrap_or(tracker.done_stays);
@@ -354,26 +363,31 @@ impl QuestRegistry {
             tracker.follow_on = patch.follow_on.unwrap_or(tracker.follow_on);
         }
         if tracker.pins == 0 || !(tracker.done_stays >= 0.0) || !(0.0..=1.0).contains(&tracker.backing_alpha) {
-            return Err(RegistryError(format!("quests.ron: the tracker needs a pin or more, a stay of 0 s or more and a backing from 0 to 1, not {tracker:?}")));
+            return Err(RegistryError(format!("{tracker_from}: the tracker needs a pin or more, a stay of 0 s or more and a backing from 0 to 1, not {tracker:?}")));
         }
-        let quests: Vec<QuestDef> = files.into_iter().flat_map(|f| f.quests).collect();
+        let (tracker_from, pins_from) = (tracker_from.to_owned(), pins_from.to_owned());
+        // Each quest with the file it was written in.
+        let written: Vec<(QuestDef, String)> = files.into_iter().flat_map(|f| f.quests.into_iter().map(move |q| (q, f.source.clone()))).collect();
         // One book or several files, a quest is written once: a second of a name, in the
-        // same file or another, is refused rather than shown twice.
-        let mut names = std::collections::HashSet::new();
-        if let Some(quest) = quests.iter().find(|q| !names.insert(q.name.as_str())) {
-            return Err(RegistryError(format!("quest {} is written twice (in one quest file or two)", quest.name)));
+        // same file or another (another package's too, so a mod cannot replace a quest by
+        // writing its name), is refused rather than shown twice.
+        let mut first = FxHashMap::default();
+        for (quest, source) in &written {
+            if let Some(earlier) = first.insert(quest.name.as_str(), source.as_str()) {
+                return Err(RegistryError(format!("quest {} is written in {earlier} and again in {source}", quest.name)));
+            }
         }
-        for quest in &quests {
+        for (quest, source) in &written {
             if quest.tasks.is_empty() {
-                return Err(RegistryError(format!("quest {} has no task", quest.name)));
+                return Err(RegistryError(format!("{source}: quest {} has no task", quest.name)));
             }
             // A task is its parts, all to be done; one with none would be done at once.
             if quest.tasks.iter().any(Vec::is_empty) {
-                return Err(RegistryError(format!("quest {} has a task with no part", quest.name)));
+                return Err(RegistryError(format!("{source}: quest {} has a task with no part", quest.name)));
             }
             for name in quest.after.iter().flat_map(|a| a.split('|')) {
-                if !quests.iter().any(|q| q.name == name) {
-                    return Err(RegistryError(format!("quest {} comes after `{name}`, which does not exist", quest.name)));
+                if !first.contains_key(name) {
+                    return Err(RegistryError(format!("{source}: quest {} comes after `{name}`, which does not exist", quest.name)));
                 }
             }
             // A rite opens a later age, and only one quest is an age's rite.
@@ -410,11 +424,12 @@ impl QuestRegistry {
                 return Err(RegistryError(format!("quest {} is of the age `{age}`, yet a way to it skips its rite {}: one `after` must be the rite or follow it", quest.name, rite.name)));
             }
         }
+        let quests: Vec<QuestDef> = written.into_iter().map(|(q, _)| q).collect();
         if start_pins.len() > tracker.pins {
-            return Err(RegistryError(format!("quests.ron: {} start pins, but the tracker follows {}", start_pins.len(), tracker.pins)));
+            return Err(RegistryError(format!("{pins_from}: {} start pins, but the tracker follows {} ({tracker_from})", start_pins.len(), tracker.pins)));
         }
         if let Some(name) = start_pins.iter().find(|name| !quests.iter().any(|q| &q.name == *name)) {
-            return Err(RegistryError(format!("quests.ron: the start pin `{name}` is not a quest")));
+            return Err(RegistryError(format!("{pins_from}: the start pin `{name}` is not a quest")));
         }
         Ok(Self { quests, tracker, start_pins, placing: Vec::new() })
     }
@@ -874,9 +889,18 @@ mod tests {
 
         let again = r#"(quests: [(name: "a", age: "farm", branch: "main", title: "A Again", why: "", tasks: [[Home]])])"#;
         let twice = QuestRegistry::new(vec![read("quests.ron", first), read("quests_farm.ron", again)]).err().expect("a quest written in two files is refused");
-        assert!(twice.0.contains("t:a is written twice"), "{}", twice.0);
+        assert!(twice.0.contains("t:a is written in t/quests.ron and again in t/quests_farm.ron"), "{}", twice.0);
         let one_file = format!("(quests: [{0}, {0}])", r#"(name: "a", age: "nomad", branch: "main", title: "A", why: "", tasks: [[Home]])"#);
-        assert!(QuestRegistry::new(vec![read("quests.ron", &one_file)]).is_err(), "and so is one written twice in one file");
+        let twice = QuestRegistry::new(vec![read("quests.ron", &one_file)]).err().expect("and so is one written twice in one file");
+        assert!(twice.0.contains("in t/quests.ron and again in t/quests.ron"), "{}", twice.0);
+        // Another package's quest of the same full name does not replace it: refused too.
+        let theirs = r#"(quests: [(name: "t:a", age: "nomad", branch: "main", title: "Mine Now", why: "", tasks: [[Home]])])"#;
+        let replaced = QuestRegistry::new(vec![read("quests.ron", first), QuestRegistry::read_named("zz", "quests.ron", theirs).unwrap()]).err().expect("a mod writing a base quest's name is refused");
+        assert!(replaced.0.contains("t:a is written in t/quests.ron and again in zz/quests.ron"), "{}", replaced.0);
+        // The other checks name the file the quest is in.
+        let lost = r#"(quests: [(name: "c", age: "nomad", branch: "main", title: "C", why: "", tasks: [[Home]], after: ["nowhere"])])"#;
+        let lost = QuestRegistry::new(vec![read("quests.ron", first), read("quests_c.ron", lost)]).err().expect("an `after` that names no quest");
+        assert!(lost.0.starts_with("t/quests_c.ron: quest t:c comes after `t:nowhere`"), "{}", lost.0);
 
         let broken = QuestRegistry::read_named("t", "quests_farm.ron", "(quests: [").err().expect("a broken file is refused");
         assert!(broken.0.starts_with("t/quests_farm.ron:"), "the error names its file: {}", broken.0);
@@ -1147,8 +1171,8 @@ mod tests {
     #[test]
     fn a_quest_with_an_empty_task_is_refused() {
         let quest = |tasks: &str| QuestRegistry::new(vec![QuestRegistry::read("base", &format!(r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: {tasks})])"#)).unwrap()]).err().map(|e| e.0);
-        assert_eq!(quest("[]"), Some("quest base:a has no task".into()));
-        assert_eq!(quest("[[Home], []]"), Some("quest base:a has a task with no part".into()));
+        assert_eq!(quest("[]"), Some("base/quests.ron: quest base:a has no task".into()));
+        assert_eq!(quest("[[Home], []]"), Some("base/quests.ron: quest base:a has a task with no part".into()));
         assert_eq!(quest("[[Home, Craft(\"torch\", 1)]]"), None, "one task of two parts");
         assert!(QuestRegistry::read("base", r#"(quests: [(name: "a", age: "nomad", branch: "main", title: "", why: "", tasks: [[Juggle(3)]])])"#).is_err(), "an unknown part");
     }
