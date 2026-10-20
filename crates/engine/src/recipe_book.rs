@@ -65,6 +65,9 @@ pub enum Method {
     Trade { event: usize, wants: Option<(crate::wander::Want, u8)>, chance: f32 },
     /// Given for finishing the quest `quest`.
     Reward { quest: String },
+    /// Left when `from` burns out, set down or in hand (a torch's stub), or, `relit`, what
+    /// `from` is lit again into (a lamp filled with fat).
+    Burn { from: BlockId, relit: bool },
     /// Found in the world (its generator lays it) and broken loose as itself, with `tool`
     /// (the least that does) if it needs one, from `level` in `skill`.
     Found { tool: Option<BlockId>, skill: Option<crate::skill::SkillId>, level: u8 },
@@ -337,6 +340,32 @@ impl RecipeBook {
                 {
                     book.add(blocks, Entry { method: Method::Reward { quest: quest.name.clone() }, output: item, count: (*count, *count) }, Vec::new());
                 }
+            }
+        }
+        // Fire: what a light set down leaves burnt out and what one is lit again into, each
+        // as breaking it gives it, from what breaking the light gives (a guttering torch is
+        // picked up as a torch); and what an item burning in hand leaves. What breaks to
+        // nothing is no way to anything.
+        let held = |b: BlockId| Some(blocks.info(b).drops).filter(|d| !d.is_air());
+        let mut fire = Vec::new();
+        for b in blocks.ids() {
+            if let Some((_, to)) = content.flames.burns_out(blocks, b) {
+                fire.push((held(b), held(to), false));
+            }
+            if let Some(to) = content.flames.relit(blocks, b) {
+                fire.push((held(b), held(to), true));
+            }
+            if let Some(to) = content.tools.burnt(b) {
+                fire.push((Some(b), held(to), false));
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (from, output, relit) in fire {
+            if let (Some(from), Some(output)) = (from, output)
+                && from != output
+                && seen.insert((from, output, relit))
+            {
+                book.add(blocks, Entry { method: Method::Burn { from, relit }, output, count: (1, 1) }, vec![from]);
             }
         }
         book
@@ -637,6 +666,14 @@ mod tests {
         // A quest's reward.
         let torch_quests: Vec<&str> = book.making(id("base:torch")).iter().filter_map(|e| if let Method::Reward { quest } = &e.method { Some(quest.as_str()) } else { None }).collect();
         assert!(content.quests.iter().filter(|q| q.rewards.contains(&crate::quest::Reward::Item("base:torch".into(), 4))).all(|q| torch_quests.contains(&q.name.as_str())) && !torch_quests.is_empty());
+        // Fire: a torch burnt out leaves its stub, a firebrand burnt in hand a charred stick,
+        // and an empty lamp filled is a lit one; a guttering torch, picked up as a torch, is
+        // no way to itself.
+        let burnt = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Burn { from, relit } = m { Some((from, relit)) } else { None }).collect::<Vec<_>>();
+        assert_eq!(burnt("base:torch_stub"), [(id("base:torch"), false)]);
+        assert_eq!(burnt("base:charred_stick"), [(id("base:firebrand"), false)]);
+        assert_eq!(burnt("base:clay_oil_lamp"), [(id("base:clay_oil_lamp_empty"), true)]);
+        assert!(burnt("base:torch_guttering").is_empty());
         // Food left too long: the cooking entries it burns in make it.
         let burnt = book.making(id("base:burnt_food"));
         assert!(!burnt.is_empty() && burnt.iter().all(|e| matches!(e.method, Method::Cook { burnt: Some(b), .. } if b == id("base:burnt_food"))));

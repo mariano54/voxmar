@@ -192,7 +192,7 @@
         ),
         (
             name: "candle_end", render: Model, shape: "candle_end", solid: false, sound: Wood, textures: All("candle_grey"), tint: Fixed(240, 228, 196),
-            drops: "core:air", hardness: 0.0, color: (240, 228, 196), tags: ["decor"],
+            drops: "core:air", hardness: 0.0, color: (240, 228, 196), tags: ["creative_only", "decor"],
         ),
         // A clay oil lamp: a brighter light than a candle, burning five game days on a fill of
         // fat. Burnt dry it keeps its clay; right clicked with fat (`relight_with:fat`) it is

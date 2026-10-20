@@ -637,6 +637,9 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
         Method::Found { tool: Some(tool), .. } => {
             item_cell(card, font, images, Some(*tool), None);
         }
+        Method::Burn { from, .. } => {
+            item_cell(card, font, images, Some(*from), None);
+        }
         Method::Drop { .. } | Method::Catch { .. } | Method::Trade { wants: None, .. } | Method::Reward { .. } | Method::Found { tool: None, .. } => {}
     }
 }
@@ -736,6 +739,10 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
         Method::Reward { quest } => {
             let title = content.quests.get(quest).map_or_else(|| quest.clone(), |q| super::quests::title(locale, q));
             vec![(locale.format("recipes.reward", &[("quest", &title)]), MUTED)]
+        }
+        Method::Burn { from, relit } => {
+            let key = if *relit { "recipes.relit" } else { "recipes.burnt" };
+            vec![(locale.format(key, &[("item", &block(*from))]), MUTED)]
         }
         Method::Found { tool, skill, level: at } => {
             let tool = tool.map(|tool| (locale.format("recipes.found.tool", &[("tool", &block(tool))]), SOFT));
