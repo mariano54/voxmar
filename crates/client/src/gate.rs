@@ -822,7 +822,7 @@ struct Gate {
     /// Rabbits the snare step has put in its snare, and when the last went in (server
     /// seconds): one may slip it, and another goes in.
     snare_tries: u32,
-    /// Sticks lying by the snare before a deer was put in to tear it.
+    /// Sticks lying by the snare or carried before a deer was put in to tear it.
     snare_sticks: u32,
     snare_at: f32,
     /// The sling step's run (`sling`).
@@ -16534,7 +16534,7 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.tap(world, false, now);
                 // A fresh snare, for a deer to tear.
                 world.resource::<Net>().command(&format!("setblock {} {} {} snare", snare.x, snare.y, snare.z));
-                gate.snare_sticks = sticks_by(world, snare);
+                gate.snare_sticks = sticks_by(world, snare) + sticks_carried(world);
                 gate.advance(now);
             } else if gate.waited_out(DRY_WAIT) {
                 gate.check("snare taken", Err(format!("{} right clicks on the sprung snare: set again {set}, raw small game carried {carried}", gate.taps)));
@@ -16555,22 +16555,30 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         _ => {
-            // Torn: gone on the client, and a stick it left lying by it.
-            let sticks = sticks_by(world, snare);
+            // Torn: gone on the client, and a stick it left lying by it or, popped the
+            // player's way, drawn in by the magnet (`MAGNET`, 2.5 blocks, the watching spot
+            // is 2.5 off) and carried.
+            let sticks = sticks_by(world, snare) + sticks_carried(world);
             if client_gone(world, snare) && sticks > gate.snare_sticks {
                 let tries = gate.snare_tries;
-                gate.check("snare torn", Ok(format!("a deer put in a set snare tore it: gone, a stick left by it ({tries} deer put in)")));
+                gate.check("snare torn", Ok(format!("a deer put in a set snare tore it: gone, a stick left by it or picked up ({tries} deer put in)")));
                 end(world, gate);
             } else if set && gate.server_now - gate.snare_at > SNARE_SLIPPED && gate.snare_tries < SNARE_TRIES {
                 // Still set past a few of the traps' looks: that deer did not tear it; another.
                 world.resource::<Net>().command(&format!("summon red_deer 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
                 (gate.snare_tries, gate.snare_at) = (gate.snare_tries + 1, gate.server_now);
             } else if waited {
-                gate.check("snare torn", Err(format!("{} deer in the snare: gone {}, sticks by it {sticks} (were {})", gate.snare_tries, client_gone(world, snare), gate.snare_sticks)));
+                gate.check("snare torn", Err(format!("{} deer in the snare: gone {}, sticks by it or carried {sticks} (were {})", gate.snare_tries, client_gone(world, snare), gate.snare_sticks)));
                 end(world, gate);
             }
         }
     }
+}
+
+/// Sticks the player carries.
+fn sticks_carried(world: &World) -> u32 {
+    let Some(stick) = world.resource::<ClientWorld>().registry.id("base:stick") else { return 0 };
+    world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| s.item == stick).map(|s| s.count as u32).sum()
 }
 
 /// Sticks lying within two blocks of `at`, as the client has them.
