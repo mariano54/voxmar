@@ -4285,7 +4285,7 @@ mod fight_tests {
     fn a_deep_strike_band_strikes_nothing_through_a_roof() {
         let deep: Scene = |s, c| {
             let wolf = s.content.creatures.id("base:wolf").expect("a wolf");
-            std::sync::Arc::get_mut(&mut s.content.creatures).expect("the test server owns its creatures").get_mut(wolf).def.strike.below = 4.0;
+            std::sync::Arc::make_mut(&mut s.content.creatures).get_mut(wolf).def.strike.below = 4.0;
             let at = hole(s, c, 5);
             set(s, "base:stone", [c + IVec3::new(2, 4, 0)]);
             at

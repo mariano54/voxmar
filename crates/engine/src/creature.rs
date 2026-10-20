@@ -875,7 +875,7 @@ impl Creature {
 }
 
 /// Every species.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CreatureRegistry {
     creatures: Vec<Creature>,
     by_name: FxHashMap<String, CreatureId>,
