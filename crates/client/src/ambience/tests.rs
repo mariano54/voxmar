@@ -142,7 +142,7 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
 fn structures_are_heard_as_fires_only_while_lit() {
     let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
     let ambience = base();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content));
     let fire = ambience.groups.iter().position(|g| g.name == "fire").unwrap() as u8;
     for (name, lit_only) in [("base:hearthstone", true), ("base:crucible", true), ("base:campfire", false), ("base:pit_kiln", false)] {
         let id = content.blocks.expect(name).0 as usize;
@@ -469,7 +469,7 @@ fn ambience_survey() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let generator = Overworld::with_content(seed, content.blocks.clone(), &WorldContent::load(&content).unwrap());
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content));
     let around = |x: i32, z: i32| {
         let center = ColumnPos::of_block(IVec3::new(x, 0, z));
         let mut world = VoxelWorld::default();
@@ -741,7 +741,7 @@ fn a_draughty_home_whistles_until_daubed() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let blocks = &content.blocks;
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content));
     let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
     let group = ambience.groups.iter().position(|g| g.name == "draughty").expect("a draughty group");
     let draught = ambience.beds.iter().position(|b| b.name == "base:draught").expect("a draught bed");
@@ -844,7 +844,7 @@ fn thatch_hisses_as_it_smoulders_and_crackles_thinner_as_it_burns_out() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let blocks = &content.blocks;
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content));
     let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
     let group = |name: &str| ambience.groups.iter().position(|g| g.name == name).unwrap_or_else(|| panic!("a {name} group"));
     let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("a {name} bed"));
@@ -1179,7 +1179,7 @@ fn left_world() -> bevy::prelude::World {
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
     let content = voxmar_server::load_content(&assets).unwrap();
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
+    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content)));
     let mut world = bevy::prelude::World::new();
     world.insert_resource(super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1));
     world.insert_resource(super::Surroundings { started: 7, surveyed: 7, ..Default::default() });
@@ -1211,7 +1211,7 @@ fn the_beds_wait_for_their_recordings() {
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
     let content = voxmar_server::load_content(&assets).unwrap();
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
+    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content)));
     let mut ambient = super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1);
     let mut app = bevy::app::App::new();
     app.add_plugins((bevy::app::TaskPoolPlugin::default(), AssetPlugin::default())).init_asset::<AudioSource>();

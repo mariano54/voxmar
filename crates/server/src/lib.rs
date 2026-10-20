@@ -307,6 +307,13 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
     }
 }
 
+/// How far above a block the server looks for anything solid over it (survival.ron's
+/// `roof_scan`; leaves count): whether rain falls on it, for the client to hear the rain on
+/// a fire as the server judges it.
+pub fn roof_scan(content: &Content) -> i32 {
+    rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).map_or(48, |rules| rules.roof_scan)
+}
+
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
 /// How each block (by id) shelters as a wall of a home's room, as `Server::room_walls`

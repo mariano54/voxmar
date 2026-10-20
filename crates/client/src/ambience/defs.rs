@@ -962,6 +962,7 @@ mod tests {
         assert!(error(r#"(beds: [(name: "x", sound: Wind, volume: 1, when: {"altitude": (min: 1)})])"#).contains("no axis altitude"));
         assert!(error(r#"(beds: [(name: "x", sound: Warbler, volume: 1)])"#).contains("not a bed"));
         assert!(error(r#"(sounds: [(name: "x", sound: Owl, volume: 1, at: Block("trees"), per_minute: 1)])"#).contains("no group trees"));
+        assert!(error(r#"(sounds: [(name: "x", sound: Owl, volume: 1, at: OpenBlock("trees"), per_minute: 1)])"#).contains("no group trees"));
         assert!(error(r#"(beds: [(name: "x", sound: Wind, volume: 1, duck: {"thunder": 1})])"#).contains("thunder"));
         assert!(error(r#"(shelter: (muffle: 5))"#).contains("shelter"));
         assert!(error(r#"(shelter: (walls: 0))"#).contains("shelter"));
