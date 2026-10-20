@@ -8940,6 +8940,81 @@ fn finish(mut f: Fresh) {
     }
 }
 
+/// The charm slot (`combat::Slot::Charm`): a charm goes on only there, never in an armour
+/// slot, and its `Wearing` effect holds while it is worn, untimed: Old Tusk's charge charm
+/// quickens the stride. Held in hand it does nothing; taken off, the effect is gone.
+#[test]
+fn a_charm_goes_in_the_charm_slot_and_works_while_worn() {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    let charm = client.content.blocks.id("base:charge_charm").unwrap();
+    for line in ["/clear", "/effect clear", "/give charge_charm 1"] {
+        client.ok(line);
+    }
+    client.pump_until(|c| (0..HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == charm)));
+    let striding = |c: &Client| c.vitals.effects.iter().find(|a| c.content.effects.get(a.effect).name == "base:tusk_stride").copied();
+    // In hand it is no charm worn.
+    client.pump_ticks(TICKS_PER_SECOND as u64 * 2, |c| striding(c).is_some());
+    assert!(striding(&client).is_none(), "held, not worn");
+    let from = (0..HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == charm)).unwrap();
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: WORN as u8, count: 1 });
+    client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (WORN + Slot::Charm.index()) as u8, count: 1 });
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_some_and(|s| s.item == charm) && striding(c).is_some());
+    assert!(client.inventory.worn[0].is_none(), "a charm is not a helmet");
+    assert_eq!(striding(&client).unwrap().seconds_left, None, "it holds while worn, untimed");
+    assert!(client.content.effects.modifiers(&client.vitals.effects).speed > 1.0);
+    client.ok("/clear charge_charm");
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_none() && striding(c).is_none());
+}
+
+/// A charm's effect ends the moment it comes off, not at the next once-a-second pass:
+/// taken off into the pack, or left in the grave by a death (worth less than three things
+/// carried that death keeps first), the stride is gone as the inventory says so.
+#[test]
+fn a_charm_taken_off_or_lost_to_death_ends_its_effect_at_once() {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::{HOTBAR_SLOTS, WORN};
+    let mut client = Client::join();
+    client.ok("/gamemode survival");
+    let charm = client.content.blocks.id("base:charge_charm").unwrap();
+    let striding = |c: &Client| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == "base:tusk_stride");
+    let well = WORN + Slot::Charm.index();
+    let wear = |client: &mut Client| {
+        client.pump_until(|c| (0..HOTBAR_SLOTS).any(|s| c.inventory.get(s).is_some_and(|s| s.item == charm)));
+        let from = (0..HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == charm)).unwrap();
+        client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: well as u8, count: 1 });
+        client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_some() && striding(c));
+    };
+    for line in ["/clear", "/effect clear", "/give charge_charm 1"] {
+        client.ok(line);
+    }
+    wear(&mut client);
+    // Off into the pack: the same tick's word takes the stride away.
+    client.propose("core:quick_move", ActionTarget::Slot(well as u8));
+    client.pump_until(|c| c.inventory.worn[Slot::Charm.index()].is_none());
+    client.pump_ticks(1, |_| false);
+    assert!(!striding(&client), "the stride outlived the charm taken off");
+    // Worn again, then a death: three things worth more are kept, the charm is not.
+    let kept = (0..client.content.blocks.len() as u16)
+        .map(voxmar_engine::block::BlockId)
+        .filter(|&item| voxmar_engine::value::worth(&client.content, item) > voxmar_engine::value::worth(&client.content, charm))
+        .find(|&item| client.content.blocks.def(item).item && voxmar_engine::inventory::worn_slot(item).is_none())
+        .expect("something worth more than the charm");
+    let kept_name = client.content.blocks.def(kept).name.clone();
+    for line in ["/clear".to_owned(), format!("/give {kept_name} 3"), "/give charge_charm 1".to_owned()] {
+        client.ok(&line);
+    }
+    wear(&mut client);
+    client.ok("/kill");
+    client.pump_until(|c| c.health == 0);
+    client.propose("core:respawn", ActionTarget::None);
+    client.pump_until(|c| c.health > 0);
+    client.pump_ticks(1, |_| false);
+    assert!(client.inventory.worn[Slot::Charm.index()].is_none(), "the charm went to the grave");
+    assert!(!striding(&client), "the stride outlived the charm lost to death");
+}
+
 /// A stone sword's 0.6 s cooldown in server ticks.
 const SWORD_TICKS: u64 = 600 * TICKS_PER_SECOND as u64 / 1000;
 

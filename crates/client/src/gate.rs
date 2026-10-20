@@ -352,6 +352,10 @@ steps! {
     /// A torch held a moment leaves the player Smoky (smoke that clings): its chip shows,
     /// timed; then the hand is emptied.
     Smoke,
+    /// The charge charm in hand, a right click puts it on in the charm slot; the server
+    /// says it is worn and Tusk Stride (a `Wearing` effect) comes on, untimed, its chip
+    /// shown; taken off, the effect is gone.
+    Charm,
     /// A chainmail shirt and a wooden shield in hand, each right click puts one on in its
     /// own worn slot, and with the shield on the guard is the shield's; the inventory
     /// shows both in its worn wells, and their tooltips the armour lines.
@@ -942,6 +946,9 @@ struct Gate {
     /// The player's states the server had sent when the wear step clicked.
     worn_states: u32,
     /// The Defence level before the wear step raised it, to put back after.
+    /// The hotbar slot selected before the charm step took the charm in hand, put back
+    /// after it.
+    charm_hand: usize,
     worn_defence: u8,
     overlay_counted: (f32, f32),
     /// The fight sounds asked for, and the bursts, kicks and knocks, before `combat_feel`
@@ -1134,6 +1141,7 @@ impl Gate {
             swing_watch: SwingWatch::default(),
             music_fade: None,
             worn_states: 0,
+            charm_hand: 0,
             worn_defence: 1,
             overlay_counted: (0.0, 0.0),
             feel_asked: Default::default(),
@@ -1998,6 +2006,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Narrow => narrow(world, gate, now),
         Step::Climb => climb(world, gate, now),
         Step::Smoke => smoke(world, gate, now),
+        Step::Charm => charm(world, gate, now, in_phase),
         Step::Wear => wear(world, gate, now, in_phase),
         Step::CombatHud => combat_hud(world, gate, now, in_phase),
         Step::CombatFeel => combat_feel(world, gate, now, in_phase),
@@ -6373,7 +6382,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 let effects = &launch.content.effects;
                 let survey = voxmar_engine::effect::HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "bed" || tag == "light"))).collect(), ..Default::default() };
                 let calm = voxmar_engine::weather::Weather::NONE;
-                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], seated: false, night: false };
+                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], worn: &[], seated: false, night: false };
                 let tags = client.registry.id("base:sleeping_bag").map(|b| client.registry.def(b).tags.clone()).unwrap_or_default();
                 let wanted = effects.given_by_sleep(&situation, &tags);
                 let shown = |id| player.vitals.effects.iter().find(|a| a.effect == id);
@@ -13117,7 +13126,7 @@ const SMOKY: &str = "base:smoky";
 fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
     let Some(smoky) = world.resource::<Launch>().content.effects.find(SMOKY) else {
         gate.check("smoky chip", Err(format!("no `{SMOKY}` in the content")));
-        gate.next(Step::Wear, now);
+        gate.next(Step::Charm, now);
         return;
     };
     let waited = gate.server_in_phase() > BOSS_WAIT;
@@ -13133,7 +13142,7 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if waited {
                 gate.check("smoky chip", Err(format!("no {SMOKE_ITEM} came to hand in {BOSS_WAIT} server seconds")));
-                gate.next(Step::Wear, now);
+                gate.next(Step::Charm, now);
             }
         }
         2 => {
@@ -13154,7 +13163,7 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
         3 => {
             if empty_hand(world) {
                 world.resource::<Net>().command("effect clear");
-                gate.next(Step::Wear, now);
+                gate.next(Step::Charm, now);
             } else {
                 world.resource::<Net>().command(&format!("clear {}", SMOKE_ITEM.trim_start_matches("base:")));
                 gate.advance(now);
@@ -13163,10 +13172,172 @@ fn smoke(world: &mut World, gate: &mut Gate, now: f32) {
         _ => {
             if empty_hand(world) || waited {
                 world.resource::<Net>().command("effect clear");
-                gate.next(Step::Wear, now);
+                gate.next(Step::Charm, now);
             }
         }
     }
+}
+
+/// Where the charm step stands, from the test ground's middle: past the narrow step's wall,
+/// on a floor of its own with the sky cleared over it, so a right click looking up takes
+/// nothing in reach.
+const CHARM_AT: IVec3 = IVec3::new(0, 0, 26);
+
+/// The content's charm: an item worn in the charm slot, and the effect that holds while
+/// something worn carries one of its tags (`Wearing`).
+fn charm_of(content: &voxmar_engine::content::Content) -> Option<(voxmar_engine::block::BlockId, voxmar_engine::effect::EffectId)> {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::effect::Condition;
+    content.blocks.ids().filter(|&item| voxmar_engine::inventory::worn_slot(item) == Some(Slot::Charm.index())).find_map(|item| {
+        let def = content.blocks.def(item);
+        let effect = content.effects.ids().find(|&id| matches!(&content.effects.get(id).when, Some(Condition::Wearing(tag)) if def.has_tag(tag)))?;
+        Some((item, effect))
+    })
+}
+
+/// The charm worn (a right click with it in hand, looking up): it goes in the charm slot
+/// by the server's word and its effect holds, untimed. Its tooltip says what it is (shots
+/// `charm-en`, `charm-ja`); a quick move takes it off into the pack, the effect ends, and
+/// the empty well shows the charm's mark again.
+fn charm(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use voxmar_engine::combat::Slot;
+    use voxmar_engine::inventory::WORN;
+    let well = WORN + Slot::Charm.index();
+    let found = charm_of(&world.resource::<Launch>().content);
+    let Some((item, effect)) = found else {
+        gate.check("charm", Err("no item worn in the charm slot with an effect that holds while it is worn".to_owned()));
+        gate.next(Step::Wear, now);
+        return;
+    };
+    let name = world.resource::<Launch>().content.blocks.def(item).name.clone();
+    let short = name.split_once(':').map_or(name.as_str(), |(_, n)| n).to_owned();
+    let waited = gate.server_in_phase() > BOSS_WAIT && now - gate.phase_since > BOSS_WAIT;
+    let in_well = world.resource::<LocalPlayer>().inventory.get(well);
+    let worn = in_well.is_some_and(|s| s.item == item);
+    let on = world.resource::<LocalPlayer>().vitals.effects.iter().find(|a| a.effect == effect).copied();
+    let carried = world.resource::<LocalPlayer>().inventory.slots.iter().flatten().any(|s| s.item == item);
+    match gate.phase {
+        0 => {
+            let at = gate.feet + CHARM_AT;
+            // Only the charm goes in and out: what the steps before left carried (the
+            // sword the guard step takes up) stays, and the hand goes back as it was.
+            gate.charm_hand = world.resource::<LocalPlayer>().selected;
+            let net = world.resource::<Net>();
+            for line in [
+                "effect clear".to_owned(),
+                format!("clear {short}"),
+                format!("fill {} {} {} {} {} {} stone", at.x - 1, at.y - 1, at.z - 1, at.x + 1, at.y - 1, at.z + 1),
+                format!("fill {} {} {} {} {} {} air", at.x - 1, at.y, at.z - 1, at.x + 1, at.y + 7, at.z + 1),
+                format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5),
+                format!("give {short} 1"),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        1 => {
+            // In hand, looking up (nothing in reach takes the click), one right click.
+            if select(world, &name) {
+                look(world, 0.0, 80.0);
+                gate.settled += 1;
+                if gate.settled < 3 {
+                    return;
+                }
+                mouse(world, MouseButton::Right, true);
+                gate.advance(now);
+            } else if waited {
+                gate.check("charm", Err(format!("no {name} came to the hotbar in {BOSS_WAIT} seconds of the server and the client")));
+                end_charm(world, gate, now);
+            }
+        }
+        2 => {
+            mouse(world, MouseButton::Right, false);
+            // Worn by the server's word, and its effect on for as long as it is: no timer.
+            let chip = world.query::<&crate::hud::effects::EffectHover>().iter(world).any(|hover| hover.0 == effect);
+            if worn && chip && on.is_some_and(|a| a.seconds_left.is_none()) {
+                let speed = world.resource::<Launch>().content.effects.modifiers(&world.resource::<LocalPlayer>().vitals.effects).speed;
+                let title = world.resource::<Launch>().content.effects.get(effect).name.clone();
+                gate.check("charm", Ok(format!("{name} worn in the charm slot: {title} on, untimed, moving {speed:.2}x")));
+                world.resource_mut::<UiState>().inventory_open = true;
+                world.insert_resource(crate::hud::inventory::HoverSlot(well));
+                gate.advance(now);
+            } else if waited {
+                gate.check("charm", Err(format!("a right click with {name} in hand: the charm slot holds {in_well:?}, chip {chip}, effect {on:?}")));
+                end_charm(world, gate, now);
+            }
+        }
+        3 => {
+            // Its tooltip, in English and then Japanese: where it goes, and that it works
+            // while worn.
+            if in_phase < 0.5 {
+                return;
+            }
+            if !gate.requested.contains(&"charm-en") {
+                let (locale, launch, player) = (world.resource::<Locale>(), world.resource::<Launch>(), world.resource::<LocalPlayer>());
+                let lines: Vec<String> = crate::hud::inventory::armour_lines(locale, &launch.content, player, item).into_iter().map(|(line, _)| line).collect();
+                let want = [locale.get("item.charm").to_owned(), locale.get("item.charm_wear").to_owned()];
+                gate.check("charm tooltip", if lines == want { Ok(format!("\"{}\"", lines.join(" / "))) } else { Err(format!("the charm's tooltip reads {lines:?}, not {want:?}")) });
+            }
+            if gate.shot(world, "charm-en").is_some() {
+                set_language(world, "ja");
+                gate.advance(now);
+            }
+        }
+        4 => {
+            if in_phase < 0.5 || gate.shot(world, "charm-ja").is_none() {
+                return;
+            }
+            set_language(world, "en");
+            // Taken off as a player does: a quick move, out of the well into the pack.
+            let actions = world.resource::<crate::Actions>().0.clone();
+            world.resource::<Net>().propose(actions.expect("core:quick_move"), voxmar_engine::action::ActionTarget::Slot(well as u8));
+            gate.advance(now);
+        }
+        _ => {
+            let glyph = charm_glyph(world, well);
+            if !worn && carried && on.is_none() && glyph.is_ok() {
+                gate.check("charm off", Ok(format!("a quick move took {name} off into the pack: its effect is gone, and the empty well shows the charm's mark")));
+                end_charm(world, gate, now);
+            } else if waited {
+                let glyph = glyph.err().unwrap_or_else(|| "the mark shows".to_owned());
+                gate.check("charm off", Err(format!("a quick move from the charm slot: it holds {in_well:?}, in the pack {carried}, effect {on:?}; {glyph}")));
+                end_charm(world, gate, now);
+            }
+        }
+    }
+}
+
+/// The empty charm well's mark: drawn, shown, and the charm's own (`ui/slot/charm`).
+fn charm_glyph(world: &mut World, well: usize) -> Result<(), String> {
+    use crate::ui::skin::Piece;
+    let want = Piece::WornCharm.handle();
+    if !world.resource::<Assets<Image>>().contains(&want) {
+        return Err("the charm's mark (ui/slot/charm) is not loaded".to_owned());
+    }
+    let marks: Vec<(Handle<Image>, bool)> =
+        world.query::<(&crate::hud::inventory::WornGlyph, &ImageNode, &InheritedVisibility)>().iter(world).filter(|(glyph, ..)| glyph.0 == well).map(|(_, image, shown)| (image.image.clone(), shown.get())).collect();
+    match marks.as_slice() {
+        [(image, true)] if *image == want => Ok(()),
+        [(image, shown)] => Err(format!("the charm well's mark is {image:?} (shown {shown}), not the charm's")),
+        _ => Err(format!("{} marks drawn in the charm well", marks.len())),
+    }
+}
+
+fn end_charm(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Right, false);
+    set_language(world, "en");
+    world.remove_resource::<crate::hud::inventory::HoverSlot>();
+    world.resource_mut::<UiState>().inventory_open = false;
+    world.resource_mut::<LocalPlayer>().selected = gate.charm_hand;
+    let charm = charm_of(&world.resource::<Launch>().content).map(|(item, _)| world.resource::<Launch>().content.blocks.def(item).name.clone());
+    let feet = gate.feet;
+    let net = world.resource::<Net>();
+    if let Some(name) = charm {
+        net.command(&format!("clear {}", name.split_once(':').map_or(name.as_str(), |(_, n)| n)));
+    }
+    net.command("effect clear");
+    net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+    gate.next(Step::Wear, now);
 }
 
 /// What the wear step puts on, and where (`inventory::WORN` on).
@@ -13271,7 +13442,7 @@ fn wear(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// The inventory's six worn wells, the shirt and the shield drawn in theirs, and their
+/// The inventory's worn wells (`WORN..=LAST`, the charm's among them), the shirt and the shield drawn in theirs, and their
 /// tooltips' armour lines: the set, its weight and Defence level, its armour, and the
 /// shield's guard.
 fn worn_drawn(world: &mut World) -> Result<String, String> {
@@ -13303,7 +13474,7 @@ fn worn_drawn(world: &mut World) -> Result<String, String> {
         return Err(format!("the shield's tooltip says \"{needs_one}\": {shield:?}"));
     }
     let words = |lines: &[(String, Color)]| lines.iter().map(|(line, _)| line.as_str()).collect::<Vec<_>>().join(" / ");
-    Ok(format!("six worn wells, the shirt and shield shown in theirs; tooltips \"{}\" and \"{}\"", words(&shirt), words(&shield)))
+    Ok(format!("{} worn wells, the shirt and shield shown in theirs; tooltips \"{}\" and \"{}\"", wells.len(), words(&shirt), words(&shield)))
 }
 
 /// Takes it all off again, for the steps after.
