@@ -627,6 +627,48 @@ mod tests {
         assert!(railed.share(Shelter::Draughty) < 0.9, "a railing walled the room: {railed:?}");
     }
 
+    /// A five by five room roofed as a hip: shingles round its edge facing out, a hip at
+    /// each corner, and planks over the middle. Every face is sound, nothing lets the sky
+    /// in, and a valley set in place of a hip leaves it sound too.
+    #[test]
+    fn a_hipped_roof_of_corners_shelters_a_room() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"));
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { planks } else { BlockId::AIR });
+                }
+                // The roof's edge over the walls, eaves out: north, east, south, west.
+                let name = match (x, z) {
+                    (-3, -3) => "base:oak_shingles_corner",
+                    (3, -3) => "base:oak_shingles_corner_east",
+                    (3, 3) => "base:oak_shingles_corner_south",
+                    (-3, 3) => "base:oak_shingles_corner_west",
+                    (_, -3) => "base:oak_shingles",
+                    (3, _) => "base:oak_shingles_east",
+                    (_, 3) => "base:oak_shingles_south",
+                    (-3, _) => "base:oak_shingles_west",
+                    _ => "base:oak_planks",
+                };
+                server.set_block(at + IVec3::new(x, 4, z), block(&server, name));
+            }
+        }
+        let home = at + IVec3::Y;
+        let walls = server.room_walls(home);
+        assert_eq!(walls.share(Shelter::Sound), 1.0, "a hipped roof let the weather in: {walls:?}");
+        for x in -2..=2 {
+            assert!(!server.open_sky(home + IVec3::X * x), "the sky shows through at {x}");
+        }
+        server.set_block(at + IVec3::new(-3, 4, -3), block(&server, "base:oak_shingles_inner_corner"));
+        assert_eq!(server.room_walls(home).share(Shelter::Sound), 1.0, "a valley let the weather in");
+    }
+
     /// The home ladder's own furniture in a five by five stone-brick room under a plank roof
     /// leaves it as walled as it was empty: sound enough for Cosy and fine enough for Heart
     /// of the Home. Thatch and shingles roof it as soundly as planks.
