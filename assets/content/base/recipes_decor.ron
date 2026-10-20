@@ -108,10 +108,12 @@
         (pattern: [["cobblestone", "charcoal", "cobblestone"], ["", "cobblestone", ""]], output: "brazier", skill: "core:construction", level: 8, xp: 6.0),
         (pattern: [["iron_ingot", "", "iron_ingot"], ["iron_ingot", "", "iron_ingot"], ["iron_ingot", "iron_ingot", "iron_ingot"]], output: "cauldron", skill: "core:engineering", level: 15, xp: 20.0),
         (pattern: [["cobblestone", "cobblestone", "cobblestone"], ["cobblestone", "campfire", "cobblestone"]], output: "cottage_stove", age: "farm", skill: "core:construction", level: 5, xp: 6.0),
-        // A weaver's and a miller's room, until the Farm age's machines.
-        (pattern: [["oak_planks", "stick", "oak_planks"], ["stick", "twine", "stick"], ["oak_planks", "", "oak_planks"]], output: "loom_frame", skill: "core:crafting", level: 8, xp: 8.0),
-        (pattern: [["oak_planks", "stick"], ["stick", "twine"]], output: "spindle_stand", skill: "core:crafting", level: 6, xp: 5.0),
-        (pattern: [["", "stick"], ["cobblestone", "cobblestone"], ["cobblestone", "cobblestone"]], output: "quern_stones", skill: "core:crafting", level: 5, xp: 5.0),
+        // The Farm age's hand stations (cooking.ron), each of something the Farm age makes:
+        // a loom hung with fired clay weights, a spindle turning on a fired clay whorl, and
+        // quern stones of stone fired smooth in the pit kiln.
+        (pattern: [["oak_planks", "stick", "oak_planks"], ["stick", "twine", "stick"], ["oak_planks", "fired_clay", "oak_planks"]], output: "loom_frame", age: "farm", skill: "core:crafting", level: 8, xp: 8.0),
+        (pattern: [["oak_planks", "stick"], ["fired_clay", "twine"]], output: "spindle_stand", age: "farm", skill: "core:crafting", level: 6, xp: 5.0),
+        (pattern: [["", "stick"], ["stone", "stone"], ["stone", "stone"]], output: "quern_stones", age: "farm", skill: "core:crafting", level: 5, xp: 5.0),
         (ingredients: ["indigo_cloth", "white_cloth", "red_cloth", "green_cloth", "amber_cloth", "twine"], output: "wind_flags", skill: "core:crafting", level: 9, xp: 8.0),
         // Graves, in stone and in mossy stone.
         (pattern: [["stone", "stone", "stone"]], output: "stone_grave_slab", count: 2, skill: "core:construction", level: 6, xp: 3.0),

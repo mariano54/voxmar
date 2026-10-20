@@ -1024,6 +1024,25 @@
             "................",
             "................",
         ])]),
+        // Flour: a soft heap, pale, with a little shadow under it.
+        "block/flour": (base: "shape/plant", layers: [Grid(legend: {'w': "#f6f0e2", 'l': "#e2d6bc", 's': "#b8a888"}, rows: [
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            "................",
+            ".......DD.......",
+            "......DwwD......",
+            ".....DwwwlD.....",
+            "....DwwwwwlD....",
+            "...DwwwlwwwlD...",
+            "..DwwwwwwwlwlD..",
+            "..DllwlwllllsD..",
+            "...DssssssssD...",
+            "....DDDDDDDD....",
+            "................",
+        ])]),
         // The Fishing skill's icon.
         "ui/skill/fishing": (size: (16, 16), layers: [Grid(legend: {'k': "#06070c", 'a': "#3a5a80", 'b': "#7aa0c8", 'c': "#d0e4f4", 'W': "#f6f2e8", 'w': "#8a5a2c"}, rows: [
             "............kk..",

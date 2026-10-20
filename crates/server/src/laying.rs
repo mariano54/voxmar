@@ -452,6 +452,27 @@ mod tests {
         assert_eq!(made(&mut server), 1, "its rite done, the kiln is made");
     }
 
+    /// The Farm age's hand stations (quern, spindle, loom) wait for its rite as the kiln does.
+    #[test]
+    fn the_farm_hand_stations_wait_for_its_rite() {
+        let mut server = fixture();
+        let table = IVec3::new(10, FLOOR + 1, 8);
+        server.set_block(table, id(&server, "base:crafting_table"));
+        server.players.get_mut(&1).unwrap().station = Some(table);
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        for station in ["base:quern_stones", "base:spindle_stand", "base:loom_frame"] {
+            lay(&mut server, station, 1);
+            let mut keys = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let voxmar_protocol::ServerMessage::Refused { why: Words::Key(key, _) } = message {
+                    keys.push(key);
+                }
+            }
+            assert_eq!(keys, ["craft.age"], "{station} before the Farm age");
+        }
+    }
+
     /// A log split near a chopping block gives six planks, away from one the grid's four;
     /// the way made near one lays only near one.
     #[test]
