@@ -158,6 +158,10 @@ pub struct Attack {
     /// level), as a weapon's accuracy does a player's.
     #[serde(default)]
     pub accuracy: Option<u16>,
+    /// A charge: once wound up it runs straight at where its target stood, blind to walls,
+    /// holes and cliff edges (`moves::Charge`, docs/bosses.md).
+    #[serde(default)]
+    pub charge: Option<moves::Charge>,
 }
 
 fn reach() -> f32 {

@@ -39,8 +39,9 @@ pub use voxmar_engine::weather::Weather;
 // 41: ServerMessage::Fires, the lit structures whose fires burn.
 // 42: a staggered creature's tell (STAGGERED).
 // 43: the seat a player sits on (Vitals::seated), for the lower eye.
-// 47: ServerMessage::Bark, a settlement person's wordless greeting, alarm or sigh (44 to 46
-// are other lanes').
+// 44: what the home's stores hold (Vitals::home_stores), for what can be made there.
+// 47: ServerMessage::Bark, a settlement person's wordless greeting, alarm or sigh (45 and
+// 46 are other lanes').
 pub const PROTOCOL_VERSION: u32 = 47;
 
 /// A creature's `tell` while it rears into a new phase of its fight.

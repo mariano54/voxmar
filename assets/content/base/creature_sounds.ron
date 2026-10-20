@@ -478,6 +478,7 @@
         "cave_bat": (voice: "bat"),
         "shambler": (voice: "zombie", aether: 0.3, pitch: 0.85),
         "rootmother": (voice: "zombie", pitch: 0.55),
+        "old_tusk": (voice: "pig", pitch: 0.6),
         "villager": (voice: "person"),
         "farmer": (voice: "person"),
         "herder": (voice: "person"),
