@@ -9,10 +9,13 @@ second:
     VOXMAR_MUTE=1 VOXMAR_CONFIG=<dir with settings.ron> target/trace/release/voxmar \
         --capture out.png --seed 1 --size 2268x1473 --weather clear --time 0.2 --flight 30
 
-Then, with START_US the trace time the flight began (its end, the last "ts" in the file,
-less the flight's seconds):
+Then, with START_US the trace time the flight began, or flight:SECONDS for the last "ts" in
+the file less the flight's seconds:
 
     python3 tools/perf/flight_spikes.py trace-*.json START_US
+    python3 tools/perf/flight_spikes.py trace-*.json flight:30
+
+(tools/perf/play_frames does both steps for a traced build, SCENES=flight.)
 
 prints frame-time quantiles (main-thread update to update) and, for the twelve slowest
 frames, the longest spans that began during them on any thread. Spans of a few
@@ -20,7 +23,28 @@ microseconds' work taking milliseconds mean the thread was preempted: time on a 
 machine (see docs/rendering.md, "Measuring").
 """
 import sys, re, statistics
-path, start = sys.argv[1], float(sys.argv[2])
+path, start = sys.argv[1], sys.argv[2]
+
+
+def last_ts(path):
+    """The last "ts" in the file, read from its tail."""
+    with open(path, 'rb') as f:
+        f.seek(0, 2)
+        size = f.tell()
+        back = 1 << 20
+        while True:
+            f.seek(max(0, size - back))
+            tail = f.read().decode('utf-8', 'replace')
+            found = re.findall(r'"ts":\s*([0-9.]+)', tail)
+            if found or back >= size:
+                return float(found[-1]) if found else 0.0
+            back *= 4
+
+
+if start.startswith('flight:'):
+    start = last_ts(path) - float(start[len('flight:'):]) * 1e6
+else:
+    start = float(start)
 name_re = re.compile(r'"name":"((?:[^"\\]|\\.)*)"')
 stacks = {}
 frames = []          # start ts of each frame

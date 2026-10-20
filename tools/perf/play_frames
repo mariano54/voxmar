@@ -18,6 +18,12 @@
 #           people), looking over its roofs, creative and noon
 #   flight  40 s flight from the spawn of seed 1 at his fly speed: the land streaming in
 #
+# SCENES picks scenes (e.g. SCENES=flight) and FLIGHT the flight's seconds (default 40). A
+# binary built with tracing (CARGO_TARGET_DIR=target/trace cargo build --release -p
+# voxmar_client --features chrome) writes a Chrome trace, 0.3-0.6 GB a second: each run's is
+# read by tools/perf/flight_spikes.py (the slowest frames and what ran in them) and deleted,
+# so keep such runs short, e.g. SCENES=flight FLIGHT=15 REPEATS=1.
+#
 # Holds ~/Projects/voxmar-wt/QUIET while it times, which pauses memcap's builds and holds
 # new heavy commands (waiting while another timing run holds it), and stops whenever his
 # game is open or PLAYING is up. Run it with no gate or train going: QUIET does not pause
@@ -28,6 +34,10 @@
 set -uo pipefail
 [[ $# -ge 1 ]] || { echo "usage: tools/perf/play_frames BINARY [BINARY...]" >&2; exit 2; }
 repeats=${REPEATS:-2}
+scenes=${SCENES:-spawn town flight}
+flight=${FLIGHT:-40}
+[[ $flight =~ ^[0-9]+$ ]] || { echo "play_frames: FLIGHT is whole seconds" >&2; exit 2; }
+spikes=$(cd "$(dirname "$0")" && pwd)/flight_spikes.py
 settings=${VOXMAR_SETTINGS:-$HOME/Library/Application Support/voxmar/settings.ron}
 quiet=~/Projects/voxmar-wt/QUIET
 play=~/Projects/voxmar-wt/PLAYING
@@ -87,12 +97,13 @@ scene_args() {
     spawn) args=(--seed 1 --weather clear --time 0.3 --pose 0,2,0,20,-5 --wait 30) ;;
     town) args=(--seed 1 --weather clear --time 0.3 --command "/gamemode creative" --command "/time set noon"
       --command "/time freeze" --command "/tp -624 -592" --pose 0,12,24,0,-20 --wait 30) ;;
-    flight) args=(--seed 1 --weather clear --time 0.3 --flight 40) ;;
+    flight) args=(--seed 1 --weather clear --time 0.3 --flight "$flight") ;;
   esac
 }
 
 echo "play_frames: load $(sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg), $repeats runs a scene"
-for scene in spawn town flight; do
+for scene in $scenes; do
+  case $scene in spawn | town | flight) ;; *) echo "play_frames: no scene called $scene" >&2; exit 2 ;; esac
   for ((round = 1; round <= repeats; round++)); do
     for given in "$@"; do
       binary=$given priority=on workers=
@@ -116,11 +127,21 @@ for scene in spawn town flight; do
       rm -rf "$config" && mkdir -p "$config"
       [[ -e $settings ]] && cp "$settings" "$config/settings.ron"
       scene_args "$scene"
-      log=$(cd "$(dirname "$binary")/../.." && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority VOXMAR_WORKERS=$workers \
+      # The repository the binary was built in, whose assets/ the game loads from where it
+      # runs (target/release/voxmar or target/trace/release/voxmar).
+      root=$(dirname "$binary")
+      while [[ $root != / && ! -d $root/assets ]]; do root=$(dirname "$root"); done
+      touch "$out/started"
+      log=$(cd "$root" && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority VOXMAR_WORKERS=$workers \
         "$binary" --capture "$out/$scene.png" --size 2268x1473 "${args[@]}" 2>&1 </dev/null | sed 's/\x1b\[[0-9;]*m//g')
       stats=$(grep -oE '(steady|flight): [0-9]+ frames.*' <<<"$log" | tail -1)
       gpu=$(grep -m1 -oE 'AdapterInfo \{ name: "[^"]*"' <<<"$log" | sed 's/.*name: //')
       echo "$scene round $round, $binary$([[ $priority == off ]] && echo ' (priorities off)')${workers:+ ($workers workers)}: ${stats:-no frame statistics (see a run by hand)} [gpu $gpu, load $(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')]"
+      # A traced build's trace of this run: read, then deleted (they run to gigabytes).
+      while IFS= read -r trace; do
+        [[ $scene == flight ]] && python3 "$spikes" "$trace" "flight:$flight"
+        rm -f "$trace"
+      done < <(find "$root" -maxdepth 1 -type f -name 'trace-*.json' -newer "$out/started")
     done
   done
 done
