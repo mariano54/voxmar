@@ -32,6 +32,9 @@
     // How high a walker steps up without jumping, for blocks shorter than a whole one (at
     // most 1): half a block and a pixel.
     step_up: 0.5625,
+    // How fast a ladder is climbed, and the fastest it is slid down, in blocks a second
+    // (Minecraft's 0.2 and 0.15 a tick, as one number); at most jump_velocity.
+    climb_speed: 3.0,
     // How far the server lets the moves a client reports stray from the numbers above,
     // for rounding, network jitter and hitches, before it puts the player back.
     checks: (
