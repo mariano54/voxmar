@@ -77,10 +77,11 @@ pub struct SfxPlugin;
 impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<SoundCue>()
+            .add_message::<Catches>()
             .init_resource::<MaterialsAsked>()
             .configure_sets(Update, Audible.run_if(sound_on))
             .add_systems(Startup, synthesize)
-            .add_systems(Update, ((footsteps, (play_cues.in_set(Audible), ask_materials)).chain(), thunder.in_set(Audible), (play_actions, play_brought).chain()));
+            .add_systems(Update, ((footsteps, (play_cues.in_set(Audible), ask_materials)).chain(), thunder.in_set(Audible), play_catches.in_set(Audible), (play_actions, play_brought).chain()));
     }
 }
 
@@ -185,6 +186,20 @@ pub fn station_cue(stations: &Stations, registry: &BlockRegistry, old: BlockId, 
     }
 }
 
+/// Something nearby caught fire (fire.ron): the server turned it into the burning block.
+/// Heard as `sounds.ron`'s `fire` `catch`, from the block.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct Catches {
+    pub at: Vec3,
+}
+
+/// Whether a block changing from `old` to `new` is something catching fire: becoming
+/// fire.ron's burning block, from anything else that was loaded. Said by the server's block
+/// change, never timed here.
+pub fn catches(fire: &voxmar_engine::fire::Fire, old: Option<BlockId>, new: BlockId) -> bool {
+    fire.burning == Some(new) && old.is_some_and(|old| old != new)
+}
+
 /// One clip a cue may play, and how loud and fast.
 #[derive(Clone)]
 struct Clip {
@@ -207,6 +222,8 @@ struct Sfx {
     thunder: [Vec<Handle<AudioSource>>; 3],
     /// What actions sound like as the player does them.
     actions: FxHashMap<voxmar_engine::action::ActionId, Vec<Clip>>,
+    /// Something catching fire.
+    catch: Vec<Clip>,
     /// What their results sound like landing in the pack, by their tags.
     brings: Brings,
     /// Actions done whose results may yet land, and until when (seconds).
@@ -390,6 +407,9 @@ fn synthesize(
             Some((launch.content.actions.id(name)?, load(&sound.sounds).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect()))
         })
         .collect();
+    // Catching fire as loud as placing a block, times its volume.
+    let gain = recorded.fire.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
+    let catch = load(&recorded.fire.catch).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect();
     let brings = recorded
         .actions
         .iter()
@@ -402,7 +422,7 @@ fn synthesize(
             Some((launch.content.actions.id(name)?, rules.collect()))
         })
         .collect();
-    commands.insert_resource(Sfx { clips, materials, material, thunder, actions, brings, awaiting: Vec::new(), counter: 0 });
+    commands.insert_resource(Sfx { clips, materials, material, thunder, actions, brings, awaiting: Vec::new(), catch, counter: 0 });
 }
 
 /// How loud a synthesized cue's clips are on average.
@@ -450,6 +470,9 @@ pub(crate) struct Recordings {
     /// What building materials sound like underfoot, set down and broken, each for the
     /// blocks carrying all its tags. A later package that names a material replaces it.
     pub(crate) materials: Vec<MaterialSound>,
+    /// What fire sounds like: thatch or wattle catching. A later package that lists any
+    /// replaces these.
+    pub(crate) fire: FireSounds,
     /// How loud each kind of sound is, how many play at once and what the music makes
     /// room for (`mix`).
     pub(crate) mix: crate::mix::MixDef,
@@ -510,6 +533,23 @@ pub(crate) struct InterfaceSound {
 pub(crate) enum Tap {
     Click,
     Item,
+}
+
+/// The sounds of fire in the thatch (fire.ron): its `catch`, a soft whoomph from a block
+/// taking fire, made at the loudness of [`ACTION_LOUDNESS`] and played that much louder or
+/// softer than a block set down. The smoulder before it and the burning after are the
+/// ambience's (ambience.ron's `smoulder` and `blaze` groups).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct FireSounds {
+    pub(crate) catch: Vec<String>,
+    pub(crate) volume: f32,
+}
+
+impl Default for FireSounds {
+    fn default() -> Self {
+        Self { catch: Vec::new(), volume: 1.0 }
+    }
 }
 
 /// The sound of one building material (timber, thatch, cobblestone): the clips of a step on
@@ -615,6 +655,9 @@ impl Recordings {
                     None => all.materials.push(material),
                 }
             }
+            if !def.fire.catch.is_empty() {
+                all.fire = FireSounds { catch: path(def.fire.catch).collect(), ..def.fire };
+            }
             all.mix.merge(def.mix);
         }
         Ok(all)
@@ -661,6 +704,18 @@ impl Recordings {
             if !(0.5..=2.0).contains(&sound.pitch) {
                 return Err(format!("{RECORDINGS}: interface `{name}` has pitch {}, not from 0.5 to 2", sound.pitch));
             }
+        }
+        Ok(())
+    }
+
+    /// Whether a fire that can set blocks burning (fire.ron) is heard catching: a `catch`
+    /// clip, at a volume from above nothing to twice the usual.
+    pub(crate) fn check_fire(&self, fire: &voxmar_engine::fire::Fire) -> Result<(), String> {
+        if fire.on() && fire.burning.is_some() && self.fire.catch.is_empty() {
+            return Err(format!("{RECORDINGS}: fire.ron sets blocks burning, but `fire` has no `catch` sound"));
+        }
+        if !(self.fire.volume > 0.0 && self.fire.volume <= 2.0) {
+            return Err(format!("{RECORDINGS}: `fire` has volume {}, not above 0 and up to 2", self.fire.volume));
         }
         Ok(())
     }
@@ -836,6 +891,35 @@ fn play_cues(
             )),
             None => commands.spawn((AudioPlayer(clip.source.clone()), playback, Voice::of(Category::Everyday))),
         };
+    }
+}
+
+/// Plays something catching fire, from the block, as the server says it caught.
+fn play_catches(
+    mut commands: Commands,
+    mut caught: MessageReader<Catches>,
+    sfx: Option<ResMut<Sfx>>,
+    settings: Res<Settings>,
+    listener: Query<&GlobalTransform, With<Camera3d>>,
+) {
+    let Some(mut sfx) = sfx else { return };
+    let master = MASTER * settings.sound_volume as f32 / 100.0;
+    let listener = listener.single().map(|t| t.translation()).ok();
+    for &Catches { at } in caught.read() {
+        let gain = falloff(listener.map_or(0.0, |ear| at.distance(ear)), HEARD_WITHIN);
+        let (pick, jitter) = (sfx.random(), sfx.random());
+        let Some(clip) = sfx.catch.get((pick * sfx.catch.len() as f32) as usize) else { continue };
+        if gain <= 0.0 {
+            continue;
+        }
+        let speed = clip.speed * (0.94 + 0.12 * jitter);
+        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * gain * master)) };
+        commands.spawn((
+            AudioPlayer(clip.source.clone()),
+            PlaybackSettings { spatial: true, spatial_scale: Some(SpatialScale::new(PAN_SCALE)), ..playback },
+            Transform::from_translation(at),
+            Voice::at(Category::Everyday, at),
+        ));
     }
 }
 
@@ -1390,7 +1474,7 @@ mod tests {
             let rolls = [vec![Handle::default()], vec![Handle::default()], vec![Handle::default()]];
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips, materials: Vec::new(), material: Vec::new(), thunder: rolls, actions: FxHashMap::default(), brings: FxHashMap::default(), awaiting: Vec::new(), counter: 0 })
+                .insert_resource(Sfx { clips, materials: Vec::new(), material: Vec::new(), thunder: rolls, actions: FxHashMap::default(), brings: FxHashMap::default(), awaiting: Vec::new(), catch: Vec::new(), counter: 0 })
                 .add_message::<SoundCue>()
                 .add_message::<Thunder>()
                 .configure_sets(Update, Audible.run_if(sound_on))
@@ -1563,6 +1647,36 @@ mod tests {
         // Without the stone_brick material, the cut stone bricks name one there is not.
         let unnamed = Recordings::load(&[file("base", r#"(materials: [(name: "cobblestone", tags: ["cobbled"], place: ["p.ogg"])])"#)]).unwrap().check_materials(blocks);
         assert!(unnamed.as_ref().is_err_and(|e| e.contains("stone_brick")), "{unnamed:?}");
+    }
+
+    /// Catching fire is the server's block change to fire.ron's burning block, from
+    /// anything else loaded; a fire that can burn must have a catch sound, at a sane volume,
+    /// and a later package replaces it. The one we ship decodes, at the loudness of the rest.
+    #[test]
+    fn catching_fire_is_heard_from_the_server_and_checked() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (fire, blocks) = (&content.fire, &content.blocks);
+        let (burning, thatch) = (fire.burning.unwrap(), blocks.id("base:thatch_roof").unwrap());
+        assert!(catches(fire, Some(thatch), burning));
+        assert!(!catches(fire, Some(burning), burning), "already burning");
+        assert!(!catches(fire, None, burning), "not loaded: not seen to catch");
+        assert!(!catches(fire, Some(burning), BlockId::AIR), "burning out is no catch");
+        assert!(!catches(fire, Some(thatch), BlockId::AIR), "broken is no catch");
+        let recorded = Recordings::load(&content.files).unwrap();
+        assert_eq!(recorded.check_fire(fire), Ok(()));
+        let silent = Recordings::default().check_fire(fire);
+        assert!(silent.as_ref().is_err_and(|e| e.contains("catch")), "{silent:?}");
+        let file = |package: &str, source: &str| ContentFile { package: package.into(), name: RECORDINGS.into(), source: source.into() };
+        let loud = Recordings::load(&[file("base", r#"(fire: (catch: ["c.ogg"], volume: 3.0))"#)]).unwrap().check_fire(fire);
+        assert!(loud.is_err(), "{loud:?}");
+        let replaced = Recordings::load(&[file("base", r#"(fire: (catch: ["c.ogg"]))"#), file("mod", r#"(fire: (catch: ["d.ogg"], volume: 0.5))"#)]).unwrap();
+        assert_eq!(replaced.fire, FireSounds { catch: vec!["content/mod/d.ogg".into()], volume: 0.5 });
+        for path in &recorded.fire.catch {
+            let [left, right] = crate::ambience::tests::decode(path);
+            let stereo: Vec<f32> = left.iter().zip(&right).flat_map(|(l, r)| [*l, *r]).collect();
+            let heard = loudness(&stereo, 2) / ACTION_LOUDNESS;
+            assert!((0.5..=1.25).contains(&heard), "{path} is heard at {heard:.2} of the loudness of the rest");
+        }
     }
 
     /// The building materials we ship pass the launch check, sound for the blocks they are
@@ -1778,7 +1892,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), awaiting: Vec::new(), counter: 0 })
+                .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), awaiting: Vec::new(), catch: Vec::new(), counter: 0 })
                 .insert_resource(net)
                 .add_systems(Update, play_actions);
             // Crafting has no sound here: nothing plays for it.
