@@ -1245,6 +1245,8 @@ mod tests {
         server.tick_fights();
         let after = server.fight_view(player);
         assert_eq!((after.swing, after.struck), (None, view.struck.wrapping_add(1)), "the blow landed was not shown");
+    }
+
     /// The ticks a wolf's blows come down on, standing by a player who never fights back,
     /// over 10 game seconds of the server's own ticks; with `slow`, each tick takes 100 ms of
     /// the players' clock, 50 more than it is, as on a server running behind.
