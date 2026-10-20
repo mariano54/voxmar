@@ -18,6 +18,9 @@ use crate::creature::{Behaviour, Style};
 
 /// Blocks from a goal that count as there.
 const ARRIVED: f32 = 0.8;
+/// How far a player a boss is held off from moves before it comes on (`Mind::held_off`):
+/// out of the hole, or out from under the roof.
+const HELD_OFF_MOVED: f32 = 1.0;
 
 /// The module that runs a behaviour from data.
 pub fn module(behaviour: Behaviour) -> Arc<dyn Module> {
@@ -638,7 +641,27 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
     let close = reaches && p.open && ctx.creature.in_band(ctx.at.position.y, p.position.y, crate::physics::player::HEIGHT, ctx.at.scale);
     let mut decision = Decision { face: Some(p.position), ..Default::default() };
     let stalker = stalks && def.movement.style == Style::Stalker;
-    if !close {
+    // Held off (`Mind::held_off`): while the player stays where it could not reach them,
+    // it keeps out of their reach, facing them, on the side it stands (a keyed side when
+    // right over them), and stands once there.
+    if mind.held_off.is_some_and(|at| at.distance(p.position) > HELD_OFF_MOVED) {
+        mind.held_off = None;
+    }
+    if !close && def.boss && mind.held_off.is_some() {
+        let off = (ctx.at.position - p.position).with_y(0.0);
+        let away = off.try_normalize().unwrap_or_else(|| {
+            let turn = ctx.random(0x4e1d_0ff5) * std::f32::consts::TAU;
+            Vec3::new(turn.cos(), 0.0, turn.sin())
+        });
+        // Their reach along the ground at the height it stands over their eyes.
+        let over = (ctx.at.position.y - p.position.y - crate::physics::player::EYE_HEIGHT).max(0.0);
+        let reach = (crate::physics::player::REACH.powi(2) - over * over).max(0.0).sqrt() + super::KEEP_OFF;
+        if ctx.creature.edge(d, ctx.at.scale) < reach - 0.5 {
+            let keep = reach + ctx.creature.edge(0.0, ctx.at.scale).abs();
+            decision.goal = Some(p.position.with_y(ctx.at.position.y) + away * keep);
+            decision.speed = run(ctx) * 0.5;
+        }
+    } else if !close {
         // Those with a way found after the target (guards going after someone) follow it
         // until the target is near; the day's errands are no way to anyone.
         decision.goal = Some(ctx.at.errand.filter(|e| e.chase.is_some_and(|handoff| d > handoff)).map_or(p.position, |e| e.to));

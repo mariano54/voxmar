@@ -1093,6 +1093,12 @@ impl Server {
         let gained = body.position.distance(before) >= drive.speed * dt * 0.2;
         if over {
             creature.stuck = creature.stuck.max(NO_WAY_STUCK);
+            // A boss fights to the end, but not from where the player strikes it and it
+            // strikes nothing: it keeps off out of their reach while they stay there
+            // (`Mind::held_off`).
+            if species.def.boss {
+                creature.mind.held_off = decision.goal;
+            }
         }
         if over || wanted != Vec3::ZERO && (!gained || detour != 0.0) {
             creature.stuck += if gained && !over { dt * 0.5 } else { dt };
@@ -4258,6 +4264,9 @@ mod fight_tests {
         /// Its blows that landed on the player (`fight_timed` with its blows timed).
         pub hits: u32,
         pub nearest: f32,
+        /// Seconds its box was in the player's reach from their eyes
+        /// (`physics::player::REACH`): where they could strike it.
+        pub in_reach: f32,
         /// How far it ended from the player.
         pub last: f32,
         /// The highest its feet came above the pen's floor, and the farthest it came east
@@ -4504,6 +4513,19 @@ mod fight_tests {
         }
     }
 
+    /// A boss with the player down a hole four deep, out of its reach down, does not stand
+    /// over them to be struck at from below: it backs off the rim out of their reach,
+    /// watching them, and comes back to look now and then, in their reach under 4 s of 16.
+    /// Before: Old Tusk and the Rootmother stood over the hole as long as the player stayed
+    /// in it, in their reach all 16 s but the walk there.
+    #[test]
+    fn a_boss_keeps_off_the_rim_of_a_hole_too_deep_for_it() {
+        for name in ["base:old_tusk", "base:rootmother"] {
+            let f = fight_timed(name, |s, c| hole(s, c, 4), 16.0, true);
+            assert!(f.hits == 0 && f.in_reach < 4.0 && f.pinned < 1.0, "{name}: {f:?}");
+        }
+    }
+
     /// Uneven ground in a fight: a step, steps, a slab and block, logs lying about, tall
     /// grass, and a fence (two blocks high: the game has no fence block yet) or a ledge the
     /// player stands behind or on, out of the creature's way.
@@ -4609,6 +4631,10 @@ mod fight_tests {
             }
             let flat = body.position.with_y(0.0).distance(stand.with_y(0.0));
             fight.nearest = fight.nearest.min(flat);
+            let (eye, aabb) = (server.players[&player].position + Vec3::Y * voxmar_engine::physics::player::EYE_HEIGHT, body.aabb());
+            if eye.clamp(aabb.min, aabb.max).distance(eye) <= voxmar_engine::physics::player::REACH {
+                fight.in_reach += dt;
+            }
             fight.highest = fight.highest.max(body.position.y - c.y as f32);
             fight.farthest = fight.farthest.max(body.position.x - c.x as f32);
             // Wanting to go (a goal, not winding up or striking), out of reach, and no more

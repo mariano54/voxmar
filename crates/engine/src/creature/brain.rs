@@ -42,6 +42,9 @@ pub const NO_WAY: f32 = 30.0;
 pub const STRUCK_LATELY: f32 = 3.0;
 /// How long a creature that gave up a chase makes for home (`Memory::Homeward`).
 pub const HOMEWARD: f32 = 20.0;
+/// How far past a player's reach (`physics::player::REACH`, from their eyes) a boss held
+/// off keeps its body: a player down a hole it cannot reach into strikes nothing from there.
+pub const KEEP_OFF: f32 = 0.5;
 /// Seconds a creature remembers the player who hurt it (`Memory::HurtBy`).
 pub const HURT_REMEMBERED: f32 = 45.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
@@ -269,6 +272,11 @@ pub struct Mind {
     /// Where it was startled with no one to blame (a snare it slipped): while it recalls
     /// the fright (`Memory::Startled`) it runs from there, not toward home.
     pub startled_at: Option<Vec3>,
+    /// Where a boss's target stood when it came as near them as it could and still could
+    /// not reach them (a player down a hole too deep for it, or under a roof): while they
+    /// stay there it keeps off out of their reach, watching them (`KEEP_OFF`), and comes
+    /// on once they leave it.
+    pub held_off: Option<Vec3>,
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
     /// near, how far it likes to stray).
     pub seed: u64,
@@ -292,6 +300,7 @@ impl Mind {
             seed,
             zig: 1.0,
             startled_at: None,
+            held_off: None,
         }
     }
 
