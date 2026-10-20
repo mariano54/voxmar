@@ -6614,7 +6614,8 @@ const WALLS_WAIT: f32 = 8.0;
 /// Walls make the home. About the camp the Home step left (the bag home, a torch beside it),
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
 /// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound), two
-/// of them hide windows, it turns Snug and is a bright room. Then, set to midnight (`/time`,
+/// of them hide windows, a rug and a hanging within, it turns Snug, a bright room and soft
+/// furnishings. Then, set to midnight (`/time`,
 /// no waiting for dark), indoors by the hearth it is an evening in, and noon again after.
 /// All of it goes again after, the camp left for the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
@@ -6629,6 +6630,8 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let (low, high) = (bag + IVec3::new(-5, 0, -3), bag + IVec3::new(3, 3, 3));
     let (hearth, light) = (bag + IVec3::new(0, 0, 2), bag + IVec3::new(-3, 0, -2));
     let panes = [IVec3::new(bag.x - 1, bag.y + 1, low.z), IVec3::new(bag.x + 1, bag.y + 1, low.z)];
+    // A rug by the hearth and a hanging inside the west wall: soft furnishings.
+    let soft = [(bag + IVec3::new(-1, 0, 1), "red_rug"), (bag + IVec3::new(-4, 1, 0), "red_wall_hanging")];
     let walls = |net: &Net, block: &str| {
         for (a, b) in [
             (low, IVec3::new(low.x, high.y, high.z)),
@@ -6644,7 +6647,7 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         walls(net, "air");
         roof(net, "air");
-        for at in [hearth, light] {
+        for at in [hearth, light].into_iter().chain(soft.map(|(at, _)| at)) {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("effect clear");
@@ -6685,23 +6688,29 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
                 for pane in panes {
                     net.command(&format!("setblock {} {} {} hide_window", pane.x, pane.y, pane.z));
                 }
+                for (at, block) in soft {
+                    net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
+                }
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", Err(format!("{waited:.1} server s on, roofed but open to the outside: Hearthside {hearthside}, Snug {snug} (want Hearthside alone), /home asked for \"{wanted}\" walls {asked}; lines since: {lines:?}")));
                 leave(world, gate);
             }
         }
-        // Walled in with planks, two of them hide windows: Snug, and a bright room.
+        // Walled in with planks, two of them hide windows, a rug and a hanging within: Snug, a
+        // bright room and soft furnishings.
         2 => {
-            let (snug, bright) = (has(world, "base:snug"), has(world, "base:bright_room"));
-            if snug && bright {
+            let (snug, bright, cushioned) = (has(world, "base:snug"), has(world, "base:bright_room"), has(world, "base:soft_furnishings"));
+            if snug && bright && cushioned {
                 gate.check("home: walls", Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()));
                 gate.check("home: bright room", Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()));
+                gate.check("home: soft furnishings", Ok("a rug and a wall hanging in the walled room showed the Soft furnishings chip".into()));
                 world.resource::<Net>().command("time set midnight");
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", if snug { Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()) } else { Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))) });
-                gate.check("home: bright room", Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")));
+                gate.check("home: bright room", if bright { Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()) } else { Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")) });
+                gate.check("home: soft furnishings", if cushioned { Ok("a rug and a wall hanging in the walled room showed the Soft furnishings chip".into()) } else { Err(format!("{waited:.1} server s after a rug and a hanging at {soft:?} in the walled room: Soft furnishings chip {cushioned}")) });
                 leave(world, gate);
             }
         }

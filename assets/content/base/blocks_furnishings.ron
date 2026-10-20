@@ -53,8 +53,9 @@
         // of cloth_grey and its kin, multiplied by the dye. Broken, a placed piece gives itself back.
         "dyed": [
             (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}", "shelter:draughty"]),
-            (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "decor", "colour:{name}"]),
+            (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "soft", "decor", "colour:{name}"]),
             (name: "{name}_banner", render: Model, shape: "banner", facing: true, solid: false, sound: Moss, textures: All("banner_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "banner", "decor", "colour:{name}"]),
+            (name: "{name}_wall_hanging", render: Model, shape: "wall_hanging", facing: true, solid: false, sound: Moss, textures: All("hanging_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "hanging", "soft", "decor", "colour:{name}"]),
             (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "curtain", "decor", "colour:{name}"]),
             (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
             (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),

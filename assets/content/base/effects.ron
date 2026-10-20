@@ -115,6 +115,11 @@
         (name: "larder", kind: Buff, title: "Larder", description: "Meals heal a fifth more here and their good lasts half again as long.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("storage", 4), HomeHas("cooking", 1), HomeHas("table", 1), Any([HomeHas("hearth", 1), HomeHas("heat", 1)])])),
             replaces: ["pantry"], modifiers: (meal_heal: 1.2, meal_time: 1.5)),
+        // Soft furnishings, the Nomad's to the Farm age's: a rug underfoot and a hanging on the
+        // wall (`soft`) under the home's roof keep the draught off the floor and the walls.
+        (name: "soft_furnishings", kind: Buff, title: "Soft furnishings", description: "A rug underfoot and a hanging on the wall keep the draught off: 1° warmer here.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("soft", 2)])),
+            replaces: [], modifiers: (warmth: 1.0)),
         // A corner by the bed, a Nomad's first comfort before any roof: a seat and two lights
         // beside it keep the night warmer, and sleeping there is a better rest (the sleeps
         // rules below). A herb nook, the Farm age's: bunches drying overhead and a jar or crate

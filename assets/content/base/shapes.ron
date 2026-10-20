@@ -199,6 +199,11 @@
             (from: (1, 14, 13), to: (15, 16, 15), textures: All("cloth_grey")),
             (from: (2, 0, 13.5), to: (14, 14, 14.5)),
         ]),
+        // A woven hanging on a rod against the south side of its cell, the wall's width.
+        "wall_hanging": (boxes: [
+            (from: (0, 15, 14), to: (16, 16, 15.5), textures: All("furniture_wood")),
+            (from: (1, 1, 14.5), to: (15, 15, 15.5)),
+        ]),
         // A door's leaf, a block's height (a door is two): shut across the middle of its
         // cell, and open, swung back against its jamb on the west side.
         "door": (boxes: [(from: (0, 0, 6.5), to: (16, 16, 9.5))]),

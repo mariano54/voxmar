@@ -9528,3 +9528,31 @@ fn a_village_bed_is_someones() {
     client.pump_until(|c| told(c, "wake here"));
     assert!(!refused(&client), "a bag set in a village bed's place was refused");
 }
+
+/// Soft things count at home (docs/home.md Rooms): a rug and a wall hanging by a slept-in
+/// bag under a roof make Soft furnishings, announced; the hanging taken down, it goes.
+#[test]
+fn a_rug_and_a_hanging_make_soft_furnishings() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let bag = feet + IVec3::new(2, 0, 0);
+    let (rug, hanging) = (feet + IVec3::new(1, 0, 2), feet + IVec3::new(3, 1, -2));
+    for line in [
+        format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 3, feet.z - 3, feet.x + 6, feet.y + 3, feet.z + 3),
+        format!("/setblock {} {} {} red_rug", rug.x, rug.y, rug.z),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(rug) == c.content.blocks.id("base:red_rug"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested"));
+    assert!(!has(&client, "base:soft_furnishings"), "a rug alone is not soft furnishings");
+    client.chat.clear();
+    client.ok(&format!("/setblock {} {} {} red_wall_hanging", hanging.x, hanging.y, hanging.z));
+    client.pump_until(|c| has(c, "base:soft_furnishings") && told(c, "Soft furnishings:"));
+    client.ok(&format!("/setblock {} {} {} air", hanging.x, hanging.y, hanging.z));
+    client.pump_until(|c| !has(c, "base:soft_furnishings"));
+}
