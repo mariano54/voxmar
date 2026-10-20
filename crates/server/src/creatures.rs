@@ -1634,9 +1634,14 @@ impl Server {
         (0..24).flat_map(|d| [y + d, y - d - 1]).map(|cy| IVec3::new(x, cy, z)).find(|&cell| stands(cell))
     }
 
-    /// Whether a block giving light lies within `LIT_REACH` of `cell`.
-    fn lit_near(&self, cell: IVec3) -> bool {
+    /// Whether a block giving light, or a player holding a light (a firebrand), lies within
+    /// `LIT_REACH` of `cell`.
+    pub(crate) fn lit_near(&self, cell: IVec3) -> bool {
         let r = LIT_REACH;
+        let held = self.players.values().filter(|p| p.joined && p.health.alive() && p.held().is_some_and(|item| self.content.tools.held_light(item) > 0));
+        if held.into_iter().any(|p| (p.position.floor().as_ivec3() - cell).abs().max_element() <= r) {
+            return true;
+        }
         (-r..=r).any(|dy| (-r..=r).any(|dz| (-r..=r).any(|dx| self.block(cell + IVec3::new(dx, dy, dz)).is_some_and(|b| self.content.blocks.info(b).emission > 0))))
     }
 

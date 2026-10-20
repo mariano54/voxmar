@@ -110,6 +110,8 @@ pub struct Atmosphere {
     pub dusk: Vec4,
     pub cloud_flash: Vec4,
     pub bow: Vec4,
+    /// A light held in the hand: where, and its level over 15 (`HeldLight`).
+    pub held: Vec4,
 }
 
 impl Default for Atmosphere {
@@ -225,6 +227,7 @@ impl Atmosphere {
                 dusk: Vec4::ZERO,
                 cloud_flash: Vec4::ZERO,
                 bow: Vec4::ZERO,
+                held: Vec4::ZERO,
             };
         }
 
@@ -281,6 +284,7 @@ impl Atmosphere {
             dusk: light.dusk.extend(0.0),
             cloud_flash: Vec4::ZERO,
             bow: Vec4::ZERO,
+            held: Vec4::ZERO,
         }
     }
 

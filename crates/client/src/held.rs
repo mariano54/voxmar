@@ -801,6 +801,9 @@ fn show(
             light
         }
     };
+    // A light in the hand lights the hand.
+    let own = launch.content.tools.held_light(item.unwrap_or(BlockId(0))).min(15);
+    let measured = [measured[0], measured[1].max(own)];
     let light = motion.light(measured, dt, handling.hand.light_rate);
     // First, not last: the renderer keeps the first `CAPACITY` models, and when drops fill
     // the list it is the furthest of them that go, not the hand.

@@ -29,6 +29,7 @@ pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
     vec![
         Box::new(Falling),
         Box::new(Survival),
+        Box::new(crate::tool_wear::Burning::default()),
         Box::new(Weather::default()),
         Box::new(crate::wear::Footsteps::default()),
         Box::new(crate::farm::Growth),

@@ -87,6 +87,56 @@ impl Server {
     }
 }
 
+/// What burns while carried (a firebrand, `burns:N`) burns down a second at a time,
+/// wherever it is in the inventory, counted in its stack's `wear`; burnt out it becomes
+/// what it leaves (`burns_to:`), or nothing. Once a second.
+#[derive(Default)]
+pub(crate) struct Burning {
+    /// Seconds gone by not yet burnt, under one.
+    behind: f32,
+}
+
+impl crate::process::Process for Burning {
+    fn tier(&self) -> voxmar_engine::schedule::Tier {
+        voxmar_engine::schedule::Tier::Low
+    }
+
+    fn run(&mut self, server: &mut Server) {
+        self.behind += voxmar_engine::schedule::Tier::Low.period() as f32 / voxmar_protocol::TICKS_PER_SECOND as f32;
+        let seconds = self.behind.floor();
+        self.behind -= seconds;
+        if seconds >= 1.0 {
+            server.burn_carried(seconds as u16);
+        }
+    }
+}
+
+impl Server {
+    /// Burns everything every living player carries that burns by `seconds`.
+    pub(crate) fn burn_carried(&mut self, seconds: u16) {
+        let tools = self.content.tools.clone();
+        for player in self.players.values_mut().filter(|p| p.joined && p.health.alive()) {
+            let inventory = &mut player.inventory;
+            let mut burnt = false;
+            for slot in inventory.slots.iter_mut().chain(std::iter::once(&mut inventory.cursor)).chain(inventory.craft.iter_mut()) {
+                let Some(stack) = slot.as_mut() else { continue };
+                let lasts = tools.burns(stack.item);
+                if lasts == 0 {
+                    continue;
+                }
+                burnt = true;
+                stack.wear = stack.wear.saturating_add(seconds);
+                if stack.wear >= lasts {
+                    *slot = tools.burnt(stack.item).map(|left| ItemStack::new(left, 1));
+                }
+            }
+            if burnt {
+                player.changed(voxmar_engine::traits::INVENTORY);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use voxmar_engine::glam::IVec3;
@@ -247,6 +297,26 @@ mod tests {
         assert_eq!((wear(&server, 7), wear(&server, 1)), (before, Some(0)), "moved out of its slot, nothing wears");
     }
 
+    /// `/wear` sets what is left of the tool in hand, or of one in a hotbar slot it names
+    /// (from 1), whichever slot is in hand.
+    #[test]
+    fn wear_names_a_slot_or_takes_the_hand() {
+        let (mut server, _client) = holding("base:iron_pickaxe", 0);
+        let pick = server.content.blocks.expect("base:iron_pickaxe");
+        let uses = server.content.tools.uses(pick);
+        server.players.get_mut(&1).unwrap().inventory.slots[3] = Some(ItemStack::new(pick, 1));
+        let me = crate::commands::Source::Player(1);
+        let wear = |server: &Server, slot: usize| server.players[&1].inventory.slots[slot].map(|s| s.wear);
+        assert!(server.wear_command(me, &["5".into()]).is_ok());
+        assert_eq!((wear(&server, 0), wear(&server, 3)), (Some(uses - 5), Some(0)), "the hand");
+        assert!(server.wear_command(me, &["2".into(), "4".into()]).is_ok());
+        assert_eq!((wear(&server, 0), wear(&server, 3)), (Some(uses - 5), Some(uses - 2)), "slot 4");
+        for bad in [["2", "0"], ["2", "10"], ["2", "x"]] {
+            assert!(server.wear_command(me, &bad.map(String::from)).is_err(), "{bad:?}");
+        }
+        assert!(server.wear_command(me, &["2".into(), "2".into()]).is_err(), "an empty slot");
+    }
+
     /// A hoe wears as it tills; in creative nothing wears; a block a player holds that never
     /// wears (a stick) and a bare hand are untouched.
     #[test]
@@ -376,5 +446,78 @@ mod tests {
         let items = crate::items::Items::restore(vec![lying], |name| blocks.id(name));
         let saved = items.saved(|item| blocks.def(item).name.clone());
         assert_eq!(saved.iter().map(|i| i.count).collect::<Vec<_>>(), [1, 1, 1]);
+    }
+
+    /// A stick held in any fire catches: the last one comes back a firebrand in the hand
+    /// that held it, from a campfire or a torch alike; from a bundle, one is lit and the
+    /// rest stay in hand.
+    #[test]
+    fn a_stick_held_in_any_fire_becomes_a_firebrand() {
+        for fire in ["base:campfire", "base:torch"] {
+            let (mut server, _client) = holding("base:stick", 0);
+            let at = put(&mut server, fire);
+            server.cook(1, at);
+            let brand = server.content.blocks.expect("base:firebrand");
+            assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(brand, 1)), "lit at {fire}, in hand");
+        }
+        let (mut server, _client) = holding("base:stick", 0);
+        let stick = server.content.blocks.expect("base:stick");
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(stick, 3));
+        let at = put(&mut server, "base:campfire");
+        server.cook(1, at);
+        let inventory = &server.players[&1].inventory;
+        assert_eq!(inventory.slots[0], Some(ItemStack::new(stick, 2)));
+        assert_eq!(inventory.count(server.content.blocks.expect("base:firebrand")), 1);
+        let (mut server, _client) = holding("base:stick", 0);
+        let at = put(&mut server, "base:stone");
+        server.cook(1, at);
+        assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(stick, 1)), "no fire, no firebrand");
+        // What tops up a stack already carried goes there, not into the emptied hand.
+        let (mut server, _client) = holding("base:cobblestone", 0);
+        let stone = server.content.blocks.expect("base:stone");
+        server.players.get_mut(&1).unwrap().inventory.slots[5] = Some(ItemStack::new(stone, 3));
+        let at = put(&mut server, "base:pit_kiln");
+        server.cook(1, at);
+        let inventory = &server.players[&1].inventory;
+        assert_eq!((inventory.slots[0], inventory.slots[5]), (None, Some(ItemStack::new(stone, 4))));
+    }
+
+    /// A firebrand burns a second at a time wherever it is carried, held or not, and burnt
+    /// out leaves a charred stick; the once-a-second pass burns it by the server's clock.
+    #[test]
+    fn a_firebrand_burns_out_to_a_charred_stick() {
+        let (mut server, _client) = holding("base:firebrand", 0);
+        let (brand, charred) = (server.content.blocks.expect("base:firebrand"), server.content.blocks.expect("base:charred_stick"));
+        let lasts = server.content.tools.burns(brand);
+        server.players.get_mut(&1).unwrap().inventory.slots[20] = Some(ItemStack::new(brand, 1));
+        server.burn_carried(lasts - 1);
+        for slot in [0, 20] {
+            assert_eq!(server.players[&1].inventory.slots[slot], Some(ItemStack { wear: lasts - 1, ..ItemStack::new(brand, 1) }), "slot {slot}");
+        }
+        let mut pass = super::Burning::default();
+        for _ in 0..(voxmar_protocol::TICKS_PER_SECOND as u64 / voxmar_engine::schedule::Tier::Low.period()) {
+            crate::process::Process::run(&mut pass, &mut server);
+        }
+        for slot in [0, 20] {
+            assert_eq!(server.players[&1].inventory.slots[slot], Some(ItemStack::new(charred, 1)), "slot {slot} burnt out");
+        }
+        server.burn_carried(lasts);
+        assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(charred, 1)), "a charred stick burns no more");
+    }
+
+    /// Monsters keep off where a player holds a light (a firebrand), as off a lit torch:
+    /// the spot by them counts as lit, and only while it is in hand and they live (one dead
+    /// burns no light down, so lights nothing).
+    #[test]
+    fn a_held_firebrand_lights_the_spot_for_spawning() {
+        let (mut server, _client) = holding("base:firebrand", 0);
+        let cell = server.players[&1].position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+        let lit = server.lit_near(cell);
+        server.players.get_mut(&1).unwrap().health.current = 0;
+        assert!(!server.lit_near(cell), "held by the dead, it does not");
+        server.players.get_mut(&1).unwrap().health.current = 10;
+        server.players.get_mut(&1).unwrap().selected = 1;
+        assert!(lit, "held, it lights");
+        assert!(!server.lit_near(cell), "carried, it does not");
     }
 }
