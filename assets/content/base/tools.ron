@@ -56,9 +56,15 @@
         (tags: ["ore", "metal:copper"], skill: "core:mining", level: 5, tool: "pickaxe", tier: 1, xp: 17.5),
         (tags: ["ore", "fuel"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 1, xp: 13.0),
         (tags: ["ore"], skill: "core:mining", level: 1, tool: "pickaxe", tier: 1, xp: 10.0),
-        (tags: ["stone", "natural"], skill: "core:mining", xp: 1.0),
-        // A dead snag's trunk breaks to a stick, not a log.
+        // Bare hands break neither rock nor a tree: stone wants a pickaxe and a log an axe,
+        // flint ones at the least (recipes.ron), so the first tools are made, not found. A
+        // log set down as a wall still wants the axe that felled it.
+        (tags: ["stone", "natural"], skill: "core:mining", tool: "pickaxe", tier: 1, xp: 1.0),
+        // A dead snag's trunk breaks to a stick, not a log, by hand too.
         (tags: ["log", "snag"], instead: ("stick", 1.0)),
+        (tags: ["log", "natural"], tool: "axe", tier: 1),
+        // Leaves pulled from a tree give a stick one time in five: the hafts of the first tools.
+        (tags: ["leaves", "natural"], instead: ("stick", 0.2)),
         (tags: ["clay", "natural"], skill: "core:mining", xp: 2.0),
         // Gravel breaks to flint one time in eight (arrowheads, spear points).
         (tags: ["gravel", "natural"], skill: "core:mining", xp: 1.0, instead: ("flint", 0.125)),

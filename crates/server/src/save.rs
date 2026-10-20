@@ -165,6 +165,10 @@ pub struct WorldMeta {
     /// none in older worlds.
     #[serde(default)]
     pub rolls: u64,
+    /// Whether the spawn kit (`spawn_kit.ron`) lies by the spawn: laid once, on the first
+    /// start of a world or of an older save without it.
+    #[serde(default)]
+    pub spawn_kit: bool,
 }
 
 /// What tells the world's rolls (`WorldMeta::next_roll`) of one kind from another's.
@@ -299,6 +303,7 @@ impl WorldMeta {
             drops: 0,
             loot: 0,
             rolls: 0,
+            spawn_kit: false,
         }
     }
 }
@@ -363,6 +368,8 @@ pub struct Draws {
     pub kills: u64,
     /// Wanderers' greetings heard, for which of their greetings is said.
     pub greets: u64,
+    /// Shots that missed, each of which may land to pick up again (`recover_miss`).
+    pub strays: u64,
 }
 
 /// A kind of roll a player's draws number (`Draws`).
@@ -386,6 +393,7 @@ pub enum Draw {
     Free,
     Kill,
     Greet,
+    Stray,
 }
 
 impl Draw {
@@ -410,6 +418,7 @@ impl Draw {
             Draw::Free => 0xf4ee,
             Draw::Kill => 0xb10d,
             Draw::Greet => 0x6e37,
+            Draw::Stray => 0x57a7,
         }
     }
 }
@@ -436,6 +445,7 @@ impl Draws {
             Draw::Free => &mut self.frees,
             Draw::Kill => &mut self.kills,
             Draw::Greet => &mut self.greets,
+            Draw::Stray => &mut self.strays,
         };
         let draws = numbered_draws(key, kind.salt(), *count);
         *count += 1;
@@ -1253,8 +1263,12 @@ mod tests {
     use voxmar_worldgen::Generator;
 
     fn registry(extra_first: bool) -> Arc<BlockRegistry> {
-        let source = include_str!("../../../assets/content/base/blocks.ron");
-        let mut defs = BlockRegistry::parse("base", source).unwrap();
+        // Every base block file, as the game loads them: worldgen places blocks from several.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.file_name().unwrap().to_str().unwrap().starts_with("blocks")).collect();
+        files.sort();
+        let packages = files.iter().map(|f| ("base".to_owned(), BlockRegistry::read("base", &std::fs::read_to_string(f).unwrap()).unwrap())).collect();
+        let mut defs = BlockRegistry::expand(packages).unwrap();
         if extra_first {
             // A mod loaded before `base` renumbers every base block.
             defs.insert(0, voxmar_engine::block::BlockDef { name: "aaa:marble".into(), ..defs[0].clone() });
@@ -1482,7 +1496,7 @@ mod tests {
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
             casts: 12,
-            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3, kills: 12, greets: 4, wears: 12 },
+            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3, kills: 12, greets: 4, strays: 6, wears: 12 },
             home_steps: Vec::new(),
             home_anchor: None,
             spilled: Vec::new(),
@@ -1530,34 +1544,34 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A player saved before kills and greetings were counted loads with both at none and
-    /// every other count kept, and the next save writes them.
+    /// A player saved before kills, greetings and stray shots were counted loads with each
+    /// at none and every other count kept, and the next save writes them.
     #[test]
     fn a_save_without_kill_or_greeting_counts_loads_them_at_none() {
         let dir = temp_dir("draws-before-kills");
         let save = WorldSave::new(&dir);
         let registry = registry(false);
-        let draws = Draws { strikes: 31, mines: 40, frees: 3, kills: 12, greets: 4, ..Draws::default() };
+        let draws = Draws { strikes: 31, mines: 40, frees: 3, kills: 12, greets: 4, strays: 6, ..Draws::default() };
         let player = SavedPlayer { position: Vec3::new(1.5, 80.0, -20.25), yaw: 1.25, mode: None, flying: false, health: Health { current: 13, max: 20 }, inventory: Inventory::default(), skills: Vec::new(), effects: Vec::new(), home: None, bed: None, kindled: false, journal: Vec::new(), quests: Vec::new(), quests_claimed: Vec::new(), tallies: Vec::new(), prayer_points: None, casts: 0, draws, home_steps: Vec::new(), home_anchor: None, spilled: Vec::new() };
         save.write_player("ada", &player, &registry).unwrap();
         let file = dir.join("players/ada.ron");
         let mut text = std::fs::read_to_string(&file).unwrap();
-        // The file as an older build wrote it: no `kills` or `greets` among the draws.
-        for key in ["kills", "greets"] {
+        // The file as an older build wrote it: no `kills`, `greets` or `strays` among the draws.
+        for key in ["kills", "greets", "strays"] {
             // ` kills:`, not the end of `skills:`.
             let at = 1 + text.find(&format!(" {key}:")).unwrap_or_else(|| panic!("no `{key}` in {text}"));
             let end = at + text[at..].find([',', ')']).unwrap();
             let start = text[..at].trim_end().strip_suffix(',').map_or(at, |before| before.len());
             text.replace_range(start..end, "");
         }
-        assert!(!text.contains(" kills:") && !text.contains(" greets:") && text.contains(" frees:"), "{text}");
+        assert!(!text.contains(" kills:") && !text.contains(" greets:") && !text.contains(" strays:") && text.contains(" frees:"), "{text}");
         std::fs::write(&file, &text).unwrap();
         let old = save.read_player("ada", &registry).unwrap().expect("loads");
-        assert_eq!(old.draws, Draws { kills: 0, greets: 0, ..draws }, "the other counts kept, the new ones at none");
-        save.write_player("ada", &SavedPlayer { draws: Draws { kills: 1, greets: 2, ..old.draws }, ..old }, &registry).unwrap();
+        assert_eq!(old.draws, Draws { kills: 0, greets: 0, strays: 0, ..draws }, "the other counts kept, the new ones at none");
+        save.write_player("ada", &SavedPlayer { draws: Draws { kills: 1, greets: 2, strays: 3, ..old.draws }, ..old }, &registry).unwrap();
         let again = std::fs::read_to_string(&file).unwrap();
-        assert!(again.contains(" kills:") && again.contains(" greets:"), "the next save writes both: {again}");
-        assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().draws, Draws { kills: 1, greets: 2, ..draws });
+        assert!(again.contains(" kills:") && again.contains(" greets:") && again.contains(" strays:"), "the next save writes them: {again}");
+        assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().draws, Draws { kills: 1, greets: 2, strays: 3, ..draws });
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1572,7 +1586,7 @@ mod tests {
         assert_eq!(draws.next(ada, Draw::Strike), numbered_draws(ada, Draw::Strike.salt(), 1));
         draws.next(ada, Draw::Cook);
         assert_eq!(draws, Draws { strikes: 2, cooks: 1, ..Draws::default() });
-        let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free, Draw::Kill, Draw::Greet];
+        let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free, Draw::Kill, Draw::Greet, Draw::Stray];
         // Every kind's salt, the world's kinds of roll and its loot rolls' are told apart.
         let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, ROLL_GRAZE, ROLL_SUMMON, ROLL_WANDER, ROLL_SPAWN, ROLL_PARTY, ROLL_FOLLOWER, ROLL_START, 0x1007]).collect();
         let unique: std::collections::BTreeSet<_> = salts.iter().collect();

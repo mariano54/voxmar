@@ -68,15 +68,17 @@ impl Server {
         }
     }
 
-    /// Uses breaking or tilling the block at `pos` takes from the tool it began with: `tool`
-    /// is the hotbar slot in hand then and what was in it. One switched to since is not
-    /// worn, and one since moved out of that slot is not found there.
+    /// Uses breaking or tilling the block at `pos` takes from the tool it was done with:
+    /// `tool` is the hotbar slot in hand and what was in it (`Timed::tool`: for a break the
+    /// client showed done early, what it was judged by). One switched to since is not worn.
+    /// Moved out of that slot since, the wear goes to the first slot carrying that tool, so
+    /// moving it never dodges the wear (several breaks shown done early can be waiting, and
+    /// each wears it); with none carried, nothing wears.
     pub(crate) fn wear_on_block(&mut self, agent: PlayerId, pos: voxmar_engine::glam::IVec3, tilling: bool, (slot, began): (usize, Option<voxmar_engine::block::BlockId>)) {
         let tools = &self.content.tools;
-        let there = self.players.get(&agent).and_then(|p| p.inventory.get(slot)).map(|s| s.item);
-        if there != began {
-            return;
-        }
+        let Some(player) = self.players.get(&agent) else { return };
+        let holds = |slot: usize| began.is_some() && player.inventory.get(slot).map(|s| s.item) == began;
+        let Some(slot) = (holds(slot)).then_some(slot).or_else(|| (0..player.inventory.slots.len()).find(|&s| holds(s))) else { return };
         let uses = if tilling {
             if began.is_some_and(|item| tools.uses(item) > 0) { tools.wear().till } else { 0 }
         } else {
@@ -271,7 +273,7 @@ mod tests {
     }
 
     /// Mining wears the tool it began with, from its slot: not one switched to before the
-    /// block broke, and nothing if that tool has left its slot.
+    /// block broke. Moved to another slot it wears there; no longer carried, nothing wears.
     #[test]
     fn mining_wears_the_tool_it_began_with() {
         let (mut server, _client) = holding("base:iron_pickaxe", 0);
@@ -289,12 +291,19 @@ mod tests {
         }
         assert!(wear(&server, 0).is_some_and(|w| w > 0), "the one it began with: {:?}", wear(&server, 0));
         assert_eq!(wear(&server, 1), Some(0), "the one switched to");
-        let before = wear(&server, 0);
-        let moved = server.players.get_mut(&1).unwrap().inventory.slots[0].take();
-        server.players.get_mut(&1).unwrap().inventory.slots[7] = moved;
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[1] = None;
+        player.inventory.slots[7] = player.inventory.slots[0].take();
+        let before = wear(&server, 7);
+        for _ in 0..5 {
+            let stone = put(&mut server, "base:stone");
+            server.wear_on_block(1, stone, false, began);
+        }
+        assert!(wear(&server, 7) > before, "moved to slot 8, it wore there: {before:?} to {:?}", wear(&server, 7));
+        let gone = server.players.get_mut(&1).unwrap().inventory.slots[7].take();
         let stone = put(&mut server, "base:stone");
         server.wear_on_block(1, stone, false, began);
-        assert_eq!((wear(&server, 7), wear(&server, 1)), (before, Some(0)), "moved out of its slot, nothing wears");
+        assert!(server.players[&1].inventory.slots.iter().all(Option::is_none), "no longer carried, nothing wears or comes back: {gone:?}");
     }
 
     /// `/wear` sets what is left of the tool in hand, or of one in a hotbar slot it names
