@@ -557,7 +557,9 @@ impl Motion {
     /// Advances the hand by `dt` seconds of what the player does.
     pub fn step(&mut self, doing: Doing, dt: f32, hand: &Hand, moves: &AllMoves) -> Weights {
         if doing.item != self.item {
-            *self = Motion { item: doing.item, light: self.light, lit: self.lit, dashing: self.dashing, hurt_seen: self.hurt_seen, whiffs: self.whiffs, ..Motion::default() };
+            // The rhythm's reading goes on (`swing_began`): a click the frame after a switch
+            // starts it over from where the switch left it, and is a swing.
+            *self = Motion { item: doing.item, light: self.light, lit: self.lit, dashing: self.dashing, hurt_seen: self.hurt_seen, whiffs: self.whiffs, since_swing: self.since_swing, ..Motion::default() };
         }
         self.raised += dt;
         // Strokes run their course, and a held button starts the next.
@@ -1093,6 +1095,28 @@ mod tests {
         motion.step(Doing { item: Some(BlockId(5)), ..Doing::default() }, 0.05, &hand, &moves);
         assert!(!motion.whiff_began(1, false), "the switch was taken for a whiff");
         assert!(motion.whiff_began(2, false));
+    }
+
+    /// A click the frame after what is held changed is a swing, and the hand plays it: the
+    /// switch's fresh hand once forgot the rhythm's last reading, so a meter starting over
+    /// from full read as no drop at all (the gate's watched swing at the bear, pressed the
+    /// frame the sword came into hand, never played).
+    #[test]
+    fn a_swing_the_frame_after_a_switch_is_seen_and_played() {
+        let handling = shipped();
+        let (hand, moves) = (handling.hand, handling.moves);
+        let mut motion = Motion::default();
+        let empty = Doing::default();
+        assert!(!motion.swing_began(0.6, false));
+        motion.step(empty, 1.0 / 60.0, &hand, &moves);
+        // The sword comes into hand with the meter full: a switch, no swing.
+        let sword = Doing { item: Some(BlockId(5)), ..Doing::default() };
+        assert!(!motion.swing_began(0.6, true));
+        motion.step(sword, 1.0 / 60.0, &hand, &moves);
+        // The very next frame the click starts the meter over.
+        assert!(motion.swing_began(0.0, false), "the swing the frame after the switch was not seen");
+        motion.step(Doing { swung: true, connect: 0.1, ..sword }, 1.0 / 60.0, &hand, &moves);
+        assert!(motion.swing().is_some(), "the hand did not play the swing");
     }
 
     #[test]
