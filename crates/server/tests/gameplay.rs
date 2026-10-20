@@ -3454,12 +3454,25 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
     for (hoe, reaped) in [("bare hand", 1), ("flint_knife", 1), ("stone_hoe", 9)] {
         client.ok("/clear");
         client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
-        if hoe != "bare hand" {
-            client.ok(&format!("/give {hoe} 1"));
+        // The tool in whatever slot it lands in, and a bare hand on an empty slot: the last
+        // round's harvest lying about may be picked up into slot 0 after the clear. The give
+        // is sent again until the server's word of it comes.
+        let slot = if hoe == "bare hand" {
+            client.pump_ticks(TICKS_PER_SECOND as u64, |_| false);
+            client.inventory.slots.iter().position(Option::is_none).expect("an empty slot for a bare hand")
+        } else {
             let item = client.content.blocks.expect(&format!("base:{hoe}"));
-            client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == item));
-        }
-        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+            let at = |c: &Client| c.inventory.slots.iter().position(|s| s.as_ref().is_some_and(|s| s.item == item));
+            for _ in 0..10 {
+                client.ok(&format!("/give {hoe} 1"));
+                client.pump_ticks(5 * TICKS_PER_SECOND as u64, |c| at(c).is_some());
+                if at(&client).is_some() {
+                    break;
+                }
+            }
+            at(&client).unwrap_or_else(|| panic!("ten gives of a {hoe} never reached the pack"))
+        };
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
         client.ok(&format!("/fill {} {} {} {} {} {} farmland", centre.x - 1, centre.y - 1, centre.z - 1, centre.x + 1, centre.y - 1, centre.z + 1));
         client.ok(&format!("/fill {} {} {} {} {} {} wheat_crop", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
         client.pump_until(|c| cells.iter().all(|&cell| c.world.block(cell) == Some(ripe)));
@@ -3486,8 +3499,14 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
     let apple = client.content.blocks.expect("base:apple_leaves");
     client.ok(&format!("/fill {} {} {} {} {} {} apple_leaves", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
     client.pump_until(|c| cells.iter().all(|&cell| c.world.block(cell) == Some(apple)));
-    client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
-    client.pump_until(|c| c.world.block(centre) != Some(apple));
+    for _ in 0..10 {
+        client.propose("core:mine", ActionTarget::Block { block: centre, face: Face::PosY });
+        client.pump_ticks(2 * TICKS_PER_SECOND as u64, |c| c.world.block(centre) != Some(apple));
+        if client.world.block(centre) != Some(apple) {
+            break;
+        }
+    }
+    assert_ne!(client.world.block(centre), Some(apple), "ten cuts with a stone hoe never took the ripe apple leaf");
     client.after_server_ticks(2);
     let left = cells.iter().filter(|&&cell| client.world.block(cell) == Some(apple)).count();
     assert_eq!(left, 8, "a stone hoe on one ripe apple leaf took {} of the leaves about it", 8 - left);
