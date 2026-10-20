@@ -505,8 +505,11 @@ fn draw(
                 // amounts is too wide for that and goes with the name instead.
                 let (low, high) = entry.count;
                 let count = (high > 1 && low == high).then(|| format!("{high}"));
-                item_cell(card, font, &images, Some(entry.output), count);
-                let title = if low == high { name(entry.output) } else { locale.format("recipes.amount", &[("item", &name(entry.output)), ("low", &low), ("high", &high)]) };
+                // Burnt food looked up shows the cooking it is left from, burnt.
+                let burnt = !lookup.uses && matches!(&entry.method, Method::Cook { burnt: Some(b), .. } if content.blocks.item_of(*b) == lookup.item && entry.output != lookup.item);
+                let output = if burnt { lookup.item } else { entry.output };
+                item_cell(card, font, &images, Some(output), count);
+                let title = if low == high { name(output) } else { locale.format("recipes.amount", &[("item", &name(output)), ("low", &low), ("high", &high)]) };
                 // How, in words.
                 let words = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), flex_grow: 1.0, min_width: Val::ZERO, ..default() };
                 card.spawn(words).with_children(|words| {
