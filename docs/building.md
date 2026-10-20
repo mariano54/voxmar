@@ -43,7 +43,9 @@ does not: a room with an empty frame is open there.
 
 A window walls a room in but lets the weather through: a lattice window, a shuttered one
 left open and an arrow slit are draughty, and carry `draught`, the tag of a wall a draught
-comes through (which a draughty home's whistle can listen for). A room with them is as
+comes through (which a draughty home's whistle can listen for). `draught` means an open
+gap: an oiled-hide window or old glass is a draughty wall with no gap in it, so it
+carries no `draught`. A room with them is as
 closed as without, and as Snug, but each is a face short of sound: enough of them cost a
 room Cosy, which asks nine tenths sound. Shut, the shutters are a sound wall and keep the
 light out. Every window lets light in: a block tagged `window`, `lattice`, `window_frame`,
