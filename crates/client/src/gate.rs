@@ -547,9 +547,10 @@ steps! {
     /// Every journal page, in English and Japanese: no text reaches past the element it
     /// sits in. Each page has the time a step has, to be drawn and read.
     FitJournal,
-    /// The screens with keys under them in a window of `SMALL` (the interface at 75%), in
-    /// English and Japanese: no text reaches past the element it sits in, and the keys under
-    /// each screen are clear of it and of the HUD along the bottom.
+    /// The screens with keys under them, and the recipe viewer on each of `FIT_LOOKUPS`, in a
+    /// window of `SMALL` (the interface at 75%), in English and Japanese: no text reaches past
+    /// the element it sits in, and the keys under each screen are clear of it and of the HUD
+    /// along the bottom.
     FitSmall,
     /// Leaving the world for the title screen.
     Leave,
@@ -8845,7 +8846,11 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let views: Vec<View> = if gate.step == Step::FitJournal {
         (0..voxmar_engine::journal::Page::ALL.len()).map(View::Journal).collect()
     } else if gate.step == Step::FitSmall {
-        vec![View::Inventory, View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)]
+        [View::Inventory]
+            .into_iter()
+            .chain((0..FIT_LOOKUPS.len()).map(View::Recipes))
+            .chain([View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)])
+            .collect()
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
     } else {
