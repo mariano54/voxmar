@@ -322,7 +322,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (priority.rs). Cores, not hardware threads: on a machine with two threads a core (the
     // Linux box's 16-core EPYC), workers on every thread slowed every frame system about
     // threefold while the world streamed in, whatever their priority, and took flightfast's
-    // p99 frame from 11 to 25 ms. Once the world has loaded, fewer of them take work
+    // p99 frame from 11 to 25 ms. Once the world has loaded, fewer of them stream
     // (workers.rs). `VOXMAR_WORKERS=n` sets their number instead, loading and playing alike,
     // for timing how many a busy machine's frames can take and whether streaming keeps up
     // (tools/perf/play_frames, its `ahead:` lines).

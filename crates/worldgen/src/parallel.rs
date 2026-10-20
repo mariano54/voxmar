@@ -21,24 +21,8 @@
 //! (user-interactive) starts would otherwise put up to a worker count of helpers level with
 //! a game's frame threads. On Linux a thread inherits its creator's nice value already. `VOXMAR_THREAD_PRIORITY=off`
 //! (the game's timing switch, see the client's `priority.rs`) leaves helpers as they start.
-//! Helpers of an urgent thread (`urgent`) are urgent too, whatever their class: they do its
-//! work, which must not wait on a background build either.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
-std::thread_local! {
-    /// Whether this thread said it must never wait on a build at a lower priority
-    /// (`mark_urgent`), or helps one that did.
-    static URGENT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Marks the calling thread as one that must never wait on a region another thread, at a
-/// lower priority, is building: it makes its own copy instead (water/cache.rs). The
-/// server's tick calls it, on every platform: on a busy machine a build at a background
-/// priority is served last, on Linux (a higher nice value) as on macOS (a lower class).
-pub fn mark_urgent() {
-    URGENT.with(|urgent| urgent.set(true));
-}
 
 /// Whether builds use helper threads. Benchmarks that measure CPU time on one thread turn
 /// it off, so the work they measure stays on that thread.
@@ -94,7 +78,6 @@ pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
 fn with_helpers<T: Sync>(items: &[T], f: impl Fn(&T) + Sync, helpers: usize) {
     let next = AtomicUsize::new(0);
     let class = SchedulingClass::current().capped();
-    let urgent = urgent();
     let work = || {
         while let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) {
             f(item);
@@ -104,9 +87,6 @@ fn with_helpers<T: Sync>(items: &[T], f: impl Fn(&T) + Sync, helpers: usize) {
         for _ in 0..helpers {
             scope.spawn(|| {
                 class.apply();
-                if urgent {
-                    mark_urgent();
-                }
                 work();
             });
         }
@@ -148,18 +128,6 @@ impl SchedulingClass {
         self
     }
 
-    /// Whether this is a class above the default, which a game's frame threads and the
-    /// server's tick ask for.
-    fn urgent(self) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            use libc::qos_class_t::{QOS_CLASS_USER_INITIATED, QOS_CLASS_USER_INTERACTIVE};
-            matches!(self.0, Some(QOS_CLASS_USER_INTERACTIVE | QOS_CLASS_USER_INITIATED))
-        }
-        #[cfg(not(target_os = "macos"))]
-        false
-    }
-
     fn apply(self) {
         #[cfg(target_os = "macos")]
         if let Some(class) = self.0 {
@@ -167,14 +135,6 @@ impl SchedulingClass {
             unsafe { libc::pthread_set_qos_class_self_np(class, 0) };
         }
     }
-}
-
-/// Whether the calling thread must never wait on a build at a lower priority: marked so
-/// (`mark_urgent`), helping a thread that is, or on macOS of a class above the default (the
-/// server's tick, a game's frame threads). The scheduler serves the builder after everything
-/// above it, the waiter's priority notwithstanding (water/cache.rs).
-pub(crate) fn urgent() -> bool {
-    URGENT.with(|urgent| urgent.get()) || SchedulingClass::current().urgent()
 }
 
 /// The threads the process was given with `RAYON_NUM_THREADS`, if any.
@@ -244,28 +204,5 @@ mod tests {
         assert!(matches!(capped(QOS_CLASS_USER_INITIATED), Some(QOS_CLASS_DEFAULT)));
         assert!(matches!(capped(QOS_CLASS_UTILITY), Some(QOS_CLASS_UTILITY)));
         assert!(SchedulingClass(None).capped().0.is_none());
-    }
-
-    /// Helpers of an urgent thread are urgent, and those of any other are not.
-    #[test]
-    fn helpers_of_an_urgent_thread_are_urgent() {
-        let helped = |marked: bool| {
-            std::thread::spawn(move || {
-                if marked {
-                    mark_urgent();
-                }
-                let barrier = std::sync::Barrier::new(2);
-                let seen = std::sync::Mutex::new(Vec::new());
-                with_helpers(&[0, 1], |_| {
-                    seen.lock().unwrap().push(urgent());
-                    barrier.wait();
-                }, 1);
-                seen.into_inner().unwrap()
-            })
-            .join()
-            .unwrap()
-        };
-        assert_eq!(helped(true), [true, true]);
-        assert_eq!(helped(false), [false, false]);
     }
 }

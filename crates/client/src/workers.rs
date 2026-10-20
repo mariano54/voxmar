@@ -1,21 +1,17 @@
-//! How many of the streaming workers (the global rayon pool, see `main`) take work: all of
-//! them while a world loads, before the player is in it and frames matter, and at most
-//! `PLAYING` once its land has first come in. On the 18-core Mac, busy with other work as it
-//! usually is, a 40 s flight's p99 frame was 24 ms with 16 workers (and with 12), 10-15 ms
-//! with 8 and 6 ms with 4, at the same frame median; but the gate's world took 49 s to load
-//! with 16, and loading is what more workers are for.
+//! How many of the streaming workers (the global rayon pool, see `main`) stream: all of them
+//! while a world loads, before the player is in it and frames matter, and at most `PLAYING`
+//! once its land has come in. On the 18-core Mac, busy with other work as it usually is, a
+//! 40 s flight's p99 frame was 24 ms with 16 workers (and with 12), 10-15 ms with 8 and 6 ms
+//! with 4, at the same frame median; but the gate's world took 49 s to load with 16, and
+//! loading is what more workers are for.
 //!
-//! A pool's size is fixed once built, so the workers beyond the cap are parked: each takes a
-//! job that sleeps until the cap is lifted (leaving the world). Work already queued runs
-//! first, so the cap takes hold as the loading's last jobs finish. Meshing dispatches for
-//! the workers that take work (`active`), and generation's region builds borrow no more
-//! helper threads than that.
+//! The pool keeps its size; what is capped is how many streaming jobs (generating, meshing,
+//! distant land) run at once (`voxmar_engine::jobs`), and the helper threads generation's
+//! region builds borrow. No worker is ever held: a job with no room is not started yet. The
+//! cap is lifted on leaving the world, so the next one loads on every worker.
 //!
 //! `VOXMAR_WORKERS=n` sets the workers outright, loading and playing alike (for timing how
 //! many a busy machine's frames can take, tools/perf/play_frames).
-
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Condvar, Mutex};
 
 use bevy::prelude::*;
 
@@ -23,25 +19,14 @@ use crate::menu::Screen;
 use crate::player::LocalPlayer;
 use crate::world::ClientWorld;
 
-/// Most workers that take work while playing.
+/// Most streaming jobs at once while playing.
 pub const PLAYING: usize = 6;
 
-/// Workers taking work now; 0 for every one in the pool (before `WorkersPlugin`, and in tests).
-static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+/// Seconds the land must have stopped arriving, all of it meshed, for the world to count
+/// as loaded: one quiet moment is not enough while a busy machine generates it in bursts.
+const LOADED_FOR: f32 = 2.0;
 
-/// Workers that take work now.
-pub fn active() -> usize {
-    match ACTIVE.load(Ordering::Relaxed) {
-        0 => rayon::current_num_threads(),
-        n => n,
-    }
-}
-
-/// The parked workers' wake-up: a count of lifts, which each parked job waits to change.
-static LIFTS: Mutex<u64> = Mutex::new(0);
-static LIFTED: Condvar = Condvar::new();
-
-/// The pool's workers, and how many of them take work while playing.
+/// The pool's workers, and how many of them stream while playing.
 pub struct WorkersPlugin {
     pub all: usize,
     pub playing: usize,
@@ -49,10 +34,9 @@ pub struct WorkersPlugin {
 
 impl Plugin for WorkersPlugin {
     fn build(&self, app: &mut App) {
-        ACTIVE.store(self.all, Ordering::Relaxed);
         if self.playing < self.all {
-            app.insert_resource(Cap { all: self.all, playing: self.playing, capped: false })
-                .add_systems(Update, cap_once_loaded)
+            app.insert_resource(Cap { all: self.all, playing: self.playing, capped: false, quiet: None })
+                .add_systems(Update, cap_once_loaded.run_if(in_state(Screen::InGame)))
                 .add_systems(OnExit(Screen::InGame), lift);
         }
     }
@@ -63,42 +47,46 @@ struct Cap {
     all: usize,
     playing: usize,
     capped: bool,
+    /// Columns received, and since when no more have come with everything meshed.
+    quiet: Option<(usize, f32)>,
 }
 
-/// Parks the workers beyond the cap once the player's world has first loaded: joined, every
-/// column in view meshed and nothing left meshing (as the gate's `load` waits for).
-fn cap_once_loaded(mut cap: ResMut<Cap>, screen: Res<State<Screen>>, player: Res<LocalPlayer>, world: Res<ClientWorld>) {
-    let loaded = *screen.get() == Screen::InGame
-        && player.joined
-        && world.voxels.len() >= 9
-        && world.stats.pending_columns == 0
-        && world.stats.jobs_in_flight == 0;
-    if cap.capped || !loaded {
+/// Caps streaming once the player's world has loaded: joined, no column arriving for
+/// `LOADED_FOR`, and every column received that can be meshed meshed.
+fn cap_once_loaded(mut cap: ResMut<Cap>, time: Res<Time<Real>>, player: Res<LocalPlayer>, world: Res<ClientWorld>) {
+    if cap.capped {
         return;
     }
-    cap.capped = true;
-    let lifts = *LIFTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    for _ in cap.playing..cap.all {
-        rayon::spawn(move || {
-            let mut now = LIFTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            while *now == lifts {
-                now = LIFTED.wait(now).unwrap_or_else(|poisoned| poisoned.into_inner());
-            }
-        });
+    let now = time.elapsed_secs();
+    let columns = world.voxels.len();
+    if !(player.joined && columns >= 9 && world.caught_up()) {
+        cap.quiet = None;
+        return;
     }
-    ACTIVE.store(cap.playing, Ordering::Relaxed);
+    match cap.quiet {
+        Some((seen, since)) if seen == columns => {
+            if now - since < LOADED_FOR {
+                return;
+            }
+        }
+        _ => {
+            cap.quiet = Some((columns, now));
+            return;
+        }
+    }
+    cap.capped = true;
+    voxmar_engine::jobs::set_limit(cap.playing);
     voxmar_worldgen::set_helper_limit(cap.playing);
-    info!("streaming on {} of {} workers while playing", cap.playing, cap.all);
+    info!("streaming on {} of {} workers while playing, from {columns} columns in", cap.playing, cap.all);
 }
 
-/// Wakes the parked workers on leaving the world, so the next one loads on all of them.
+/// Streams on every worker again on leaving the world, so the next one loads on all of them.
 fn lift(mut cap: ResMut<Cap>) {
+    cap.quiet = None;
     if !cap.capped {
         return;
     }
     cap.capped = false;
-    *LIFTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) += 1;
-    LIFTED.notify_all();
-    ACTIVE.store(cap.all, Ordering::Relaxed);
+    voxmar_engine::jobs::set_limit(0);
     voxmar_worldgen::set_helper_limit(cap.all);
 }

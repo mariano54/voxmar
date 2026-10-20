@@ -32,16 +32,15 @@
 //! (`cut`): a choice that depends on nothing but the circle, never on which region or thread
 //! asked first. Without it, two threads could each wait on the other's half of the circle.
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::cmp::{Ordering, Reverse};
 use std::collections::BinaryHeap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::glam::IVec2;
 
-use super::cache::{Cache, Shared, Weigh};
+use super::cache::{Cache, Weigh};
 use crate::SEA_LEVEL;
 use crate::rng::hash3;
 
@@ -451,12 +450,12 @@ struct Exit {
     /// The cell outside the region it drains into, by its own region's routing.
     to: IVec2,
     /// Whether it ends a circle of crossings (see the module's docs), once known.
-    cut: Shared<bool>,
+    cut: OnceLock<bool>,
     /// Water gathered inside the region.
     local: f32,
     /// The entries whose water passes through this exit.
     upstream: Vec<u32>,
-    total: Shared<f32>,
+    total: OnceLock<f32>,
 }
 
 /// A region's record of where water crosses its border.
@@ -492,7 +491,7 @@ pub struct Basin {
     /// Lakes, wet or dry, whose basins reach the core.
     pub lakes: Vec<Arc<Lake>>,
     flow: Arc<Flow>,
-    totals: Shared<Box<[f32]>>,
+    totals: OnceLock<Box<[f32]>>,
 }
 
 impl Basin {
@@ -623,12 +622,11 @@ impl Drainage {
         let stages = if tier.tarns.is_some() { 2 } else { 1 };
         Self {
             tier,
-            // Pure functions of their regions, which the server's tick may read: copying.
-            lakes: Cache::copying(budget.lakes / stages),
-            ordinary_lakes: Cache::copying(budget.lakes / 2),
-            basins: Cache::copying(budget.basins / stages),
-            routing: Cache::copying(budget.basins / 2),
-            flows: Cache::copying(budget.flows),
+            lakes: Cache::new(budget.lakes / stages),
+            ordinary_lakes: Cache::new(budget.lakes / 2),
+            basins: Cache::new(budget.basins / stages),
+            routing: Cache::new(budget.basins / 2),
+            flows: Cache::new(budget.flows),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -659,8 +657,8 @@ impl Drainage {
 
     /// Water flowing through every cell of a basin's region, from everywhere upstream
     /// (rows of `Tier::side` cells).
-    pub fn totals<'b>(&self, ground: &dyn Ground, basin: &'b Basin) -> Cow<'b, [f32]> {
-        let totals = basin.totals.get_or_make(|| {
+    pub fn totals<'b>(&self, ground: &dyn Ground, basin: &'b Basin) -> &'b [f32] {
+        basin.totals.get_or_init(|| {
             self.prepare_upstream(ground, basin.flow.entries.iter());
             let mut totals = basin.local.clone();
             let side = self.tier.side;
@@ -682,11 +680,7 @@ impl Drainage {
                 }
             }
             totals
-        });
-        match totals {
-            Ok(shared) => Cow::Borrowed(shared),
-            Err(own) => Cow::Owned(own.into_vec()),
-        }
+        })
     }
 
     /// Water leaving its region through `cell`, which must drain out of that region.
@@ -706,7 +700,7 @@ impl Drainage {
             debug_assert!(false, "water loops through {cell}");
             return exit.local;
         }
-        let (Ok(&total) | Err(total)) = exit.total.get_or_make(|| {
+        let total = *exit.total.get_or_init(|| {
             self.prepare_upstream(ground, exit.upstream.iter().map(|&e| &flow.entries[e as usize]));
             exit.local + exit.upstream.iter().map(|&e| self.inflow(ground, &flow.entries[e as usize])).sum::<f32>()
         });
@@ -759,7 +753,7 @@ impl Drainage {
         const LONGEST: usize = 512;
         let flow = self.flow(ground, self.region_of(cell));
         let Some(exit) = Self::exit_of(&flow, cell) else { return false };
-        let (Ok(&cut) | Err(cut)) = exit.cut.get_or_make(|| {
+        *exit.cut.get_or_init(|| {
             let mut seen = vec![cell];
             let mut at = cell;
             while seen.len() < LONGEST {
@@ -774,8 +768,7 @@ impl Drainage {
                 }
             }
             false
-        });
-        cut
+        })
     }
 
     /// What water does at a pit.
@@ -1240,7 +1233,7 @@ impl Drainage {
                     let cell = origin + IVec2::new(i as i32 % side, i as i32 / side);
                     if next[core_index(cell).unwrap()] < 8 {
                         let to = cell + DIRS[next[core_index(cell).unwrap()] as usize];
-                        exits.push(Exit { cell, to, cut: Shared::default(), local: local[i], upstream: upstream[i].clone(), total: Shared::default() });
+                        exits.push(Exit { cell, to, cut: OnceLock::new(), local: local[i], upstream: upstream[i].clone(), total: OnceLock::new() });
                     }
                 }
             }
@@ -1261,7 +1254,7 @@ impl Drainage {
             local: local.into(),
             lakes,
             flow: Arc::new(Flow { entries, exits }),
-            totals: Shared::default(),
+            totals: OnceLock::new(),
         }
     }
 }

@@ -596,21 +596,14 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
 /// client's `priority.rs`), said outright, since whether a new thread takes its creator's
 /// class is not promised. Never below them: in a single-player game the server runs the
 /// world, and at the default class, on a machine at a load of 70-90, the gate's creatures
-/// stood still for seconds while the frames went on. On every platform it is marked urgent
-/// for world generation, which then never has it wait on a background worker's build
-/// (`voxmar_worldgen::mark_urgent`). `VOXMAR_THREAD_PRIORITY=off` leaves it as it starts, as
-/// it does the client's threads.
+/// stood still for seconds while the frames went on. `VOXMAR_THREAD_PRIORITY=off` leaves it
+/// as it starts, as it does the client's threads.
 fn frame_class() {
-    if std::env::var("VOXMAR_THREAD_PRIORITY").is_ok_and(|v| v == "off") {
-        return;
-    }
-    // SAFETY: only changes the scheduling class of the current thread.
     #[cfg(target_os = "macos")]
-    unsafe {
-        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
-    };
-    // Above the streaming workers, so never waiting on a region one of them is building.
-    voxmar_worldgen::mark_urgent();
+    if std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off") {
+        // SAFETY: only changes the scheduling class of the current thread.
+        unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0) };
+    }
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -1397,11 +1390,18 @@ impl Server {
                         player.sent.insert(pos);
                         sent += 1;
                     }
-                } else if self.generating.len() < MAX_GENERATING && self.generating.insert(pos) {
+                } else if self.generating.len() < MAX_GENERATING
+                    && !self.generating.contains(&pos)
+                    // Generating on fewer workers than there are, when a game playing on this
+                    // machine asks it to (voxmar_engine::jobs).
+                    && let Some(slot) = voxmar_engine::jobs::start()
+                {
+                    self.generating.insert(pos);
                     let (generator, save, registry) = (self.generator.clone(), self.save.clone(), self.content.blocks.clone());
                     let (wear, today) = (self.wear_rules.clone(), wear::day(self.day));
                     let tx = self.generated_tx.clone();
                     rayon::spawn(move || {
+                        let _slot = slot;
                         let _ = tx.send((pos, load_column(save.as_ref(), &*generator, &registry, &wear, today, pos)));
                     });
                 }

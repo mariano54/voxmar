@@ -252,11 +252,9 @@ impl Geology {
             vertical: 0.6 + 0.4 * dials.mountain_height / 140.0,
             climate: Climate::new(seed, dials, &content.climate),
             shapes: Shapes::new(seed, dials, content, rocks),
-            // Samples of the land, pure functions of their tiles, which the server's tick may
-            // read: copying.
-            lattice: Cache::copying(16 << 20),
-            lattice_reliefs: Cache::copying(8 << 20),
-            bases: Cache::copying(4 << 20),
+            lattice: Cache::new(16 << 20),
+            lattice_reliefs: Cache::new(8 << 20),
+            bases: Cache::new(4 << 20),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
