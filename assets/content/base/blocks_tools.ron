@@ -68,11 +68,11 @@
         // Farmland: soil a hoe has turned, where crops are sown.
         (
             name: "farmland", sound: Soil, textures: Sides(top: "farmland", bottom: "dirt", side: "dirt"),
-            hardness: 0.6, drops: "dirt", color: (100, 70, 45), tags: ["soil", "fertile", "tilled"],
+            hardness: 0.6, drops: "dirt", color: (100, 70, 45), tags: ["creative_only", "soil", "fertile", "tilled"],
         ),
         // Flint lying loose on the ground (decorations.ron's `loose_flint`), picked
         // up by hand: with gravel's, the flint of a new player's first tools.
-        (name: "loose_flint", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("loose_flint"), hardness: 0.0, drops: "flint", color: (60, 60, 66), tags: ["loose", "natural"]),
+        (name: "loose_flint", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("loose_flint"), hardness: 0.0, drops: "flint", color: (60, 60, 66), tags: ["creative_only", "loose", "natural"]),
     ],
     families: [
         // Flint: tier 1 as wood is, but made from bare hands: flint (gravel gives it one time in

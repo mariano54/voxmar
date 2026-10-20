@@ -7,8 +7,8 @@
 (
     blocks: [
         (name: "drying_rack", render: Plant, solid: false, sound: Wood, textures: All("drying_rack"), drops: "drying_rack", hardness: 0.3, color: (140, 105, 60), tags: ["decor"]),
-        (name: "drying_rack_hung", render: Plant, solid: false, sound: Wood, textures: All("drying_rack_hung"), drops: "drying_rack", hardness: 0.3, color: (170, 80, 70), tags: ["drying", "decor"]),
-        (name: "drying_rack_dry", render: Plant, solid: false, sound: Wood, textures: All("drying_rack_dry"), drops: "drying_rack", hardness: 0.3, color: (110, 60, 40), tags: ["drying", "decor"]),
+        (name: "drying_rack_hung", render: Plant, solid: false, sound: Wood, textures: All("drying_rack_hung"), drops: "drying_rack", hardness: 0.3, color: (170, 80, 70), tags: ["creative_only", "drying", "decor"]),
+        (name: "drying_rack_dry", render: Plant, solid: false, sound: Wood, textures: All("drying_rack_dry"), drops: "drying_rack", hardness: 0.3, color: (110, 60, 40), tags: ["creative_only", "drying", "decor"]),
         // A cooking pot of fired clay, empty, simmering and full: a hob (a campfire, or the
         // hearthstone it stands on) under it, water near, and grain becomes porridge, meat or
         // vegetables a stew.
@@ -16,7 +16,7 @@
         // On the boil: steam rolling off the top and bubbles heard breaking (`simmering`,
         // ambience.ron); done, a thinner wisp says a dish is waiting.
         (
-            name: "cooking_pot_simmering", render: Model, shape: "cooking_pot", sound: Stone, textures: All("cooking_pot_simmer"), drops: "cooking_pot", hardness: 1.0, color: (190, 190, 170), tags: ["simmering"],
+            name: "cooking_pot_simmering", render: Model, shape: "cooking_pot", sound: Stone, textures: All("cooking_pot_simmer"), drops: "cooking_pot", hardness: 1.0, color: (190, 190, 170), tags: ["creative_only", "simmering"],
             particles: [
                 (style: Smoke, rate: 7.0, at: (0.5, 0.6, 0.5), spread: 0.18, size: 1.0, height: 1.6, color: Some((214, 214, 208))),
                 (style: Spark, rate: 1.5, count: 3, at: (0.5, 0.56, 0.5), spread: 0.15, size: 0.4, height: 0.25, color: Some((236, 226, 196))),
@@ -24,15 +24,15 @@
         ),
         (
             name: "cooking_pot_ready", render: Model, shape: "cooking_pot", sound: Stone, textures: All("cauldron_stew"), drops: "cooking_pot", hardness: 1.0, color: (110, 130, 50),
-            particles: [(style: Smoke, rate: 2.0, at: (0.5, 0.6, 0.5), spread: 0.12, size: 0.8, height: 1.2, color: Some((214, 214, 208)))],
+            particles: [(style: Smoke, rate: 2.0, at: (0.5, 0.6, 0.5), spread: 0.12, size: 0.8, height: 1.2, color: Some((214, 214, 208)))], tags: ["creative_only"],
         ),
         (name: "compost_heap", sound: Wood, textures: Column(end: "compost_heap_top", side: "compost_heap_side"), drops: "compost_heap", hardness: 1.0, color: (120, 90, 55), tags: ["wood"]),
-        (name: "compost_heap_full", sound: Wood, textures: Column(end: "compost_heap_full_top", side: "compost_heap_full_side"), drops: "compost_heap", hardness: 1.0, color: (90, 120, 50), tags: ["wood"]),
+        (name: "compost_heap_full", sound: Wood, textures: Column(end: "compost_heap_full_top", side: "compost_heap_full_side"), drops: "compost_heap", hardness: 1.0, color: (90, 120, 50), tags: ["creative_only", "wood"]),
         // A well: a ring of stone over water, with a pail on a beam. It waters crops and keeps a
         // compost heap damp as water does (`waters`), so a field can grow by the home, far
         // from any river.
         (name: "well", render: Model, shape: "well", facing: true, sound: Stone, material: "cobblestone", textures: All("cobblestone"), hardness: 2.5, color: (115, 115, 120), tags: ["waters", "drinking_water", "building"]),
-        (name: "compost_heap_ready", sound: Wood, textures: Column(end: "compost_heap_ready_top", side: "compost_heap_ready_side"), drops: "compost_heap", hardness: 1.0, color: (60, 45, 30), tags: ["wood"]),
+        (name: "compost_heap_ready", sound: Wood, textures: Column(end: "compost_heap_ready_top", side: "compost_heap_ready_side"), drops: "compost_heap", hardness: 1.0, color: (60, 45, 30), tags: ["creative_only", "wood"]),
         // A feed trough (Farm): a store of 9 (machines.ron) a hungry kept animal eats its food
         // from, within its leash of home (`trough`; server/src/troughs.rs).
         (name: "feed_trough", render: Model, shape: "trough", sound: Wood, textures: All("oak_planks"), hardness: 1.0, color: (140, 105, 65), tags: ["trough", "wood", "drinking_water"]),
