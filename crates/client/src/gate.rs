@@ -399,8 +399,11 @@ steps! {
     /// Every creature's blow told (`fight_fx`'s tells): a wolf this side alone winds up in
     /// reach and coils, its snarl waiting to land with the blow without dipping the music,
     /// while the player swings at it (`Gate::swing`); then a creature with no tell of its own,
-    /// first seen already winding up, coils and is told by its style's. Each frame a fixed
-    /// step of their time (`Creatures::watch_step`). Shot with the wolf coiled.
+    /// first seen already winding up, coils and is told by its style's; then the first
+    /// creature in the content that never hunts, fights back when struck and runs once
+    /// badly hurt (`flees_below`: a wild boar) coils, told by its own tell (its gore)
+    /// without dipping the music. Each frame a fixed step of their
+    /// time (`Creatures::watch_step`). Shots with the wolf coiled and with that one coiled.
     FirstFights,
     /// A cancelled swing's shot strikes nothing (`fight_fx`'s shots): a bow's arrow drawn
     /// at a deer this side alone is loosed from the hand, and the swing is cancelled (as
@@ -443,7 +446,8 @@ steps! {
     Tarns,
     /// `/locate settlement` finds a hamlet or village, and the server's world there has
     /// what its plan says: a well on its square, doors open onto a floor, and houses dry;
-    /// and the ambience hears it at work by day, not by night.
+    /// its people come, and one greets the player in its own voice; and the ambience hears
+    /// it at work by day, not by night.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -1658,7 +1662,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Tame => STEP_LIMIT + TROUGH_WAIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
-        Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
+        Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
         Step::Weather => STEP_LIMIT + 10.0 + ROOF_RAIN,
         _ => STEP_LIMIT,
@@ -6912,6 +6916,10 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.check("make: list", Err("the content lacks the oak log, its planks or the stone pickaxe".into()));
         return leave(world, gate);
     };
+    // A cooked thing that takes more than what is held (bronze: copper ingots held, a tin
+    // ore carried), picked from the data by that: its held input, and what else it wants.
+    let content = world.resource::<Launch>().content.clone();
+    let alloy = content.cooking.iter().find(|(_, r)| !r.with.is_empty()).map(|(input, r)| (content.blocks.item_of(input), r.def.uses, r.with.clone(), r.output));
     let cell_of = |world: &mut World, item: BlockId| {
         let drawn = world.resource::<Drawn>().0.clone();
         world.query::<(Entity, &MakeCell)>().iter(world).find(|(_, cell)| drawn.get(cell.0).is_some_and(|m| m.output == item)).map(|(entity, _)| entity)
@@ -6923,6 +6931,15 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             for line in ["clear oak_log", "give oak_log 1", "clear cobblestone", "give cobblestone 3"] {
                 net.command(line);
             }
+            // As many as one go of the alloy holds, and none of what goes with it.
+            if let Some((input, uses, with, _)) = &alloy {
+                let short = |item: BlockId| content.blocks.def(item).name.split_once(':').map_or(String::new(), |(_, n)| n.to_owned());
+                net.command(&format!("clear {}", short(*input)));
+                net.command(&format!("give {} {uses}", short(*input)));
+                for (item, _) in with {
+                    net.command(&format!("clear {}", short(*item)));
+                }
+            }
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.quests_open, ui.menu_open, ui.character_open) = (false, false, false, false);
             ui.inventory_open = true;
@@ -6933,12 +6950,23 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         1 => {
             let drawn = world.resource::<Drawn>().0.clone();
             let ready = drawn.iter().find(|m| m.output == planks).is_some_and(|m| m.reach == Reach::Ready);
+            let alloy_held = alloy.as_ref().is_none_or(|(input, uses, with, _)| {
+                let inventory = &world.resource::<LocalPlayer>().inventory;
+                inventory.count(*input) == *uses as u32 && with.iter().all(|&(item, _)| inventory.count(item) == 0)
+            });
             let cell = cell_of(world, planks);
             match cell {
-                Some(_) if ready && holding(world, "base:oak_log").0 >= 1 => {
+                Some(_) if ready && holding(world, "base:oak_log").0 >= 1 && alloy_held => {
                     let first_not = drawn.iter().position(|m| m.reach != Reach::Ready).unwrap_or(drawn.len());
                     let order = drawn[first_not..].iter().all(|m| m.reach != Reach::Ready);
                     gate.check("make: list", if order { Ok(format!("a log in the pack shows planks ready; {first_not} of {} ready, all first", drawn.len())) } else { Err(format!("a ready one comes after one not ready: {:?}", drawn.iter().map(|m| m.reach.rank()).collect::<Vec<_>>())) });
+                    // The alloy's input in hand, what goes with it not: short of exactly that.
+                    if let Some((input, uses, with, output)) = &alloy {
+                        let wanted = Reach::Short(with.iter().map(|&(item, n)| (item, n as u32)).collect());
+                        let reach = drawn.iter().find(|m| m.output == *output).map(|m| m.reach.clone());
+                        let name = |item: BlockId| content.blocks.def(item).name.clone();
+                        gate.check("make: cooked with", if reach.as_ref() == Some(&wanted) { Ok(format!("{uses} {} in the pack show {} short of what goes with it, {wanted:?}", name(*input), name(*output))) } else { Err(format!("{uses} {} in the pack show {} as {reach:?}, not {wanted:?}", name(*input), name(*output))) });
+                    }
                     gate.count_before = world.resource::<LocalPlayer>().inventory.craft.iter().flatten().filter(|s| s.item == log).map(|s| s.count as u32).sum();
                     gate.advance(now);
                 }
@@ -11015,8 +11043,9 @@ const FEEL_LAG_SETTLE: u32 = 9;
 const FEEL_BEARS: u32 = 3;
 
 /// Where the fight-feel step stands: when the bear's wind-up was first seen (by the wall's
-/// clock, as the server times blows), how long after that the answer comes, and what has
-/// been tried.
+/// clock, the players' clock the server judges blows by: a blow lands on its due tick, and
+/// is judged a wind-up after it began on that clock, or sooner), how long after that the
+/// answer comes, and what has been tried.
 #[derive(Default)]
 struct FeelRun {
     seen: Option<Instant>,
@@ -13571,6 +13600,9 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
 const FIGHTER: u32 = u32::MAX - 10;
 const FIGHTER_SPECIES: &str = "wolf";
 const FALLBACK: u32 = u32::MAX - 11;
+/// The creature that only fights back (a wild boar) the FirstFights step winds up last, an
+/// id the server never gives.
+const DEFENDER: u32 = u32::MAX - 13;
 
 /// The FirstFights step (see [`Step::FirstFights`]).
 fn first_fights(world: &mut World, gate: &mut Gate) {
@@ -13594,6 +13626,17 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
     let plain_style = plain_creature.def.attack.map(|a| a.style).unwrap_or(voxmar_engine::combat::Style::Crush);
     let plain_tell = look.tell_for("", plain_style).map(|t| t.sound.clone()).unwrap_or_default();
     let wolf_tell = look.tells.get(FIGHTER_SPECIES).map(|t| (t.sound.clone(), t.ducks));
+    // The first creature that never hunts, fights back when struck and runs once badly hurt
+    // (its own `flees_below`: a wild boar), and its own tell (its gore).
+    let defender = launch.content.creatures.iter().find(|(_, c)| {
+        use voxmar_engine::creature::Behaviour;
+        !c.def.boss && c.def.attack.is_some() && c.def.flees_below.is_some() && c.behaviours.iter().any(|b| b.behaviour == Behaviour::Defend) && !c.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Hunt { .. }))
+    });
+    let defender = defender.map(|(species, c)| {
+        let name = c.def.name.rsplit(':').next().unwrap_or(&c.def.name).to_owned();
+        let tell = look.tells.get(&name).map(|t| (t.sound.clone(), t.ducks));
+        (species, c.def.health, name, tell)
+    });
     let health = |species| launch.content.creatures.get(species).def.health;
     let (wolf_health, plain_health) = (health(wolf), health(plain));
     let at = gate.feet.as_vec3() + Vec3::new(0.0, 0.0, 2.2);
@@ -13683,10 +13726,48 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
                 Ok(format!("{name}, first seen mid-wind-up, coils and is told by its style's {plain_tell}"))
             };
             gate.check("first fights: style tell", result);
+            // Then one that fights back when struck (a wild boar), winding up its blow.
+            gate.feel_asked = world.resource::<Heard>().asked.clone();
             let mut creatures = world.resource_mut::<Creatures>();
-            creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: FALLBACK, died: false }]);
-            (creatures.watch, creatures.watch_step) = (None, None);
-            gate.next(Step::ShotCancel, now);
+            let defender = defender.as_ref().map(|(species, health, ..)| view(DEFENDER, *species, Pose::Attacking, *health));
+            creatures.receive(defender.into_iter().collect(), vec![voxmar_protocol::CreatureGone { id: FALLBACK, died: false }]);
+            creatures.watch = Some(DEFENDER);
+            gate.advance(now);
+        }
+        // The frame after: coiling, its gore waiting to land with the blow, the music left
+        // alone.
+        5 => {
+            let Some((_, _, name, tell)) = defender.clone() else {
+                gate.check("first fights: defender", Ok("no creature in the content fights back when struck and runs once badly hurt, so none to wind up".into()));
+                gate.advance(now);
+                return;
+            };
+            let Some((sound, ducks)) = tell else {
+                gate.check("first fights: defender", Err(format!("the {name}, which fights back then runs, has no tell of its own in combat_fx.ron")));
+                gate.advance(now);
+                return;
+            };
+            let winding = world.resource::<Creatures>().winding(DEFENDER);
+            let cue = world.resource::<Pending>().0.iter().find(|c| c.id == DEFENDER).map(|c| (c.due - now, c.ducks));
+            let result = if !winding {
+                Err(format!("the {name} shows no wind-up"))
+            } else if asked(world, &sound) <= before(gate, &sound) {
+                Err(format!("the {name}'s wind-up asked for no {sound}"))
+            } else if ducks || cue.is_some_and(|(_, ducks)| ducks) {
+                Err(format!("the {name}'s blow dips the music, as only a boss's may"))
+            } else {
+                Ok(format!("the {name}, which only fights back, coils with {sound}, its loudest {:.2} s on as the blow lands, the music left alone", cue.map_or(0.0, |(wait, _)| wait.max(0.0))))
+            };
+            gate.check("first fights: defender", result);
+            gate.advance(now);
+        }
+        6 => {
+            if defender.is_none() || gate.shot(world, "defender-blow").is_some() {
+                let mut creatures = world.resource_mut::<Creatures>();
+                creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: DEFENDER, died: false }]);
+                (creatures.watch, creatures.watch_step) = (None, None);
+                gate.next(Step::ShotCancel, now);
+            }
         }
         _ => {}
     }
@@ -15370,13 +15451,16 @@ const SETTLEMENT_REACH: i32 = 40;
 const SETTLEMENT_LOAD: f32 = 120.0;
 /// Server seconds a settlement's people have to reach a player standing in its square.
 const SETTLEMENT_PEOPLE: f32 = 20.0;
+/// Server seconds for a greeting asked of one of them to reach the client.
+const SETTLEMENT_BARK: f32 = 3.0;
 
 /// `/locate settlement` names the nearest hamlet or village; the player and the observer go
 /// there, and once the server's world around it has loaded, its blocks are judged against
 /// the plan worldgen gives for it (`Overworld::settlements_near`): its well stands on the
 /// square, every door within reach is open with a floor under it and space behind it, and
-/// no house holds water, and its people come to the player and draw, and the ambience hears
-/// the settlement at work. Then the player goes back to the test ground.
+/// no house holds water, and its people come to the player and draw, the ambience hears
+/// the settlement at work, and the nearest greets them (`/creatures bark greet`) with its
+/// voice's greeting. Then the player goes back to the test ground.
 fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     match gate.phase {
         0 => {
@@ -15445,6 +15529,19 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
             gate.check("settlement sounds", heard);
+            // The nearest of them greets the player (`Server::bark`, by its command).
+            world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
+            world.resource::<Net>().command("creatures bark greet");
+            gate.advance(now);
+        }
+        // The greeting asked for its voice's own greeting clips (silently: asked, not heard).
+        4 => {
+            let asked: Vec<_> = world.resource::<crate::creature_sounds::Heard>().barks.iter().cloned().collect();
+            if asked.is_empty() && gate.server_in_phase() < SETTLEMENT_BARK {
+                return;
+            }
+            let greeted = settlement_greeted(world, &asked);
+            gate.check("settlement bark", greeted);
             let feet = gate.feet;
             world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
             gate.advance(now);
@@ -15459,6 +15556,27 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.next(Step::Recipes, now);
             }
         }
+    }
+}
+
+/// Whether one of the settlement's people greeted, asking for its own voice's greeting
+/// clips (`creature_sounds.ron`'s `greet`, not a hum it falls back to).
+fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind, Vec<String>)]) -> Result<String, String> {
+    use crate::creature_sounds::{Kind, Voices};
+    let Some((id, kind, clips)) = asked.first() else { return Err("no greeting was heard of anyone (asked with /creatures bark greet)".into()) };
+    let content = &world.resource::<Launch>().content;
+    let Some(view) = world.resource::<crate::creatures::Creatures>().views().find(|v| v.id == *id).copied() else {
+        return Err(format!("creature {id} greeted but is not drawn"));
+    };
+    let name = &content.creatures.get(view.species).def.name;
+    let voices = world.get_resource::<Voices>().ok_or("no creature sound bank")?;
+    let own: Vec<String> = voices.bank.voice(view.species).and_then(|v| v.events[Kind::Greet as usize].as_ref()).map(|e| e.clips.iter().map(|&i| voices.bank.clips[i].path.clone()).collect()).unwrap_or_default();
+    if *kind != Kind::Greet {
+        Err(format!("{name} was asked to greet but made {kind:?}"))
+    } else if own.is_empty() || *clips != own {
+        Err(format!("{name} greeted with {clips:?}, not its voice's greeting {own:?}"))
+    } else {
+        Ok(format!("{name} greeted the player with its own clips ({})", clips.join(", ")))
     }
 }
 
