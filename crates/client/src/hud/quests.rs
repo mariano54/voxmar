@@ -539,10 +539,14 @@ fn best_task<'a>(quest: &'a QuestDef, state: Option<&QuestState>) -> Vec<(&'a Go
     quest.tasks.get(best).map_or_else(Vec::new, |goals| goals.iter().enumerate().map(|(g, goal)| (goal, progress(best, g))).collect())
 }
 
-/// The quests a quest comes after, each way it may (`a|b` is either).
 /// How many quests come after `quest`.
 fn followers(content: &Content, quest: &QuestDef) -> usize {
-    content.quests.iter().filter(|q| before(content, q).iter().any(|f| f.name == quest.name)).count()
+    leads_to(content, quest).len()
+}
+
+/// The quests that come after `quest`, in the book's order.
+fn leads_to<'a>(content: &'a Content, quest: &QuestDef) -> Vec<&'a QuestDef> {
+    content.quests.iter().filter(|q| before(content, q).iter().any(|f| f.name == quest.name)).collect()
 }
 
 /// The quests a quest comes after, each way it may (`a|b` is either).
@@ -1204,6 +1208,13 @@ fn draw(
                 let color = if standing == Standing::Waiting { TEXT } else { MUTED };
                 detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, line, BODY, color)));
             }
+            // And what it leads to, so the way on is never a guess.
+            let next = leads_to(content, quest);
+            if !next.is_empty() {
+                let names: Vec<String> = next.iter().map(|q| title(&locale, q)).collect();
+                let line = locale.format("quest.leads", &[("list", &names.join(locale.get("language.comma")))]);
+                detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, line, BODY, MUTED)));
+            }
             // What it asks: its goals, or its routes when there are several.
             let asks = if quest.tasks.len() > 1 { "quest.routes" } else { "quest.goals" };
             detail.spawn((Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() }, Localized(asks), shadowed(font, "", BODY, ACCENT)));
@@ -1829,6 +1840,12 @@ fn track(
                 if done {
                     let key = if claimable(&player, name) { "quest.tracker.ready" } else { "quest.tracker.done" };
                     card.spawn((shadowed(font, locale.get(key).to_owned(), BODY, GOLD), TrackerLine));
+                    // What finishing it opened, before the tracker moves on to it.
+                    let opened: Vec<String> = leads_to(content, quest).into_iter().filter(|q| standing(content, &player, q) == Standing::Open).map(|q| title(&locale, q)).collect();
+                    if !opened.is_empty() {
+                        let line = locale.format("quest.tracker.opens", &[("list", &opened.join(locale.get("language.comma")))]);
+                        card.spawn(shadowed(font, line, BODY, TEXT));
+                    }
                     return;
                 }
                 for (goal, progress) in best_task(quest, state) {

@@ -102,6 +102,18 @@ impl Server {
         let title = Words::Own(voxmar_engine::lang::def_key("quest", &quest.name), quest.title.clone());
         let key = if quest.pays() { "quest.ready" } else { "quest.done" };
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key(key).with("quest", title) });
+        // And what it opened, so the next step is named as this one ends.
+        let done = |n: &str| player.quests_done.iter().any(|d| d == n);
+        let opened: Vec<Words> = self
+            .content
+            .quests
+            .iter()
+            .filter(|q| !done(&q.name) && q.after.iter().flat_map(|a| a.split('|')).any(|a| a == name) && self.content.quests.open(q, &done))
+            .map(|q| Words::Own(voxmar_engine::lang::def_key("quest", &q.name), q.title.clone()))
+            .collect();
+        if !opened.is_empty() {
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("quest.opens").with("list", Words::List(opened)) });
+        }
     }
 
     /// A player claims a finished quest's rewards from the quest screen: its items go into
@@ -143,8 +155,9 @@ impl Server {
 mod tests {
     use voxmar_engine::coords::ColumnPos;
     use voxmar_engine::glam::{IVec3, Vec3};
+    use voxmar_engine::lang::Words;
     use voxmar_engine::world::Column;
-    use voxmar_protocol::TICKS_PER_DAY;
+    use voxmar_protocol::{ServerMessage, TICKS_PER_DAY};
 
     use crate::Server;
 
@@ -199,6 +212,35 @@ mod tests {
 
     fn done(server: &Server, quest: &str) -> bool {
         server.players[&1].quests_done.iter().any(|q| q == quest)
+    }
+
+    /// Finishing a quest names what it opened, after the line saying it is done; one still
+    /// waiting on another quest is left out.
+    #[test]
+    fn a_finished_quest_names_what_it_opened() {
+        let mut server = fixture();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        let quests = &server.content.quests;
+        let (first, next) = quests
+            .iter()
+            .filter(|q| q.after.is_empty())
+            .find_map(|first| Some((first.name.clone(), quests.iter().find(|q| q.after == [first.name.clone()])?.name.clone())))
+            .expect("a quest only another opens");
+        let waiting = quests.iter().find(|q| q.after.len() > 1 && q.after.contains(&first)).map(|q| q.name.clone());
+        server.finish_quest(1, &first);
+        let mut lines = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            if let ServerMessage::Chat { text, .. } = message {
+                lines.push(text);
+            }
+        }
+        let own = |name: &str| Words::Own(voxmar_engine::lang::def_key("quest", name), server.content.quests.get(name).unwrap().title.clone());
+        let Some(Words::Key(key, args)) = lines.get(1) else { panic!("{lines:?}") };
+        let Some((_, Words::List(opened))) = args.iter().find(|(name, _)| name == "list") else { panic!("{args:?}") };
+        assert_eq!(key, "quest.opens");
+        assert!(opened.contains(&own(&next)), "{opened:?}");
+        assert!(waiting.is_none_or(|w| !opened.contains(&own(&w))), "{opened:?}");
     }
 
     #[test]
