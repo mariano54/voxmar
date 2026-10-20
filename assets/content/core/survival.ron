@@ -38,8 +38,10 @@
     // A light that gutters (a torch, `gutters_to:`) does so in this last share of its burn:
     // its flame low and sputtering, the sign it wants lighting again.
     gutter_share: 0.1,
-    // A light set down inside a settlement is tended by its people and never burns out.
-    tend_in_settlements: true,
+    // A light that is `tended` (a torch, a candle, a lamp), set down inside a settlement no
+    // more than this many blocks above or below its height, is tended by its people and never
+    // burns out; one in a mine under it burns as anywhere.
+    tend_height: 12,
     // A home (the lit hearth, else the bed last slept in) reaches this many blocks out on each
     // side, up and down. Its furnishings are counted in that box and a player feels it
     // standing in it (effects.ron's AtHome and HomeHas).

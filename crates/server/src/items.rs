@@ -324,7 +324,7 @@ impl Server {
                     // What a player left where they died is theirs alone.
                     item.owner.is_none_or(|owner| owner == *name)
                         && middle.distance(centre) < MAGNET + 1.0
-                        && self.players[pid].inventory.room_for(item.stack.item, 1) > 0
+                        && self.players[pid].inventory.has_room_for(item.stack)
                 })
                 .min_by(|a, b| a.1.distance(centre).total_cmp(&b.1.distance(centre)));
             let Some(&(collector, middle, reach, _)) = nearest else { continue };

@@ -616,6 +616,11 @@ impl Overworld {
         self.settlement_covers(x, z)
     }
 
+    /// The height of the settlement whose plan covers (x, z), if one does.
+    pub fn settlement_height(&self, x: i32, z: i32) -> Option<i32> {
+        self.settlements.height_covering(self, x, z)
+    }
+
     /// Whether a settlement's plan covers (x, z).
     pub(crate) fn settlement_covers(&self, x: i32, z: i32) -> bool {
         self.settlements.covers(self, x, z)

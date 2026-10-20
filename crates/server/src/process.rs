@@ -182,6 +182,11 @@ impl Survival {
         });
 
         let player = server.players.get_mut(&id).unwrap();
+        // What their home meets now, to tell on their return what lights burnt out while
+        // they were away cost; not before that is told (`flames::check_home_return`).
+        if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked) {
+            player.home_steps = effects.home_steps(home);
+        }
         let creative = player.allow_flight;
         let before = (player.vitals.clone(), player.health);
         // A minute of other things brings back what eating the same food over and over

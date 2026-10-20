@@ -1556,7 +1556,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Two blocks mined with a tool, and a mend crafted, each waited on.
         Step::ToolWear => STEP_LIMIT + 15.0,
         Step::Firebrand => STEP_LIMIT + 15.0,
-        // A torch burnt out, lit again and rained out, each waited on.
+        // A torch guttering, burnt out, lit again and rained out, each waited on.
         Step::Torch => STEP_LIMIT + 20.0,
         // A lamp filled, then burnt dry with a candle by it, each waited on.
         Step::Lamp => STEP_LIMIT + 20.0,
@@ -4992,6 +4992,8 @@ struct TorchPlan {
     kindle: BlockId,
     /// What it gutters into near its end, if it does.
     gutter: Option<BlockId>,
+    /// Where its room stands: outside every settlement, where it would be tended.
+    room: IVec3,
 }
 
 impl TorchPlan {
@@ -5003,8 +5005,22 @@ impl TorchPlan {
             .ok_or("no light set down on its own in the content burns out and is put out by rain")?;
         let (_, stub) = flames.burns_out(blocks, torch).expect("found by it");
         let kindle = blocks.ids().find(|&b| b != torch && flames.kindles(b)).ok_or("nothing in the content but the light itself kindles")?;
-        Ok(Self { torch, stub, kindle, gutter: flames.gutters(blocks, torch) })
+        Ok(Self { torch, stub, kindle, gutter: flames.gutters(blocks, torch), room: IVec3::ZERO })
     }
+}
+
+/// A room's middle near `from` whose whole footprint (and a margin) lies outside every
+/// settlement, where a light set down is tended and never burns out: `from`, else a step
+/// east at a time.
+fn untended_room(world: &World, from: IVec3) -> Result<IVec3, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to tell settlements by".into());
+    };
+    const STEP: i32 = 48;
+    (0..8)
+        .map(|i| from + IVec3::new(STEP * i, 0, 0))
+        .find(|at| (-6..=6).all(|dx| (-6..=6).all(|dz| !generator.in_settlement(at.x + dx, at.z + dz))))
+        .ok_or_else(|| format!("every room from {from} east for {} blocks lies in a settlement", STEP * 8))
 }
 
 /// How much darker (rgb, averaged) the floor before a guttering torch is than before it lit.
@@ -5015,7 +5031,7 @@ const GUTTER_DIM: f64 = 2.0;
 /// a stub and the floor is dark again. Lit again from a firebrand in hand, then the roof
 /// taken off and rain brought, the rain puts it out.
 fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    let at = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE + IVec3::new(16, 0, 0);
+    let at = gate.torch.map_or(gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE + IVec3::new(16, 0, 0), |plan| plan.room);
     let light_at = at + IVec3::new(1, 0, 2);
     let floor = at + IVec3::new(0, -1, 2);
     let waited = gate.server_in_phase() > TORCH_WAIT;
@@ -5043,11 +5059,12 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let here = |world: &World| world.resource::<ClientWorld>().block(light_at);
     match gate.phase {
         0 => {
-            let plan = match TorchPlan::of(&content) {
+            let plan = match TorchPlan::of(&content).and_then(|plan| Ok(TorchPlan { room: untended_room(world, at)?, ..plan })) {
                 Ok(plan) => plan,
                 Err(why) => return fail(world, gate, "torch: burns out", why),
             };
             gate.torch = Some(plan);
+            let (at, light_at) = (plan.room, plan.room + (light_at - at));
             if !empty_hand(world) {
                 return fail(world, gate, "torch: burns out", "no empty hotbar slot, so no light is held".into());
             }
@@ -5191,6 +5208,8 @@ struct LampPlan {
     fuel: BlockId,
     candle: BlockId,
     end: BlockId,
+    /// Where its room stands: outside every settlement, where it would be tended.
+    room: IVec3,
 }
 
 impl LampPlan {
@@ -5208,7 +5227,7 @@ impl LampPlan {
             .filter(|&b| set_down(b))
             .find_map(|b| flames.burns_out(blocks, b).map(|(_, to)| (b, to)).filter(|&(_, to)| flames.relit(blocks, to).is_none()))
             .ok_or("no light set down burns out to something never lit again")?;
-        Ok(Self { lamp, empty, fuel, candle, end })
+        Ok(Self { lamp, empty, fuel, candle, end, room: IVec3::ZERO })
     }
 }
 
@@ -5216,7 +5235,7 @@ impl LampPlan {
 /// floor before the player (that floor, settled, empty and lit); then a candle set beside
 /// it, five game days on (`/time add`) the lamp is burnt dry and the candle at its end.
 fn lamp(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    let at = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE + IVec3::new(24, 0, 0);
+    let at = gate.lamp.map_or(gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE + IVec3::new(24, 0, 0), |plan| plan.room);
     let light_at = at + IVec3::new(1, 0, 2);
     let candle_at = at + IVec3::new(-1, 0, 2);
     let floor = at + IVec3::new(0, -1, 2);
@@ -5245,11 +5264,12 @@ fn lamp(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let named = |b: Option<BlockId>| b.map(|b| content.blocks.def(b).name.clone());
     match gate.phase {
         0 => {
-            let plan = match LampPlan::of(&content) {
+            let plan = match LampPlan::of(&content).and_then(|plan| Ok(LampPlan { room: untended_room(world, at)?, ..plan })) {
                 Ok(plan) => plan,
                 Err(why) => return fail(world, gate, "lamp: filled and lit", why),
             };
             gate.lamp = Some(plan);
+            let (at, light_at) = (plan.room, plan.room + (light_at - at));
             if !empty_hand(world) {
                 return fail(world, gate, "lamp: filled and lit", "no empty hotbar slot, so no light is held".into());
             }

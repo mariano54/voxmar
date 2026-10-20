@@ -27,7 +27,7 @@
         (
             name: "torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
             light: 14, hardness: 0.0, color: (250, 180, 60), wall: "wall_torch",
-            tags: ["light", "fire", "kindles", "burns_days:1", "burns_out_to:torch_stub", "rain_douses", "gutters_to:torch_guttering"],
+            tags: ["light", "fire", "kindles", "burns_days:1", "burns_out_to:torch_stub", "rain_douses", "gutters_to:torch_guttering", "tended"],
             particles: [
                 (style: Flame, rate: 26.0, at: (0.5, 0.78, 0.5), spread: 0.04, size: 1.6, height: 0.35, color: Some((240, 128, 20))),
                 (style: Ember, rate: 0.5, at: (0.5, 0.75, 0.5), spread: 0.04, size: 0.7, height: 2.0, color: Some((226, 84, 16))),
@@ -40,7 +40,7 @@
         (
             name: "wall_torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
             light: 14, hardness: 0.0, color: (250, 180, 60), drops: "torch",
-            tags: ["light", "fire", "burns_days:1", "burns_out_to:wall_torch_stub", "rain_douses", "gutters_to:wall_torch_guttering"],
+            tags: ["light", "fire", "burns_days:1", "burns_out_to:wall_torch_stub", "rain_douses", "gutters_to:wall_torch_guttering", "tended"],
             facing: true, support: Wall, model: Wall,
             particles: [
                 (style: Flame, rate: 26.0, at: (0.5, 0.84, 0.67), spread: 0.04, size: 1.6, height: 0.35),
@@ -49,12 +49,13 @@
             ],
         ),
         // A torch near its end (survival.ron's `gutter_share` of its burn left): its flame
-        // low and sputtering, smoking more, the cue to light it again before it goes out.
-        // It burns on to the same end; picked up, it is a torch with what it has left.
+        // low and sputtering, smoking more, the cue to light it again before it goes out:
+        // anything that kindles lights it again a whole torch. Left, it burns on to the same
+        // end; picked up, it is a torch with what it has left.
         (
             name: "torch_guttering", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
             light: 11, hardness: 0.0, color: (220, 140, 50), drops: "torch",
-            tags: ["light", "fire", "burns_days:1", "burns_out_to:torch_stub", "rain_douses"],
+            tags: ["light", "fire", "burns_days:1", "burns_out_to:torch_stub", "rain_douses", "relights_to:torch", "tended"],
             particles: [
                 (style: Flame, rate: 9.0, at: (0.5, 0.74, 0.5), spread: 0.06, size: 1.1, height: 0.2, color: Some((220, 100, 20))),
                 (style: Ember, rate: 2.0, at: (0.5, 0.74, 0.5), spread: 0.06, size: 0.6, height: 1.2, color: Some((226, 84, 16))),
@@ -64,7 +65,7 @@
         (
             name: "wall_torch_guttering", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
             light: 11, hardness: 0.0, color: (220, 140, 50), drops: "torch",
-            tags: ["light", "fire", "burns_days:1", "burns_out_to:wall_torch_stub", "rain_douses"],
+            tags: ["light", "fire", "burns_days:1", "burns_out_to:wall_torch_stub", "rain_douses", "relights_to:wall_torch", "tended"],
             facing: true, support: Wall, model: Wall,
             particles: [
                 (style: Flame, rate: 9.0, at: (0.5, 0.8, 0.67), spread: 0.06, size: 1.1, height: 0.2),

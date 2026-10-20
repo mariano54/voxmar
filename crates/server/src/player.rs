@@ -61,6 +61,11 @@ pub struct Player {
     /// The announced effects (`EffectDef::announce`) the player has been told of this
     /// session, so stepping out of a room and back in does not say it twice.
     pub announced: Vec<EffectId>,
+    /// The home steps their home met when last surveyed (`EffectRegistry::home_steps`),
+    /// and whether it is yet to be surveyed since they joined, to tell them what lights
+    /// burnt out while they were away cost.
+    pub home_steps: Vec<EffectId>,
+    pub home_unchecked: bool,
     /// Healing and hurting under way, in seconds (`process::Survival`).
     pub heal_clock: f32,
     pub hurt_clock: f32,
@@ -198,6 +203,8 @@ impl Player {
             vitals: Vitals::default(),
             timed_effects: Vec::new(),
             announced: Vec::new(),
+            home_steps: Vec::new(),
+            home_unchecked: false,
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
             health_base: 0,
@@ -331,6 +338,7 @@ impl Player {
             prayer_points: Some(self.praying.points),
             casts: self.casts,
             draws: self.draws,
+            home_steps: self.home_steps.iter().map(|&id| effects.get(id).name.clone()).collect(),
             spilled: Vec::new(),
         }
     }
@@ -586,6 +594,8 @@ impl Server {
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
+                player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_unchecked = !player.home_steps.is_empty();
             }
             // Players who left dead come back to life at home, or else the spawn point.
             Some(saved) => {

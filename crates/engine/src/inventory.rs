@@ -186,14 +186,15 @@ impl Default for Inventory {
 }
 
 impl Inventory {
-    /// Adds items, topping up existing stacks before using empty slots. Returns how many
-    /// did not fit.
+    /// Adds items, topping up existing unworn stacks before using empty slots (a worn
+    /// stack, such as a light picked up part-burnt, keeps its wear to itself). Returns how
+    /// many did not fit.
     pub fn add(&mut self, item: BlockId, mut count: u8) -> u8 {
         // Into its pouch first, if the player carries one.
         if pouch_for(item).is_some_and(|p| self.slots.iter().flatten().any(|s| s.item == p)) {
             count -= self.pouch(item, count);
         }
-        for stack in self.slots.iter_mut().flatten().filter(|s| s.item == item) {
+        for stack in self.slots.iter_mut().flatten().filter(|s| s.item == item && s.wear == 0) {
             let moved = count.min(max_stack(item).saturating_sub(stack.count));
             stack.count += moved;
             count -= moved;
@@ -334,7 +335,7 @@ impl Inventory {
     /// Adds to the slots only, never a pouch; returns how many went in.
     fn add_to_slots(&mut self, item: BlockId, count: u8) -> u8 {
         let mut left = count;
-        for stack in self.slots.iter_mut().flatten().filter(|s| s.item == item) {
+        for stack in self.slots.iter_mut().flatten().filter(|s| s.item == item && s.wear == 0) {
             let moved = left.min(max_stack(item).saturating_sub(stack.count));
             stack.count += moved;
             left -= moved;
@@ -616,11 +617,17 @@ impl Inventory {
             .iter()
             .map(|slot| match slot {
                 None => max_stack(item) as u32,
-                Some(stack) if stack.item == item => max_stack(item).saturating_sub(stack.count) as u32,
+                Some(stack) if stack.item == item && stack.wear == 0 => max_stack(item).saturating_sub(stack.count) as u32,
                 Some(_) => 0,
             })
             .sum();
         room.min(count as u32) as u8
+    }
+
+    /// Whether any of `stack` fits, as [`Inventory::add_stack`] would put it: a worn one
+    /// only into an empty slot.
+    pub fn has_room_for(&self, stack: ItemStack) -> bool {
+        if stack.wear == 0 { self.room_for(stack.item, 1) > 0 } else { self.slots.iter().any(Option::is_none) }
     }
 
     /// Takes up to `count` items from `slot` (or [`CURSOR`]), returning what it took.
@@ -668,6 +675,26 @@ mod tests {
         assert_eq!((inv.count(SAND), inv.count(DIRT)), (7, 1), "nothing taken");
         assert!(inv.take_all(&[(SAND, 6), (DIRT, 1)], 4));
         assert_eq!((inv.slots[4], inv.slots[0], inv.count(DIRT)), (None, stack(SAND, 1), 0), "the held slot went first");
+    }
+
+    /// Fresh items added never top up a worn stack of the same item, nor count its room: the
+    /// wear stays its own.
+    #[test]
+    fn fresh_items_never_join_a_worn_stack() {
+        let mut inv = Inventory::default();
+        for slot in inv.slots.iter_mut().skip(1) {
+            *slot = Some(ItemStack::new(SAND, 1));
+        }
+        let worn = ItemStack { wear: 600, ..ItemStack::new(DIRT, 1) };
+        inv.slots[0] = Some(worn);
+        assert_eq!(inv.add(DIRT, 3), 3, "no room but the worn stack's, which it does not take");
+        assert_eq!(inv.slots[0], Some(worn));
+        assert_eq!(inv.room_for(DIRT, 3), 0);
+        assert!(!inv.has_room_for(ItemStack::new(DIRT, 1)) && !inv.has_room_for(worn));
+        inv.slots[1] = None;
+        assert!(inv.has_room_for(worn));
+        assert_eq!(inv.add(DIRT, 3), 0);
+        assert_eq!((inv.slots[0], inv.slots[1]), (Some(worn), Some(ItemStack::new(DIRT, 3))));
     }
 
     #[test]

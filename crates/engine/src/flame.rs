@@ -14,6 +14,8 @@
 //!   turns into `BLOCK`, in its facing, burning on to the same end: a torch guttering, its
 //!   flame low and sputtering, a cue it wants relighting. `BLOCK` burns as long, out to the
 //!   same block.
+//! - `tended`: set down inside a settlement (near its height), its people tend it and it
+//!   never burns out there.
 //!
 //! What burns out and is lit again is lit into itself: a torch's stub relights to a torch.
 //! What burns out to something never lit again is used up (a candle to its end).
@@ -40,6 +42,7 @@ pub struct Flames {
     kindles: Vec<bool>,
     /// Each block: what it gutters into near its end.
     gutters: Vec<Option<BlockId>>,
+    tended: Vec<bool>,
 }
 
 impl Flames {
@@ -101,6 +104,11 @@ impl Flames {
             if gutters.is_some() && out.is_none() {
                 return Err(bad("`gutters_to:` but it never burns out (`burns_days:`)".into()));
             }
+            let tended = tags.iter().any(|t| t == "tended");
+            if tended && out.is_none() {
+                return Err(bad("`tended` but it never burns out (`burns_days:`)".into()));
+            }
+            flames.tended.push(tended);
             flames.gutters.push(gutters);
             flames.out.push(out);
             flames.relight_with.push(with);
@@ -137,6 +145,11 @@ impl Flames {
             }
         }
         Ok(flames)
+    }
+
+    /// Whether a settlement's people tend `block` set down there, so it never burns out.
+    pub fn tended(&self, block: BlockId) -> bool {
+        self.tended.get(block.0 as usize).copied().unwrap_or(false)
     }
 
     /// What `block` gutters into near its end, in its facing, if anything.
@@ -217,8 +230,8 @@ mod tests {
             ("lard", &["fat"], false),
             ("candle", &["burns_days:3", "burns_out_to:end"], false),
             ("end", &[], false),
-            ("lit", &["burns_days:1", "burns_out_to:wick", "gutters_to:low"], true),
-            ("low", &["burns_days:1", "burns_out_to:wick"], true),
+            ("lit", &["burns_days:1", "burns_out_to:wick", "gutters_to:low", "tended"], true),
+            ("low", &["burns_days:1", "burns_out_to:wick", "relights_to:lit"], true),
             ("wick", &["relights_to:lit"], true),
         ])
         .unwrap();
@@ -234,10 +247,13 @@ mod tests {
         assert_eq!((flames.burns_out(&blocks, id("candle")), flames.relit(&blocks, id("end"))), (Some((3.0, id("end"))), None), "a candle burns to its end, never lit again");
         assert_eq!(flames.gutters(&blocks, id("lit_east")), Some(id("low_east")), "gutters in its facing");
         assert_eq!(flames.gutters(&blocks, id("low")), None);
+        assert_eq!(flames.relit(&blocks, id("low_west")), Some(id("lit_west")), "guttering, lit again");
+        assert!(flames.tended(id("lit")) && !flames.tended(id("torch")));
         assert_eq!((flames.burn_life(id("torch")), flames.burn_life(id("candle")), flames.burn_life(id("stub"))), (1200, 3600, 0), "seconds of the clock");
         for bad in [
             &[("torch", &["burns_days:1"][..], false)][..],
             &[("torch", &["burns_days:60", "burns_out_to:torch"][..], false)],
+            &[("torch", &["tended"][..], false)],
             &[("torch", &["gutters_to:low"][..], false), ("low", &["burns_days:1", "burns_out_to:low"][..], false)],
             &[("torch", &["burns_days:1", "burns_out_to:end", "gutters_to:low"][..], false), ("low", &["burns_days:2", "burns_out_to:end"][..], false), ("end", &[][..], false)],
             &[("torch", &["burns_days:1", "burns_out_to:end", "gutters_to:low"][..], false), ("low", &["burns_days:1", "burns_out_to:low"][..], false), ("end", &[][..], false)],

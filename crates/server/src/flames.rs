@@ -6,8 +6,8 @@
 //! back, never coal.
 //!
 //! Picked up burning, a light keeps what it has burnt as its item's wear, and set down
-//! again burns on from there. Inside a settlement its people tend it (`tend_in_settlements`):
-//! it never goes out there, and keeps what it had burnt. Lights from before lights burnt
+//! again burns on from there. Inside a settlement, near its height, its people tend what is
+//! `tended` (`tend_height`): it never goes out there, and keeps what it had burnt. Lights from before lights burnt
 //! out, and those the world placed, are given a full burn the first time their column
 //! loads (`flame_columns`, once a column). When one burning out leaves a home short of a
 //! light a step of it asks for, the home's owner is told.
@@ -16,6 +16,7 @@ use rustc_hash::FxHashMap;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos, local_index};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
+use voxmar_engine::effect::HomeSurvey;
 use voxmar_engine::lang::Words;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_DAY};
 
@@ -54,15 +55,16 @@ impl Server {
         self.content.flames.burns_out(&self.content.blocks, block).map(|(days, _)| (days * TICKS_PER_DAY as f32).round() as u64)
     }
 
-    /// Whether a light at `pos` is tended: inside a settlement, where its people keep it.
-    fn tended_at(&self, pos: IVec3) -> bool {
-        self.survival.tend_in_settlements && self.overworld.in_settlement(pos.x, pos.z)
+    /// Whether `block` at `pos` is tended: a light its people keep, inside a settlement and
+    /// near its height (`tend_height`), not in a mine under it.
+    fn tended_at(&self, pos: IVec3, block: BlockId) -> bool {
+        self.content.flames.tended(block) && self.overworld.settlement_height(pos.x, pos.z).is_some_and(|height| (pos.y - height).abs() <= self.survival.tend_height)
     }
 
     /// `block` at `pos` burns on with `left` ticks of its burn. Tended, it is kept: as no
     /// entry when its burn is whole, so a settlement's lights cost nothing.
     fn burn_from(&mut self, pos: IVec3, block: BlockId, left: u64) {
-        if self.tended_at(pos) {
+        if self.tended_at(pos, block) {
             if self.full_burn(block).is_some_and(|full| left >= full) {
                 self.flames.remove(&pos);
             } else {
@@ -197,23 +199,55 @@ impl Server {
                 self.set_block(pos, low);
             }
         }
-        let mut told: Vec<PlayerId> = Vec::new();
-        for pos in out {
+        if out.is_empty() {
+            return;
+        }
+        // The homes these lights stand in, surveyed once before and once after the whole
+        // pass: each owner is told once, of the highest step lost.
+        let mut homes: Vec<(PlayerId, IVec3, BlockId)> = Vec::new();
+        for &pos in &out {
             let Some(here) = self.block(pos) else { continue };
-            let Some((_, stub)) = self.content.flames.burns_out(&self.content.blocks, here) else { continue };
-            let homes = self.homes_holding(pos);
-            let before: Vec<_> = homes.iter().map(|&(id, anchor)| self.survey_around(anchor, Some(id))).collect();
-            self.set_block(pos, stub);
-            for (&(id, anchor), before) in homes.iter().zip(before) {
-                if told.contains(&id) {
-                    continue;
-                }
-                let after = self.survey_around(anchor, Some(id));
-                if self.tell_short(id, here, stub, &before, &after) {
-                    told.push(id);
+            for (id, anchor) in self.homes_holding(pos) {
+                if !homes.iter().any(|&(had, ..)| had == id) {
+                    homes.push((id, anchor, here));
                 }
             }
         }
+        let before: Vec<HomeSurvey> = homes.iter().map(|&(id, anchor, _)| self.survey_around(anchor, Some(id))).collect();
+        for pos in out {
+            let Some(here) = self.block(pos) else { continue };
+            if let Some((_, stub)) = self.content.flames.burns_out(&self.content.blocks, here) {
+                self.set_block(pos, stub);
+            }
+        }
+        let tags = self.light_tags();
+        let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
+        for (&(id, anchor, light), before) in homes.iter().zip(&before) {
+            let after = self.survey_around(anchor, Some(id));
+            let lost = self.content.effects.falls_short(&tags, before, &after);
+            let steps = self.content.effects.home_steps(&after);
+            let Some(player) = self.players.get_mut(&id) else { continue };
+            if !player.home_unchecked {
+                player.home_steps = steps;
+            }
+            let Some((effect, _, need)) = lost else { continue };
+            let words = Words::key("flame.home_short").with("light", Words::Block(self.content.blocks.def(light).name.clone()));
+            self.tell_short(id, words, effect, need);
+        }
+    }
+
+    /// The tags home steps ask for (`HomeHas`) that lights burning out take away: those of
+    /// what burns out and not of what it leaves.
+    fn light_tags(&self) -> Vec<String> {
+        let (blocks, flames) = (&self.content.blocks, &self.content.flames);
+        let lights: Vec<BlockId> = blocks.ids().filter(|&b| flames.burn_life(b) > 0).collect();
+        self.content
+            .effects
+            .home_tags()
+            .iter()
+            .filter(|tag| lights.iter().any(|&b| blocks.def(b).has_tag(tag) && flames.burns_out(blocks, b).is_some_and(|(_, stub)| !blocks.def(stub).has_tag(tag))))
+            .cloned()
+            .collect()
     }
 
     /// The players here whose homes hold `pos`, and where each home is.
@@ -222,20 +256,40 @@ impl Server {
         self.players.iter().filter(|(_, p)| p.joined).filter_map(|(&id, _)| Some((id, self.home_holding(id, at)?))).collect()
     }
 
-    /// Tells player `id` once if `light` going out to `stub` left their home short of what
-    /// a step of it asks for (`HomeHas`, effects.ron), naming the highest step lost.
-    fn tell_short(&self, id: PlayerId, light: BlockId, stub: BlockId, before: &voxmar_engine::effect::HomeSurvey, after: &voxmar_engine::effect::HomeSurvey) -> bool {
-        let (blocks, effects) = (&self.content.blocks, &self.content.effects);
-        let lost = effects.home_tags().iter().filter(|tag| blocks.def(light).has_tag(tag) && !blocks.def(stub).has_tag(tag)).find_map(|tag| effects.falls_short(tag, before, after));
-        let (Some((effect, need)), Some(player)) = (lost, self.players.get(&id)) else { return false };
-        let def = effects.get(effect);
+    /// Tells player `id` that `effect`, a step of their home, now wants `need` lights:
+    /// `words` with the step's name and the count filled in.
+    fn tell_short(&self, id: PlayerId, words: Words, effect: voxmar_engine::effect::EffectId, need: u32) {
+        let Some(player) = self.players.get(&id) else { return };
+        let def = self.content.effects.get(effect);
         let key = voxmar_engine::lang::def_key("effect", &def.name);
-        let words = Words::key("flame.home_short")
-            .with("light", Words::Block(blocks.def(light).name.clone()))
-            .with("name", Words::Own(key, def.title.clone()))
-            .with("need", need.to_string());
+        let words = words.with("name", Words::Own(key, def.title.clone())).with("need", need.to_string());
         player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
-        true
+    }
+
+    /// Player `id` back since they joined: once the land around their home is loaded, they
+    /// are told the highest home step that lights burning out while they were away cost
+    /// them, and what their home meets is noted from then on.
+    pub(crate) fn check_home_return(&mut self, id: PlayerId) {
+        let Some(player) = self.players.get(&id).filter(|p| p.joined && p.home_unchecked) else { return };
+        let Some(anchor) = player.home_spot(&self.lit).map(|at| at.floor().as_ivec3()) else {
+            self.players.get_mut(&id).unwrap().home_unchecked = false;
+            return;
+        };
+        let reach = IVec3::new(self.survival.home_reach, 0, self.survival.home_reach);
+        let corners = [anchor - reach, anchor + reach, anchor + IVec3::new(reach.x, 0, -reach.z), anchor + IVec3::new(-reach.x, 0, reach.z)];
+        if !corners.iter().all(|&c| self.world.column(ColumnPos::of_block(c)).is_some()) {
+            return;
+        }
+        let now = self.survey_around(anchor, Some(id));
+        let tags = self.light_tags();
+        let tags: Vec<&str> = tags.iter().map(String::as_str).collect();
+        let lost = self.content.effects.lost(&player.home_steps, &tags, &now);
+        let steps = self.content.effects.home_steps(&now);
+        let player = self.players.get_mut(&id).unwrap();
+        (player.home_steps, player.home_unchecked) = (steps, false);
+        if let Some((effect, _, need)) = lost {
+            self.tell_short(id, Words::key("flame.home_short_away"), effect, need);
+        }
     }
 
     pub(crate) fn saved_flames(&self) -> Vec<SavedFlame> {
@@ -252,7 +306,8 @@ pub(crate) fn restore(saved: &[SavedFlame], id: impl Fn(&str) -> Option<BlockId>
     saved.iter().filter_map(|s| Some((IVec3::from_array(s.pos), Flame { block: id(&s.block).filter(|&b| burns_out(b))?, out: s.out, tended: s.tended }))).collect()
 }
 
-/// Puts out burnt-out and rained-on lights once a second.
+/// Puts out burnt-out and rained-on lights once a second, and tells players back what
+/// lights burnt out while they were away cost their homes.
 #[derive(Default)]
 pub(crate) struct Flames;
 
@@ -262,6 +317,10 @@ impl crate::process::Process for Flames {
     }
 
     fn run(&mut self, server: &mut Server) {
+        let back: Vec<PlayerId> = server.players.iter().filter(|(_, p)| p.home_unchecked).map(|(&id, _)| id).collect();
+        for id in back {
+            server.check_home_return(id);
+        }
         server.burn_flames();
     }
 }
@@ -538,11 +597,16 @@ mod tests {
     fn a_light_in_a_settlement_is_tended_and_never_burns_out() {
         let mut server = fixture("base:torch");
         let town = server.overworld.settlements_near(IVec2::ZERO, 6000)[0].centre;
-        let pos = IVec3::new(town.x, FLOOR + 1, town.z);
+        let pos = IVec3::new(town.x, town.y + 1, town.z);
         server.world.insert(ColumnPos::of_block(pos), Arc::new(Column::default()));
         server.set_block(pos - IVec3::Y, id(&server, "base:stone"));
         server.set_block(pos, id(&server, "base:torch"));
         assert!(!server.flames.contains_key(&pos), "a whole light tended is no entry");
+        // A mine under the settlement is no part of it: a torch there burns.
+        let mine = pos - IVec3::Y * (server.survival.tend_height + 2);
+        server.set_block(mine, id(&server, "base:torch"));
+        assert_eq!(server.flames.get(&mine).map(|f| f.tended), Some(false), "a torch in a mine under it burns");
+        server.set_block(mine, BlockId::AIR);
         let worn = TORCH + IVec3::X;
         server.set_block(worn, id(&server, "base:torch"));
         server.set_down_burnt(pos, id(&server, "base:torch"), 600);
@@ -575,7 +639,7 @@ mod tests {
         assert!(server.flames.is_empty(), "once a column");
 
         let town = server.overworld.settlements_near(IVec2::ZERO, 6000)[0].centre;
-        let pos = IVec3::new(town.x, FLOOR + 1, town.z);
+        let pos = IVec3::new(town.x, town.y + 1, town.z);
         let mut column = Column::default();
         column.set_block(pos - ColumnPos::of_block(pos).origin(), torch);
         server.world.insert(ColumnPos::of_block(pos), Arc::new(column));
@@ -607,17 +671,63 @@ mod tests {
         let sleeping = blocks.ids().find(|&b| blocks.def(b).has_tag("bed") && blocks.upper(b).is_none()).unwrap();
         server.set_block(bed, sleeping);
         server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        // Two lights, burning out in the same second.
         server.set_block(TORCH, id(&server, "base:torch"));
+        server.set_block(TORCH + IVec3::Z, id(&server, "base:torch"));
+        let had = server.content.effects.home_steps(&server.survey_around(bed, Some(1)));
+        assert!(!had.is_empty(), "the home meets a step with its lights");
         while client.try_recv().ok().flatten().is_some() {}
         server.day += TICKS_PER_DAY as f64;
         server.burn_flames();
+        let said = heard(&client);
+        assert_eq!(said.iter().filter(|k| *k == "flame.home_short").count(), 1, "told once for both: {said:?}");
+        assert!(server.players[&1].home_steps.len() < had.len(), "what the home meets noted after");
+    }
+
+    /// The keys of the lines player 1 was told since last asked.
+    fn heard(client: &voxmar_protocol::ClientConnection) -> Vec<String> {
         let mut said = Vec::new();
         while let Ok(Some(message)) = client.try_recv() {
-            if let voxmar_protocol::ServerMessage::Chat { text: voxmar_engine::lang::Words::Key(key, args), .. } = message {
-                said.push((key, args.iter().find(|(n, _)| n == "need").map(|(_, w)| format!("{w:?}"))));
+            if let voxmar_protocol::ServerMessage::Chat { text: voxmar_engine::lang::Words::Key(key, _), .. } = message {
+                said.push(key);
             }
         }
-        assert_eq!(said.iter().filter(|(k, _)| k == "flame.home_short").count(), 1, "told once: {said:?}");
+        said
+    }
+
+    /// A player back after their home's lights burnt out while they were away is told,
+    /// once the land around their home has loaded, what step it cost.
+    #[test]
+    fn a_player_back_is_told_what_lights_burnt_out_away_cost() {
+        let (mut server, client) = told_fixture();
+        let bed = TORCH + IVec3::new(-2, 0, 0);
+        let blocks = &server.content.blocks;
+        let sleeping = blocks.ids().find(|&b| blocks.def(b).has_tag("bed") && blocks.upper(b).is_none()).unwrap();
+        server.set_block(bed, sleeping);
+        server.set_block(TORCH, id(&server, "base:torch"));
+        server.set_block(TORCH + IVec3::Z, id(&server, "base:torch"));
+        let had = server.content.effects.home_steps(&server.survey_around(bed, Some(1)));
+        // Away, the lights burnt out; back, with what the home met then.
+        server.set_block(TORCH, id(&server, "base:torch_stub"));
+        server.set_block(TORCH + IVec3::Z, id(&server, "base:torch_stub"));
+        let player = server.players.get_mut(&1).unwrap();
+        (player.bed, player.home_steps, player.home_unchecked) = (Some(bed.as_vec3() + Vec3::new(0.5, 0.0, 0.5)), had, true);
+        while client.try_recv().ok().flatten().is_some() {}
+        server.check_home_return(1);
+        assert_eq!(heard(&client), vec!["flame.home_short_away".to_owned()]);
+        assert!(!server.players[&1].home_unchecked);
+        server.check_home_return(1);
+        assert!(heard(&client).is_empty(), "told once");
+    }
+
+    /// A guttering torch is lit again whole by what kindles, burning a fresh day.
+    #[test]
+    fn a_guttering_torch_is_lit_again_whole() {
+        let mut server = fixture("base:firebrand");
+        server.set_block(TORCH, id(&server, "base:torch_guttering"));
+        act(&mut server, "base:relight", TORCH, Face::NegX);
+        assert_eq!(at(&server, TORCH), "base:torch");
+        assert_eq!(server.flames.get(&TORCH).map(|f| f.out), Some(server.day.floor() as u64 + TICKS_PER_DAY));
     }
 
     /// `fixture`, with the client end of player 1's connection kept to hear what they are told.

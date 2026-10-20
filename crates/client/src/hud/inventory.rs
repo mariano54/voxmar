@@ -987,10 +987,11 @@ fn wear_lines(locale: &Locale, content: &voxmar_engine::content::Content, item: 
         let per_day = voxmar_engine::flame::WEAR_PER_DAY as f32;
         let days = |wear: u16| format!("{:.1}", wear as f32 / per_day);
         let color = if worn_low(content, item, wear) { ERROR } else { SOFT };
-        return vec![
-            (locale.format("item.flame", &[("left", &days(flame.saturating_sub(wear))), ("days", &days(flame))]), color),
-            (locale.get("item.flame.tended").to_owned(), MUTED),
-        ];
+        let mut lines = vec![(locale.format("item.flame", &[("left", &days(flame.saturating_sub(wear))), ("days", &days(flame))]), color)];
+        if content.flames.tended(item) {
+            lines.push((locale.get("item.flame.tended").to_owned(), MUTED));
+        }
+        return lines;
     }
     let burns = content.tools.burns(item);
     if burns > 0 {
