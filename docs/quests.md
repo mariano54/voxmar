@@ -201,7 +201,7 @@ on the spine gated by a side quest, and a quest that is several steps shown as s
 
 | Check | Before | After |
 |---|---|---|
-| A clear goal per chapter | Nomad's goal Homestead Hearth ("the Farm age opens"); Farm's goal the lit Crucible Kiln ("starts the Bronze age"), with First Bronze after it as the bridge to the next age | Unchanged: both goals are the last spine quest their text names as the age's end |
+| A clear goal per chapter | Nomad's goal Homestead Hearth ("the Farm age opens"; since Oct 15 its rite, The Farm Age, follows it and opens the age); Farm's goal the lit Crucible Kiln ("starts the Bronze age"), with First Bronze after it as the bridge to the next age | Unchanged: both goals are the last spine quest their text names as the age's end |
 | Side branches read as optional | No spine quest comes after a side quest (the_potter, brick_by_brick and crucible_kiln come only after spine quests or the hearth); the wanderer quests say "may" | Unchanged |
 | Nothing unreachable or a dead end | Every `after` names a quest that exists (load-checked); no Nomad quest waits on a Farm one; no Craft or Level goal asks more than Engineering 10 (The Crucible). A Place to Pray stood in the Farm tab with no `after`, so it could finish before the Farm age opened. Stone in Hand had no `after`, so the spine read as three loose starts | A Place to Pray comes after Homestead Hearth like the rest of its tab; Stone in Hand after Crafting Table, so the Nomad spine reads Crafting Table, Stone in Hand, then First Night's line (First Night stays pinned at the start, with no `after`) |
 | Several steps shown as several | Homestead Hearth was one goal (`Home`) for a hearthstone, two chimneys and the lighting | Three parts: the hearthstone, two chimneys, and the lit hearth (`Home`). The book ticks each as it is made |
@@ -324,7 +324,40 @@ and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever
 the snare gets the credit and the catch, as with a shared lit fire, until traps have
 owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` tag no
 recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
-full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 64 quests, Farm 98.
+full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 65 quests, Farm 99, each counting its rite.
+
+## An age's rite (Oct 15)
+
+The next age's stations wait for its rite. A quest with `opens: Some("farm")` is the rite
+of that age (one to an age, and never its own), and a recipe with `age: "farm"` is
+refused, on the server (`allowed_recipes`) and greyed in Can Make and the grid ("opens in
+the Farm Age"), until its rite is done. A recipe naming an age no quest opens fails to
+load. Two goals count the age's own quests, read from what is done rather than a tally:
+`QuestsDone(age, n)` and `Capstones(age, n)`, the latter only quests marked
+`capstone: true` (a path's last quest). Loading refuses a count that is 0, of an age no
+quest is in, or more than the age holds besides the rite.
+
+| Rite | After | Parts | Opens |
+|---|---|---|---|
+| The Farm Age | Homestead Hearth | 20 Nomad quests; 3 Nomad path capstones | pit kiln, crucible, herb planter, stone altar, earth clamp, cooking pot, well, cottage stove, compost heap, skep |
+| The Bronze Age | Crucible Kiln | 30 Farm quests; 4 Farm path capstones | (nothing yet) |
+
+The Farm quests that followed Homestead Hearth follow The Farm Age.
+
+- **Old saves.** A rite also finishes when any quest of the age it opens is done
+  (`QuestRegistry::behind`), so a save from before rites that had reached the Farm age keeps
+  its stations. That is safe only while no quest of the age can be done before its rite, so
+  loading refuses a quest of the age that any way round skips the rite (every `after` is
+  needed, so one that is the rite or follows it is enough; of an `a|b`, both must).
+- **Refused out loud.** A locked recipe crafted in the grid or laid from the book is refused
+  with `craft.age` ("That opens in the Farm Age"), listed under `sent` in `refusals.ron`.
+  Can Make shows it greyed ("Cooking Pot opens in the Farm Age") once half of it is held, after
+  everything that is only short of something, so it never crowds out what can be made.
+- **Capstones are marked.** A quest with `capstone: true` has a gold corner on its cell in the
+  book and a line in its detail ("A path's capstone, gold at its corner"); the rites' texts
+  point to the mark. The gate's `quests: capstones` checks each one drawn carries it.
+- `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
+  it for The Farm Age until piece 12 has it earn the rite.
 
 ## Readable to a newcomer (Oct 13)
 

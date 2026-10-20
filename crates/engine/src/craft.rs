@@ -59,6 +59,10 @@ pub struct RecipeDef {
     /// Made only within reach of a block with this tag.
     #[serde(default)]
     pub near: Option<String>,
+    /// The age it opens in (`farm`): refused until the player has done that age's rite
+    /// (a quest that `opens` it), load-checked to have one.
+    #[serde(default)]
+    pub age: Option<String>,
 }
 
 fn one() -> u8 {
@@ -92,6 +96,8 @@ pub struct Recipe {
     /// What its cells accept that no player holds (sorted): natural blocks that break into
     /// something else, as deepslate breaks to its cobbles. Shown and asked for last.
     unheld: Vec<BlockId>,
+    /// The age it opens in, if not the first (`RecipeDef::age`).
+    pub age: Option<String>,
 }
 
 impl Recipe {
@@ -414,7 +420,7 @@ impl RecipeRegistry {
                     .collect();
                 unheld.sort();
                 unheld.dedup();
-                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm, near: def.near.clone(), unheld });
+                recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm, near: def.near.clone(), unheld, age: def.age.clone() });
             }
         }
         Self::mirrors_collide(&recipes, blocks)?;

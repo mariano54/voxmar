@@ -1,8 +1,9 @@
 // Quests (engine/src/quest.rs): the quest book's chapters, one per age. A quest completes
 // the moment one of its `tasks` holds, however long ago it was done: every goal of the task
 // is read from what the player has done (their journal, what they made and cooked, their
-// skills, what they carry, a home). Nothing is locked behind a quest; they point the way
-// and reward the walk. `after` names quests that come first (`"a|b"` for either).
+// skills, what they carry, a home). They point the way and reward the walk; the one thing
+// locked behind a quest is a later age's stations, behind that age's rite (`opens`, and a
+// recipe's `age`). `after` names quests that come first (`"a|b"` for either).
 //
 // Goals: Craft(item, n), Cook(item, n), Catch(fish, n) (Catch("Kinds", n) for kinds),
 // Kill(creature, n), Tame(creature, n), Pick(plant, n), Mine(ore, n), Visit(biomes),
@@ -52,10 +53,19 @@
         ),
         (
             name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",
-            why: "Your home: you wake here after dying, and the Farm age opens. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone or cobblestone blocks level with it, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel (one cobblestone over two sticks).",
+            capstone: true,
+            why: "Your home: you wake here after dying, and the road to the Farm age begins. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone or cobblestone blocks level with it, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel (one cobblestone over two sticks).",
             tasks: [[Craft("hearthstone", 1), Craft("chimney", 2), Home]],
             after: ["torchlight"],
             rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 1)],
+        ),
+        (
+            name: "the_farm_age", age: "nomad", branch: "main", title: "The Farm Age",
+            why: "The Farm age opens once you have found your feet: twenty quests of this age done, three of them path capstones, marked gold at their corner in the book. Its stations then open to you: the pit kiln first, for fired clay, then the cooking pot, the well and the rest.",
+            tasks: [[QuestsDone("nomad", 20), Capstones("nomad", 3)]],
+            after: ["homestead_hearth"],
+            opens: "farm",
+            rewards: [Xp("crafting", 120.0), Item("clay", 12)],
         ),
         (
             name: "a_friend_in_the_wild", age: "nomad", branch: "hunter", title: "A Friend in the Wild",
@@ -87,6 +97,7 @@
         ),
         (
             name: "set_a_snare", age: "nomad", branch: "hunter", title: "Set a Snare",
+            capstone: true,
             why: "A snare catches small game while you do other work. Two twine over two sticks make one (Hunter 1). Set it on grass where rabbits, hares or field mice wander, and go about your day; a sprung snare holds its catch until you come back. Right-click it to take the catch and set it again.",
             tasks: [[Placed("snare", 1), Trapped("any", 1)]],
             after: ["twine_and_thong"],
@@ -94,6 +105,7 @@
         ),
         (
             name: "pockets", age: "nomad", branch: "qol", title: "Pockets",
+            capstone: true,
             why: "Herbs and seeds eat slots; a pouch holds a thousand of a kind in one. A hide and a twine side by side make a herb pouch, a twine over a hide a seed pouch (Crafting 3).",
             tasks: [[Craft("herb_pouch", 1)], [Craft("seed_pouch", 1)]],
             after: ["twine_and_thong"],
@@ -128,6 +140,7 @@
         ),
         (
             name: "first_ore", age: "nomad", branch: "mining", title: "Red Metal Underfoot",
+            capstone: true,
             why: "Copper needs Mining 5 and the pickaxe you have. Mining grows mostly from coal: a score or so of it, with what the early quests give, takes you there. Copper lies in veins underground, mostly below sea level and richest under granite; a small copper-coloured stone lying on the ground marks a vein below it, so dig down there. Mine five; it is the start of every metal.",
             tasks: [[Mine("copper_ore", 5)]],
             after: ["coal_and_cinders"],
@@ -204,6 +217,7 @@
         ),
         (
             name: "hard_to_put_down", age: "nomad", branch: "combat", title: "Hard to Put Down",
+            capstone: true,
             why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 3 and Hitpoints 11.",
             tasks: [[Level("defence", 3), Level("hitpoints", 11)]],
             after: ["raise_your_guard"],
@@ -246,6 +260,7 @@
         ),
         (
             name: "a_fish_supper", age: "nomad", branch: "fishing", title: "A Fish Supper",
+            capstone: true,
             why: "A fish tastes far better cooked. Roast three at a campfire: hold the raw fish and right-click the fire. Catch the three yourself.",
             tasks: [[Catch("tag:fish", 3), Cook("tag:fish", 3)]],
             after: ["bare_hands"],
@@ -260,6 +275,7 @@
         ),
         (
             name: "herb_lore", age: "nomad", branch: "farming", title: "Herb Lore",
+            capstone: true,
             why: "Alchemy is knowing what each herb carries. Brewing comes in a later age, but folk on the road teach the first of it now: an old herb gatherer shares lore for a herb, a wandering healer makes a salve of three, and a travelling alchemist wants two each of six kinds. Carry herbs on your rounds and deal with one of them.",
             tasks: [[Met("herb_gatherer", 1)], [Met("travelling_alchemist", 1)], [Met("wandering_healer", 1)]],
             after: ["wild_harvest"],
@@ -316,6 +332,7 @@
         ),
         (
             name: "full_stone_kit", age: "nomad", branch: "crafting", title: "A Full Stone Kit",
+            capstone: true,
             why: "A stone tool works twice as fast as a flint one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one stone head over two sticks), hoe and knife.",
             tasks: [[Have("stone_pickaxe", 1), Have("stone_axe", 1), Have("stone_shovel", 1), Have("stone_hoe", 1), Have("stone_knife", 1)]],
             after: ["a_sharp_edge", "break_ground"],
@@ -344,6 +361,7 @@
         ),
         (
             name: "stockpile", age: "nomad", branch: "start", title: "Stockpile",
+            capstone: true,
             why: "A home runs on common stock. Carry thirty-two logs and sixty-four cobblestone and nothing you want to build is a trip away. Woods give the logs fastest, and stone lies a few blocks under the dirt almost anywhere.",
             tasks: [[Have("tag:log", 32), Have("cobblestone", 64)]],
             after: ["first_ore"],
@@ -354,7 +372,7 @@
             name: "the_potter", age: "farm", branch: "main", title: "The Potter",
             why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
             tasks: [[Craft("clay_pot", 6)]],
-            after: ["homestead_hearth", "fire_the_clay"],
+            after: ["the_farm_age", "fire_the_clay"],
             rewards: [Xp("crafting", 305.0), Item("fired_clay", 4)],
         ),
         (
@@ -366,6 +384,7 @@
         ),
         (
             name: "a_hearty_stew", age: "farm", branch: "cooking", title: "A Hearty Stew",
+            capstone: true,
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
             after: ["a_pot_on_the_fire"],
@@ -396,16 +415,25 @@
         ),
         (
             name: "first_bronze", age: "farm", branch: "main", title: "First Bronze",
+            capstone: true,
             why: "Hold three copper ingots, with a tin ore in your pack, and right-click the crucible of your lit kiln: they melt into four bronze ingots, the metal of the next age (Engineering 12). Smelt four.",
             tasks: [[Cook("bronze_ingot", 4)]],
             after: ["crucible_kiln"],
             rewards: [Xp("engineering", 400.0), Item("bronze_ingot", 4)],
         ),
         (
+            name: "the_bronze_age", age: "farm", branch: "main", title: "The Bronze Age",
+            why: "The Bronze age opens once the Farm age is behind you: thirty quests of this age done, four of them path capstones, marked gold at their corner, and the crucible kiln lit.",
+            tasks: [[QuestsDone("farm", 30), Capstones("farm", 4)]],
+            after: ["crucible_kiln"],
+            opens: "bronze",
+            rewards: [Xp("engineering", 300.0), Item("charcoal", 16)],
+        ),
+        (
             name: "clay_banks", age: "farm", branch: "pottery", title: "Clay Banks",
             why: "Pots, vials and kiln bricks are all clay. It lies in patches on the bottom of ponds, lakes and rivers: wade in and dig it with a shovel (one stone head over two sticks). Carry out twenty-four.",
             tasks: [[Have("clay", 24)]],
-            after: ["homestead_hearth"],
+            after: ["the_farm_age"],
             rewards: [Xp("crafting", 60.0)],
         ),
         (
@@ -419,7 +447,7 @@
             name: "a_pit_kiln", age: "farm", branch: "main", title: "A Pit Kiln",
             why: "Clay needs more heat than an open fire gives. A pit kiln is a campfire walled in with cobblestone: at the crafting table, put the campfire in the middle of the bottom row with a cobblestone on each side of it and one above each of those, four in all, as the recipe shows. Set it down, then hold clay and right-click it.",
             tasks: [[Craft("pit_kiln", 1)]],
-            after: ["homestead_hearth"],
+            after: ["the_farm_age"],
             rewards: [Xp("construction", 80.0)],
         ),
         (
@@ -454,7 +482,7 @@
             name: "first_harvest", age: "farm", branch: "farming", title: "First Harvest",
             why: "Till grass or dirt with a hoe (right-click), sow wheat seeds (wild wheat gives them) on the farmland (right-click), keeping it within four blocks of water (beside a river, pond or lake), and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest; a stone hoe reaps the ripe crops around the one you cut. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: fish (Patient Angler), tame hens (Hens in a Row) or make seats and a table for the hearth (A Table for Two).",
             tasks: [[Pick("wheat_crop", 4), Have("wheat", 4)]],
-            after: ["homestead_hearth"],
+            after: ["the_farm_age"],
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
         ),
         (
@@ -473,6 +501,7 @@
         ),
         (
             name: "a_full_granary", age: "farm", branch: "farming", title: "A Full Granary",
+            capstone: true,
             why: "A stone hoe reaps every ripe crop in the three by three around the one you cut, and an iron hoe the five by five, so a wide field comes in at a few strokes. Sow a field nine across with your well in it, let it ripen, and bring in sixty-four wheat plants; keep thirty-two wheat of the harvest for bread, twine and feed.",
             tasks: [[Pick("wheat_crop", 64), Have("wheat", 32)]],
             after: ["a_well_by_the_field"],
@@ -496,7 +525,7 @@
             name: "camp_cook", age: "farm", branch: "cooking", title: "Camp Cook",
             why: "Every dish trains Cooking. Duck wants level 3, mutton 5 and crab 6, and a higher level burns less. Cook a mix of meat and fish, whatever your hunting and fishing bring, until you reach Cooking 5.",
             tasks: [[Level("cooking", 5)]],
-            after: ["homestead_hearth"],
+            after: ["the_farm_age"],
             rewards: [Item("bread", 6)],
         ),
         (
@@ -571,6 +600,7 @@
         ),
         (
             name: "a_full_pen", age: "farm", branch: "husbandry", title: "A Full Pen",
+            capstone: true,
             why: "Six animals under your care is a real farm. Keep each fed, watered, roofed against rain and given room; condition decides what they give. You can keep up to 64 animals.",
             tasks: [[Tame("any", 6)]],
             after: ["the_milk_pail"],
@@ -580,7 +610,7 @@
             name: "bigger_game", age: "farm", branch: "hunter", title: "Bigger Game",
             why: "Sheep, deer, boar and cattle give more meat and better hides, but they fight back: wear your hide wraps and keep your sword sharp. Red deer and wild boar keep to the woods, aurochs to the plains, mouflon to the mountains. Cook the haunch: mutton at Cooking 5, pork at 8, venison at 15.",
             tasks: [[Kill("mouflon", 2)], [Kill("red_deer", 1)], [Kill("wild_boar", 1)], [Kill("aurochs", 1)]],
-            after: ["homestead_hearth"],
+            after: ["the_farm_age"],
             rewards: [Xp("hunter", 200.0), Xp("attack", 100.0)],
         ),
         (
@@ -599,7 +629,7 @@
         ),
         (
             name: "bow_and_arrow", age: "farm", branch: "combat", title: "Bow and Arrow",
-            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 5). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 5): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 5 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
+            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
             tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
             after: ["full_hide_wraps"],
             rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],
@@ -634,6 +664,7 @@
         ),
         (
             name: "heart_of_the_wood", age: "farm", branch: "combat", title: "Heart of the Wood",
+            capstone: true,
             why: "The Rootmother leaves three heartroot. Eaten, one gives Heartwood for ten minutes: room for a fifth more health, and you heal a quarter faster. Another eaten while it lasts only starts the ten minutes again, so keep the rest for the next hard fight. Eat one and keep two.",
             tasks: [[Ate("heartroot", 1), Have("heartroot", 2)]],
             after: ["the_rootmother"],
@@ -657,11 +688,12 @@
             name: "patient_angler", age: "farm", branch: "fishing", title: "Patient Angler",
             why: "Every catch trains Fishing, and the bigger fish bite only at higher levels. Fish until you reach Fishing 5, when sardines start biting in the sea.",
             tasks: [[Level("fishing", 5)]],
-            after: ["homestead_hearth"],
+            after: ["the_farm_age"],
             rewards: [Xp("cooking", 100.0)],
         ),
         (
             name: "many_kinds", age: "farm", branch: "fishing", title: "Many Kinds of Fish",
+            capstone: true,
             why: "Rivers, lakes and the sea bite differently: minnows anywhere, sardines in the sea, perch in lakes from Fishing 10. Land two different kinds. Cook six of your catch: the best fish are worth a fire.",
             tasks: [[Catch("Kinds", 2), Cook("tag:fish", 6)]],
             after: ["patient_angler"],
@@ -671,7 +703,7 @@
             name: "far_horizons", age: "farm", branch: "explore", title: "Far Horizons",
             why: "The world is big and each biome has its own animals, plants and ores. Stand in twelve different biomes.",
             tasks: [[Visit(12)]],
-            after: ["homestead_hearth"],
+            after: ["the_farm_age"],
             rewards: [Xp("farming", 150.0), Xp("mining", 150.0), Xp("fishing", 150.0)],
         ),
         (
@@ -692,7 +724,7 @@
             name: "a_table_for_two", age: "farm", branch: "home", title: "A Table for Two",
             why: "A home needs somewhere to sit. Furniture is made from oak, birch or dark oak planks. A stool is two planks over two sticks (Construction 1); benches and chairs follow. Make two seats at the crafting table and set them by the hearth. Planks on four sticks make a table (Construction 3). Set it near the hearth with a seat on each side; a roof and a table make a house a home.",
             tasks: [[Craft("tag:seat", 2), Craft("tag:table", 1)]],
-            after: ["homestead_hearth"],
+            after: ["the_farm_age"],
             rewards: [Xp("construction", 270.0)],
         ),
         (
@@ -802,6 +834,7 @@
         ),
         (
             name: "heart_of_the_home", age: "farm", branch: "home", title: "Heart of the Home",
+            capstone: true,
             why: "Everything a home needs: a bookshelf, a stove or cauldron, a quern, spindle or loom, and a banner, all in a cosy home. Heal twice as fast and learn an eighth more where you live.",
             tasks: [[Built("home_heart_of_the_home", 1)]],
             after: ["a_cosy_home", "books_and_banners", "a_proper_workshop"],
@@ -809,6 +842,7 @@
         ),
         (
             name: "ore_run", age: "farm", branch: "mining", title: "An Ore Run",
+            capstone: true,
             why: "Bronze needs a good store of ore. With a copper kit you dig fast: bring up twenty-four copper, nine tin and twelve coal ore, and the crucible will not wait on you. Copper lies below sea level with tin in the lower part of the same vein, coal in seams near sea level; small copper and coal stones lying on the ground mark the veins below.",
             tasks: [[Mine("copper_ore", 24), Mine("tin_ore", 9), Mine("coal_ore", 12)]],
             after: ["rock_collector"],
@@ -867,6 +901,7 @@
         ),
         (
             name: "from_the_shelves", age: "nomad", branch: "home", title: "From the Shelves",
+            capstone: true,
             why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Put planks in a store and lay three recipes from it.",
             tasks: [[Laid("any", 3)]],
             after: ["pantry_shelves"],
@@ -881,6 +916,7 @@
         ),
         (
             name: "a_varied_table", age: "nomad", branch: "cooking", title: "A Varied Table",
+            capstone: true,
             why: "One food grows dull and heals little. Cook six meat at a fire, cook four fish, and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
             tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)]],
             after: ["a_fish_supper", "daily_bread", "trail_rations"],
@@ -1068,6 +1104,7 @@
         ),
         (
             name: "fired_whole", age: "farm", branch: "pottery", title: "Fired Whole",
+            capstone: true,
             why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is a dozen clay for the next kiln load.",
             tasks: [[Met("clay_diggers", 1), Cook("fired_clay", 24)]],
             after: ["a_kiln_load"],
@@ -1075,6 +1112,7 @@
         ),
         (
             name: "coal_by_road", age: "nomad", branch: "explore", title: "Coal by Road",
+            capstone: true,
             why: "Coal carters walk sacks of coal to the nearest town, and miners caught by the dark far from home sit waiting for a light. Keep with the carters to the town, or give the miners a lump of coal or charcoal to light their lamp again; both say where coal shows at the surface. Then make sixteen torches: coal or charcoal over a stick makes four.",
             tasks: [[Met("coal_carters", 1), Craft("torch", 16)], [Met("benighted_miners", 1), Craft("torch", 16)]],
             after: ["caught_in_the_rain"],
@@ -1089,6 +1127,7 @@
         ),
         (
             name: "mice_in_the_stores", age: "farm", branch: "rooms", title: "Mice in the Stores",
+            capstone: true,
             why: "At dusk a piper may come by homes, the field mice of folk's stores at his heels. Follow him to the end of his tune and he leaves the seed they would have eaten. Keep a pantry by your fire as well, two crates or baskets beside it, so your stores are worth the guarding.",
             tasks: [[Met("rat_catcher", 1), Built("home_pantry", 1)], [Met("rat_catcher", 1), Built("home_larder", 1)]],
             after: ["a_larder"],
@@ -1096,6 +1135,7 @@
         ),
         (
             name: "the_keepers_word", age: "farm", branch: "hunter", title: "The Keepers' Word",
+            capstone: true,
             why: "A poacher stalks deer in the woods at dusk: be there when he takes one and he cuts you a share, or face him with a weapon in hand (Attack 10) and he leaves. Gamekeepers follow on his trail and say which way he went, and on a later day, once you can fight, his gang may lie in wait for you. Deal with all three.",
             tasks: [[Met("poacher", 1), Met("gamekeepers", 1), Met("poachers_gang", 1)]],
             after: ["a_share_of_the_hunt"],
@@ -1103,6 +1143,7 @@
         ),
         (
             name: "catch_up_the_shrine", age: "farm", branch: "prayer", title: "Catch Up the Shrine",
+            capstone: true,
             why: "Pilgrims who fell behind the shrine bearer walk the roads after it, asking which way it went. They point you after it too, and a loaf from you buys their prayers. Meet the shrine bearer and the stragglers both.",
             tasks: [[Met("shrine_bearer", 1), Met("stragglers", 1)]],
             after: ["filled_again"],
@@ -1110,6 +1151,7 @@
         ),
         (
             name: "wedding_to_christening", age: "farm", branch: "explore", title: "From Wedding to Christening",
+            capstone: true,
             why: "A wedding party walks the open country behind a priest: a flower for the bride, and they share bread and good cheer. Some days later the same folk may pass again with a child to be christened. Bring a loaf for the feast, and the priest's blessing restores your prayer. Meet both.",
             tasks: [[Met("wedding", 1), Met("christening", 1)]],
             after: ["the_rain_dance"],
@@ -1117,6 +1159,7 @@
         ),
         (
             name: "those_taken_in", age: "farm", branch: "callers", title: "Those Taken In",
+            capstone: true,
             why: "Refugees roam near homes, hungry. Food in your hand and they follow you home, where they thank you with seed. Days later their kin come looking for them and camp near your home to thank you too. Take them in, then meet their kin.",
             tasks: [[Met("refugees", 1), Met("refugee_kin", 1)]],
             after: ["neighbourly", "callers_at_the_door"],
@@ -1138,6 +1181,7 @@
         ),
         (
             name: "master_and_journeyman", age: "farm", branch: "crafting", title: "Master and Journeyman",
+            capstone: true,
             why: "A child may tag along behind you for a while, watching you work. Once you are good at something (Farming, Mining or Crafting 15), they ask to learn it and pay a coin for the lesson. Days later they pass again as a journeyman, with a gift for their old teacher. Teach them, then meet the journeyman.",
             tasks: [[Met("apprentice", 1), Met("journeyman", 1)]],
             after: ["fired_whole"],

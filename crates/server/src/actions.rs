@@ -542,6 +542,11 @@ impl Server {
         let allowed = self.allowed_recipes(agent);
         let near = self.near_tags(agent);
         let near = |tag: &str| near.iter().any(|t| t == tag);
+        // A later age's recipe, before its rite, is refused out loud.
+        let grid = self.players[&agent].inventory.grid();
+        if let Some(age) = recipes.find_near(&grid, near).and_then(|r| self.age_closed(agent, r)) {
+            self.refuse_age(agent, &age);
+        }
         let player = self.players.get_mut(&agent).unwrap();
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.

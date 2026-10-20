@@ -8570,6 +8570,12 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
     f.wait(5.0, "lighting the hearth", |c| c.chat.iter().any(|(_, t)| t.contains("your home")));
     f.mark("hearth_lit");
+    // The Farm age's rite (twenty Nomad quests, three of them path capstones) opens its
+    // stations; this line walks only the main quests, so it is marked done for it.
+    f.c.ok("/quest the_farm_age");
+    // Its own line and the command's both in before any later command reads the chat.
+    f.wait(5.0, "the Farm age's rite marked done", |c| quest_status(c, "the_farm_age").0);
+    f.c.chat.clear();
 
     // The Farm age's first fire: a campfire and five cobblestones make a pit kiln, set down;
     // clay from the pond fired in it (a fair share cracks at Crafting 1) until twelve fired

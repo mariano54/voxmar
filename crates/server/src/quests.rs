@@ -151,7 +151,7 @@ impl Server {
 
     /// Finishes `id`'s quests whose tasks hold and tells them their quests' states if they
     /// changed.
-    fn update_quests(&mut self, id: PlayerId) {
+    pub(crate) fn update_quests(&mut self, id: PlayerId) {
         let (finished, states) = self.quest_check(id);
         for name in &finished {
             self.finish_quest(id, name);
@@ -200,7 +200,7 @@ impl Server {
 
     /// Marks a quest done for `agent`. What it pays waits to be claimed (`claim_quest`), and
     /// the chat line says so; a quest that pays nothing is claimed at once.
-    fn finish_quest(&mut self, agent: PlayerId, name: &str) {
+    pub(crate) fn finish_quest(&mut self, agent: PlayerId, name: &str) {
         let Some(quest) = self.content.quests.get(name).cloned() else { return };
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.quests_done.push(name.to_owned());

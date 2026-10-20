@@ -431,13 +431,20 @@ fn craft(
             !voxmar_engine::level::meets_recipe(r, skills.level(player.skills.xp(s)), boosted, &player.inventory, blocks)
         })
     };
-    let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
+    // And a later age's only once its rite is done.
+    let closed = |r: &voxmar_engine::craft::Recipe| super::makeable::closed(&launch.content, &player, r);
+    let allowed = |r: &voxmar_engine::craft::Recipe| closed(r).is_none() && (at_table || !r.needs_table()) && short(r).is_none();
     let near = |tag: &str| near.has(tag);
     let found = recipes.find_near(&player.inventory.grid(), near);
+    let locked = found.and_then(closed);
     let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
     let made = found.filter(|r| allowed(r)).map(|r| (r.output, r.count));
     let filled = player.inventory.grid().iter().any(Option::is_some);
     let (title, how) = match made {
+        _ if let Some(age) = &locked => {
+            let age = locale.get(&format!("quest.age.{age}")).to_owned();
+            (locale.format("inventory.craft.age", &[("age", &age)]), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))]))
+        }
         _ if let Some((skill, level)) = lacking => {
             let skill = locale.skill(skills.get(skill));
             (locale.format("skills.needs", &[("skill", &skill), ("level", &level)]), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))]))
