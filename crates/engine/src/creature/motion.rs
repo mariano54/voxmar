@@ -25,6 +25,9 @@ const CLIMB: f32 = 5.0;
 const DESCEND: f32 = 3.0;
 const FLUTTER_DOWN: f32 = 2.5;
 const LOOK_AHEAD: f32 = 3.0;
+/// How far aside a body slips, walking into the edge of a gap barely wider than it (an open
+/// gate between its fence's posts, a doorway), to go through it.
+const SLIP: f32 = 0.2;
 
 /// A creature's moving state.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -673,6 +676,33 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         if stepped.min.y > start_box.min.y + 1e-4 && (freed || gone(&stepped) > gone(&aabb) + 1e-8) {
             aabb = stepped;
             blocked = [across[0], true, across[2]];
+        }
+    }
+    // Stopped across on the ground at the edge of a gap it fits (a post of an open gate, a
+    // doorway's frame), it slips aside toward the gap's middle, as far as it walks this
+    // tick and no further than `SLIP` in all: a hair off the line through it, it would
+    // press the post for ever. A wall with no gap so near stops it as before.
+    if body.on_ground && !floating && !flying {
+        let boxes = |p: IVec3| world.boxes(p);
+        for (k, side) in [(0, Vec3::Z), (2, Vec3::X)] {
+            let ahead = [Vec3::X, Vec3::Y, Vec3::Z][k] * motion[k].signum() * 0.1;
+            if !blocked[k] || motion[k].abs() < 1e-4 {
+                continue;
+            }
+            let goes = |d: f32| {
+                let (mut aside, mut on) = (aabb, aabb);
+                aside.translate(side * d);
+                on.translate(side * d + ahead);
+                !aside.overlaps(boxes) && !on.overlaps(boxes)
+            };
+            if let Some(d) = (1..=(SLIP / 0.01) as i32).flat_map(|i| [i as f32 * 0.01, -(i as f32) * 0.01]).find(|&d| goes(d)) {
+                let d = d.signum() * d.abs().min(motion[k].abs());
+                let mut aside = aabb;
+                aside.translate(side * d);
+                if !aside.overlaps(boxes) {
+                    aabb = aside;
+                }
+            }
         }
     }
     body.on_ground = blocked[1] && body.velocity.y <= 0.0;

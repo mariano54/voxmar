@@ -1053,10 +1053,16 @@ impl Server {
                 // the next, so it never turns back for a cell it brushed past.
                 let off = |cell: &IVec3| (walker.middle(*cell) - body.position).with_y(0.0).length();
                 // Whether its box goes straight to the middle of `cell`, a cell at its level,
-                // meeting nothing: through a doorway barely wider than it, only once lined up
-                // with it.
+                // meeting nothing: through a doorway barely wider than it, or an open gate
+                // between the posts of its fence, only once lined up with it. A piece it
+                // steps over (a slab, a stair's tread) is nothing in its way.
                 let ground = Ground::climbing(self, climbs);
-                let straight = |cell: &IVec3| goes_straight(body.aabb(), (walker.middle(*cell) - body.position).with_y(0.0), |p| motion::Surroundings::solid(&ground, p));
+                let blocked = |at: &voxmar_engine::physics::Aabb| {
+                    let mut over = *at;
+                    over.min.y += movement.step;
+                    at.intersects(|p| motion::Surroundings::solid(&ground, p)) || over.overlaps(|p| motion::Surroundings::boxes(&ground, p))
+                };
+                let straight = |cell: &IVec3| goes_straight(body.aabb(), (walker.middle(*cell) - body.position).with_y(0.0), blocked);
                 while let Some(cell) = cells.first() {
                     // Level with it: a cell a block up is not reached until it has climbed.
                     // In water its feet bob at the surface, a block over a ford's cells.
@@ -2085,12 +2091,12 @@ pub(crate) fn ring(r: i32, i: i32) -> (i32, i32) {
 /// Whether a box goes `along` (horizontal) meeting nothing, swept in steps a tenth of a
 /// block long: not an axis at a time, which goes round a corner (a stair's turn, a doorway's
 /// frame) the straight line cuts through.
-fn goes_straight(aabb: voxmar_engine::physics::Aabb, along: Vec3, solid: impl Fn(IVec3) -> bool) -> bool {
+fn goes_straight(aabb: voxmar_engine::physics::Aabb, along: Vec3, blocked: impl Fn(&voxmar_engine::physics::Aabb) -> bool) -> bool {
     let steps = (along.length() / 0.1).ceil().max(1.0) as i32;
     (1..=steps).all(|i| {
         let mut at = aabb;
         at.translate(Vec3::Y * 0.01 + along * (i as f32 / steps as f32));
-        !at.intersects(&solid)
+        !blocked(&at)
     })
 }
 
@@ -3325,6 +3331,56 @@ mod way_tests {
             assert!(hunter(name, doorway(None), 8).is_some(), "{name} never found the doorway");
             assert!(hunter(name, doorway(Some("base:wooden_door_open")), 8).is_some(), "{name} never came through an open door");
             assert_eq!(hunter(name, doorway(Some("base:wooden_door")), 8), None, "{name} came through a shut door");
+        }
+    }
+
+    /// Every animal of the homestead that fits a gate (fowl, a duck, sheep, a goat, a
+    /// reindeer, a boar, a deer), led with its favourite food held up, follows the player
+    /// through an open gate in a fence, past a feed trough set by the gate, and up stairs
+    /// onto a floor a block up, within 20 s each. Before: an open gate kept its two half
+    /// posts, leaving 0.66 of a block between them and its leaf, and a boar or a deer
+    /// (0.8 across) pressed the posts for ever; and a body a hair off the line through a
+    /// gap it fits slid along the fence beside it rather than slip aside into it.
+    #[test]
+    fn homestead_animals_led_with_food_follow_through_gates_past_troughs_and_up_stairs() {
+        fn fence(server: &mut Server, c: IVec3) {
+            let (fence, gate) = (server.content.blocks.expect("base:oak_fence_east"), server.content.blocks.expect("base:oak_fence_gate_open_east"));
+            for z in -14..=14 {
+                server.world.set_block(c + IVec3::new(1, 0, z), if z == 3 { gate } else { fence });
+            }
+        }
+        let scenes: [(&str, fn(&mut Server, IVec3) -> Vec3); 3] = [
+            ("gate", |server, c| {
+                fence(server, c);
+                c.as_vec3() + Vec3::new(5.5, 0.0, 3.5)
+            }),
+            ("trough", |server, c| {
+                fence(server, c);
+                let trough = server.content.blocks.expect("base:feed_trough");
+                server.world.set_block(c + IVec3::new(0, 0, 2), trough);
+                server.world.set_block(c + IVec3::new(0, 0, 4), trough);
+                c.as_vec3() + Vec3::new(5.5, 0.0, 3.5)
+            }),
+            ("stairs", |server, c| {
+                super::fight_tests::set(server, "base:oak_stairs_west", (-3..=3).map(|z| c + IVec3::new(1, 0, z)));
+                super::fight_tests::set(server, "base:oak_planks", (2..=8).flat_map(|x| (-3..=3).map(move |z| c + IVec3::new(x, 0, z))));
+                c.as_vec3() + Vec3::new(5.5, 1.0, 0.5)
+            }),
+        ];
+        for name in ["base:junglefowl", "base:mallard", "base:mouflon", "base:mountain_goat", "base:reindeer", "base:wild_boar", "base:red_deer"] {
+            for (scene, build) in scenes {
+                let mut server = crate::test_server();
+                let c = pen(&mut server, 14);
+                let to = build(&mut server, c);
+                let player = join(&mut server, to);
+                let species = server.content.creatures.get(server.content.creatures.find(name).expect(name));
+                let food = species.favourite[0];
+                let held = server.players.get_mut(&player).unwrap();
+                held.inventory.add(food, 1);
+                held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == food)).expect("the food is held");
+                let id = put(&mut server, name, c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5), Vec3::X);
+                assert!(comes(&mut server, id, to, 20).is_some(), "{name} never followed the food in the {scene} scene: at {:.2}", server.creatures.live[&id].body.position - c.as_vec3());
+            }
         }
     }
 
@@ -5147,8 +5203,8 @@ mod fight_tests {
     fn a_way_round_a_corner_is_not_straight() {
         let body = Body::new(Vec3::new(0.5, 0.0, 0.5), 0.0, (0.6, 1.0));
         let corner = |p: IVec3| p == IVec3::new(0, 0, 1);
-        assert!(!goes_straight(body.aabb(), Vec3::new(1.0, 0.0, 1.0), corner));
-        assert!(goes_straight(body.aabb(), Vec3::new(1.0, 0.0, 0.0), corner));
+        assert!(!goes_straight(body.aabb(), Vec3::new(1.0, 0.0, 1.0), |at| at.intersects(corner)));
+        assert!(goes_straight(body.aabb(), Vec3::new(1.0, 0.0, 0.0), |at| at.intersects(corner)));
         assert!(goes_straight(body.aabb(), Vec3::new(1.0, 0.0, 1.0), |_| false));
     }
 
