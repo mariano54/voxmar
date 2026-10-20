@@ -2971,13 +2971,6 @@ mod way_tests {
 
     /// The gate's Climb step, here without a client: a wolf held at the foot of a step a block
     /// high is struck by the player on the step's edge, then let go with the player three
-    /// blocks back along the top. It comes up the step and strikes (a blow told the player, a
-    /// miss as a hit, as the gate counts them) within its chase: the wait for its first
-    /// thought once let go (its own beat), what its own physics takes to bring it in reach
-    /// of the player (`motion::ticks_to`: its turn, its gathering speed and the hop up the
-    /// step), a thought once in reach, and its wind-up.
-    /// The gate's Climb step, here without a client: a wolf held at the foot of a step a block
-    /// high is struck by the player on the step's edge, then let go with the player three
     /// blocks back along the top. From its first thought once let go (its own beat) its
     /// physics brings it up the step and in reach within `motion::chase_with_hop` (its way at
     /// its run, the hop's time in the air, its gathering speed); it decides to strike at its

@@ -5802,6 +5802,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
 
 #[test]
 fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two_ingots_an_ore() {
+    lockstep("the coke oven bakes by the server's ticks, so on a busy machine its 30 s is not done before it is first asked about");
     let mut client = Client::join();
     let start = client.position.floor().as_ivec3();
     // The coke oven: a chamber of kiln bricks three on a side round a hollow middle, the
@@ -9224,6 +9225,10 @@ fn a_charm_taken_off_or_lost_to_death_ends_its_effect_at_once() {
     for line in ["/clear".to_owned(), format!("/give {kept_name} 3"), "/give charge_charm 1".to_owned()] {
         client.ok(&line);
     }
+    // A command's answer can come before the inventory it changed (answered between ticks,
+    // the inventory sent at the next): the charm worn before still shows in the hotbar until
+    // the three things given do.
+    client.pump_until(|c| c.inventory.slots.iter().flatten().filter(|s| s.item == kept).map(|s| s.count).sum::<u8>() == 3);
     wear(&mut client);
     client.ok("/kill");
     client.pump_until(|c| c.health == 0);
