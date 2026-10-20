@@ -195,8 +195,8 @@ fn show_tip(
 }
 
 /// The keys a tip may name (`{character}` in its words), as bound.
-fn bound_keys(settings: &Settings) -> [(&'static str, crate::keys::Key); 4] {
-    [("character", settings.character_key), ("recipes", settings.recipes_key), ("uses", settings.uses_key), ("quests", settings.quests_key)]
+fn bound_keys(settings: &Settings) -> [(&'static str, crate::keys::Key); 5] {
+    [("character", settings.character_key), ("recipes", settings.recipes_key), ("uses", settings.uses_key), ("quests", settings.quests_key), ("inventory", settings.inventory_key)]
 }
 
 #[cfg(test)]

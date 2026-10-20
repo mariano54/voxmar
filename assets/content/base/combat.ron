@@ -52,7 +52,7 @@
         // Nomad: bone, wood and stone, Attack 1.
         (item: "bone_club", class: "mace", level: 1, max_hit: 3),
         (item: "stone_sword", class: "sword", level: 1, max_hit: 3),
-        (item: "wooden_axe", class: "axe", level: 1, max_hit: 2),
+        (item: "flint_axe", class: "axe", level: 1, max_hit: 2),
         (item: "stone_axe", class: "axe", level: 1, max_hit: 3),
         // A flint spear: a stone sword's max hit, a step more reach, and it braces.
         (item: "flint_spear", class: "spear", level: 1, max_hit: 3),
