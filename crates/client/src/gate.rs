@@ -1854,6 +1854,11 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
             // A click a cell: press, release the next frame, and on to the next cell.
             let cells = [0, 1, -1].map(|dx| feet + IVec3::new(dx, -1, 2));
+            // The first block set down settles in a puff of its own dust (`action_fx.ron`),
+            // kept for the record while it shows.
+            if !gate.placed.is_empty() && gate.shot(world, "place-dust").is_none() {
+                return;
+            }
             let Some(&cell) = cells.get(gate.placed.len()) else {
                 aim(world, cells[0]);
                 gate.next(Step::PlaceSettle, now);
@@ -1886,6 +1891,19 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             let (count, wanted) = (held_count(world), gate.count_before.saturating_sub(3));
             let result = if count == wanted { Ok(format!("the hand holds {count}")) } else { Err(format!("the hand holds {count}, not {wanted}")) };
             gate.check("place: inventory", result);
+            // Each block set down settled in a puff of its own dust: the particles counted as
+            // the effect spawned them, the same at any frame rate.
+            let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let dust = world.resource::<crate::fx::FxSeen>().0.get("settle").copied().unwrap_or(0);
+            // As many as `action_fx.ron`'s `settle` gives a block at full particles.
+            let per = crate::fx::ActionFx::load(&world.resource::<crate::session::Launch>().content.files).ok().and_then(|fx| fx.effects.get("settle").map(|e| e.count)).unwrap_or(0);
+            let owed = (cells.len() as f32 * per as f32 * amount.min(1.0) * 0.5) as u32;
+            let result = if dust >= owed.max(1) || amount <= 0.0 {
+                Ok(format!("{dust} motes of dust settled round {} blocks (at a particle amount of {amount:.2})", cells.len()))
+            } else {
+                Err(format!("only {dust} motes of dust round {} blocks, under {owed} (particle amount {amount:.2})", cells.len()))
+            };
+            gate.check("place: dust", result);
             aim(world, feet + IVec3::new(0, -1, -2));
             gate.next(Step::Dig, now);
         }
