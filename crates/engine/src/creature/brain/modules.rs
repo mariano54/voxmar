@@ -634,8 +634,8 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
         let off = def.body.size.0 * ctx.at.scale * 0.5 + reach + circle.away;
         return Decision { goal: Some(p.position + round * off), speed: run(ctx) * circle.pace, face: Some(p.position), ..Default::default() };
     }
-    let reaches = ctx.creature.reaches(ctx.at.phase, ctx.creature.edge(d, ctx.at.scale));
-    let close = reaches && (p.position.y - ctx.at.position.y).abs() < def.body.size.1 + 1.5;
+    let reaches = ctx.creature.reaches(ctx.at.phase, ctx.creature.edge(d, ctx.at.scale), ctx.creature.level(ctx.at.position.y, p.position.y, ctx.at.scale));
+    let close = reaches && p.open && ctx.creature.in_band(ctx.at.position.y, p.position.y, crate::physics::player::HEIGHT, ctx.at.scale);
     let mut decision = Decision { face: Some(p.position), ..Default::default() };
     let stalker = stalks && def.movement.style == Style::Stalker;
     if !close {

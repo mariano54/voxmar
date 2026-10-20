@@ -207,6 +207,7 @@
     "block.base.{name}_fence_corner": "{name}のさくのかど",
     "block.base.{name}_fence_gate": "{name}のさくのもん",
     "block.base.{name}_fence_gate_open": "{name}のさくのもん",
+    "block.base.{name}_ladder": "{name}のはしご",
     "block.base.{name}_newel_post": "{name}のおやばしら",
     "block.base.{name}_landing": "{name}のおどりば",
     "block.base.balcony_door": "こうしど",

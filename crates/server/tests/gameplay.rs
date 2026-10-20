@@ -4150,6 +4150,10 @@ impl voxmar_engine::movement::Surroundings for Seen<'_> {
     fn water(&self, _: &voxmar_engine::physics::Aabb) -> (f32, voxmar_engine::glam::Vec2) {
         (0.0, voxmar_engine::glam::Vec2::ZERO)
     }
+
+    fn climbable(&self, cell: IVec3) -> bool {
+        self.0.world.block(cell).is_some_and(|b| self.0.content.blocks.info(b).climbable)
+    }
 }
 
 /// An honest client among shapes: the engine's own movement at 30, 60 and 144 frames a
@@ -4244,6 +4248,47 @@ fn honest_movement_among_shapes_is_never_put_back() {
         client.fill(at, IVec3::new(1, 0, -6), IVec3::new(20, 3, 1), "air");
     }
     assert!(put_back.is_empty(), "honest moves put back:\n{}", put_back.join("\n"));
+}
+
+/// An honest client climbing a ladder up a wall four blocks high, the engine's own movement
+/// at 30, 60 and 144 frames a second, sending where it is twenty times a second, is never
+/// put back, and ends on top of the wall; and the server has them there. (Off the ground
+/// for longer than a jump, the server takes a ladder their feet are in as something under
+/// them.) Each input is stamped with the client's own clock, as
+/// `honest_movement_among_shapes_is_never_put_back`.
+#[test]
+fn an_honest_climb_up_a_ladder_is_never_put_back() {
+    use voxmar_engine::movement::{Body, Controls, advance};
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    let tuning = client.content.movement.clone();
+    client.fill(at, IVec3::new(4, 0, -1), IVec3::new(7, 3, 1), "oak_planks");
+    client.fill(at, IVec3::new(3, 0, 0), IVec3::new(3, 3, 0), "oak_ladder_west");
+    let ladder = client.content.blocks.expect("base:oak_ladder_west");
+    client.pump_until(|c| c.world.block(at + IVec3::new(3, 3, 0)) == Some(ladder));
+    let mut clock = Instant::now();
+    for fps in [30.0, 60.0, 144.0] {
+        client.tp(start);
+        let mut body = Body { position: start, on_ground: true, ..Default::default() };
+        let controls = Controls { wish: Vec3::X, forward: true, sprint: false, jump: false, descend: false };
+        let (dt, mut t, mut sent) = (1.0 / fps, 0.0f32, 0u32);
+        while t < 3.0 {
+            advance(&mut body, &Seen(&client), &tuning, controls, dt);
+            t += dt;
+            if t >= (sent + 1) as f32 * 0.05 {
+                sent += 1;
+                client.send_position_at(body.position, false, clock + Duration::from_secs_f32(t));
+            }
+        }
+        assert!(body.on_ground && body.position.y - start.y == 4.0 && body.position.x - start.x > 4.0, "at {fps} fps the client did not climb onto the wall: {}", body.position - start);
+        assert!(client.all_accepted(), "an honest climb at {fps} fps to {} was put back to {:?}", body.position - start, client.teleported.map(|to| to - start));
+        client.connection.send(ClientMessage::Command { line: "/tp ~ ~ ~".into() });
+        client.pump_until(|c| c.teleported.is_some());
+        let there = client.teleported.take().unwrap();
+        assert!(there.distance(body.position) < 1e-3, "at {fps} fps the client got to {}, the server has {}", body.position - start, there - start);
+        clock += Duration::from_secs(4);
+    }
 }
 
 /// A gap between shaped blocks narrower or lower than the player is no way through, though
