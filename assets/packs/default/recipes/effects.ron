@@ -597,6 +597,19 @@
             ".kwwdwwwk.",
             ".kkkkkkkk.",
         ])]),
+        // A four-paned window with the sun in its corner.
+        "ui/effect/bright_room": (size: (10, 10), layers: [Grid(legend: {'k': "#3a2410", 'w': "#a0703a", 's': "#ffe070", 'b': "#9ad0f0", 'c': "#d8f0ff"}, rows: [
+            "s.s.......",
+            ".sss......",
+            "ssswwwwww.",
+            ".sswbbwbbw",
+            "s.swcbwcbw",
+            "...wbbwbbw",
+            "...wwwwwww",
+            "...wbbwbbw",
+            "...wcbwcbw",
+            "...wwwwwww",
+        ])]),
         // A shelf with its jars in a row.
         "ui/effect/everything_in_its_place": (size: (10, 10), layers: [Grid(legend: {'k': "#1a1008", 'w': "#a0703a", 'b': "#4a80c0", 'r': "#c04030", 'g': "#40a040"}, rows: [
             "..........",

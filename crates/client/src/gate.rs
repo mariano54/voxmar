@@ -6559,8 +6559,9 @@ const WALLS_WAIT: f32 = 8.0;
 
 /// Walls make the home. About the camp the Home step left (the bag home, a torch beside it),
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
-/// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound) it
-/// turns Snug. All of it goes again after, the camp left for the way home.
+/// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound), two
+/// of them hide windows, it turns Snug and is a bright room. All of it goes again after, the
+/// camp left for the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase();
     let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
@@ -6572,6 +6573,7 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     // beyond, the roof over the walls.
     let (low, high) = (bag + IVec3::new(-5, 0, -3), bag + IVec3::new(3, 3, 3));
     let (hearth, light) = (bag + IVec3::new(0, 0, 2), bag + IVec3::new(-3, 0, -2));
+    let panes = [IVec3::new(bag.x - 1, bag.y + 1, low.z), IVec3::new(bag.x + 1, bag.y + 1, low.z)];
     let walls = |net: &Net, block: &str| {
         for (a, b) in [
             (low, IVec3::new(low.x, high.y, high.z)),
@@ -6622,20 +6624,28 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
             let asked = lines.iter().any(|l| l.contains(&wanted));
             let (hearthside, snug) = (has(world, "base:hearthside"), has(world, "base:snug"));
             if asked && hearthside && !snug {
-                walls(world.resource::<Net>(), "oak_planks");
+                let net = world.resource::<Net>();
+                walls(net, "oak_planks");
+                // Two hide windows in the north wall: a bright room.
+                for pane in panes {
+                    net.command(&format!("setblock {} {} {} hide_window", pane.x, pane.y, pane.z));
+                }
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", Err(format!("{waited:.1} server s on, roofed but open to the outside: Hearthside {hearthside}, Snug {snug} (want Hearthside alone), /home asked for \"{wanted}\" walls {asked}; lines since: {lines:?}")));
                 leave(world, gate);
             }
         }
-        // Walled in with planks: Snug.
+        // Walled in with planks, two of them hide windows: Snug, and a bright room.
         _ => {
-            if has(world, "base:snug") {
+            let (snug, bright) = (has(world, "base:snug"), has(world, "base:bright_room"));
+            if snug && bright {
                 gate.check("home: walls", Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()));
+                gate.check("home: bright room", Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()));
                 leave(world, gate);
             } else if gate.waited_out(WALLS_WAIT) {
-                gate.check("home: walls", Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))));
+                gate.check("home: walls", if snug { Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()) } else { Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))) });
+                gate.check("home: bright room", Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")));
                 leave(world, gate);
             }
         }

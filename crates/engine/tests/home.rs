@@ -157,6 +157,22 @@ fn herbs_drying_at_home_make_a_nook_for_the_garden_and_the_brew() {
     assert_eq!(content.blocks.def(herbs).drops.as_deref(), Some("core:air"));
 }
 
+/// Windows count at home: two in its walls under a roof make a bright room; one does not,
+/// nor two out under the sky. Every window the content has is one (`window`).
+#[test]
+fn two_windows_at_home_make_a_bright_room() {
+    let content = content();
+    let effects = &content.effects;
+    assert!(rooms(&[("window", 1)]).is_empty(), "one window is not a bright room");
+    assert_eq!(rooms(&[("window", 2)]), ["base:bright_room"]);
+    assert!(rooms_in(&[("window", 2)], &Weather::NONE, true).is_empty(), "no roof, no room");
+    let bright = effects.get(effects.id("base:bright_room").unwrap());
+    assert_eq!((bright.modifiers.xp, bright.modifiers.heal), (1.05, 1.05));
+    for name in ["base:hide_window", "base:glass"] {
+        assert!(content.blocks.def(content.blocks.expect(name)).has_tag("window"), "{name} is a window");
+    }
+}
+
 /// What a survey with these counts shows of the rooms (the side branches) in this weather.
 fn rooms_in(counts: &[(&str, u32)], weather: &Weather, outdoors: bool) -> Vec<String> {
     let content = content();
