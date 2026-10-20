@@ -2835,6 +2835,46 @@ fn windows_at_home_make_a_bright_room() {
     client.pump_until(|c| !has(c, "base:bright_room"));
 }
 
+/// Things set out in the yard count at home (docs/home.md Rooms): an awning, and a bench and
+/// a hay bale out in the open by a slept-in bag under the sky, make a Dooryard, announced.
+/// The same pieces under a roof of their own count for nothing; the player under a roof, it
+/// goes; the bale taken away, it goes again.
+#[test]
+fn an_awning_a_bench_and_a_bale_make_a_dooryard() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let bag = feet + IVec3::new(2, 0, 0);
+    let (awning, bench, bale) = (feet + IVec3::new(0, 2, 2), feet + IVec3::new(-2, 0, 2), feet + IVec3::new(4, 0, 2));
+    // A shed roof over the bench and the bale: kept indoors.
+    let shed = |block: &str| format!("/fill {} {} {} {} {} {} {block}", bench.x, bench.y + 3, bench.z - 1, bale.x, bale.y + 3, bale.z + 1);
+    for line in [
+        format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z),
+        format!("/setblock {} {} {} red_awning", awning.x, awning.y, awning.z),
+        format!("/setblock {} {} {} oak_bench", bench.x, bench.y, bench.z),
+        format!("/setblock {} {} {} hay_bale", bale.x, bale.y, bale.z),
+        shed("stone"),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(bale) == c.content.blocks.id("base:hay_bale"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested"));
+    assert!(!has(&client, "base:dooryard"), "a bench and a bale under a roof made a dooryard");
+    client.chat.clear();
+    client.ok(&shed("air"));
+    client.pump_until(|c| has(c, "base:dooryard") && told(c, "Dooryard:"));
+    // A roof over the player: indoors, not the yard.
+    let roof = feet + IVec3::new(0, 2, 0);
+    client.ok(&format!("/setblock {} {} {} stone", roof.x, roof.y, roof.z));
+    client.pump_until(|c| !has(c, "base:dooryard"));
+    client.ok(&format!("/setblock {} {} {} air", roof.x, roof.y, roof.z));
+    client.pump_until(|c| has(c, "base:dooryard"));
+    client.ok(&format!("/setblock {} {} {} air", bale.x, bale.y, bale.z));
+    client.pump_until(|c| !has(c, "base:dooryard"));
+}
+
 /// A proper bed rests better than a bag (A Proper Bed: "something better than the ground"),
 /// out under the sky with nothing around it: well rested, and a longer mend.
 #[test]
@@ -5802,6 +5842,7 @@ fn an_aurochs_on_a_treadwheel_blows_the_bellows_of_a_bloomery_that_makes_a_bloom
 
 #[test]
 fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two_ingots_an_ore() {
+    lockstep("the coke oven bakes by the server's ticks, so on a busy machine its 30 s is not done before it is first asked about");
     let mut client = Client::join();
     let start = client.position.floor().as_ivec3();
     // The coke oven: a chamber of kiln bricks three on a side round a hollow middle, the
@@ -9224,6 +9265,10 @@ fn a_charm_taken_off_or_lost_to_death_ends_its_effect_at_once() {
     for line in ["/clear".to_owned(), format!("/give {kept_name} 3"), "/give charge_charm 1".to_owned()] {
         client.ok(&line);
     }
+    // A command's answer can come before the inventory it changed (answered between ticks,
+    // the inventory sent at the next): the charm worn before still shows in the hotbar until
+    // the three things given do.
+    client.pump_until(|c| c.inventory.slots.iter().flatten().filter(|s| s.item == kept).map(|s| s.count).sum::<u8>() == 3);
     wear(&mut client);
     client.ok("/kill");
     client.pump_until(|c| c.health == 0);
@@ -9527,4 +9572,37 @@ fn a_village_bed_is_someones() {
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
     client.pump_until(|c| told(c, "wake here"));
     assert!(!refused(&client), "a bag set in a village bed's place was refused");
+}
+
+/// A bed in a town's farthest house, over 64 blocks from its middle, is as much the
+/// town's as one by its well: sleep there is refused, as the bed's settlement is the one
+/// whose square holds it, not one found within a reach of it.
+#[test]
+fn a_bed_far_out_in_a_town_is_someones() {
+    let seed = 0x5eed;
+    let mut client = Client::join_with(ServerConfig { seed, view_distance: 2, allow_flight: false, ..Default::default() });
+    client.admin = true;
+    let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
+    let overworld = voxmar_worldgen::Overworld::with_content(seed, client.content.blocks.clone(), &world_content);
+    let town = overworld.nearest_settlement(client.position.floor().as_ivec3().xz(), 10000, |s| s.size == "town").expect("a town");
+    // Its farthest ground-floor bed from the middle, and the home it stands in.
+    let (far, home, bed) = town
+        .buildings
+        .iter()
+        .flat_map(|b| b.beds.iter().filter(|p| p.y == b.floor + 1).map(move |&p| ((p.xz() - town.centre.xz()).as_vec2().length(), b, p)))
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .expect("a town home with a bed on its ground floor");
+    assert!(far > 64.0, "{}'s farthest bed is only {far:.0} blocks from its middle", town.name.0);
+    let open = |c: &Client, p: IVec3| c.world.block(p).is_some_and(|b| !c.content.blocks.def(b).solid);
+    client.ok("/time set noon");
+    client.ok(&format!("/tp {} {} {}", bed.x as f32 + 0.5, bed.y + 1, bed.z as f32 + 0.5));
+    client.pump_until(|c| c.world.block(bed).is_some_and(|b| c.content.blocks.def(b).has_tag("bed")));
+    let side = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().map(|d| bed + d).find(|&p| open(&client, p) && open(&client, p + IVec3::Y) && home.room.contains(&p.xz()))
+        .unwrap_or_else(|| panic!("the {} bed at {bed} has no open side", home.what));
+    client.ok(&format!("/tp {} {} {}", side.x as f32 + 0.5, side.y, side.z as f32 + 0.5));
+    client.pump_until(|c| c.position.distance(side.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) < 1.0);
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| c.refused.iter().any(|t| t.contains("belongs to someone")));
+    assert!(!client.chat.iter().any(|(_, t)| t.contains("wake here")), "the bed {far:.0} blocks out in {} took as where the player wakes", town.name.0);
 }

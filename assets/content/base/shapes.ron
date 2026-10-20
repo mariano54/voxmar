@@ -397,6 +397,26 @@
             (from: (0, 8, 8), to: (16, 12, 16), cull: true),
             (from: (0, 12, 12), to: (16, 16, 16), cull: true),
         ]),
+        // A roof's outer corner, a hip: four courses as the roof's, each set a quarter back
+        // from the north and from the west, so eaves run along both and the top course
+        // meets the back corner.
+        "roof_corner": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (4, 4, 4), to: (16, 8, 16), cull: true),
+            (from: (8, 8, 8), to: (16, 12, 16), cull: true),
+            (from: (12, 12, 12), to: (16, 16, 16), cull: true),
+        ]),
+        // A roof's inner corner, a valley: the courses of a roof with its eave north and of
+        // one with its eave west together, meeting along the diagonal.
+        "roof_inner_corner": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (0, 4, 4), to: (16, 8, 16), cull: true),
+            (from: (4, 4, 0), to: (16, 8, 4), cull: true),
+            (from: (0, 8, 8), to: (16, 12, 16), cull: true),
+            (from: (8, 8, 0), to: (16, 12, 8), cull: true),
+            (from: (0, 12, 12), to: (16, 16, 16), cull: true),
+            (from: (12, 12, 0), to: (16, 16, 12), cull: true),
+        ]),
         // The top of a gable, between a roof facing north one below it on one side and one
         // facing south on the other: courses rising from both sides to a ridge capping the
         // middle, running east to west.
