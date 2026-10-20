@@ -32,6 +32,7 @@
         "CropLevel": (say: "skills.needs"),
         "SkillLevel": (say: "skills.needs"),
         "CookingLevel": (say: "skills.needs"),
+        "CookingTool": (say: "cooking.needs_tool"),
         // Where, and with what.
         "Replaceable": (say: "refusal.in_the_way"),
         "Unobstructed": (say: "refusal.someone_there"),
@@ -62,5 +63,7 @@
         "trap.needs",
         // No sleep with a hunter near or a wound fresh.
         "bed.threatened", "bed.just_hurt",
+        // A station recipe's tool not carried (an axe to split a log on a chopping block).
+        "cooking.needs_tool",
     ],
 )

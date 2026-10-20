@@ -221,6 +221,8 @@
     "effect.base.waterside.description": ("By the sea, a river or a marsh: casts land a fifth more often.", "海や川や沼のそば。釣り糸が5分の1ほどよくかかる。"),
     "multiblock.base.crucible_kiln": ("Crucible Kiln", "るつぼ窯"),
     "multiblock.base.crucible_kiln.hint": ("The kiln needs kiln bricks all round the crucible and a pillar of kiln bricks on each corner.", "窯には、るつぼを囲む窯レンガと、四隅に窯レンガの柱が必要です。"),
+    "multiblock.base.charcoal_clamp": ("Charcoal Clamp", "炭窯"),
+    "multiblock.base.charcoal_clamp.hint": ("A clamp is nine firewood laid three by three on the ground, walled round and roofed over with earth, with kindling on the roof's middle for a flue. Light the kindling from a torch.", "炭窯は、薪を地面に3×3で9本並べ、まわりを土で囲んで上も土でふさぎ、屋根の真ん中に焚きつけを置いて煙道にしたもの。松明で焚きつけに火をつける。"),
     "multiblock.base.homestead_hearth": ("Homestead Hearth", "開拓の炉"),
     "multiblock.base.homestead_hearth.hint": ("The hearth needs a ring of stone around the hearthstone and a chimney two blocks tall at one corner.", "炉には、炉石を囲む石の輪と、角に2ブロックの高さの煙突が必要です。"),
     "quest.base.a_bed_of_your_own": ("A Bed of Your Own", "自分の寝床"),

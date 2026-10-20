@@ -158,3 +158,29 @@ placed it, and a multiblock counts towards `built:` quests once per standing str
 Fuels: the last entry in `fuels` naming an item says how long it burns, else the last tag
 taking it, so a tag never shortens an item's own entry and a later package can change any of
 them.
+
+Fuel heat. Each fuel has a `heat` (1 when unsaid; 0 is refused): logs and planks 1, firewood
+and charred wood 2, coal, charcoal and coke 3. A machine or multiblock with a `heat` takes
+only fuel at least that hot (`MachineRegistry::burns_in`), so the Crucible Kiln (heat 3)
+wants charcoal or coal; a hearth or campfire (heat 0) burns anything. Load refuses a
+machine whose heat no fuel reaches.
+
+## The fuel chain (wood to charcoal)
+
+Raw logs are poor fuel. The way up:
+
+1. **Firewood.** A log right clicked on a chopping block with an axe in hand (cooking.ron,
+   `tool: "axe"`) splits into two firewood, hotter than the log. Any `log`-tagged wood
+   splits. The axe's wear is data only (the tool-wear hook adds it).
+2. **The charcoal clamp** (multiblocks.ron `charcoal_clamp`): a 5x5 stack of firewood under
+   soil (earth or turf), kindling at its heart and a flue at the top. Lit with a firebrand or
+   a torch (`lit_by`), it smoulders for game hours (`smoulder.hours`), then the firewood is
+   charcoal heaps. Rain on its open flue (a bad seal) spoils to ash heaps the share of its
+   wood it rained for, from the top down (rain as survival.ron's `douse_rain`). Opened early (a cell broken) it gives part-burnt
+   charred wood. Server: `smoulder.rs`, saved in the world's `smoulders`.
+3. **Charcoal heat** gates the Crucible Kiln, and so the Farm age's end.
+
+Cheaper routes that already existed, a balance call to make: the earth clamp station turns
+16 logs into charcoal a minute, and a campfire turns a log into charcoal one at a time
+(docs/stations.md).
+

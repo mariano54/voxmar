@@ -41,6 +41,9 @@ impl Server {
             return;
         };
         self.tally(agent, "built", &structure.name, 1);
+        if structure.smoulder.is_some() {
+            return self.smoulder(agent, core, structure);
+        }
         if !structure.fuels.is_empty() && !self.station_lit(core) {
             let fuel = self.players.get(&agent).and_then(|p| p.inventory.get(p.selected))
                 .and_then(|stack| structure.fuels.iter().find(|&&(item, count)| item == stack.item && stack.count >= count).copied());

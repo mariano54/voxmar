@@ -444,6 +444,9 @@ impl Content {
                 if !machines.burn_seconds(fuel).is_some_and(|seconds| seconds.is_finite() && seconds > 0.0 && (seconds * count as f32).is_finite()) {
                     return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} needs a positive finite burn time in machines.ron", structure.name, blocks.def(fuel).name)));
                 }
+                if machines.fuel_heat(fuel).is_some_and(|heat| heat < structure.heat) {
+                    return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} burns cooler than the heat {} it asks", structure.name, blocks.def(fuel).name, structure.heat)));
+                }
             }
         }
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
