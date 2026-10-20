@@ -346,7 +346,7 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 | Hitpoints | **Hard to Put Down** (Nomad, new) | Twice your level in health; 12 is 24 | None: it grows with blows landed |
 | Magic | A Place to Pray (Farm) | Bark Skin at 1, Ember Arm 4, Mending 10 | The stone altar |
 | Alchemy | **Herb Lore** (Nomad, new) | A taste only: herb lore from three kinds of wanderer | None yet |
-| Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 5 | Sling to short bow |
+| Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 3 | Sling to short bow |
 
 Two new side quests fill the skills that had nothing before:
 - **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 3 and Hitpoints 12. Both
@@ -401,8 +401,8 @@ base/recipes_weapons.ron), checked at load:
 | Weapon | Age | Level | Max hit | Cooldown | Reach | Ammo | Recipe |
 |---|---|---|---|---|---|---|---|
 | Sling | Nomad | Ranged 1 | 2 | 0.53 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
-| Short Bow | Farm | Ranged 5 | 4 | 0.6 s | 20 | Arrows | Three sticks, three twine (Crafting 5) |
-| Arrow (x4) | Farm | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 5) |
+| Short Bow | Nomad (late) | Ranged 3 | 4 | 0.6 s | 20 | Arrows | Three sticks, three twine (Crafting 3) |
+| Arrow (x4) | Nomad (late) | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 3) |
 
 Next to early melee: fists hit 1, a stone sword 3, copper swords 5 and a copper axe 6. The
 sling (2) is a step above fists that keeps you out of reach; the bow (4) sits just under
