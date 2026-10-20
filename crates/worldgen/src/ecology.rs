@@ -869,7 +869,7 @@ impl Flora {
         // Plants much brighter or more saturated than the grass are rarer accents.
         let contrast = |block: &str| 1.0 - hue::ACCENT_RARITY * (1.0 - hue::harmony(shown(block), grass, hue::CONTRAST_SPREAD));
         let wonders = def.wonders.clone().unwrap_or_else(|| vec![Select::Tag("wonder".into(), 1.0)]);
-        let mut flora = Flora { forest: def.forest, cover: def.cover, flowers: def.flowers, bloom: def.bloom, name: crate::rarity::name_hash(&def.name), ..Default::default() };
+        let mut flora = Flora { forest: def.forest, cover: def.cover, flowers: def.flowers, bloom: def.bloom, name: crate::rarity::name_hash(&biome.name), ..Default::default() };
         for (i, tree) in content.trees.iter().enumerate() {
             let tags = tree.tags.iter().map(String::as_str);
             let id = TreeId(i as u16);
