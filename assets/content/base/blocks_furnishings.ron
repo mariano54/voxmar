@@ -56,6 +56,13 @@
             // Pantry shelves: a shelf stood with crocks and a keg, a store for the home's food
             // (`storage`, counted by a pantry and a larder).
             (name: "{name}_pantry_shelf", render: Model, shape: "pantry_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "pantry", "decor", "wood"]),
+            // The hearth corner (with the hearth, a `hearth_corner` room in effects.ron): a settle, a
+            // high-backed bench with arms that keeps the draught off a back turned to the room
+            // (`settle`, a seat like any); a woodpile, logs stacked to hand by the fire; a peg
+            // rail on the wall with a cloak and a pot hung on it.
+            (name: "{name}_settle", render: Model, shape: "settle", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "seat", "settle", "decor", "wood"]),
+            (name: "{name}_woodpile", render: Model, shape: "woodpile", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "woodpile", "decor", "wood"]),
+            (name: "{name}_peg_rail", render: Model, shape: "peg_rail", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "pegs", "decor", "wood"]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
