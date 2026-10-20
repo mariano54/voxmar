@@ -247,6 +247,82 @@ pub(crate) fn waited_for_cores() -> Option<std::time::Duration> {
     None
 }
 
+/// How much core time the whole machine has spent busy (every core's user, nice and system
+/// time, and on Linux what the host took for itself), and how much CPU time this process has
+/// had, since the machine and the process started. Their difference over a frame is the core
+/// time other work on the machine ran (`waited_for_others`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CoreTimes {
+    pub machine_busy: std::time::Duration,
+    pub ours: std::time::Duration,
+}
+
+pub(crate) fn core_times() -> Option<CoreTimes> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    // SAFETY: getrusage fills the `rusage` it is given, read only on success.
+    let usage = unsafe {
+        if libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) != 0 {
+            return None;
+        }
+        usage.assume_init()
+    };
+    let micros = |t: libc::timeval| t.tv_sec as u64 * 1_000_000 + t.tv_usec as u64;
+    let ours = std::time::Duration::from_micros(micros(usage.ru_utime) + micros(usage.ru_stime));
+    // SAFETY: sysconf only reads a configuration value.
+    let hz = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
+    if hz <= 0 {
+        return None;
+    }
+    let machine_busy = std::time::Duration::from_secs_f64(machine_busy_ticks()? as f64 / hz as f64);
+    Some(CoreTimes { machine_busy, ours })
+}
+
+/// The machine's busy core time in clock ticks: `/proc/stat`'s first line, every field but
+/// idle and waiting on the disk (guest time is counted in user time already).
+#[cfg(target_os = "linux")]
+fn machine_busy_ticks() -> Option<u64> {
+    let stat = std::fs::read_to_string("/proc/stat").ok()?;
+    let fields: Vec<u64> = stat.lines().next()?.split_whitespace().skip(1).take(8).map(|f| f.parse().ok()).collect::<Option<_>>()?;
+    let [user, nice, system, _idle, _iowait, irq, softirq, steal] = fields[..] else { return None };
+    Some(user + nice + system + irq + softirq + steal)
+}
+
+/// The machine's busy core time in clock ticks, summed over its cores: the host's CPU load
+/// (`HOST_CPU_LOAD_INFO`), every state but idle.
+#[cfg(target_os = "macos")]
+// libc marks its mach calls deprecated in favour of the mach2 crate; these two
+// (`mach_host_self`, `host_statistics`) are stable on every macOS, and no crate is added.
+#[allow(deprecated)]
+fn machine_busy_ticks() -> Option<u64> {
+    let mut info = libc::host_cpu_load_info { cpu_ticks: [0; libc::CPU_STATE_MAX as usize] };
+    let mut count = libc::HOST_CPU_LOAD_INFO_COUNT;
+    // SAFETY: host_statistics writes at most `count` integers, the size of `info`, into it.
+    let got = unsafe { libc::host_statistics(libc::mach_host_self(), libc::HOST_CPU_LOAD_INFO, (&raw mut info).cast(), &mut count) };
+    if got != libc::KERN_SUCCESS {
+        return None;
+    }
+    let ticks = |state: libc::c_int| u64::from(info.cpu_ticks[state as usize]);
+    Some(ticks(libc::CPU_STATE_USER) + ticks(libc::CPU_STATE_SYSTEM) + ticks(libc::CPU_STATE_NICE))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn machine_busy_ticks() -> Option<u64> {
+    None
+}
+
+/// Of the `waited` seconds our threads spent queued for a core in a frame of `wall` seconds,
+/// the share other work on the machine caused, given the CPU seconds we had (`ours`) and the
+/// core seconds the machine was busy (`busy`) on `cores` cores in it. With the machine to
+/// ourselves we would have waited only for as much as we asked past every core; the rest of
+/// the waiting is set down to others, and never more than they ran. Our own pools crowding the
+/// cores (generation, meshing, the server) are no excuse: on a machine with nothing else to
+/// run, other work ran nothing and nothing is set down to it.
+pub(crate) fn waited_for_others(wall: f32, waited: f32, ours: f32, busy: f32, cores: f32) -> f32 {
+    let others = (busy - ours).max(0.0);
+    let ourselves = (ours + waited - cores * wall).max(0.0);
+    (waited - ourselves).min(others).clamp(0.0, waited.max(0.0))
+}
+
 /// Milliseconds between two marks, if both were taken.
 fn between(a: Option<Instant>, b: Option<Instant>) -> Option<f32> {
     Some(b?.saturating_duration_since(a?).as_secs_f32() * 1000.0)
