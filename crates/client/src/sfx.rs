@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use bevy::audio::{AudioPlayer, AudioSource, GlobalVolume, PlaybackSettings, SpatialScale, Volume};
 use bevy::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
 use voxmar_engine::content::ContentFile;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Sound};
@@ -77,10 +77,11 @@ pub struct SfxPlugin;
 impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<SoundCue>()
+            .add_message::<Catches>()
             .init_resource::<MaterialsAsked>()
             .configure_sets(Update, Audible.run_if(sound_on))
             .add_systems(Startup, synthesize)
-            .add_systems(Update, ((footsteps, (play_cues.in_set(Audible), ask_materials)).chain(), thunder.in_set(Audible), (play_actions, play_brought).chain()));
+            .add_systems(Update, ((footsteps, (play_cues.in_set(Audible), ask_materials)).chain(), thunder.in_set(Audible), play_catches.in_set(Audible), (play_actions, play_brought).chain()));
     }
 }
 
@@ -185,6 +186,20 @@ pub fn station_cue(stations: &Stations, registry: &BlockRegistry, old: BlockId, 
     }
 }
 
+/// Something nearby caught fire (fire.ron): the server turned it into the burning block.
+/// Heard as `sounds.ron`'s `fire` `catch`, from the block.
+#[derive(Message, Clone, Copy, Debug)]
+pub struct Catches {
+    pub at: Vec3,
+}
+
+/// Whether a block changing from `old` to `new` is something catching fire: becoming
+/// fire.ron's burning block, from anything else that was loaded. Said by the server's block
+/// change, never timed here.
+pub fn catches(fire: &voxmar_engine::fire::Fire, old: Option<BlockId>, new: BlockId) -> bool {
+    fire.burning == Some(new) && old.is_some_and(|old| old != new)
+}
+
 /// One clip a cue may play, and how loud and fast.
 #[derive(Clone)]
 struct Clip {
@@ -207,10 +222,14 @@ struct Sfx {
     thunder: [Vec<Handle<AudioSource>>; 3],
     /// What actions sound like as the player does them.
     actions: FxHashMap<voxmar_engine::action::ActionId, Vec<Clip>>,
+    /// Something catching fire.
+    catch: Vec<Clip>,
     /// What their results sound like landing in the pack, by their tags.
     brings: Brings,
     /// Actions done whose results may yet land, and until when (seconds).
     awaiting: Vec<(voxmar_engine::action::ActionId, f32)>,
+    /// The ways of doing them that sound their own, in order, by what each is done with.
+    ways: FxHashMap<voxmar_engine::action::ActionId, Vec<(FxHashSet<BlockId>, Vec<Clip>)>>,
     counter: u64,
 }
 
@@ -390,6 +409,25 @@ fn synthesize(
             Some((launch.content.actions.id(name)?, load(&sound.sounds).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect()))
         })
         .collect();
+    let ways = recorded
+        .actions
+        .iter()
+        .filter_map(|(name, sound)| {
+            let ways = sound
+                .ways
+                .iter()
+                .filter_map(|way| {
+                    let items = way.items(blocks).inspect_err(|e| error!("{RECORDINGS}: `{name}`'s way `{}`: {e}", way.name)).ok()?;
+                    let gain = way.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
+                    Some((items, load(&way.sounds).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect()))
+                })
+                .collect();
+            Some((launch.content.actions.id(name)?, ways))
+        })
+        .collect();
+    // Catching fire as loud as placing a block, times its volume.
+    let gain = recorded.fire.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
+    let catch = load(&recorded.fire.catch).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect();
     let brings = recorded
         .actions
         .iter()
@@ -402,7 +440,7 @@ fn synthesize(
             Some((launch.content.actions.id(name)?, rules.collect()))
         })
         .collect();
-    commands.insert_resource(Sfx { clips, materials, material, thunder, actions, brings, awaiting: Vec::new(), counter: 0 });
+    commands.insert_resource(Sfx { clips, materials, material, thunder, actions, brings, awaiting: Vec::new(), catch, ways, counter: 0 });
 }
 
 /// How loud a synthesized cue's clips are on average.
@@ -450,6 +488,9 @@ pub(crate) struct Recordings {
     /// What building materials sound like underfoot, set down and broken, each for the
     /// blocks carrying all its tags. A later package that names a material replaces it.
     pub(crate) materials: Vec<MaterialSound>,
+    /// What fire sounds like: thatch or wattle catching. A later package that lists any
+    /// replaces these.
+    pub(crate) fire: FireSounds,
     /// How loud each kind of sound is, how many play at once and what the music makes
     /// room for (`mix`).
     pub(crate) mix: crate::mix::MixDef,
@@ -468,6 +509,9 @@ pub(crate) struct ActionSound {
     pub(crate) silent: bool,
     /// Heard from elsewhere instead.
     pub(crate) heard: Option<HeardBy>,
+    /// The ways of doing it that sound their own, the first that fits heard instead of
+    /// `sounds`: crafting from flint, lighting a hearthstone (see [`WaySound`]).
+    pub(crate) ways: Vec<WaySound>,
     /// What it sounds like when what it brings lands in the pack (a fish landed, food off
     /// the fire done or burnt): the first whose `tags` the item all has.
     pub(crate) brings: Vec<Brought>,
@@ -510,6 +554,23 @@ pub(crate) struct InterfaceSound {
 pub(crate) enum Tap {
     Click,
     Item,
+}
+
+/// The sounds of fire in the thatch (fire.ron): its `catch`, a soft whoomph from a block
+/// taking fire, made at the loudness of [`ACTION_LOUDNESS`] and played that much louder or
+/// softer than a block set down. The smoulder before it and the burning after are the
+/// ambience's (ambience.ron's `smoulder` and `blaze` groups).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct FireSounds {
+    pub(crate) catch: Vec<String>,
+    pub(crate) volume: f32,
+}
+
+impl Default for FireSounds {
+    fn default() -> Self {
+        Self { catch: Vec::new(), volume: 1.0 }
+    }
 }
 
 /// The sound of one building material (timber, thatch, cobblestone): the clips of a step on
@@ -561,6 +622,43 @@ pub(crate) enum HeardBy {
     Combat,
 }
 
+/// One way of doing an action that sounds its own: done with any of `with` (items or blocks
+/// by name, or `tag:TAG`), it plays these clips instead of the action's. What an action is
+/// done with is what it is made from (crafting: the grid's items) or the block it works and
+/// what is in hand (lighting, loading a station, cooking).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct WaySound {
+    pub(crate) name: String,
+    pub(crate) with: Vec<String>,
+    pub(crate) sounds: Vec<String>,
+    #[serde(default = "full")]
+    pub(crate) volume: f32,
+}
+
+impl WaySound {
+    /// Every item and block the way is done with, or why one of `with` names none.
+    pub(crate) fn items(&self, blocks: &BlockRegistry) -> Result<FxHashSet<BlockId>, String> {
+        let mut items = FxHashSet::default();
+        for name in &self.with {
+            let found: Vec<BlockId> = match name.strip_prefix("tag:") {
+                Some(tag) => blocks.tagged(tag).collect(),
+                None => blocks.id(name).into_iter().collect(),
+            };
+            if found.is_empty() {
+                return Err(format!("`{name}` is no item, block or tag any has"));
+            }
+            items.extend(found);
+        }
+        Ok(items)
+    }
+}
+
+/// The first of `ways` done with any of `with`.
+pub(crate) fn way_of<'a, T>(ways: &'a [(FxHashSet<BlockId>, T)], with: &[BlockId]) -> Option<&'a T> {
+    ways.iter().find(|(items, _)| with.iter().any(|item| items.contains(item))).map(|(_, way)| way)
+}
+
 fn full() -> f32 {
     1.0
 }
@@ -598,7 +696,10 @@ impl Recordings {
             replace(&mut all.pickup, def.pickup);
             for (name, sound) in def.actions {
                 let brings = sound.brings.into_iter().map(|b| Brought { sounds: path(b.sounds).collect(), ..b }).collect();
-                all.actions.insert(name, ActionSound { sounds: path(sound.sounds).collect(), brings, ..sound });
+                // A bare name is the package's own item, as in its other files.
+                let named = |with: Vec<String>| with.into_iter().map(|name| if name.contains(':') { name } else { format!("{}:{name}", file.package) }).collect();
+                let ways = sound.ways.into_iter().map(|way| WaySound { with: named(way.with), sounds: path(way.sounds).collect(), ..way }).collect();
+                all.actions.insert(name, ActionSound { sounds: path(sound.sounds).collect(), brings, ways, ..sound });
             }
             for (name, sound) in def.interface {
                 all.interface.insert(name, InterfaceSound { sounds: path(sound.sounds).collect(), ..sound });
@@ -614,6 +715,9 @@ impl Recordings {
                     Some(earlier) => *earlier = material,
                     None => all.materials.push(material),
                 }
+            }
+            if !def.fire.catch.is_empty() {
+                all.fire = FireSounds { catch: path(def.fire.catch).collect(), ..def.fire };
             }
             all.mix.merge(def.mix);
         }
@@ -663,6 +767,97 @@ impl Recordings {
             }
         }
         Ok(())
+    }
+
+    /// Whether a fire that can set blocks burning (fire.ron) is heard catching: a `catch`
+    /// clip, at a volume from above nothing to twice the usual.
+    pub(crate) fn check_fire(&self, fire: &voxmar_engine::fire::Fire) -> Result<(), String> {
+        if fire.on() && fire.burning.is_some() && self.fire.catch.is_empty() {
+            return Err(format!("{RECORDINGS}: fire.ron sets blocks burning, but `fire` has no `catch` sound"));
+        }
+        if !(self.fire.volume > 0.0 && self.fire.volume <= 2.0) {
+            return Err(format!("{RECORDINGS}: `fire` has volume {}, not above 0 and up to 2", self.fire.volume));
+        }
+        Ok(())
+    }
+
+    /// Whether every way of an action is named once, refines an action that has clips, is
+    /// done with items, blocks or tags the content has, and has clips at a volume from
+    /// above nothing to twice the usual.
+    pub(crate) fn check_ways(&self, blocks: &BlockRegistry) -> Result<(), String> {
+        for (action, sound) in &self.actions {
+            if !sound.ways.is_empty() && sound.sounds.is_empty() {
+                return Err(format!("{RECORDINGS}: `{action}` has ways but no sounds of its own; ways stand in for its sounds"));
+            }
+            for (i, way) in sound.ways.iter().enumerate() {
+                let name = &way.name;
+                let at = format!("{RECORDINGS}: `{action}`'s way `{name}`");
+                if name.is_empty() || sound.ways[..i].iter().any(|w| &w.name == name) {
+                    return Err(format!("{at}: each way has a name of its own"));
+                }
+                if way.with.is_empty() {
+                    return Err(format!("{at} is done with nothing, so never heard"));
+                }
+                way.items(blocks).map_err(|e| format!("{at}: {e}"))?;
+                if way.sounds.is_empty() {
+                    return Err(format!("{at} has no sounds"));
+                }
+                if !(way.volume > 0.0 && way.volume <= 2.0) {
+                    return Err(format!("{at} has volume {}, not above 0 and up to 2", way.volume));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether every clip named is there under `assets`: a mistyped path fails at launch,
+    /// not silently the first time it would play.
+    pub(crate) fn check_files(&self, assets: &std::path::Path) -> Result<(), String> {
+        for (what, clips) in self.clip_lists() {
+            if let Some(missing) = clips.iter().find(|path| !assets.join(path).is_file()) {
+                return Err(format!("{RECORDINGS}: {what} sounds `{missing}`, which is not there"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Every list of clips in the file, with what it is the sound of. Each struct is taken
+    /// apart field by field, never with `..`, so a list added to one cannot be left out.
+    fn clip_lists(&self) -> Vec<(String, &[String])> {
+        let Recordings { thunder, swim, splash, quest_done, quest_claim, level_up, level_milestone, pickup, actions, interface, materials, fire, mix: _ } = self;
+        let ThunderRecordings { near, middle, far } = thunder;
+        let FireSounds { catch, volume: _ } = fire;
+        let mut lists: Vec<(String, &[String])> = vec![
+            ("thunder".into(), near), ("thunder".into(), middle), ("thunder".into(), far),
+            ("swim".into(), swim), ("splash".into(), splash), ("pickup".into(), pickup),
+            ("quest_done".into(), quest_done), ("quest_claim".into(), quest_claim),
+            ("level_up".into(), level_up), ("level_milestone".into(), level_milestone),
+            ("fire".into(), catch),
+        ];
+        for (action, sound) in actions {
+            let ActionSound { sounds, volume: _, silent: _, heard: _, ways, brings } = sound;
+            lists.push((format!("`{action}`"), sounds));
+            for WaySound { name, with: _, sounds, volume: _ } in ways {
+                lists.push((format!("`{action}`'s way `{name}`"), sounds));
+            }
+            for Brought { tags, sounds, volume: _ } in brings {
+                lists.push((format!("`{action}`'s brings {tags:?}"), sounds));
+            }
+        }
+        for (event, InterfaceSound { tap: _, sounds, jingle: _, silent: _, volume: _, pitch: _ }) in interface {
+            lists.push((format!("interface `{event}`"), sounds));
+        }
+        for MaterialSound { name, tags: _, step, place, breaks } in materials {
+            lists.extend([step, place, breaks].map(|clips| (format!("material `{name}`"), clips.as_slice())));
+        }
+        lists
+    }
+
+    /// The name of the way `action` done with `with` sounds as, if any.
+    #[cfg(test)]
+    pub(crate) fn way_named(&self, blocks: &BlockRegistry, action: &str, with: &[BlockId]) -> Option<&str> {
+        let ways: Vec<_> = self.actions.get(action)?.ways.iter().map(|way| (way.items(blocks).unwrap(), way.name.as_str())).collect();
+        way_of(&ways, with).copied()
     }
 
     /// Which material `block` sounds as, if any (see [`MaterialSound`]): the one its def
@@ -839,6 +1034,35 @@ fn play_cues(
     }
 }
 
+/// Plays something catching fire, from the block, as the server says it caught.
+fn play_catches(
+    mut commands: Commands,
+    mut caught: MessageReader<Catches>,
+    sfx: Option<ResMut<Sfx>>,
+    settings: Res<Settings>,
+    listener: Query<&GlobalTransform, With<Camera3d>>,
+) {
+    let Some(mut sfx) = sfx else { return };
+    let master = MASTER * settings.sound_volume as f32 / 100.0;
+    let listener = listener.single().map(|t| t.translation()).ok();
+    for &Catches { at } in caught.read() {
+        let gain = falloff(listener.map_or(0.0, |ear| at.distance(ear)), HEARD_WITHIN);
+        let (pick, jitter) = (sfx.random(), sfx.random());
+        let Some(clip) = sfx.catch.get((pick * sfx.catch.len() as f32) as usize) else { continue };
+        if gain <= 0.0 {
+            continue;
+        }
+        let speed = clip.speed * (0.94 + 0.12 * jitter);
+        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * gain * master)) };
+        commands.spawn((
+            AudioPlayer(clip.source.clone()),
+            PlaybackSettings { spatial: true, spatial_scale: Some(SpatialScale::new(PAN_SCALE)), ..playback },
+            Transform::from_translation(at),
+            Voice::at(Category::Everyday, at),
+        ));
+    }
+}
+
 /// Which clips each building material's cues were asked for, as asset paths: once for each
 /// block and cue, kept whether or not sound is on, so a silent run (the gate) can tell a
 /// block of a material sounded as that material.
@@ -878,12 +1102,15 @@ fn play_actions(
     let (Some(mut sfx), true) = (sfx, sound_on(global)) else { return };
     let master = MASTER * settings.sound_volume as f32 / 100.0;
     let now = time.map_or(0.0, |time| time.elapsed_secs());
-    for action in proposed {
+    for proposed in proposed {
+        let action = proposed.action;
         if sfx.brings.contains_key(&action) {
             sfx.awaiting.push((action, now + BROUGHT_WITHIN));
         }
         let (pick, jitter) = (sfx.random(), sfx.random());
-        let Some(clip) = sfx.actions.get(&action).and_then(|clips| clips.get((pick * clips.len() as f32) as usize)) else { continue };
+        // The way it is done (flint knapped, a hearth kindled), else the action's own.
+        let way = sfx.ways.get(&action).and_then(|ways| way_of(ways, &proposed.with));
+        let Some(clip) = way.or_else(|| sfx.actions.get(&action)).and_then(|clips| clips.get((pick * clips.len() as f32) as usize)) else { continue };
         play_clip(&mut commands, clip, master, jitter);
     }
 }
@@ -1390,7 +1617,7 @@ mod tests {
             let rolls = [vec![Handle::default()], vec![Handle::default()], vec![Handle::default()]];
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips, materials: Vec::new(), material: Vec::new(), thunder: rolls, actions: FxHashMap::default(), brings: FxHashMap::default(), awaiting: Vec::new(), counter: 0 })
+                .insert_resource(Sfx { clips, materials: Vec::new(), material: Vec::new(), thunder: rolls, actions: FxHashMap::default(), brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), catch: Vec::new(), counter: 0 })
                 .add_message::<SoundCue>()
                 .add_message::<Thunder>()
                 .configure_sets(Update, Audible.run_if(sound_on))
@@ -1523,6 +1750,97 @@ mod tests {
         assert_eq!((quiet.check(&more), quiet.covers(&more)), (Ok(()), Ok(())));
     }
 
+    /// The work of the first two ages is heard by what it is done with: a craft by its
+    /// hardest ingredient, a light, a station loaded or a kiln fed by the block worked. Every
+    /// home station loads with a sound of its own, and both age gates kindle. A way that is
+    /// unnamed, named twice, done with nothing or with what the content lacks, without clips
+    /// or volume, or on an action with no clips of its own fails the launch check.
+    #[test]
+    fn work_is_heard_by_what_it_is_done_with() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let blocks = &content.blocks;
+        let recorded = Recordings::load(&content.files).unwrap();
+        assert_eq!(recorded.check_ways(blocks), Ok(()));
+        let id = |name: &str| blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("{name}"));
+        let way = |action: &str, with: &[&str]| recorded.way_named(blocks, action, &with.iter().map(|name| id(name)).collect::<Vec<_>>()).map(str::to_owned);
+        for (with, heard) in [
+            (&["flint", "stick"][..], Some("knap")),
+            (&["cobblestone", "stick", "twine"], Some("dress_stone")),
+            (&["hide"], Some("scrape_hide")),
+            (&["clay"], Some("shape_clay")),
+            (&["fired_clay"], Some("clink")),
+            (&["wheat"], Some("twist")),
+            (&["oak_planks"], Some("whittle")),
+            (&["oak_log"], Some("whittle")),
+            (&["iron_ingot"], None),
+        ] {
+            assert_eq!(way("core:craft", with), heard.map(str::to_owned), "crafting with {with:?}");
+        }
+        assert_eq!(way("base:light", &["hearthstone"]), Some("kindle_hearth".into()));
+        assert_eq!(way("base:light", &["crucible", "charcoal"]), Some("kindle_kiln".into()));
+        assert_eq!(way("base:cook", &["pit_kiln", "clay"]), Some("fire_in_kiln".into()));
+        assert_eq!(way("base:cook", &["crucible", "copper_ore"]), Some("smelt".into()));
+        assert_eq!(way("base:cook", &["campfire", "raw_beef"]), None);
+        // Each station loaded at its empty block sounds of its own; emptied, as before.
+        for station in &content.stations.stations {
+            let name = &blocks.def(station.empty).name;
+            assert!(recorded.way_named(blocks, "base:use_station", &[station.empty]).is_some(), "loading {name} has no sound of its own");
+            assert_eq!(recorded.way_named(blocks, "base:use_station", &[station.ready]), None, "{name}");
+        }
+        // Both age gates kindle: every core a multiblock of the first two ages stands round.
+        for core in ["hearthstone", "crucible"] {
+            assert!(way("base:light", &[core]).is_some(), "{core}");
+        }
+        let file = |source: &str| ContentFile { package: "mod".into(), name: RECORDINGS.into(), source: source.into() };
+        let fine = r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "knap", with: ["base:flint", "tag:log"], sounds: ["k.ogg"], volume: 1.5)])})"#;
+        let fine = Recordings::load(&[file(fine)]).unwrap();
+        assert_eq!(fine.actions["core:craft"].ways[0].sounds, ["content/mod/k.ogg"]);
+        assert_eq!(fine.check_ways(blocks), Ok(()));
+        // A bare name is the package's own: the base package's flint, but no flint of a mod's.
+        let base = ContentFile { package: "base".into(), name: RECORDINGS.into(), source: r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "knap", with: ["flint"], sounds: ["k.ogg"])])})"#.into() };
+        assert_eq!(Recordings::load(&[base]).unwrap().check_ways(blocks), Ok(()));
+        let bare = r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "knap", with: ["flint"], sounds: ["k.ogg"])])})"#;
+        assert!(Recordings::load(&[file(bare)]).unwrap().check_ways(blocks).is_err());
+        // Every shipped way's clips are there; one a mod mistyped is not, and fails the check.
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        assert_eq!(recorded.check_files(&assets), Ok(()));
+        assert!(fine.check_files(&assets).is_err(), "content/mod/k.ogg is not there");
+        // So are an action's own clips, what it brings and a material's.
+        for missing in [
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"])})"#,
+            r#"(actions: {"core:craft": (silent: true, brings: [(tags: ["fish"], sounds: ["f.ogg"])])})"#,
+            r#"(materials: [(name: "rough", tags: ["stone"], step: ["s.ogg"])])"#,
+            r#"(materials: [(name: "rough", tags: ["stone"], place: ["p.ogg"])])"#,
+            r#"(materials: [(name: "rough", tags: ["stone"], break: ["b.ogg"])])"#,
+            r#"(interface: {"click": (sounds: ["c.ogg"])})"#,
+            r#"(thunder: (near: ["n.ogg"]))"#,
+            r#"(thunder: (middle: ["m.ogg"]))"#,
+            r#"(thunder: (far: ["f.ogg"]))"#,
+            r#"(swim: ["s.ogg"])"#,
+            r#"(splash: ["s.ogg"])"#,
+            r#"(pickup: ["p.ogg"])"#,
+            r#"(quest_done: ["q.ogg"])"#,
+            r#"(quest_claim: ["q.ogg"])"#,
+            r#"(level_up: ["l.ogg"])"#,
+            r#"(level_milestone: ["l.ogg"])"#,
+            r#"(fire: (catch: ["c.ogg"]))"#,
+        ] {
+            assert!(Recordings::load(&[file(missing)]).unwrap().check_files(&assets).is_err(), "{missing}");
+        }
+        for wrong in [
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(with: ["base:flint"], sounds: ["k.ogg"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flint"], sounds: ["k.ogg"]), (name: "a", with: ["base:clay"], sounds: ["k.ogg"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", sounds: ["k.ogg"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flimt"], sounds: ["k.ogg"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["tag:nothing_has_this"], sounds: ["k.ogg"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flint"])])})"#,
+            r#"(actions: {"core:craft": (sounds: ["c.ogg"], ways: [(name: "a", with: ["base:flint"], sounds: ["k.ogg"], volume: 0.0)])})"#,
+            r#"(actions: {"core:craft": (silent: true, ways: [(name: "a", with: ["base:flint"], sounds: ["k.ogg"])])})"#,
+        ] {
+            assert!(Recordings::load(&[file(wrong)]).unwrap().check_ways(blocks).is_err(), "{wrong}");
+        }
+    }
+
     /// A later package replaces a material by its name and adds others; a block sounds as
     /// the material its def names, else the one whose tags it all carries, the one naming
     /// the most of them if several fit; taps and landings take the steps. A material that is
@@ -1563,6 +1881,36 @@ mod tests {
         // Without the stone_brick material, the cut stone bricks name one there is not.
         let unnamed = Recordings::load(&[file("base", r#"(materials: [(name: "cobblestone", tags: ["cobbled"], place: ["p.ogg"])])"#)]).unwrap().check_materials(blocks);
         assert!(unnamed.as_ref().is_err_and(|e| e.contains("stone_brick")), "{unnamed:?}");
+    }
+
+    /// Catching fire is the server's block change to fire.ron's burning block, from
+    /// anything else loaded; a fire that can burn must have a catch sound, at a sane volume,
+    /// and a later package replaces it. The one we ship decodes, at the loudness of the rest.
+    #[test]
+    fn catching_fire_is_heard_from_the_server_and_checked() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (fire, blocks) = (&content.fire, &content.blocks);
+        let (burning, thatch) = (fire.burning.unwrap(), blocks.id("base:thatch_roof").unwrap());
+        assert!(catches(fire, Some(thatch), burning));
+        assert!(!catches(fire, Some(burning), burning), "already burning");
+        assert!(!catches(fire, None, burning), "not loaded: not seen to catch");
+        assert!(!catches(fire, Some(burning), BlockId::AIR), "burning out is no catch");
+        assert!(!catches(fire, Some(thatch), BlockId::AIR), "broken is no catch");
+        let recorded = Recordings::load(&content.files).unwrap();
+        assert_eq!(recorded.check_fire(fire), Ok(()));
+        let silent = Recordings::default().check_fire(fire);
+        assert!(silent.as_ref().is_err_and(|e| e.contains("catch")), "{silent:?}");
+        let file = |package: &str, source: &str| ContentFile { package: package.into(), name: RECORDINGS.into(), source: source.into() };
+        let loud = Recordings::load(&[file("base", r#"(fire: (catch: ["c.ogg"], volume: 3.0))"#)]).unwrap().check_fire(fire);
+        assert!(loud.is_err(), "{loud:?}");
+        let replaced = Recordings::load(&[file("base", r#"(fire: (catch: ["c.ogg"]))"#), file("mod", r#"(fire: (catch: ["d.ogg"], volume: 0.5))"#)]).unwrap();
+        assert_eq!(replaced.fire, FireSounds { catch: vec!["content/mod/d.ogg".into()], volume: 0.5 });
+        for path in &recorded.fire.catch {
+            let [left, right] = crate::ambience::tests::decode(path);
+            let stereo: Vec<f32> = left.iter().zip(&right).flat_map(|(l, r)| [*l, *r]).collect();
+            let heard = loudness(&stereo, 2) / ACTION_LOUDNESS;
+            assert!((0.5..=1.25).contains(&heard), "{path} is heard at {heard:.2} of the loudness of the rest");
+        }
     }
 
     /// The building materials we ship pass the launch check, sound for the blocks they are
@@ -1679,7 +2027,8 @@ mod tests {
             }
         }
         let brought = recorded.actions.values().flat_map(|sound| sound.brings.iter().flat_map(|b| b.sounds.iter().map(move |path| (path, b.volume))));
-        let clips = recorded.actions.values().flat_map(|sound| sound.sounds.iter().map(|path| (path, sound.volume))).chain(brought).chain(recorded.pickup.iter().map(|path| (path, 1.0)));
+        let ways = recorded.actions.values().flat_map(|sound| &sound.ways).flat_map(|way| way.sounds.iter().map(|path| (path, way.volume)));
+        let clips = recorded.actions.values().flat_map(|sound| sound.sounds.iter().map(|path| (path, sound.volume))).chain(brought).chain(ways).chain(recorded.pickup.iter().map(|path| (path, 1.0)));
         for (path, volume) in clips {
             let [left, right] = crate::ambience::tests::decode(path);
             let stereo: Vec<f32> = left.iter().zip(&right).flat_map(|(l, r)| [*l, *r]).collect();
@@ -1721,6 +2070,10 @@ mod tests {
             for brought in &sound.brings {
                 let gain = brought.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
                 heard.extend(brought.sounds.iter().map(|path| (path.clone(), measure(path)[0] * gain)));
+            }
+            for way in &sound.ways {
+                let gain = way.volume * Cue::Place.gain() * level(&target, Cue::Place) / ACTION_LOUDNESS;
+                heard.extend(way.sounds.iter().map(|path| (path.clone(), measure(path)[0] * gain)));
             }
         }
         let everyday = within(crate::mix::Category::Everyday, heard);
@@ -1778,7 +2131,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), awaiting: Vec::new(), counter: 0 })
+                .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), catch: Vec::new(), counter: 0 })
                 .insert_resource(net)
                 .add_systems(Update, play_actions);
             // Crafting has no sound here: nothing plays for it.

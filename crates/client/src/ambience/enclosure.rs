@@ -61,6 +61,8 @@ pub struct Enclosure {
     pub groups: Vec<f32>,
     /// A few blocks of each group, nearer ones likelier.
     pub samples: Vec<Vec<IVec3>>,
+    /// Whether each sample has nothing over it but the sky.
+    pub open_to_sky: Vec<Vec<bool>>,
 }
 
 /// What the scan needs to know of each block id.
@@ -72,6 +74,9 @@ pub struct Kinds {
     pub group: Vec<Option<u8>>,
     /// A structure's core whose group counts it only while its fire burns.
     pub lit_only: Vec<bool>,
+    /// Each block's wall group, if any (a home's walls by their shelter), counted besides
+    /// its `group`, and never as the floor under a cell.
+    pub wall_group: Vec<Option<u8>>,
     pub groups: usize,
     /// Blocks out from the eye a wall may be and still count, and above it a roof may be for
     /// rain to be heard on it.
@@ -130,15 +135,11 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
         })
     };
 
-    let mut found = Enclosure { groups: vec![0.0; kinds.groups], samples: vec![Vec::new(); kinds.groups], ..Default::default() };
+    let mut found = Enclosure { groups: vec![0.0; kinds.groups], samples: vec![Vec::new(); kinds.groups], open_to_sky: vec![Vec::new(); kinds.groups], ..Default::default() };
     // Weighted reservoir per group: the samples with the largest keys u^(1 / weight).
     let mut keys: Vec<Vec<f32>> = vec![Vec::new(); kinds.groups];
     let mut random = seed;
-    let mut meet = |found: &mut Enclosure, p: IVec3, b: BlockId, d: i32| {
-        let Some(group) = kinds.group[b.0 as usize] else { return };
-        if kinds.lit_only[b.0 as usize] && !burning(p) {
-            return;
-        }
+    let mut count = |found: &mut Enclosure, p: IVec3, group: u8, d: i32, sky: bool| {
         let (group, w) = (group as usize, weight(d));
         found.groups[group] += w;
         random = mix(random);
@@ -147,11 +148,20 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
         if samples.len() < SAMPLES {
             samples.push(p);
             keys.push(key);
+            found.open_to_sky[group].push(sky);
         } else if let Some((i, &lowest)) = keys.iter().enumerate().min_by(|a, b| a.1.total_cmp(b.1))
             && key > lowest
         {
             samples[i] = p;
             keys[i] = key;
+            found.open_to_sky[group][i] = sky;
+        }
+    };
+    let mut meet = |found: &mut Enclosure, p: IVec3, b: BlockId, d: i32, floor: bool, sky: bool| {
+        let wall = kinds.wall_group[b.0 as usize].filter(|_| !floor);
+        let own = kinds.group[b.0 as usize].filter(|_| !kinds.lit_only[b.0 as usize] || burning(p));
+        for group in [own, wall].into_iter().flatten() {
+            count(found, p, group, d, sky);
         }
     };
 
@@ -172,7 +182,7 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
             }
         }
         if let Some(b) = block(p).filter(|b| !b.is_air()) {
-            meet(&mut found, p, b, d);
+            meet(&mut found, p, b, d, false, r.solid <= p.y);
         }
         for step in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y] {
             let n = p + step;
@@ -183,7 +193,9 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
             let b = block(n);
             if !is_open(b) {
                 if let Some(b) = b {
-                    meet(&mut found, n, b, d + 1);
+                    // Nothing over it but the sky: the topmost block of its column.
+                    let sky = roof(n.x, n.z).solid <= n.y;
+                    meet(&mut found, n, b, d + 1, step == IVec3::NEG_Y, sky);
                 }
                 continue;
             }
@@ -247,6 +259,7 @@ mod tests {
             // Groups: 0 rock, 1 leaves, 2 water, 3 grass.
             group: vec![None, Some(0), Some(1), Some(2), Some(3)],
             lit_only: vec![false; 5],
+            wall_group: vec![None; 5],
             groups: 4,
             walls: 6,
             roof: 8,
@@ -284,6 +297,26 @@ mod tests {
         assert_eq!(found.groups[0], 0.0, "the stone is under the grass");
         assert!(found.samples[3].len() == SAMPLES && found.samples[3].iter().all(|p| p.y == 63));
         assert_eq!((found.shelter, found.roof), (0.0, 0.0));
+        assert!(found.open_to_sky[3].iter().all(|&sky| sky), "the field's grass is under the sky");
+    }
+
+    /// A block with nothing over it is open to the sky; one under a roof is not, wherever
+    /// the listener stands.
+    #[test]
+    fn a_block_under_a_roof_is_not_open_to_the_sky() {
+        // Grass on stone; a stone slab on posts over the grass where x is 2 to 6.
+        let porch = |p: IVec3| {
+            Some(match (p.x, p.y) {
+                (_, ..63) => STONE,
+                (_, 63) => GRASS,
+                (2..=6, 67) => STONE,
+                _ => AIR,
+            })
+        };
+        let found = scan(IVec3::new(0, 65, 0), porch, |_| true, &kinds(), 1);
+        let grass: Vec<_> = found.samples[3].iter().zip(&found.open_to_sky[3]).collect();
+        assert!(grass.iter().any(|(p, _)| (2..=6).contains(&p.x)) && grass.iter().any(|(p, _)| !(2..=6).contains(&p.x)), "{grass:?}");
+        assert!(grass.iter().all(|(p, sky)| **sky != (2..=6).contains(&p.x)), "{grass:?}");
     }
 
     /// A 7×7 hut of stone on the field, three high inside, roofed at 67.

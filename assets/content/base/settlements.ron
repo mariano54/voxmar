@@ -65,7 +65,16 @@
 //   main wood) and `{trim}` (a second wood, sometimes the same) in block names; every
 //   material list is weighed per settlement, which keeps a few of its options, and each
 //   house picks among those. `chimney`: what a chimney is built of, one block of the list
-//   all the way up (Review, 7 Oct: one stone per chimney, never a mix).
+//   all the way up (Review, 7 Oct: one stone per chimney, never a mix). `roof_pieces`:
+//   the shaped pieces a steep gable over four walls may be laid in (a `slope` and its
+//   `ridge`, each facing four ways, by weight), on `pieced` of such roofs; the rest stay
+//   whole blocks. `jetty`: the beam the storeys over the ground of a house of two or more
+//   storeys stand a block out over the street on, and the chance one is (times 0.5 plus
+//   the place's crowding). `row`: homes built wall to wall along a straight street (a
+//   terrace), alike but for what is inside: a number drawn from `houses`, fewer where the
+//   street or the homes wanted run out. A home of four walls on the ground starts one on
+//   `chance` (times the place's crowding); the row stands at least the `storeys` its
+//   place's size names (1 where it names none: town terraces are of town houses).
 // people: who lives there and how their days go (see crates/worldgen/src/settlements/
 //   people.rs). `jobs`: each building whose work or kind is `at` takes `count` of a
 //   species (by `chance`), living above the shop when it has room, else in the home
@@ -177,6 +186,11 @@
     //     how high a palisade of logs and a stone wall stand, the wealth past which it is
     //     stone, and towers at the corners and every `towers.0` blocks, `towers.1` higher.
     //     A gate stands where each lane passes, with a lintel where the wall is over three.
+    //   fire: no flame of a settlement's own (`flames`, by tag) reaches what catches
+    //     (`catch`): out a face at a time through open cells, `reach` steps, as fire
+    //     catches in a home (fire.ron's reach is 1 to 4; this keeps the most). A roof of
+    //     pieces that catch which a flame reaches is laid in `instead`; a flame that still
+    //     reaches something is put out.
     rules: (
         spawn_settlement_within: 1024,
         spawn_tries: 8,
@@ -213,6 +227,7 @@
         houses: (inn: (2, 8, 9), grand: 8, trader: ((5, 7), (5, 8)), pitch: (8, 0.45), regular: 0.45, middle_door: 0.6, windows: (0.6, 0.8, 0.95), plinth: 0.35, moss: 0.22),
         dressing: (every: (9.0, 14.0), lamp: (0.5, 0.4), yards: (0.5, 1.0, 2), per_lane: 6, banks: (1, 3), clearance: (0.4, 0.6)),
         walls: (margin: 4, height: (3, 4), stone: 0.5, towers: (24, 2)),
+        fire: (flames: ["fire"], catch: ["thatch", "wattle"], reach: 4, instead: Some((slope: "dark_oak_shingles", ridge: "dark_oak_shingle_ridge"))),
     ),
     // furnishings: blocks every settlement uses whatever its style. A package may name
     //   others; content without one leaves it out (no water or dirt: no settlements).
@@ -530,6 +545,7 @@
             trim: [Name("{trim}_planks", 1), Name("orange_terracotta", 1)],
             roofs: [(Flat, 4), (Shed, 1)],
             window: Some("old_glass"), window_chance: 0.5,
+            row: Some((chance: 0.5, houses: (3, 6), storeys: [("town", 2)])),
             paving: [Name("sandstone", 3), Name("cobbled_sandstone", 2), Name("sand", 1)],
             hedge: [Name("dead_bush", 1)],
             crops: [Name("wheat", 1), Name("chickpea", 1)],
@@ -547,6 +563,7 @@
             trim: [Name("{trim}_planks", 1)],
             roofs: [(Flat, 3), (Shed, 1), (Gable, 1)],
             window: Some("old_glass"), window_chance: 0.5,
+            row: Some((chance: 0.4, houses: (3, 5), storeys: [("town", 2)])),
             paving: [Name("red_sandstone", 2), Name("cobbled_red_sandstone", 2), Name("red_sand", 1)],
             hedge: [Name("dead_bush", 1)],
             crops: [Name("wheat", 1), Name("chickpea", 1)],
@@ -564,6 +581,11 @@
             trim: [Name("{trim}_planks", 1)],
             roofs: [(Gable, 2), (Hip, 2), (Flat, 1), (Conical, 0.6)],
             window: None, window_chance: 0.4,
+            roof_pieces: [(slope: "thatch_roof", ridge: "thatch_ridge", weight: 1)], pieced: 0.35,
+            // Upper rooms carried out over the lane on timber brought in, as in old Anatolian
+            // towns (a cumba).
+            jetty: Some((beam: "dark_oak_jetty_beam", chance: 0.4)),
+            row: Some((chance: 0.5, houses: (3, 6), storeys: [("town", 2)])),
             paving: [Name("packed_earth", 3), Name("coarse_dirt", 2), Name("red_sand", 1)],
             hedge: [Name("acacia_leaves", 1)],
             crops: [Name("wheat", 2), Name("chickpea", 1), Name("potato", 1)],
@@ -581,6 +603,7 @@
             trim: [Name("{trim}_log", 1)],
             roofs: [(Gable, 3), (Hip, 1), (HalfHip, 1), (Conical, 0.5)],
             window: None, window_chance: 0.45,
+            roof_pieces: [(slope: "thatch_roof", ridge: "thatch_ridge", weight: 1)], pieced: 0.5,
             paving: [Name("mud", 2), Name("{wood}_planks", 2), Name("coarse_dirt", 1)],
             hedge: [Name("{wood}_leaves", 1)],
             crops: [Name("rice", 2), Name("carrot", 2), Name("potato", 1)],
@@ -598,6 +621,7 @@
             trim: [Name("stripped_{trim}_log", 1), Name("{trim}_planks", 1)],
             roofs: [(Gable, 5), (Hip, 1), (Saltbox, 1.5), (Gambrel, 0.8)],
             window: Some("old_glass"), window_chance: 0.6,
+            roof_pieces: [(slope: "dark_oak_shingles", ridge: "dark_oak_shingle_ridge", weight: 1)], pieced: 0.4,
             paving: [Name("gravel", 3), Name("cobblestone", 2), Name("packed_earth", 1)],
             hedge: [Name("{wood}_leaves", 1)],
             crops: [Name("rye", 2), Name("potato", 2), Name("carrot", 1)],
@@ -615,6 +639,9 @@
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Gable, 5), (Hip, 2), (HalfHip, 2), (Saltbox, 1)],
             window: Some("old_glass"), window_chance: 0.45,
+            roof_pieces: [(slope: "thatch_roof", ridge: "thatch_ridge", weight: 2), (slope: "dark_oak_shingles", ridge: "dark_oak_shingle_ridge", weight: 1)], pieced: 0.5,
+            jetty: Some((beam: "dark_oak_jetty_beam", chance: 0.25)),
+            row: Some((chance: 0.35, houses: (2, 4), storeys: [("town", 2)])),
             paving: [Name("gravel", 2), Name("cobblestone", 3), Name("cobbled_slate", 1)],
             hedge: [Name("spruce_leaves", 1)],
             crops: [Name("potato", 2), Name("carrot", 1), Name("wheat", 1)],
@@ -632,6 +659,8 @@
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Hip, 5), (Gable, 2), (HalfHip, 2)],
             window: Some("old_glass"), window_chance: 0.4,
+            roof_pieces: [(slope: "dark_oak_shingles", ridge: "dark_oak_shingle_ridge", weight: 1)], pieced: 0.4,
+            row: Some((chance: 0.4, houses: (3, 5), storeys: [("town", 2)])),
             paving: [Name("gravel", 3), Name("polished_andesite", 1), Name("cobbled_andesite", 2)],
             hedge: [Name("cherry_leaves", 2), Name("azalea_leaves", 1)],
             crops: [Name("carrot", 2), Name("wheat", 1)],
@@ -649,6 +678,9 @@
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Gable, 5), (Hip, 1), (Shed, 1), (Saltbox, 1.5), (Gambrel, 1)],
             window: Some("old_glass"), window_chance: 0.6,
+            roof_pieces: [(slope: "{wood}_shingles", ridge: "{wood}_shingle_ridge", weight: 2), (slope: "thatch_roof", ridge: "thatch_ridge", weight: 1)], pieced: 0.6,
+            jetty: Some((beam: "{wood}_jetty_beam", chance: 0.3)),
+            row: Some((chance: 0.25, houses: (2, 3), storeys: [("town", 2)])),
             paving: [Name("gravel", 3), Name("packed_earth", 2), Name("cobbled_diorite", 1)],
             hedge: [Name("birch_leaves", 2), Name("golden_birch_leaves", 1)],
             crops: [Name("potato", 2), Name("carrot", 2)],
@@ -666,6 +698,9 @@
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Gable, 5), (Hip, 2), (Gambrel, 1.5), (HalfHip, 1)],
             window: Some("old_glass"), window_chance: 0.55,
+            roof_pieces: [(slope: "dark_oak_shingles", ridge: "dark_oak_shingle_ridge", weight: 1), (slope: "thatch_roof", ridge: "thatch_ridge", weight: 1)], pieced: 0.45,
+            jetty: Some((beam: "dark_oak_jetty_beam", chance: 0.3)),
+            row: Some((chance: 0.25, houses: (2, 4), storeys: [("town", 2)])),
             paving: [Name("gravel", 2), Name("packed_earth", 2), Name("cobbled_granite", 1)],
             hedge: [Name("maple_leaves", 1), Name("amber_maple_leaves", 1), Name("russet_oak_leaves", 1)],
             crops: [Name("wheat", 2), Name("carrot", 1), Name("potato", 1)],
@@ -683,6 +718,7 @@
             trim: [Name("{trim}_planks", 1)],
             roofs: [(Hip, 3), (Gable, 3), (Conical, 1)],
             window: None, window_chance: 0.45,
+            roof_pieces: [(slope: "thatch_roof", ridge: "thatch_ridge", weight: 1)], pieced: 0.5,
             paving: [Name("mud", 2), Name("coarse_dirt", 2), Name("{wood}_planks", 1)],
             hedge: [Name("jungle_leaves", 2), Name("palm_leaves", 1)],
             crops: [Name("taro", 2), Name("rice", 1), Name("carrot", 1)],
@@ -717,6 +753,7 @@
             trim: [Name("{trim}_planks", 1), Name("polished_travertine", 1)],
             roofs: [(Hip, 3), (Gable, 2), (Flat, 1)],
             window: Some("old_glass"), window_chance: 0.5,
+            row: Some((chance: 0.4, houses: (3, 5), storeys: [("town", 2)])),
             paving: [Name("cobbled_travertine", 2), Name("cobbled_limestone", 2), Name("gravel", 1), Name("polished_travertine", 1)],
             hedge: [Name("olive_leaves", 2), Name("azalea_leaves", 1), Name("flowering_azalea_leaves", 1)],
             crops: [Name("wheat", 3), Name("chickpea", 1), Name("carrot", 1)],
@@ -734,6 +771,9 @@
             trim: [Name("{trim}_planks", 1), Name("stripped_{trim}_log", 1)],
             roofs: [(Gable, 6), (Hip, 2), (Shed, 1), (HalfHip, 2.5), (Saltbox, 1.5), (Gambrel, 1)],
             window: Some("old_glass"), window_chance: 0.6,
+            roof_pieces: [(slope: "thatch_roof", ridge: "thatch_ridge", weight: 2), (slope: "oak_shingles", ridge: "oak_shingle_ridge", weight: 1), (slope: "dark_oak_shingles", ridge: "dark_oak_shingle_ridge", weight: 1)], pieced: 0.6,
+            jetty: Some((beam: "dark_oak_jetty_beam", chance: 0.6)),
+            row: Some((chance: 0.6, houses: (3, 6), storeys: [("town", 2)])),
             paving: [Name("cobblestone", 3), Name("gravel", 2), Name("packed_earth", 2), Name("stone_bricks", 1)],
             hedge: [Name("oak_leaves", 3), Name("{wood}_leaves", 1), Name("azalea_leaves", 1)],
             crops: [Name("wheat", 3), Name("carrot", 2), Name("potato", 2)],

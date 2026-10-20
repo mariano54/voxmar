@@ -27,6 +27,11 @@
     // An item picked up off the ground: a soft pop, when the player's Minecraft sounds are
     // off.
     pickup: ["sounds/pickup_1.ogg", "sounds/pickup_2.ogg", "sounds/pickup_3.ogg", "sounds/pickup_4.ogg"],
+    // Fire in the thatch (fire.ron): a block catching, a soft whoomph from it as the server
+    // sets it burning. Our own (tools/generate_sfx.py). The smoulder before and the burning
+    // after are ambience (ambience.ron's `smoulder` and `blaze`). While fire.ron can set a
+    // block burning there must be one, or the game does not start.
+    fire: (catch: ["sounds/fire_catch_1.ogg", "sounds/fire_catch_2.ogg"], volume: 0.9),
     // What building materials sound like: a step on one, a piece set down, a piece broken.
     // Every block carrying all of a material's tags sounds as it (of several, the one with
     // the most tags); mining taps and landings use the steps. A cue a material lists nothing
@@ -105,17 +110,64 @@
     // or `heard` elsewhere (Block, Interface or Combat). `brings`: what its result sounds
     // like as it lands in the pack, by the first `tags` the item all has (only what the
     // action brings, never anything else picked up meanwhile).
+    // `ways` are the ways of doing an action that sound their own: the first done `with`
+    // any of its items or blocks (by name, or `tag:TAG`) is heard instead of the action's
+    // `sounds`. Crafting is done with the grid's items; lighting, loading a station and
+    // cooking with the block worked, never what is in hand. Each is checked at launch:
+    // named, and done with things the content has. Our own (tools/generate_sfx.py, under
+    // sounds/work/). Every clip in this file is checked at launch to be there.
     actions: {
         // Three bites and their chews.
         "core:eat": (sounds: ["sounds/eat_1.ogg", "sounds/eat_2.ogg", "sounds/eat_3.ogg"], volume: 0.8),
         // A scrape and two knocks: parts fitted together at the grid.
-        "core:craft": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.8),
-        // Loading or emptying a home station (a drying rack, a compost bin) sounds the same.
-        "base:use_station": (sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.6),
+        "core:craft": (
+            sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.8,
+            // By what it is made of, the hardest first: a stone axe is knocked out of
+            // cobble, then bound, and heard as the stone.
+            ways: [
+                // Flint knapped: sharp, glassy cracks and flakes ticking away.
+                (name: "knap", with: ["flint"], sounds: ["sounds/work/knap_1.ogg", "sounds/work/knap_2.ogg", "sounds/work/knap_3.ogg"]),
+                // A hide or fur scraped: long rasping strokes of a stone edge.
+                (name: "scrape_hide", with: ["hide", "tag:fur"], sounds: ["sounds/work/scrape_hide_1.ogg", "sounds/work/scrape_hide_2.ogg"], volume: 0.8),
+                // Clay shaped by hand: wet slaps and a squelch.
+                (name: "shape_clay", with: ["clay"], sounds: ["sounds/work/shape_clay_1.ogg", "sounds/work/shape_clay_2.ogg"], volume: 1.1),
+                // Fired clay and kiln bricks knocked together: pottery clinks.
+                (name: "clink", with: ["fired_clay", "kiln_bricks", "clay_pot"], sounds: ["sounds/work/clink_1.ogg", "sounds/work/clink_2.ogg"], volume: 1.1),
+                // Stone dressed: a hammerstone pecking, grit falling.
+                (name: "dress_stone", with: ["tag:cobbled", "stone", "stone_bricks"], sounds: ["sounds/work/dress_stone_1.ogg", "sounds/work/dress_stone_2.ogg", "sounds/work/dress_stone_3.ogg"], volume: 1.1),
+                // Stalks and fibre twisted into cord, or wool worked: a winding creak.
+                (name: "twist", with: ["wheat", "twine", "wool"], sounds: ["sounds/work/twist_1.ogg", "sounds/work/twist_2.ogg"], volume: 0.8),
+                // Wood whittled: knife strokes peeling shavings, a knock of the stick.
+                (name: "whittle", with: ["stick", "tag:log", "tag:planks"], sounds: ["sounds/work/whittle_1.ogg", "sounds/work/whittle_2.ogg", "sounds/work/whittle_3.ogg"], volume: 0.8),
+            ],
+        ),
+        // Loading or emptying a home station (a drying rack, a compost heap): parts handled.
+        // Loaded, at its empty block, each sounds of its own work instead.
+        "base:use_station": (
+            sounds: ["sounds/craft_1.ogg", "sounds/craft_2.ogg", "sounds/craft_3.ogg"], volume: 0.6,
+            ways: [
+                // Meat hung on the rack: a wet slap on the rail, the poles creaking.
+                (name: "hang", with: ["drying_rack"], sounds: ["sounds/work/hang_1.ogg", "sounds/work/hang_2.ogg"], volume: 0.7),
+                // Food tipped into the pot: a plop, a swirl of the ladle, a knock on the rim.
+                (name: "stir", with: ["cooking_pot"], sounds: ["sounds/work/stir_1.ogg", "sounds/work/stir_2.ogg"], volume: 0.7),
+                // Greens forked onto the heap: a wet flump and a damp rustle.
+                (name: "heap", with: ["compost_heap"], sounds: ["sounds/work/heap_1.ogg", "sounds/work/heap_2.ogg"], volume: 0.7),
+                // Clay or logs laid in the clamp and soil shovelled over.
+                (name: "clamp", with: ["earth_clamp"], sounds: ["sounds/work/clamp_1.ogg", "sounds/work/clamp_2.ogg"], volume: 0.7),
+            ],
+        ),
         // Taking a catch from a sprung trap (traps.ron): a pouch drawn open and shut.
         "base:take_from_trap": (sounds: ["sounds/pouch_1.ogg", "sounds/pouch_2.ogg"], volume: 0.6),
         // Flint struck, sparks, and the tinder catching: a fire or a kiln lit.
-        "base:light": (sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"]),
+        "base:light": (
+            sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"],
+            // A hearth or kiln catching: a strike, a whoomph, and the fire swelling into a
+            // roar that settles into its bed (ambience.ron's fire); a kiln's deeper.
+            ways: [
+                (name: "kindle_hearth", with: ["hearthstone"], sounds: ["sounds/work/kindle_hearth_1.ogg", "sounds/work/kindle_hearth_2.ogg"]),
+                (name: "kindle_kiln", with: ["crucible"], sounds: ["sounds/work/kindle_kiln_1.ogg", "sounds/work/kindle_kiln_2.ogg"]),
+            ],
+        ),
         // A lid lifted: a short creak and the lid knocking back.
         "base:open_store": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.8),
         // The latch, then a slow creak on the hinges; quieter than the rest at its loudest, so
@@ -129,6 +181,13 @@
             brings: [
                 (tags: ["burnt"], sounds: ["sounds/burnt_1.ogg", "sounds/burnt_2.ogg"], volume: 0.8),
                 (tags: ["cooked"], sounds: ["sounds/cooked_1.ogg", "sounds/cooked_2.ogg"], volume: 0.7),
+            ],
+            ways: [
+                // Clay or cobble set into a pit kiln: a knock into the embers and a breath of
+                // flame.
+                (name: "fire_in_kiln", with: ["tag:pit_kiln"], sounds: ["sounds/work/kiln_load_1.ogg", "sounds/work/kiln_load_2.ogg"], volume: 0.9),
+                // Ore tipped into the hot crucible: a rattle on clay and a deep hiss.
+                (name: "smelt", with: ["tag:crucible"], sounds: ["sounds/work/smelt_1.ogg", "sounds/work/smelt_2.ogg"], volume: 0.9),
             ],
         ),
         // Lying down: rustles of cloth and straw.

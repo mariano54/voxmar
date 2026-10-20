@@ -485,6 +485,9 @@ pub struct CreatureDef {
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
+    /// How far up and down it strikes (`moves::Strike`).
+    #[serde(default)]
+    pub strike: moves::Strike,
     /// The stages of its fight, by the health it falls to.
     #[serde(default)]
     pub phases: Vec<moves::Phase>,
@@ -872,7 +875,7 @@ impl Creature {
 }
 
 /// Every species.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CreatureRegistry {
     creatures: Vec<Creature>,
     by_name: FxHashMap<String, CreatureId>,
@@ -880,6 +883,13 @@ pub struct CreatureRegistry {
 }
 
 impl CreatureRegistry {
+    /// A species' data to change in place, for tests only (`test-support`): what a package
+    /// would set, past the load checks.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn get_mut(&mut self, id: CreatureId) -> &mut Creature {
+        &mut self.creatures[id.0 as usize]
+    }
+
     /// Reads a package's `creatures.ron`, qualifying names with its namespace: its species,
     /// and what it sets of the world's rules.
     pub fn read(namespace: &str, source: &str) -> Result<CreaturePackage, RegistryError> {

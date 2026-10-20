@@ -17,7 +17,7 @@
 use voxmar_engine::block::BlockId;
 use voxmar_engine::glam::IVec2;
 
-use super::canvas::{Canvas, Frame, Palette, Put, unit};
+use super::canvas::{Canvas, Facing, Frame, Palette, Put, unit};
 use super::def::{Centre, Extra, Fitting, Form, Roof};
 use crate::rng::{Rng, hash3};
 
@@ -85,9 +85,37 @@ pub struct Mats {
     pub crops: Vec<(Vec<BlockId>, f32)>,
     /// The fruit trees it grows: only those of its size's crop level or below.
     pub fruit: Palette,
+    /// The pieces a pitched gable may be laid in, by weight, and the share of such roofs
+    /// that are.
+    pub roof_pieces: Vec<(super::roofs::RoofPieces, f32)>,
+    pub pieced: f32,
+    /// The beam a jettied house's upper storeys stand out on, in each facing, and the share
+    /// of houses that can be that are.
+    pub jetty: Option<([BlockId; 4], f32)>,
 }
 
 impl Mats {
+    /// The pieces a pitched gable roof of the building `seed` is laid in, if it is.
+    pub fn pieces(&self, seed: u64) -> Option<super::roofs::RoofPieces> {
+        if self.roof_pieces.is_empty() || unit(hash3(seed, 0x7007, 0, 0)) >= self.pieced {
+            return None;
+        }
+        let total: f32 = self.roof_pieces.iter().map(|p| p.1).sum();
+        let mut t = unit(hash3(seed, 0x7007, 1, 0)) * total;
+        for &(p, w) in &self.roof_pieces {
+            if t < w {
+                return Some(p);
+            }
+            t -= w;
+        }
+        self.roof_pieces.last().map(|p| p.0)
+    }
+
+    /// The beams the building `seed` is jettied on, if it is.
+    pub fn jetty(&self, seed: u64) -> Option<[BlockId; 4]> {
+        self.jetty.filter(|j| unit(hash3(seed, 0x7e77, 0, 0)) < j.1).map(|j| j.0)
+    }
+
     /// The first stone of the foundation, for hearths, ovens and plinths.
     pub fn stone(&self) -> BlockId {
         self.foundation.0.first().map_or(self.wall, |b| b.0)
@@ -122,6 +150,8 @@ pub struct Fixed {
     pub cloth: Palette,
     /// What stands in homes; none where content gives no interiors.
     pub interiors: Option<super::interior::Interiors>,
+    /// What village flames are kept from (`rules.fire`).
+    pub fire: super::roofs::Fire,
     pub dirt: BlockId,
     /// The chance of a stone lowest course, and old walls' share of weathered blocks.
     pub plinth: f32,
@@ -157,9 +187,27 @@ pub struct Spec {
     /// What a centrepiece is, when the code draws it.
     pub centre: Option<Centre>,
     pub seed: u64,
+    /// A house of a row (a terrace), built on against its neighbours: none of its eaves or
+    /// side windows on a side another stands against.
+    pub row: Option<Row>,
+}
+
+/// A house's place in a row of houses built wall to wall along a street, each with its own
+/// side walls (`left` at x 0, `right` at x `w - 1`) against the next one's. The row's
+/// `seed` decides what all its houses share, jettied or not and the pieces of their roofs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub seed: u64,
+    pub left: bool,
+    pub right: bool,
 }
 
 impl Spec {
+    /// The seed for what all the houses of its row share.
+    pub fn shared_seed(&self) -> u64 {
+        self.row.map_or(self.seed, |r| r.seed)
+    }
+
     pub fn has(&self, extra: Extra) -> bool {
         self.extras.contains(&extra)
     }
@@ -214,7 +262,12 @@ impl Spec {
                 };
                 let right = self.w + if self.shed > 0 { 3 } else { 0 };
                 let back = self.d + self.wing.map_or(0, |(_, wd)| wd);
-                (IVec2::new(-1, front), IVec2::new(right, back))
+                // No eave over a side another house of its row stands against.
+                let (left, right) = match self.row {
+                    Some(row) => (if row.left { 0 } else { -1 }, if row.right { right - 1 } else { right }),
+                    None => (-1, right),
+                };
+                (IVec2::new(left, front), IVec2::new(right, back))
             }
         }
     }
@@ -413,8 +466,12 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
     let flat = shape == Roof::Flat;
     // Eaves one column out, but an A-frame's timber ends stand flush with its roof.
     let a_frame = foot.form == Form::AFrame;
+    // A row's house has no eave over a side its neighbour stands against: their roofs run on.
+    let (open_left, open_right) = spec.row.map_or((true, true), |r| (!r.left, !r.right));
     let roofed = |x: i32, z: i32| {
-        if flat {
+        if (x < x0 && !open_left) || (x >= x0 + w && !open_right) {
+            false
+        } else if flat {
             foot.inside(x, z)
         } else if a_frame {
             let (along, across) = if ridge_x { (x - x0, z) } else { (z - z0, x) };
@@ -472,6 +529,22 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
         }
     }
     let gabled = matches!(shape, Roof::Gable | Roof::HalfHip | Roof::Saltbox | Roof::Gambrel);
+    // A pitched gable over four walls may be laid in shaped pieces: each column's top a
+    // slope whose low edge faces its eave, and a ridge cap along the peak.
+    let pieces = if shape == Roof::Gable && pitch == 1 && matches!(foot.form, Form::Box | Form::ShopFront) { mats.pieces(spec.shared_seed()) } else { None };
+    let facing = pen.frame.facing;
+    let piece = |x: i32, z: i32| -> Option<BlockId> {
+        let p = pieces?;
+        let s = if ridge_x { z - z0 } else { x - x0 };
+        let down = (s + 1).cmp(&(span - s));
+        let local = |d: i32| if ridge_x { IVec2::new(0, d) } else { IVec2::new(d, 0) };
+        Some(match down {
+            std::cmp::Ordering::Less => p.slope[super::roofs::facing_of(turned(facing, local(-1)))],
+            std::cmp::Ordering::Greater => p.slope[super::roofs::facing_of(turned(facing, local(1)))],
+            // A bare ridge runs east to west, one turned east north to south.
+            std::cmp::Ordering::Equal => p.ridge[usize::from(turned(facing, if ridge_x { IVec2::X } else { IVec2::Y }).x == 0)],
+        })
+    };
     for z in z0 - 1..=z0 + d {
         for x in x0 - 1..=x0 + w {
             let Some(h) = heights.at(x, z) else { continue };
@@ -485,13 +558,17 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
             for y in lo..=h {
                 pen.set(x, y, z, block);
             }
+            if let Some(cap) = piece(x, z) {
+                pen.set(x, h, z, cap);
+            }
             if !foot.inside(x, z) {
                 continue;
             }
             let wall = foot.wall(x, z);
             let (s, r) = if ridge_x { (z - z0, x - x0) } else { (x - x0, z - z0) };
             let gable = gabled && (r == 0 || r == run - 1);
-            let end = gable && s == span / 2 && blind != Some((x, z));
+            let joined = ridge_x && ((r == 0 && !open_left) || (r == run - 1 && !open_right));
+            let end = gable && !joined && s == span / 2 && blind != Some((x, z));
             // An A-frame's ends are timber, boards in a frame of logs under the roof, so
             // it never reads as a bank of earth whatever its roof.
             let timber = gable && foot.form == Form::AFrame;
@@ -509,7 +586,9 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
                     pen.set(x, y, z, mats.wall);
                 }
             }
-            if flat && wall && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
+            // A flat roof's low parapet, but not on a side a neighbour's roof runs on from.
+            let against = (x == x0 && !open_left) || (x == x0 + w - 1 && !open_right);
+            if flat && wall && !against && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
                 pen.set(x, top + 2, z, mats.trim);
             }
         }
@@ -523,6 +602,11 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
         pen.set(x, y + 1, z, mats.frame);
     }
     heights
+}
+
+/// A step `d` in a building's own frame, in the world.
+fn turned(facing: Facing, d: IVec2) -> IVec2 {
+    facing.turn(d.x, d.y)
 }
 
 fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Canvas) {
@@ -660,7 +744,19 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     }
 
     let gable_windows = if spec.form == Form::AFrame { 3 } else { 1 };
-    let heights = roof(spec, &mut pen, mats, top, &foot, spec.ridge_x, spec.roof, mats.roof, gable_windows, chimney.map(|c| c.1));
+    // A jettied house: its storeys over the ground stand a block out over the street (moved
+    // out once the front is drawn), so its roof covers a block more at the front. Not over
+    // a porch, an awning or a balcony, nor with a dormer in the roof's front. A house of a
+    // row rolls its own, unless its roof slopes down to the street: a jetty moves that eave
+    // out, so the whole row shares the roll and the roof runs on at one height.
+    let sloped_to_street = spec.ridge_x && spec.roof != Roof::Flat;
+    let jetty = (spec.form == Form::Box
+        && spec.storeys >= 2
+        && ![Extra::Porch, Extra::Awning, Extra::Balcony, Extra::Dormer].iter().any(|&e| spec.has(e)))
+    .then(|| mats.jetty(if sloped_to_street { spec.shared_seed() } else { spec.seed }))
+    .flatten();
+    let covered = if jetty.is_some() { Foot { z0: -1, d: d + 1, ..foot } } else { foot };
+    let heights = roof(spec, &mut pen, mats, top, &covered, spec.ridge_x, spec.roof, mats.roof, gable_windows, chimney.map(|c| c.1));
 
     // The door, a lintel over it, and a step or stair to it; barns, boathouses and inns
     // have wide doors.
@@ -1067,6 +1163,48 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             }
         }
     }
+    if let Some(beams) = jetty {
+        jettied(&mut pen, spec, mats, lift, top, beams);
+    }
+}
+
+/// Moves the front of a house's storeys over the ground a block out, with what hangs on
+/// it (shutters, flower boxes), the floor of the first carried on a row of jetty `beams`
+/// whose braces rest on the wall below; the old front of each storey becomes room.
+fn jettied(pen: &mut Pen, spec: &Spec, mats: &Mats, lift: i32, top: i32, beams: [BlockId; 4]) {
+    let w = spec.w;
+    let floor = lift + spec.wall + 1;
+    // Not a neighbour's in its row: its own front moves out with it.
+    let (from_x, to_x) = spec.row.map_or((-1, w), |r| (if r.left { 0 } else { -1 }, if r.right { w - 1 } else { w }));
+    for y in floor..=top {
+        for z in [-1, 0] {
+            for x in from_x..=to_x {
+                let (from, to) = (pen.frame.at(x, y, z), pen.frame.at(x, y, z - 1));
+                match pen.canvas.absolute.get(&from).copied() {
+                    Some(put) => pen.canvas.put(to, put),
+                    None => {
+                        pen.canvas.absolute.remove(&to);
+                    }
+                }
+                // Where the front wall stood, each storey's floor runs on to the wall's
+                // new line; the rest is room.
+                let storey_floor = (y - lift) % (spec.wall + 1) == 0 && (y - lift) / (spec.wall + 1) < spec.storeys;
+                if z == 0 && x > 0 && x < w - 1 {
+                    if storey_floor { pen.set(x, y, 0, mats.floor) } else { pen.clear(x, y, 0) }
+                } else if z == 0 && (x < 0 || x >= w) {
+                    pen.canvas.absolute.remove(&from);
+                }
+            }
+        }
+    }
+    let out = super::roofs::facing_of(turned(pen.frame.facing, IVec2::new(0, -1)));
+    // Under the overhang, but never over what already hangs there (a sign board at the
+    // top of walls of three).
+    for x in 0..w {
+        if !pen.canvas.absolute.contains_key(&pen.frame.at(x, floor - 1, -1)) {
+            pen.set(x, floor - 1, -1, beams[out]);
+        }
+    }
 }
 
 /// What stands inside a working building, on its ground floor.
@@ -1316,9 +1454,12 @@ fn windows(spec: &Spec, pen: &mut Pen, mats: &Mats, base: i32, storey: i32, rng:
             place(pen, x, d - 1, x, rng);
         }
     }
+    let (left, right) = spec.row.map_or((false, false), |r| (r.left, r.right));
     for z in 1..d - 1 {
-        place(pen, 0, z, z, rng);
-        if !(spec.shed > 0 && storey == 0) {
+        if !left {
+            place(pen, 0, z, z, rng);
+        }
+        if !(spec.shed > 0 && storey == 0) && !right {
             place(pen, w - 1, z, z, rng);
         }
     }

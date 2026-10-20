@@ -31,6 +31,7 @@ mod house;
 pub mod interior;
 pub mod people;
 mod plan;
+pub mod roofs;
 #[cfg(test)]
 mod tests;
 mod walls;
@@ -165,6 +166,21 @@ struct Cell {
     clear: bool,
 }
 
+impl Cell {
+    /// The ground's height where it is graded, from its own `sample`.
+    fn graded(&self, sample: &GeoSample) -> i32 {
+        let target = self.target as i32;
+        let height = if self.core {
+            target
+        } else {
+            let w = self.weight as f32 / 255.0;
+            (sample.height as f32 + (target - sample.height) as f32 * w).round() as i32
+        };
+        // Never below the water beside it, which would let it spill.
+        height.max(sample.water)
+    }
+}
+
 pub(crate) struct Raster {
     min: IVec2,
     max: IVec2,
@@ -193,6 +209,15 @@ impl Raster {
 
     fn get(&self, x: i32, z: i32) -> Option<&Cell> {
         self.index(IVec2::new(x, z)).map(|i| &self.cells[i])
+    }
+
+    /// The height of the ground at (x, z) once graded, from its own `sample`, as `apply`
+    /// gives it.
+    fn ground(&self, x: i32, z: i32, sample: &GeoSample) -> i32 {
+        match self.get(x, z) {
+            Some(cell) if !sample.submerged() && sample.cavity.is_none() && cell.weight > 0 => cell.graded(sample),
+            _ => sample.height,
+        }
     }
 
     /// A pad at `height` over `core`, held exactly where `inside`, easing out over
@@ -497,15 +522,7 @@ impl Settlements {
             return sample;
         }
         if !sample.submerged() && sample.cavity.is_none() && cell.weight > 0 {
-            let target = cell.target as i32;
-            let height = if cell.core {
-                target
-            } else {
-                let w = cell.weight as f32 / 255.0;
-                (sample.height as f32 + (target - sample.height) as f32 * w).round() as i32
-            };
-            // Never below the water beside it, which would let it spill.
-            sample.height = height.max(sample.water);
+            sample.height = cell.graded(&sample);
             sample.crag.amplitude = 0.0;
         }
         let tread = cell.tread as f32 / 255.0;
@@ -598,6 +615,55 @@ impl Settlements {
             });
         }
         cells.into_iter().map(|c| self.slot(world, c)).filter(|slot| slot.0.is_some()).collect()
+    }
+
+    /// The settlement nearest `from` by its middle, within `radius` of it, that `keep`
+    /// takes. Squares are planned nearest first, a few side by side at a time, and the
+    /// search stops once no square left could hold a nearer one: a settlement never
+    /// reaches past its square, so the nearest point of a square bounds how near any of
+    /// its places can be. Only the squares nearer than the answer are planned, where
+    /// `near` would plan every one within `radius`.
+    pub fn nearest(&self, world: &Overworld, from: IVec2, radius: i32, keep: impl Fn(&Plan) -> bool) -> Option<Arc<Slot>> {
+        let spacing = self.def.grid.spacing;
+        let reach = i64::from(radius) * i64::from(radius);
+        let away = |p: IVec2| (p - from).as_i64vec2().length_squared();
+        let (first, last) = (self.cell_of(from.x - radius, from.y - radius), self.cell_of(from.x + radius, from.y + radius));
+        let mut cells: Vec<(i64, IVec2)> = (first.y..=last.y)
+            .flat_map(|cz| (first.x..=last.x).map(move |cx| IVec2::new(cx, cz)))
+            .map(|c| (away(from.clamp(c * spacing, (c + 1) * spacing - 1)), c))
+            .filter(|&(bound, _)| bound <= reach)
+            .collect();
+        cells.sort_unstable_by_key(|&(bound, c)| (bound, c.x, c.y));
+        let batch = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+        // Ties go to the lower x, then z, of the middle, as a sorted scan would give.
+        let mut best: Option<((i64, i32, i32), Arc<Slot>)> = None;
+        for group in cells.chunks(batch) {
+            if best.as_ref().is_some_and(|(d, _)| group[0].0 > d.0) {
+                break;
+            }
+            let missing: Vec<IVec2> = group.iter().map(|&(_, c)| c).filter(|&c| !self.plans.has(c)).collect();
+            if missing.len() > 1 {
+                crate::parallel::for_each(&missing, |&c| {
+                    self.slot(world, c);
+                });
+            }
+            for &(_, c) in group {
+                let slot = self.slot(world, c);
+                let Some(plan) = slot.0.as_ref() else { continue };
+                let d = (away(plan.centre), plan.centre.x, plan.centre.y);
+                // The cheap checks before `keep`, which may look the plan over.
+                if d.0 <= reach && best.as_ref().is_none_or(|(b, _)| d < *b) && keep(plan) {
+                    best = Some((d, slot.clone()));
+                }
+            }
+        }
+        best.map(|(_, slot)| slot)
+    }
+
+    /// The settlement of the square holding (x, z), planning that square alone: the only
+    /// one any block there can belong to.
+    pub fn holding(&self, world: &Overworld, x: i32, z: i32) -> Option<Arc<Slot>> {
+        Some(self.slot(world, self.cell_of(x, z))).filter(|slot| slot.0.is_some())
     }
 
     /// Plans square `cell`, settled near `spawn` if it is the spawn's.
@@ -700,6 +766,39 @@ impl Settlements {
     }
 }
 
+impl Settlements {
+    /// The roof pieces the plan of the settlement whose square's middle is at `centre`
+    /// sets, and where: for tools judging a settlement as the world holds it.
+    pub fn roofs_of(&self, world: &Overworld, centre: IVec2) -> Option<Vec<(IVec3, BlockId)>> {
+        let fixed = self.fixed.as_ref()?;
+        self.planned(world, centre, &|b| fixed.fire.piece(b))
+    }
+
+    /// The blocks `keep` picks that the plan of the settlement whose square's middle is at
+    /// `centre` sets, and where.
+    pub fn planned(&self, world: &Overworld, centre: IVec2, keep: &dyn Fn(BlockId) -> bool) -> Option<Vec<(IVec3, BlockId)>> {
+        let slot = self.slot(world, self.cell_of(centre.x, centre.y));
+        let plan = slot.0.as_ref().filter(|p| p.centre == centre)?;
+        let mut roofs: Vec<(IVec3, BlockId)> = plan
+            .voxels
+            .values()
+            .flatten()
+            .filter(|v| !v.ground)
+            .filter_map(|v| match v.put {
+                Put::Set(b) if keep(b) => Some((v.pos, b)),
+                _ => None,
+            })
+            .collect();
+        roofs.sort_unstable_by_key(|r| (r.0.y, r.0.x, r.0.z));
+        Some(roofs)
+    }
+
+    /// What its flames are kept from (`rules.fire`).
+    pub fn fire(&self) -> Option<&roofs::Fire> {
+        self.fixed.as_ref().map(|f| &f.fire)
+    }
+}
+
 /// The blocks settlements furnish themselves with (`furnishings` in settlements.ron):
 /// none without water and dirt, and only the plain common sorts of flowers and bushes.
 fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
@@ -752,6 +851,12 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
         crates: palette(&f.crates, &any),
         cloth: palette(&f.cloth, &any),
         interiors: interior::Interiors::new(&def.interiors, registry),
+        fire: roofs::Fire::new(&def.rules.fire, registry, def.styles.iter().flat_map(|s| {
+            let woods = &s.woods;
+            s.roof_pieces.iter().flat_map(move |p| {
+                woods.iter().flat_map(move |(wood, _)| woods.iter().filter_map(move |(trim, _)| roofs::RoofPieces::resolve(p, wood, trim, |n| registry.id(n))))
+            })
+        })),
         plinth: def.rules.houses.plinth,
         moss: def.rules.houses.moss,
     })

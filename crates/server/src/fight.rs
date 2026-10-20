@@ -131,6 +131,9 @@ pub(crate) struct Fights {
     /// lower by the share, until when).
     pinned: FxHashMap<u32, (f32, f64)>,
     sundered: FxHashMap<u32, (f32, f64)>,
+    /// Fight time in tests that drive it by game time (`run_clock`), not the wall clock.
+    #[cfg(test)]
+    clock: Option<f64>,
 }
 
 impl Default for Fights {
@@ -142,6 +145,8 @@ impl Default for Fights {
             bleeds: Vec::new(),
             pinned: FxHashMap::default(),
             sundered: FxHashMap::default(),
+            #[cfg(test)]
+            clock: None,
         }
     }
 }
@@ -152,7 +157,18 @@ impl Fights {
     }
 
     fn now(&self) -> f64 {
+        #[cfg(test)]
+        if let Some(clock) = self.clock {
+            return clock;
+        }
         self.secs(Instant::now())
+    }
+
+    /// Runs fight time by game time from here on, `seconds` on from where it is (tests that
+    /// tick faster than the clock): the wall clock no longer counts.
+    #[cfg(test)]
+    pub(crate) fn run_clock(&mut self, seconds: f32) {
+        self.clock = Some(self.clock.unwrap_or_else(|| self.secs(Instant::now())) + seconds as f64);
     }
 
     /// The share a pin slows `creature` by at `now`, in game seconds (`Server::game_secs`).
@@ -380,8 +396,12 @@ impl Server {
         // player stands, from its body's edge (`Creature::choose`).
         let species = self.content.creatures.get(live.species);
         let edge = species.edge(to.length(), live.scale);
-        let Some(index) = species.choose(live.phase, edge, live.attack) else { return };
+        let Some(index) = species.choose(live.phase, edge, live.attack, species.level(live.body.position.y, target.position.y, live.scale)) else { return };
         let Some(attack) = species.attack_at(index) else { return };
+        // No wind-up at a player its blow has no way through the air to (`blow_open`).
+        if attack.charge.is_none() && !self.blow_open(&live.body, attack.reach, target.position) {
+            return;
+        }
         let feel = self.content.combat.feel;
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
         let tick = self.tick;
@@ -719,7 +739,10 @@ impl Server {
         // with slack for the lag.
         let reach = attack.reach + size.0 * scale * 0.5 + 0.3 + feel.reach_slack;
         let flat = (to - at).with_y(0.0).length();
-        let tall = (to.y - at.y).abs() < size.1 * scale + 1.5;
+        let tall = self.content.creatures.get(species).in_band(at.y, to.y, voxmar_engine::physics::player::HEIGHT, scale);
+        // And through the air, not through a roof or a wall (`blow_open`); a charge that ran
+        // into them met them.
+        let open = contact || self.blow_open(&voxmar_engine::creature::motion::Body { position: at, ..live.body }, attack.reach + feel.reach_slack, to);
         // A charge that runs onto a braced point is stopped on it, heavy or not.
         if let Some(charge) = attack.charge.filter(|_| contact) {
             let bracing = self.guard_of(player).filter(|g| g.braces(look, at - to));
@@ -734,7 +757,7 @@ impl Server {
         }
         let guard = self.guard_of(player).and_then(|g| g.takes(attack.style, attack.heavy, look, at - to, &feel));
         let fighter = self.fights.fighters.entry(player).or_default();
-        let defended = if flat > reach || !tall { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
+        let defended = if flat > reach || !tall || !open { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
         match defended {
             Defended::Dodged => fighter.riposte_until = lands + feel.riposte as f64,
             Defended::Perfect => fighter.counter_until = lands + feel.counter as f64,
@@ -791,7 +814,8 @@ impl Server {
         let Some(live) = self.creatures.live.get_mut(&creature) else { return };
         let Some(mut charge) = live.charging else { return };
         let body = live.body;
-        let species = self.content.creatures.get(live.species);
+        let kind = live.species;
+        let species = self.content.creatures.get(kind);
         let (size, scale, most) = (species.def.body.size, live.scale, species.def.health);
         let moved = (body.position - before).with_y(0.0).dot(charge.along).max(0.0);
         charge.left -= moved;
@@ -824,7 +848,7 @@ impl Server {
             .filter(|p| p.joined && p.health.alive() && !p.allow_flight)
             .filter(|p| {
                 let to = (p.position - body.position).with_y(0.0);
-                to.length() <= touching && to.dot(charge.along) >= 0.0 && (p.position.y - body.position.y).abs() < size.1 * scale + 1.0
+                to.length() <= touching && to.dot(charge.along) >= 0.0 && self.content.creatures.get(kind).level(body.position.y, p.position.y, scale)
             })
             .min_by(|a, b| (a.position - body.position).with_y(0.0).length_squared().total_cmp(&(b.position - body.position).with_y(0.0).length_squared()))
             .map(|p| p.id);
@@ -1159,7 +1183,7 @@ mod tests {
         server.players.insert(player, joined);
         let species = server.content.creatures.id("base:brown_bear").expect("a bear");
         let bear = server.spawn_creature(species, at, 1).expect("room");
-        std::sync::Arc::get_mut(&mut server.content.combat).expect("the test server owns its combat data").feel.creature_tracking = 0.0;
+        std::sync::Arc::make_mut(&mut server.content.combat).feel.creature_tracking = 0.0;
         for direction in [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z, Vec3::X + Vec3::Z, Vec3::X - Vec3::Z, -Vec3::X + Vec3::Z, -Vec3::X - Vec3::Z] {
             let direction = direction.normalize();
             let target = at + direction * 4.0;
@@ -1331,7 +1355,7 @@ mod tests {
         fn answered(&mut self, round_trip: f32, allowance: Option<f32>, after: f32, dodge: bool) -> Defended {
             let (player, lands) = (1, 10.0);
             if let Some(allowance) = allowance {
-                std::sync::Arc::get_mut(&mut self.server.content.combat).expect("the test server owns its combat data").feel.lag_allowance = allowance;
+                std::sync::Arc::make_mut(&mut self.server.content.combat).feel.lag_allowance = allowance;
             }
             // As new: no guard up, no dodge under way, the bear where it was, the player well.
             self.server.fights.fighters.clear();

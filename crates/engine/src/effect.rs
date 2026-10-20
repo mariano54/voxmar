@@ -272,6 +272,8 @@ impl Condition {
 pub enum Lack {
     /// A roof overhead.
     Roof,
+    /// Out under the open sky, no roof overhead.
+    Sky,
     /// Standing at home (the home survey is none).
     Away,
     /// Blocks with a tag: how many there are and how many are wanted.
@@ -284,6 +286,16 @@ pub enum Lack {
 }
 
 impl Condition {
+    /// Whether the condition asks the player to be out under the sky (`Not(Indoors)`, alone
+    /// or among an `All`'s).
+    fn wants_sky(&self) -> bool {
+        match self {
+            Condition::Not(inner) => **inner == Condition::Indoors,
+            Condition::All(list) => list.iter().any(Condition::wants_sky),
+            _ => false,
+        }
+    }
+
     /// Whether the condition is about a home (`AtHome` or `HomeHas` anywhere in it).
     fn about_home(&self) -> bool {
         match self {
@@ -303,6 +315,7 @@ impl Condition {
         match self {
             Condition::AtHome => vec![Lack::Away],
             Condition::Indoors => vec![Lack::Roof],
+            Condition::Not(inner) if **inner == Condition::Indoors => vec![Lack::Sky],
             Condition::HomeHas(tag, need) => vec![Lack::Tag { tag: tag.clone(), have: s.home.map_or(0, |h| h.count(tag)), need: *need }],
             Condition::HomeWalls(shelter, need) => {
                 let have = s.home.map_or(0.0, |h| h.walls.share(*shelter));
@@ -526,6 +539,10 @@ pub struct EffectFile {
     pub foods: Vec<FoodRule>,
     #[serde(default)]
     pub sleeps: Vec<SleepRule>,
+    /// Tags a home counts only where the block stands under the open sky (`yard`: things set
+    /// out in the yard, not kept indoors). Each must be one a `HomeHas` asks.
+    #[serde(default)]
+    pub outdoors: Vec<String>,
 }
 
 /// Every effect, in the order packages list them.
@@ -541,6 +558,8 @@ pub struct EffectRegistry {
     sleeps: Vec<(EffectId, f32, Option<EffectId>, Option<String>, bool)>,
     /// The tags effects ask of a home, each once.
     home_tags: Vec<String>,
+    /// Those of them a home counts only under the open sky (`EffectFile::outdoors`).
+    outdoor_tags: Vec<String>,
     /// Whether any effect asks after a home's walls (`HomeWalls`).
     home_walls: bool,
     /// The quests effects wait on, each once.
@@ -587,11 +606,12 @@ impl EffectRegistry {
     }
 
     pub fn new(files: Vec<EffectFile>) -> Result<Self, RegistryError> {
-        let (mut defs, mut rules, mut sleeps) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut defs, mut rules, mut sleeps, mut outdoors) = (Vec::new(), Vec::new(), Vec::new(), Vec::<String>::new());
         for file in files {
             defs.extend(file.effects);
             rules.extend(file.foods);
             sleeps.extend(file.sleeps);
+            outdoors.extend(file.outdoors);
         }
         let mut by_name = FxHashMap::default();
         for (i, def) in defs.iter().enumerate() {
@@ -698,7 +718,11 @@ impl EffectRegistry {
             once
         };
         let (held_tags, worn_tags) = (once(held), once(worn));
-        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, home_walls, quests, near_asks, held_tags, worn_tags })
+        if let Some(tag) = outdoors.iter().find(|tag| !home_tags.contains(tag)) {
+            return Err(RegistryError(format!("effects.ron: `outdoors` names `{tag}`, which no `HomeHas` asks")));
+        }
+        let outdoor_tags = once(outdoors.iter().map(String::as_str).collect());
+        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, outdoor_tags, home_walls, quests, near_asks, held_tags, worn_tags })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -810,12 +834,16 @@ impl EffectRegistry {
             .map(|c| {
                 let mut members: Vec<EffectId> = steps.iter().zip(&chain).filter(|(_, k)| **k == c).map(|(&id, _)| id).collect();
                 members.sort_by_key(|id| (self.replaces[id.0 as usize].len(), *id));
-                let holds = |id: EffectId| self.get(id).when.as_ref().is_some_and(|w| w.holds(situation));
+                // A step that holds only out of doors (a dooryard) is judged as if the player
+                // stood in the yard, as the rest are as if they stood in the room.
+                let outside = Situation { outdoors: true, ..*situation };
+                let at = |w: &Condition| if w.wants_sky() { &outside } else { situation };
+                let holds = |id: EffectId| self.get(id).when.as_ref().is_some_and(|w| w.holds(at(w)));
                 // The highest step met, and the next one above it: a lower step left unmet
                 // (a hearth lit with no torch by the bed) is behind, not next.
                 let top = members.iter().rposition(|&id| holds(id));
                 let reached = top.map(|i| members[i]);
-                let next = members[top.map_or(0, |i| i + 1)..].iter().copied().find(|&id| !holds(id)).map(|id| (id, self.get(id).when.as_ref().map(|w| w.lacks(situation)).unwrap_or_default()));
+                let next = members[top.map_or(0, |i| i + 1)..].iter().copied().find(|&id| !holds(id)).map(|id| (id, self.get(id).when.as_ref().map(|w| w.lacks(at(w))).unwrap_or_default()));
                 HomeProgress { reached, next }
             })
             .collect()
@@ -862,6 +890,11 @@ impl EffectRegistry {
 
     pub fn home_tags(&self) -> &[String] {
         &self.home_tags
+    }
+
+    /// Whether a home counts blocks with `tag` only under the open sky.
+    pub fn outdoor(&self, tag: &str) -> bool {
+        self.outdoor_tags.iter().any(|t| t == tag)
     }
 
     /// Whether any effect asks after a home's walls: what surveying a home scans its room for.

@@ -76,6 +76,8 @@ impl Process for Falling {
             // flowing lava burns.
             let touching = |kind: &dyn Fn(FluidId) -> bool| aabb.intersects(|p| server.block(p).and_then(|b| blocks.fluid(b)).is_some_and(|f| kind(f.fluid)));
             let (in_water, in_lava) = (touching(&|f| blocks.fluid_def(f).def.swim), touching(&|f| is_lava(blocks, f)));
+            // Feet on a ladder, nobody is falling: sliding down it ends no fall.
+            let on_ladder = server.on_ladder(player.position);
 
             let player = server.players.get_mut(&id).unwrap();
             // Where a grave would go: never in lava, nor on anything below the void.
@@ -89,7 +91,7 @@ impl Process for Falling {
             if in_lava && burns {
                 damage += rules.burn as f32;
             }
-            if player.flying || in_water || in_lava || !column_loaded {
+            if player.flying || in_water || in_lava || on_ladder || !column_loaded {
                 player.fall_start = None;
             } else if on_ground {
                 if let Some(start) = player.fall_start.take() {
@@ -347,16 +349,19 @@ impl Server {
         }
         let blocks = &self.content.blocks;
         let reach = rules.home_reach;
+        // Tags counted only under the open sky (`outdoors`: things set out in the yard).
+        let outdoor: Vec<bool> = counts.iter().map(|(tag, _)| self.content.effects.outdoor(tag)).collect();
         for dy in -down..=up {
             for dz in -reach..=reach {
                 for dx in -reach..=reach {
-                    let Some(block) = self.block(anchor + IVec3::new(dx, dy, dz)) else { continue };
+                    let at = anchor + IVec3::new(dx, dy, dz);
+                    let Some(block) = self.block(at) else { continue };
                     let tags = &blocks.def(block).tags;
                     if tags.is_empty() {
                         continue;
                     }
-                    for (tag, n) in &mut counts {
-                        if tags.contains(tag) {
+                    for ((tag, n), &outdoor) in counts.iter_mut().zip(&outdoor) {
+                        if tags.contains(tag) && (!outdoor || self.open_sky(at + IVec3::Y)) {
                             *n += 1;
                         }
                     }
@@ -506,6 +511,47 @@ impl Server {
 mod tests {
     use super::*;
 
+    /// Sliding down a ladder at its own pace, from ten blocks up or from six after jumping
+    /// onto it, ends no fall: no harm at the bottom, and never falling on the way (so no
+    /// falling blow, fight.rs). The same descent with no ladder hurts.
+    #[test]
+    fn sliding_down_a_ladder_is_no_fall() {
+        use voxmar_engine::block::BlockId;
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let (stone, planks, ladder) = (server.content.blocks.expect("base:stone"), server.content.blocks.expect("base:oak_planks"), server.content.blocks.expect("base:oak_ladder"));
+        server.set_block(at, stone);
+        for y in 1..=12 {
+            server.set_block(at + IVec3::new(0, y, 1), planks);
+        }
+        let id = crate::creatures::cornered_tests::join(&mut server, at.as_vec3() + Vec3::new(0.5, 11.0, 0.5));
+        let slide = |server: &mut Server, from: f32, rungs: bool| -> (u8, bool) {
+            for y in 1..=10 {
+                server.set_block(at + IVec3::Y * y, if rungs { ladder } else { BlockId::AIR });
+            }
+            let player = server.players.get_mut(&id).unwrap();
+            player.health.current = player.health.max;
+            player.position = at.as_vec3() + Vec3::new(0.5, 1.0 + from, 0.5);
+            // Jumped onto it from a little above.
+            player.fall_start = Some(player.position.y + 1.0);
+            let mut falling = false;
+            // Down at climb_speed, 3 blocks a second: 0.15 a tick.
+            for _ in 0..=(from / 0.15).ceil() as usize {
+                Falling.run(server);
+                let player = server.players.get_mut(&id).unwrap();
+                falling |= player.fall_start.is_some_and(|top| player.position.y < top - 0.3);
+                player.position.y = (player.position.y - 0.15).max(at.y as f32 + 1.0);
+            }
+            Falling.run(server);
+            (server.players[&id].health.current, falling)
+        };
+        let full = server.players[&id].health.max;
+        assert_eq!(slide(&mut server, 9.99, true), (full, false), "a slide down a ten-block ladder hurt or fell");
+        assert_eq!(slide(&mut server, 6.0, true), (full, false), "a slide down from six blocks up hurt or fell");
+        let (bare, falling) = slide(&mut server, 9.99, false);
+        assert!(bare < full && falling, "the same descent with no ladder did not hurt");
+    }
+
     /// A home's room is judged by its walls and roof: a closed plank room is sound all about,
     /// a brick in it is a fine face, a hole or an open door lets the outside in, and a closed
     /// door is a wall.
@@ -552,6 +598,11 @@ mod tests {
             server.set_block(at + IVec3::new(dx, 1, 2), block(&server, name));
         }
         assert_eq!(server.room_walls(home), before, "furniture made the room draughtier");
+        // A ladder up the wall to a loft is looked past as well.
+        for y in 1..=3 {
+            server.set_block(at + IVec3::new(0, y, 2), block(&server, "base:oak_ladder"));
+        }
+        assert_eq!(server.room_walls(home), before, "a ladder made the room draughtier");
         // A solid block where home stands (a hearthstone): the room is the open cell over it.
         assert_eq!(server.room_walls(at), server.room_walls(home));
     }
@@ -632,6 +683,51 @@ mod tests {
         server.set_block(door + IVec3::Y, planks);
         let railed = server.room_walls(home);
         assert!(railed.share(Shelter::Draughty) < 0.9, "a railing walled the room: {railed:?}");
+    }
+
+    /// A five by five room roofed as a hip: shingles round its edge facing out, a hip at
+    /// each corner, and planks over the middle. Every face is sound, nothing lets the sky
+    /// in, and a valley set in place of a hip leaves it sound too.
+    #[test]
+    fn a_hipped_roof_of_corners_shelters_a_room() {
+        use voxmar_engine::{block::BlockId, effect::Shelter};
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"));
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { planks } else { BlockId::AIR });
+                }
+                // Planks over the walls, and the roof's edge over the room's outer cells,
+                // eaves out (north, east, south, west), so the room sees every corner.
+                let name = match (x, z) {
+                    _ if x.abs() == 3 || z.abs() == 3 => "base:oak_planks",
+                    (-2, -2) => "base:oak_shingles_corner",
+                    (2, -2) => "base:oak_shingles_corner_east",
+                    (2, 2) => "base:oak_shingles_corner_south",
+                    (-2, 2) => "base:oak_shingles_corner_west",
+                    (_, -2) => "base:oak_shingles",
+                    (2, _) => "base:oak_shingles_east",
+                    (_, 2) => "base:oak_shingles_south",
+                    (-2, _) => "base:oak_shingles_west",
+                    _ => "base:oak_planks",
+                };
+                server.set_block(at + IVec3::new(x, 4, z), block(&server, name));
+            }
+        }
+        let home = at + IVec3::Y;
+        let walls = server.room_walls(home);
+        assert_eq!(walls.share(Shelter::Sound), 1.0, "a hipped roof let the weather in: {walls:?}");
+        for (x, z) in [(-2, -2), (2, -2), (2, 2), (-2, 2), (0, -2), (2, 0), (0, 0)] {
+            assert!(!server.open_sky(at + IVec3::new(x, 1, z)), "the sky shows through at {x} {z}");
+        }
+        server.set_block(at + IVec3::new(-2, 4, -2), block(&server, "base:oak_shingles_inner_corner"));
+        assert_eq!(server.room_walls(home).share(Shelter::Sound), 1.0, "a valley let the weather in");
+        assert!(!server.open_sky(at + IVec3::new(-2, 1, -2)), "the sky shows through the valley");
     }
 
     /// The home ladder's own furniture in a five by five stone-brick room under a plank roof
