@@ -44,11 +44,11 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
-Seats are stools, chairs, benches, settles, cushions and window seats; tables include desks and
-counters; storage is whatever a home keeps things in or on: chests, cupboards and wardrobes,
-stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves too),
-crate stacks, barrel racks, jars and baskets, and a village's barrels and crates (every
-store a player opens counts but the feed trough, which is the pen's: test
+Seats are stools, chairs, benches, settles, cushions and window seats; tables include desks
+and counters; storage is whatever a home keeps things in or on: chests, blanket chests,
+cupboards and wardrobes, stair cupboards, window seats, shelves (pot shelves, pantry shelves
+and bookshelves too), crate stacks, barrel racks, jars and baskets, and a village's barrels
+and crates (every store a player opens counts but the feed trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
 of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage stove and
 cauldron; workshop is the loom frame, spindle stand and quern. All are craftable in the
@@ -120,6 +120,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Bright room | a roof, 2 windows (`window`: hide window, glass, lattice window, open shuttered window) | heal x1.05, learn x1.05 |
 | Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging or a curtain) | 1° warmer |
 | Hearth corner | a roof, the hearth, a settle (`settle`) and a woodpile (`woodpile`) | 1° warmer, heal x1.05 (test `a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner`) |
+| Bedchamber | a roof, a bed, a blanket chest (`blanket_chest`), a washstand (`washstand`) and a rug | 1° warmer, heal x1.1 (test `a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber`) |
 | Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)

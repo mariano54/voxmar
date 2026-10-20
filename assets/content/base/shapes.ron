@@ -202,6 +202,23 @@
             (from: (1, 2, 13), to: (6, 11, 15), textures: All("furniture_linen")),
             (from: (11, 7, 12), to: (14, 10, 15), textures: All("furniture_pot")),
         ]),
+        // A blanket chest, its front to the north: a panelled box under a lid that overhangs it.
+        "blanket_chest": (boxes: [
+            (from: (1, 0, 4), to: (15, 8, 15), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+            (from: (0, 8, 3), to: (16, 10, 16)),
+        ]),
+        // A washstand, its back to the south: a top on four legs with a shelf low between
+        // them, a basin on the top and a jug beside it.
+        "washstand": (boxes: [
+            (from: (1, 10, 4), to: (15, 12, 15)),
+            (from: (2, 0, 5), to: (4, 10, 7), textures: All("furniture_grain")),
+            (from: (12, 0, 5), to: (14, 10, 7), textures: All("furniture_grain")),
+            (from: (2, 0, 12), to: (4, 10, 14), textures: All("furniture_grain")),
+            (from: (12, 0, 12), to: (14, 10, 14), textures: All("furniture_grain")),
+            (from: (4, 3, 5), to: (12, 4, 14)),
+            (from: (3, 12, 6), to: (10, 14, 13), textures: All("furniture_pot")),
+            (from: (11, 12, 9), to: (14, 16, 12), textures: All("furniture_pot")),
+        ]),
         // A stair (the step facing north) with panelled doors in its riser.
         "stair_cupboard": (boxes: [
             (from: (0, 0, 1), to: (16, 8, 16), cull: true),

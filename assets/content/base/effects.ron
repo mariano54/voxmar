@@ -143,6 +143,11 @@
         (name: "hearth_corner", kind: Buff, title: "Hearth corner", description: "A settle by the hearth and wood stacked to hand: 1° warmer here, and you heal a twentieth faster.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("settle", 1), HomeHas("woodpile", 1)])),
             replaces: [], modifiers: (warmth: 1.0, heal: 1.05)),
+        // A bedchamber, the Farm age's first: a room to sleep in under the home's roof, the
+        // bed with a blanket chest (`blanket_chest`), a washstand (`washstand`) and a rug.
+        (name: "bedchamber", kind: Buff, title: "Bedchamber", description: "A bed, a blanket chest at its foot, a washstand and a rug under one roof: 1° warmer here, and you heal a tenth faster.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("bed", 1), HomeHas("blanket_chest", 1), HomeHas("washstand", 1), HomeHas("rug", 1)])),
+            replaces: [], modifiers: (warmth: 1.0, heal: 1.1)),
         // A bee garden, the Farm age's: a skep with bees in it among flowers at home
         // (bees.ron). Its bees make the crops about it grow a quarter faster, which the
         // apiary does; the home itself heals a tenth faster and is sweeter to come back to.
