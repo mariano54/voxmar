@@ -127,7 +127,8 @@ mod tests {
 
     /// The first coal sample a player breaks over a seam teaches its rule's prospecting
     /// experience; breaking it there again teaches none, nor does a sample where no seam's
-    /// sample lies (one a player set down).
+    /// sample lies. (One a player set down over its seam: `actions.rs`, through the place
+    /// and mine actions.)
     #[test]
     fn the_first_sample_over_a_vein_teaches_prospecting() {
         let mut server = crate::test_server();
@@ -148,7 +149,7 @@ mod tests {
         let once = xp(&server);
         server.prospect(1, at, coal);
         assert_eq!(xp(&server), once, "the same seam taught twice");
-        // Far from any seam's samples: one a player set down.
+        // Far from any seam's samples.
         let mut lone = at + IVec3::new(5000, 0, 5000);
         while server.overworld.vein_of_sample(lone, coal).is_some() {
             lone.x += 1;

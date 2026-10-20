@@ -569,7 +569,7 @@ impl Server {
     /// gives itself back (where the world placed one, it does not). (By the block placed: a
     /// held item may place as another, as a torch does.)
     pub(crate) fn marks_placed(&self, item: BlockId, placed: BlockId) -> bool {
-        self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0 || rule.instead.is_some()) || self.content.blocks.def(placed).has_tag("furnishing")
+        self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0 || rule.prospect > 0.0 || rule.instead.is_some()) || self.content.blocks.def(placed).has_tag("furnishing")
     }
 
     /// What breaking the block at `block` gives and teaches: its drop or harvest, the
@@ -772,5 +772,49 @@ mod tests {
             .count();
         assert_eq!(sticks, 0, "placed leaves gave a stick");
         assert!(!server.placed.contains(&pos), "the mark goes with the break");
+    }
+
+    /// A coal sample a player sets down where the world laid one, over its seam, and mines
+    /// again teaches no prospecting: the place action marks the cell as theirs, and the mine
+    /// action's break skips what a player put there.
+    #[test]
+    fn a_placed_sample_over_its_seam_teaches_no_prospecting() {
+        use std::time::{Duration, Instant};
+        use voxmar_engine::action::ActionTarget;
+        use voxmar_engine::block::BlockId;
+        use voxmar_engine::coords::Face;
+        use voxmar_engine::world::{Column, ColumnPos};
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let coal = server.content.blocks.expect("base:coal_ore_sample");
+        let (at, _) = server.overworld.locate_ore(Some("coal_seam"), voxmar_engine::glam::IVec2::new(server.spawn.x as i32, server.spawn.z as i32), 1500).expect("a coal seam near spawn");
+        assert!(server.overworld.vein_of_sample(at, coal).is_some(), "the world's sample lies over a seam");
+        // The sample's own ground, with the world's sample taken up.
+        server.world.insert(ColumnPos::of_block(at), std::sync::Arc::new(Column::default()));
+        server.set_block(at - IVec3::Y, server.content.blocks.expect("base:stone"));
+        let player = server.players.get_mut(&1).unwrap();
+        player.position = at.as_vec3() + voxmar_engine::glam::Vec3::new(1.5, 0.0, 0.5);
+        player.selected = 0;
+        player.inventory.clear(|_| true);
+        assert_eq!(player.inventory.add(coal, 1), 0);
+        let (place, mine) = (server.content.actions.expect("core:place"), server.content.actions.expect("core:mine"));
+        let now = Instant::now();
+        server.propose(1, place, ActionTarget::Block { block: at - IVec3::Y, face: Face::PosY }, now);
+        assert_eq!(server.block(at), Some(coal), "the sample set down");
+        assert!(server.placed.contains(&at), "and marked as the player's");
+        let pickaxe = server.content.blocks.expect("base:flint_pickaxe");
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.clear(|_| true);
+        assert_eq!(player.inventory.add(pickaxe, 1), 0);
+        let mining = server.content.skills.id("core:mining").unwrap();
+        let before = server.players[&1].skills.xp(mining);
+        server.propose(1, mine, ActionTarget::Block { block: at, face: Face::PosY }, now);
+        server.complete_actions(now + Duration::from_secs(30));
+        assert_eq!(server.block(at), Some(BlockId::AIR), "the sample mined");
+        assert_eq!(server.players[&1].skills.xp(mining), before, "a placed sample taught Mining");
+        assert!(!server.players[&1].tallies.keys().any(|k| k.starts_with("prospected:")), "a placed sample prospected its seam");
     }
 }

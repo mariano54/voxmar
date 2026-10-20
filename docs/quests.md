@@ -256,7 +256,7 @@ Twine and Thong and the rest beside the first three), so a newcomer met a wall b
 their first tool. Now four quests open at the start, the three pinned ones (Look It Up,
 Timber, First Night) and the Crafting Table, and every other path starts from a step the
 main line reaches: the crafting table, the stone tools, the first night or the bed. Each path runs as a chain:
-mining runs A Pile of Stone and Dig In, and Black Flecks (a coal sample lifted with flint, from the Crafting Table), Coal and Cinders (twelve coal, after it and Stone in Hand; Torchlight waits on it), First Ore, Stockpile; fighting runs
+mining runs A Pile of Stone and Dig In, and Black Flecks (a coal sample lifted with flint, or one coal ore, from the Crafting Table), Coal and Cinders (twelve coal, after it and Stone in Hand; Torchlight waits on it), First Ore, Stockpile; fighting runs
 Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw; the camp runs Make
 Camp, Company at Camp, Pantry Shelves, From the Shelves, with A Lit Corner and A Bench to
 Work At beside it; grain runs A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore.

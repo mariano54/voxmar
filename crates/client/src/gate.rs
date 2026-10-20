@@ -711,12 +711,14 @@ struct Gate {
     tarn: Option<TarnVisit>,
     /// Where `/locate ore` found a sample of ore.
     ore: IVec3,
-    /// The Mining level before the ore step raised it, to put back.
+    /// The Mining level before the ore step raised it, to put back (none when it did not).
     ore_mining: Option<u8>,
     /// The sample `ore` found, kept once it is broken.
     ore_sample: Option<BlockId>,
     /// The tools the ore step gave that the player had none of, to clear after.
     ore_given: Vec<String>,
+    /// The sample's drop and how many the player carried before the ore step, put back after.
+    ore_drop: Option<(String, u32)>,
     /// Where `/locate settlement` sent the player: the middle of its square.
     settlement: IVec3,
     /// What `/locate settlement` answered, English, for the culture it names.
@@ -969,6 +971,7 @@ impl Gate {
             ore_mining: None,
             ore_sample: None,
             ore_given: Vec::new(),
+            ore_drop: None,
             quarry: Vec3::ZERO,
             quarry_id: None,
             fallen_watched: false,
@@ -15190,9 +15193,15 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             let level = skill_level(world, "core:mining").0;
-            gate.ore_mining = Some(level);
+            gate.ore_mining = (level < rule.level).then_some(level);
             give_for_ore(world, gate, &content.blocks.def(tool).name);
-            world.resource::<Net>().command(&format!("skill mining {}", level.max(rule.level)));
+            let drop = content.blocks.def(content.blocks.info(sample).drops).name.clone();
+            gate.ore_drop = Some((short_name(&drop), holding(world, &drop).0));
+            // Raised only when short: the command sets the experience to the level's floor,
+            // which would undercount what the break teaches.
+            if level < rule.level {
+                world.resource::<Net>().command(&format!("skill mining {}", rule.level));
+            }
             gate.mining_before = None;
             gate.advance(now);
         }
@@ -15217,12 +15226,12 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let xp = skill_level(world, "core:mining").1;
             let before = *gate.mining_before.get_or_insert(xp);
             aim(world, at);
-            mouse(world, MouseButton::Left, true);
             let gone = gate.observer.as_ref().is_some_and(|o| o.world.block(at).is_some_and(|b| b.is_air()));
+            // Held until the sample breaks, and let go at once: no more is mined after.
+            mouse(world, MouseButton::Left, !gone);
             let learnt = xp.saturating_sub(before);
             let wanted = ((rule.xp + rule.prospect) * 10.0) as u32;
             if gone && learnt >= wanted && rule.prospect > 0.0 {
-                mouse(world, MouseButton::Left, false);
                 gate.check("ore: prospect", Ok(format!("the first sample broken over its vein taught {:.1} Mining ({} for the break, {} for prospecting)", learnt as f32 / 10.0, rule.xp, rule.prospect)));
                 // Coal, set where the sample lay, for a pickaxe of the first tier.
                 let pickaxe = content.tools.rule(content.blocks.expect("base:coal_ore")).and_then(|r| r.tool).and_then(|kind| content.least_tool(kind, 1));
@@ -15283,7 +15292,7 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 const ORE_WAIT: f32 = 8.0;
 
 /// Ends the ore step with `check`: the cell the sample lay in emptied, the tools given
-/// cleared, and Mining put back.
+/// cleared, the sample's drop back to what the player carried before, and Mining put back.
 fn end_ore(world: &mut World, gate: &mut Gate, now: f32, check: &str, result: Result<String, String>) {
     gate.check(check, result);
     mouse(world, MouseButton::Left, false);
@@ -15292,6 +15301,12 @@ fn end_ore(world: &mut World, gate: &mut Gate, now: f32, check: &str, result: Re
     net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
     for name in gate.ore_given.drain(..) {
         net.command(&format!("clear {name}"));
+    }
+    if let Some((drop, count)) = gate.ore_drop.take() {
+        net.command(&format!("clear {drop}"));
+        if count > 0 {
+            net.command(&format!("give {drop} {count}"));
+        }
     }
     if let Some(level) = gate.ore_mining.take() {
         net.command(&format!("skill mining {level}"));

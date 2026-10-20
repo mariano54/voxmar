@@ -25,7 +25,7 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and a flint pickaxe breaks it. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing the stone axe, which hits three times as hard (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and a flint pickaxe breaks it. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
@@ -135,7 +135,7 @@
         ),
         (
             name: "timber", age: "nomad", branch: "start", title: "Timber",
-            why: "You start with nothing, and bare hands cannot fell a tree. Flint lies loose on the ground near where you wake, and a dead grey snag breaks by hand to a stick a block. Leaves give sticks too (one break in five), and gravel gives flint (one in eight). In the 2×2 grid, two flint over a stick make a flint axe, and two flint over two sticks a flint pickaxe. Fell four logs with the axe; woods have the most trees, and plains have a few in groves. A log splits into four planks; four planks make a crafting table, and two planks four sticks.",
+            why: "You start with nothing, and bare hands cannot fell a tree. Flint lies loose on the ground near where you wake, and a dead grey snag breaks by hand to a stick a block. Leaves give sticks too (one break in five), and gravel gives flint (one in eight). In the 2×2 grid, two flint over a stick make a flint axe, and two flint over two sticks a flint pickaxe. Fell four logs with the axe (hold the left mouse button on it); woods have the most trees, and plains have a few in groves. A log splits into four planks; four planks make a crafting table, and two planks four sticks.",
             tasks: [[Have("tag:log", 4)]],
             rewards: [Xp("engineering", 30.0)],
         ),
@@ -155,8 +155,8 @@
         ),
         (
             name: "black_flecks", age: "nomad", branch: "mining", title: "Black Flecks",
-            why: "Coal shows on the surface before you dig. A small black-flecked stone lying on open ground, a coal ore sample, marks a coal seam below it; they lie most often over limestone, sandstone and chalk, around sea level. Break one with your flint pickaxe: the first sample you find over each seam teaches you Mining, and any ore's sample does the same for its vein. The seam itself wants a stone pickaxe (Stone in Hand).",
-            tasks: [[Mine("coal_ore_sample", 1)]],
+            why: "Coal shows on the surface before you dig. A small black-flecked stone lying on open ground, a coal ore sample, marks a coal seam below it; they lie most often over limestone, sandstone and chalk, around sea level. Break one with your flint pickaxe: the first sample you find over each seam teaches you Mining, and any ore's sample does the same for its vein. The seam itself wants a stone pickaxe (Stone in Hand); coal ore mined from a cliff or a shaft counts here too.",
+            tasks: [[Mine("coal_ore_sample", 1)], [Mine("coal_ore", 1)]],
             after: ["crafting_table"],
             rewards: [Xp("mining", 30.0)],
         ),
