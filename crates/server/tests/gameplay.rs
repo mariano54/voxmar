@@ -2411,16 +2411,25 @@ fn the_quern_spindle_and_loom_grind_spin_and_weave() {
     refuses(&mut client, "old_quern_stones", "a village's quern ground flour");
     client.ok("/skill cooking 2");
     refuses(&mut client, "quern_stones", "a quern ground flour at Cooking 2");
-    // Broken, a station drops itself.
+    // Broken, one the world set (an older world's village kept the real station) gives
+    // nothing; one a player set down drops itself.
     for station in ["quern_stones", "spindle_stand", "loom_frame"] {
+        let block = client.content.blocks.expect(&format!("base:{station}"));
+        let loose = |c: &Client| count(c, &format!("base:{station}")) as usize + c.items.values().filter(|i| i.stack.item == block).map(|i| i.stack.count as usize).sum::<usize>();
         client.clear();
         client.ok(&format!("/setblock ~2 ~ ~ {station}"));
-        let block = client.content.blocks.expect(&format!("base:{station}"));
         client.pump_until(|c| c.world.block(at) == Some(block) && c.inventory.slots.iter().all(Option::is_none));
         client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
         client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
-        let loose = |c: &Client| count(c, &format!("base:{station}")) as usize + c.items.values().filter(|i| i.stack.item == block).map(|i| i.stack.count as usize).sum::<usize>();
-        assert_eq!(client.quiet(loose), 1, "a broken {station} did not drop itself");
+        assert_eq!(client.quiet(loose), 0, "a {station} the world set gave itself");
+        client.ok(&format!("/give {station} 1"));
+        client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == block));
+        client.propose("core:place", ActionTarget::Block { block: at - IVec3::Y, face: Face::PosY });
+        // Set down facing the player: one of its facings.
+        client.pump_until(|c| c.world.block(at).is_some_and(|b| c.content.blocks.def(b).name.starts_with(&format!("base:{station}"))));
+        client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+        assert_eq!(client.quiet(loose), 1, "a {station} a player set down did not drop itself");
     }
 }
 
