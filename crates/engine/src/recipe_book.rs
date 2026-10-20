@@ -667,8 +667,9 @@ mod tests {
         assert_eq!((found(dirt), found(stone), found(seeds)), (1, 0, 0), "dirt is found, stone breaks to cobblestone, seeds are never laid");
     }
 
-    /// A station a package adds (a quern) shows its ways, cooked at it and crafted near it,
-    /// with no code for it: one path from data for every station.
+    /// A station a package adds (a quern, tagged `millstone` apart from base's own quern)
+    /// shows its ways, cooked at it and crafted near it, with no code for it: one path from
+    /// data for every station.
     #[cfg(unix)]
     #[test]
     fn a_station_a_package_adds_lists_its_ways_with_no_code() {
@@ -680,12 +681,12 @@ mod tests {
             std::os::unix::fs::symlink(shipped.join(package).canonicalize().unwrap(), dir.join(package)).unwrap();
         }
         std::fs::write(dir.join("mill/blocks.ron"), r#"(blocks: [
-            (name: "quern", textures: All("stone"), hardness: 1.0, color: (120, 120, 120), tags: ["quern"]),
+            (name: "quern", textures: All("stone"), hardness: 1.0, color: (120, 120, 120), tags: ["millstone"]),
             (name: "meal", item: true, render: Plant, solid: false, textures: All("wheat"), hardness: 0.0, color: (220, 210, 170)),
             (name: "cake", item: true, render: Plant, solid: false, textures: All("bread"), hardness: 0.0, color: (220, 190, 130)),
         ])"#).unwrap();
-        std::fs::write(dir.join("mill/cooking.ron"), r#"(recipes: [(input: "base:wheat", output: "meal", station: "quern", skill: "core:cooking", level: 1, xp: 1.0, stop_burning: 0)])"#).unwrap();
-        std::fs::write(dir.join("mill/recipes.ron"), r#"(recipes: [(ingredients: ["meal", "base:honey"], output: "cake", near: "quern")])"#).unwrap();
+        std::fs::write(dir.join("mill/cooking.ron"), r#"(recipes: [(input: "base:wheat", output: "meal", station: "millstone", skill: "core:cooking", level: 1, xp: 1.0, stop_burning: 0)])"#).unwrap();
+        std::fs::write(dir.join("mill/recipes.ron"), r#"(recipes: [(ingredients: ["meal", "base:honey"], output: "cake", near: "millstone")])"#).unwrap();
         let content = Content::load(&dir).expect("the mill loads");
         std::fs::remove_dir_all(&dir).unwrap();
         let book = RecipeBook::new(&content);

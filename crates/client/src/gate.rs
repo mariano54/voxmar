@@ -432,6 +432,9 @@ steps! {
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
+    /// A wheat held to quern stones and right-clicked grinds into flour (cooking.ron's
+    /// stations: the Farm age's quern, spindle and loom work what is held, as a fire does).
+    Quern,
     /// The home motif (`music.ron`'s `home`): the Cook step's Homestead Hearth, lit and so
     /// home, roofed over; at midnight the player steps from the open under the roof and a
     /// `Home` track starts (rehearsed silently, `music::Rehearse`); out and in again that
@@ -654,8 +657,8 @@ struct Gate {
     /// Where a stage last walked the player to pick something up (`walk_to_lying`), so the
     /// step is asked once.
     walked_to: Option<Vec3>,
-    /// Where the observer floated before a step moved it (`settlements`, `reap`), to
-    /// be put back when the step ends.
+    /// Where the observer floated before a step moved it (`settlements`, `reap`, `step_up`,
+    /// `ore` and `gorge`), to be put back when the step ends (by `tarns` for the ore and gorge).
     observer_home: Option<Vec3>,
     /// Frames in this stage that what a shot is about has been on screen: it shows a frame
     /// or two after the change.
@@ -1017,6 +1020,8 @@ struct Gate {
     /// The hotbar slot selected before the charm step took the charm in hand, put back
     /// after it.
     charm_hand: usize,
+    /// Where the player stood when the quern step began, put back after it.
+    quern_from: Vec3,
     worn_defence: u8,
     overlay_counted: (f32, f32),
     /// The fight sounds asked for, and the bursts, kicks and knocks, before `combat_feel`
@@ -1228,6 +1233,7 @@ impl Gate {
             music_fade: None,
             worn_states: 0,
             charm_hand: 0,
+            quern_from: Vec3::ZERO,
             worn_defence: 1,
             overlay_counted: (0.0, 0.0),
             feel_asked: Default::default(),
@@ -1798,6 +1804,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Kindle | Step::Blaze => STEP_LIMIT + 10.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
+        Step::Quern => STEP_LIMIT,
         // The roof and the night, then three steps in or out, each waited on.
         Step::HomeMotif => STEP_LIMIT + 3.0 * QUEST_WAIT,
         // The barrel opened, then a server pass for the egg and a second for the chat; then
@@ -2135,6 +2142,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::ShotCancel => shot_cancel(world, gate),
         Step::Others => others(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
+        Step::Quern => quern(world, gate, now),
         Step::HomeMotif => home_motif(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Snare => snare(world, gate, now),
@@ -8136,6 +8144,7 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         net.command(&clear);
         let feet = gate.feet;
         net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+        observer_back(gate);
         gate.next(Step::Makeable, now);
     };
     let (position, on_ground, flying, velocity, teleports) = {
@@ -8184,11 +8193,9 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
             net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
-            // The observer, left at the town the settlement steps judged, is brought above the
-            // course: the server tells it only of players within `players_seen`.
-            if let Some(observer) = gate.observer.as_mut() {
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y + 40, stand.z as f32 + 0.5) });
-            }
+            // The observer is brought above the course, and put back as the step ends: the
+            // server tells it only of players within `players_seen`.
+            observer_to(gate, format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y + 40, stand.z as f32 + 0.5));
             gate.step_up_fault = None;
             gate.advance(now);
         }
@@ -16808,11 +16815,87 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         10 => {
             chimney_watch(world, gate, now, pot);
             if gate.chimney_since.is_none() {
-                gate.next(Step::HomeMotif, now);
+                gate.next(Step::Quern, now);
             }
         }
         _ => {}
     }
+}
+
+/// Where the quern step sets its quern stones, from the test ground's middle: inside the
+/// creatures pad (stone underfoot, air above, walled at x -6), west of the Cook step's fire,
+/// stove and chimney, clear of them all; and where it stands, south of the quern.
+const QUERN_AT: IVec3 = IVec3::new(-4, 0, 14);
+const QUERN_STAND: Vec3 = Vec3::new(-3.5, 0.0, 12.0);
+
+/// Quern stones set down, a wheat in hand and right clicks on them, as on a fire: the
+/// wheat comes back as flour. The player is put back where the Cook step left them, for
+/// the home motif's walk.
+fn quern(world: &mut World, gate: &mut Gate, now: f32) {
+    let at = gate.feet + QUERN_AT;
+    let flour = item_count(world, "base:flour");
+    let wheat_left = item_count(world, "base:wheat");
+    match gate.phase {
+        0 => {
+            gate.quern_from = world.resource::<LocalPlayer>().position;
+            let stand = gate.feet.as_vec3() + QUERN_STAND;
+            let net = world.resource::<Net>();
+            for line in [
+                format!("fill {} {} {} {} {} {} stone", at.x, at.y - 1, at.z - 2, at.x + 1, at.y - 1, at.z),
+                format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z - 2, at.x + 1, at.y + 2, at.z),
+                format!("setblock {} {} {} quern_stones", at.x, at.y, at.z),
+                "clear wheat".to_owned(),
+                "clear flour".to_owned(),
+                "give wheat 1".to_owned(),
+                format!("tp {} {} {}", stand.x, stand.y, stand.z),
+            ] {
+                net.command(&line);
+            }
+            gate.taps = 0;
+            gate.advance(now);
+        }
+        1 => {
+            let (placed, wheat) = {
+                let client = world.resource::<ClientWorld>();
+                (client.registry.id("base:quern_stones").is_some_and(|b| client.block(at) == Some(b)), client.registry.id("base:wheat"))
+            };
+            let slot = wheat.and_then(|wheat| in_hotbar(world, &mut gate.food_moved, wheat));
+            if let (true, Some(slot), 0) = (placed, slot, flour) {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                gate.taps = 0;
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("quern grinds", Err(format!("the quern stones ({placed}) or a wheat in the hotbar ({slot:?}) never came, flour {flour}")));
+                end_quern(world, gate, now);
+            }
+        }
+        _ => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            if flour > 0 && wheat_left == 0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("quern grinds", Ok(format!("a right click on the quern stones with a wheat in hand ground it into {flour} flour")));
+                end_quern(world, gate, now);
+            } else if gate.waited_out(15.0) {
+                mouse(world, MouseButton::Right, false);
+                gate.check("quern grinds", Err(format!("right clicks on the quern stones at {at} with a wheat in hand made {flour} flour and left {wheat_left} wheat in 15 server seconds")));
+                end_quern(world, gate, now);
+            } else {
+                gate.tap(world, true, now);
+            }
+        }
+    }
+}
+
+fn end_quern(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Right, false);
+    let (at, back) = (gate.feet + QUERN_AT, gate.quern_from);
+    let net = world.resource::<Net>();
+    // The quern goes. Its floor and the air over it are the pad's own stone and air.
+    net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    net.command("clear wheat");
+    net.command("clear flour");
+    net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
+    gate.next(Step::HomeMotif, now);
 }
 
 /// The Cook step's hearth, its stove and chimney (with its flue and pot), from where that
@@ -18068,8 +18151,11 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             if let Some(observer) = gate.observer.as_mut() {
                 observer.replies.clear();
                 observer.connection.send(ClientMessage::Command { line: format!("locate settlement {SETTLEMENT_RADIUS}") });
-                // Where it floats over the test ground, for the last stage to bring it back to.
-                gate.observer_home = observer.position;
+                // Where it floats over the test ground, for the last stage to bring it back to
+                // (kept if a step before sent it home and its position has yet to follow).
+                if gate.observer_home.is_none() {
+                    gate.observer_home = observer.position;
+                }
             }
             gate.advance(now);
         }
@@ -18727,9 +18813,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let net = world.resource::<Net>();
             net.command("time set noon");
             net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
-            if let Some(observer) = gate.observer.as_mut() {
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 40, at.z) });
-            }
+            observer_to(gate, format!("tp {} {} {}", at.x, at.y + 40, at.z));
             gate.advance(now);
         }
         2 => {
@@ -18814,6 +18898,25 @@ struct TarnVisit {
     return_teleports: (u32, u32),
 }
 
+/// Sends the observer away with the `tp` in `line`, keeping where it floated before for
+/// `observer_back` (the first such move's start, while no step has put it back yet: the ore
+/// and gorge steps move it twice before the tarns step returns it).
+fn observer_to(gate: &mut Gate, line: String) {
+    if let Some(observer) = gate.observer.as_mut() {
+        if gate.observer_home.is_none() {
+            gate.observer_home = observer.position;
+        }
+        observer.connection.send(ClientMessage::Command { line });
+    }
+}
+
+/// Puts the observer back where it floated before `observer_to` moved it.
+fn observer_back(gate: &mut Gate) {
+    if let (Some(home), Some(observer)) = (gate.observer_home.take(), gate.observer.as_mut()) {
+        observer.connection.send(ClientMessage::Command { line: return_teleport(home) });
+    }
+}
+
 /// `/tp` centres integer-looking horizontal coordinates on a block. Retain the saved
 /// f32's full decimal precision and spell integral positions with a fractional part.
 fn return_teleport(at: Vec3) -> String {
@@ -18826,8 +18929,9 @@ fn return_teleport(at: Vec3) -> String {
 
 /// Visits a real pool filled by the tarn rule. Both peers must receive at least twenty
 /// matching source-water surface columns, then the loaded pool is captured from above.
-/// The generator chooses the place; no hand-built pool can satisfy this step. Both peers
-/// return to the gorge before the next lookup, including after a failed pool load.
+/// The generator chooses the place; no hand-built pool can satisfy this step. Before the next
+/// lookup, including after a failed pool load, the player returns to where it stood (the
+/// gorge) and the observer to where it floated before the ore and gorge steps moved it.
 fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
@@ -18842,10 +18946,16 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("tarns", Err("no visible generated tarn in the sampled alpine highlands".into()));
+                // Sent home, its way back kept: its position still lags the return, and the
+                // settlement step takes `observer_home` as home over that.
+                if let (Some(home), Some(observer)) = (gate.observer_home, gate.observer.as_mut()) {
+                    observer.connection.send(ClientMessage::Command { line: return_teleport(home) });
+                }
                 gate.next(Step::Settlements, now);
                 return;
             };
-            let Some(observer) = gate.observer.as_ref().and_then(|o| o.position) else {
+            // Its way back: where the steps before took it from, else where it is.
+            let Some(observer) = gate.observer_home.take().or_else(|| gate.observer.as_ref().and_then(|o| o.position)) else {
                 gate.check("tarns", Err("no observer position to return to after the visit".into()));
                 gate.next(Step::Settlements, now);
                 return;
@@ -18994,9 +19104,7 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.ore = at;
             let net = world.resource::<Net>();
             net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
-            if let Some(observer) = gate.observer.as_mut() {
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 40, at.z) });
-            }
+            observer_to(gate, format!("tp {} {} {}", at.x, at.y + 40, at.z));
             gate.advance(now);
         }
         2 => {
