@@ -111,6 +111,9 @@ const STANDS: u16 = 128;
 /// Whether the cell is in the way, once known.
 const SOLID_KNOWN: u16 = 256;
 const SOLID: u16 = 512;
+/// Whether the cell has anything a body meets in it (`Surroundings::boxes`), once known.
+const BOXED_KNOWN: u16 = 1024;
+const BOXED: u16 = 2048;
 
 /// How far up and down from where a search starts it keeps what it learns; beyond that it
 /// looks again each time.
@@ -167,6 +170,19 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         solid
     }
 
+    /// Whether anything in `cell` meets a body (`Surroundings::boxes`).
+    fn boxed(&self, cell: IVec3) -> bool {
+        let slot = self.slot(cell);
+        if let Some(bits) = slot.map(|s| s.get()).filter(|b| b & BOXED_KNOWN != 0) {
+            return bits & BOXED != 0;
+        }
+        let boxed = !self.world.boxes(cell).is_empty();
+        if let Some(slot) = slot {
+            slot.set(slot.get() | BOXED_KNOWN | if boxed { BOXED } else { 0 });
+        }
+        boxed
+    }
+
     /// Whether the column from `cell` up is open as high as it stands.
     fn open(&self, cell: IVec3) -> bool {
         let slot = self.slot(cell);
@@ -175,8 +191,14 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         }
         // Standing on something low in the cell (a slab, a sill), its head is that much
         // higher, in the cell over its height.
-        let open = (0..self.walker.height).all(|h| !self.solid(cell + IVec3::Y * h))
-            && (self.rise(cell) == 0.0 || !self.solid(cell + IVec3::Y * self.walker.height));
+        // A low piece over its floor (a slab, a sill, a beam) is in its way as much as a
+        // wall, and over a low floor so is any piece whose foot is under its head.
+        let rise = self.rise(cell);
+        let open = (0..self.walker.height).all(|h| !self.solid(cell + IVec3::Y * h) && (h == 0 || !self.boxed(cell + IVec3::Y * h)))
+            && (rise == 0.0 || {
+                let over = cell + IVec3::Y * self.walker.height;
+                !self.solid(over) && self.world.boxes(over).iter().all(|b| b.min.y >= rise)
+            });
         if let Some(slot) = slot {
             slot.set(slot.get() | OPEN_KNOWN | if open { OPEN } else { 0 });
         }
@@ -202,6 +224,9 @@ impl<'a, W: Surroundings> Looker<'a, W> {
     /// How high what is in a cell that is not in the way comes (a slab, a sill): where a
     /// body in it stands.
     fn rise(&self, cell: IVec3) -> f32 {
+        if !self.boxed(cell) {
+            return 0.0;
+        }
         self.world.boxes(cell).iter().map(|b| b.max.y).fold(0.0, f32::max)
     }
 
@@ -546,6 +571,38 @@ mod tests {
         // On top of the stairs, a block up, it has room to stand.
         let low = Flight { piece: stairs };
         assert!(snail.stands(&low, IVec3::new(3, 1, 0)), "nowhere to stand on top of the stairs");
+    }
+
+    /// A lane one block across between walls, with a slab low in the cell at (3, 1, 0): a
+    /// beam at a tall body's chest.
+    struct Beam;
+
+    const BEAM: [crate::physics::Aabb; 1] = [crate::physics::Aabb { min: Vec3::ZERO, max: Vec3::new(1.0, 0.5, 1.0) }];
+
+    impl Surroundings for Beam {
+        fn solid(&self, c: IVec3) -> bool {
+            c.y < 0 || c.z.abs() == 1 && c.y < 4
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+        fn boxes(&self, c: IVec3) -> &[crate::physics::Aabb] {
+            if c == IVec3::new(3, 1, 0) {
+                &BEAM
+            } else if self.solid(c) {
+                &crate::physics::CUBE
+            } else {
+                &[]
+            }
+        }
+    }
+
+    #[test]
+    fn a_low_piece_at_a_tall_bodys_chest_closes_its_way() {
+        let tall = Walker { height: 2, ..WOLF };
+        let (from, to) = (IVec3::new(0, 0, 0), IVec3::new(6, 0, 0));
+        assert_eq!(find(&Beam, &tall, from, to), None, "a tall body's way runs through a beam at its chest");
+        assert!(find(&Beam, &WOLF, from, to).is_some(), "no way under the beam for a body a block high");
     }
 
     #[test]

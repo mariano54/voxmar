@@ -102,8 +102,10 @@ impl Body {
         // Ground under its front and under every sample short of the step: a block across a
         // gap from it (a trench, or a gap before a fence two high) is no stair up to what is
         // beyond.
+        // On a slab or a sill it stands in its feet's cell, on the piece.
+        let floored = |cell: IVec3| world.footing(cell - IVec3::Y) || !world.solid(cell) && !world.boxes(cell).is_empty();
         let front = self.position + forward * (half - 0.01);
-        if !world.footing(IVec3::new(front.x.floor() as i32, feet - 1, front.z.floor() as i32)) {
+        if !floored(IVec3::new(front.x.floor() as i32, feet, front.z.floor() as i32)) {
             return false;
         }
         let mut met = None;
@@ -118,7 +120,7 @@ impl Body {
                 met = Some((out, cell));
                 break;
             }
-            if !world.footing(cell - IVec3::Y) {
+            if !floored(cell) {
                 return false;
             }
         }
@@ -571,7 +573,8 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         body.velocity.y = (body.velocity.y - GRAVITY * dt).max(-FLUTTER_DOWN);
     } else if floating {
         // Float above the ground, bobbing, rising over what is in the way.
-        let ground = (0..8).map(|d| feet - IVec3::Y * d).find(|&c| world.solid(c)).map_or(body.position.y - 8.0, |c| c.y as f32 + 1.0);
+        // A slab roof is ground under it, as to a flier.
+        let ground = (0..8).map(|d| feet - IVec3::Y * d).find(|&c| world.solid(c) || !world.boxes(c).is_empty()).map_or(body.position.y - 8.0, |c| c.y as f32 + 1.0);
         let want = ground + DRIFT_HEIGHT + drive.wish.y * 2.0;
         body.velocity.y = ((want - body.position.y) * 2.0).clamp(-2.0, 2.0);
     } else if body.in_water && water == Water::Swim {
