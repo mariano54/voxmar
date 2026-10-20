@@ -440,7 +440,10 @@ fn break_and_place(
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             match actions.0.get(cook).map(|def| def.validate(&context, action_target)) {
                 // One thing at a time: a click while it cooks neither restarts it nor eats.
-                Some(Ok(())) if time.elapsed_secs() < target.cooking_until => return,
+                Some(Ok(())) if time.elapsed_secs() < target.cooking_until => {
+                    target.cook_held = true;
+                    return;
+                }
                 Some(Ok(())) => {
                     let seconds = actions.0.get(cook).map_or(0.0, |def| def.seconds(&context, action_target));
                     net.propose_from_with(&player, cook, action_target, worked(&context, hit.block));
@@ -456,6 +459,7 @@ fn break_and_place(
                     if let Some(words) = refusal(&context, &locale, Some(hit.block), need) {
                         toasts.refused(words, time.elapsed_secs());
                     }
+                    target.cook_held = true;
                     return;
                 }
                 _ => {}
@@ -855,8 +859,14 @@ mod tests {
                 app.update();
             }
         };
-        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
-        frames(&mut app, 20);
+        // Pressed for one frame, then held: the press is spent after the first frame.
+        let hold = |app: &mut App, n: usize| {
+            app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+            app.update();
+            app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+            frames(app, n - 1);
+        };
+        hold(&mut app, 20);
         assert_eq!(proposed(&server_side), [cook], "the split, and the log not laid");
         // Split: the firewood in the emptied hand, the cook's time over, the button still down.
         app.world_mut().resource_mut::<LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(id("base:firewood"), 2));
@@ -870,6 +880,29 @@ mod tests {
         app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
         frames(&mut app, 2);
         assert!(proposed(&server_side).contains(&place), "let go and pressed again, it is laid");
+    }
+
+    /// A log held on the chopping block with no axe about says it needs one and is not laid
+    /// on it, however long the button is held.
+    #[test]
+    fn a_split_refused_for_want_of_an_axe_lays_nothing() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        let id = |name: &str| content.blocks.expect(name);
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, id("base:chopping_block"));
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(id("base:oak_log"), 1));
+        player.selected = 0;
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+        for _ in 0..20 {
+            app.update();
+        }
+        let proposed: Vec<_> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).collect();
+        assert!(proposed.is_empty(), "nothing proposed, the log not laid: {proposed:?}");
     }
 
     /// Food is eaten on a right click unless the click tends a creature, places the food,
