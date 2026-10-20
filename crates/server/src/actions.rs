@@ -146,7 +146,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn occupied(&self, cell: IVec3) -> bool {
-        self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
+        self.server.player_in(cell)
     }
 
     fn creature_in(&self, cell: IVec3) -> bool {
@@ -293,8 +293,19 @@ impl Server {
         }
     }
 
-    /// Applies an action's effects. Validation already guaranteed they can all apply.
+    /// Applies an action's effects, as `agent`'s doing (`fire_origin`, `changed_by`) whenever
+    /// it commits: as their message arrives or later, when it falls due in the run loop.
     fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
+        let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+        let fire_was = std::mem::replace(&mut self.fire_origin, by.clone());
+        let changed_was = std::mem::replace(&mut self.changed_by, by);
+        self.commit_effects(agent, def, target);
+        self.fire_origin = fire_was;
+        self.changed_by = changed_was;
+    }
+
+    /// Applies an action's effects. Validation already guaranteed they can all apply.
+    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
         for &effect in &def.effects {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
@@ -411,6 +422,7 @@ impl Server {
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
                     self.set_blocks(&changes);
                 }
+                (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
