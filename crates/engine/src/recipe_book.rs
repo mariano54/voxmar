@@ -2,7 +2,10 @@
 //! looks them up (hover an item, R for its recipes, U for its uses, as in NEI). It is read
 //! from the same content the game plays by (crafting recipes, cooking, machines, home
 //! stations, crops, what breaking a block gives, fishing, what kept creatures give and what
-//! hunted ones drop), so a package's recipes appear in it with no more work.
+//! hunted ones drop, traps, bees, locked chests, parties met on the road, quest rewards and
+//! what the world lays), so a package's recipes appear in it with no more work. Every item
+//! a player could hold has a way in it or is tagged [`CREATIVE_ONLY`]: content with a dead
+//! entry fails to load, naming the item and its package.
 
 use rustc_hash::FxHashMap;
 
@@ -39,14 +42,55 @@ pub enum Method {
     /// in `skill`.
     Work { station: BlockId, input: BlockId, takes: u8, skill: crate::skill::SkillId, level: u8 },
     /// Harvested from a ripe crop (its ripe block), or foraged from a wild one, `chance`
-    /// of the time; it is planted from `level` in `skill`.
-    Harvest { crop: BlockId, forage: bool, chance: f32, skill: crate::skill::SkillId, level: u8 },
+    /// of the time; it is planted from `level` in `skill`. `from` is what the card shows
+    /// going in: the seed that plants it (or the crop, if players don't plant it), or the
+    /// wild plant foraged.
+    Harvest { crop: BlockId, from: BlockId, forage: bool, chance: f32, skill: crate::skill::SkillId, level: u8 },
     /// Got by breaking `block`, with `tool` (the least that does) if it needs one, from
     /// `level` in `skill`; `chance` of the time when it comes instead of the block's own
     /// drop, else always.
     Break { block: BlockId, tool: Option<BlockId>, skill: Option<crate::skill::SkillId>, level: u8, chance: f32 },
     /// Caught on a line, from `level` in `skill`.
     Catch { skill: Option<crate::skill::SkillId>, level: u8 },
+    /// Taken from a sprung `trap` (its set block) that caught `creature`: that creature's
+    /// loot, `chance` of the time, from `level` in `skill`.
+    Trap { trap: BlockId, creature: CreatureId, chance: f32, skill: crate::skill::SkillId, level: u8 },
+    /// Taken from bees in `block` (a wild nest, a full skep), with `holding` in hand if the
+    /// take asks for it, `chance` of the time, from `level` in `skill`.
+    Bees { block: BlockId, holding: Option<BlockId>, chance: f32, skill: crate::skill::SkillId, level: u8 },
+    /// Found in a locked chest (its block), `chance` of the time.
+    Chest { chest: BlockId, chance: f32 },
+    /// Given by a party met on the road (the wandering event `event`): for `wants` when it
+    /// asks for something, else for meeting, helping or watching it; `chance` of the time.
+    Trade { event: usize, wants: Option<(crate::wander::Want, u8)>, chance: f32 },
+    /// Given for finishing the quest `quest`.
+    Reward { quest: String },
+    /// Found in the world (its generator lays it) and broken loose as itself, with `tool`
+    /// (the least that does) if it needs one, from `level` in `skill`.
+    Found { tool: Option<BlockId>, skill: Option<crate::skill::SkillId>, level: u8 },
+}
+
+/// The tag that marks an item no way in survival gives: the creative catalogue's alone
+/// (a block's other states, leaves no tool takes whole). Every other item a player could
+/// hold has a way in the book, or content fails to load ([`RecipeBook::unsourced`]).
+pub const CREATIVE_ONLY: &str = "creative_only";
+
+impl Method {
+    /// The blocks a way is worked at: the blocks tagged with a recipe's `near` or a cooking
+    /// station's tag, the machines, the home station, the trap, the bees, the chest. One
+    /// path for every station, read from data, so a station whose recipes a package adds
+    /// later (an anvil, a quern) lists them with no change here.
+    pub fn stations(&self, blocks: &crate::block::BlockRegistry) -> Vec<BlockId> {
+        match self {
+            Method::Craft { near: Some(tag), .. } | Method::Cook { station: tag, .. } => blocks.tagged(tag).collect(),
+            Method::Process { machines, .. } => machines.clone(),
+            Method::Work { station, .. } => vec![*station],
+            Method::Trap { trap, .. } => vec![*trap],
+            Method::Bees { block, .. } => vec![*block],
+            Method::Chest { chest, .. } => vec![*chest],
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// One way to get an item: how, what comes out, and how many (at least, at most).
@@ -63,6 +107,28 @@ pub struct RecipeBook {
     entries: Vec<Entry>,
     makes: FxHashMap<BlockId, Vec<usize>>,
     uses: FxHashMap<BlockId, Vec<usize>>,
+    /// What the world lays, as each is held ([`listed_as`]).
+    laid: std::collections::HashSet<BlockId>,
+}
+
+/// The block `id` is held as: itself, or for one of its placed forms (another look, a
+/// facing, upside down, against a wall) the block that form is of. A plant merged into
+/// another item stays itself, as it is its own way to that item.
+pub fn listed_as(blocks: &crate::block::BlockRegistry, id: BlockId) -> BlockId {
+    let mut at = id;
+    for _ in 0..4 {
+        if !blocks.placement_form(at) {
+            return at;
+        }
+        let def = blocks.def(at);
+        let named = def.form_of().map(str::to_owned).or_else(|| def.variant_of.clone()).and_then(|name| blocks.id(&name));
+        let dropped = Some(blocks.info(at).drops).filter(|&d| !d.is_air() && d != at);
+        match named.or(dropped) {
+            Some(base) => at = base,
+            None => return at,
+        }
+    }
+    at
 }
 
 impl RecipeBook {
@@ -99,28 +165,33 @@ impl RecipeBook {
             }
             let method = Method::Craft { variants: layouts, shapeless: recipe.shapeless(), first: index, ways: 1, near: recipe.near.clone(), skill: recipe.skill, level: recipe.level };
             // The blocks it is made near are among what it uses, as a cooking station is.
-            let stations: Vec<BlockId> = recipe.near.as_deref().map(|tag| blocks.tagged(tag).collect()).unwrap_or_default();
+            let stations = method.stations(blocks);
             book.add(blocks, Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items.into_iter().chain(stations).collect());
         }
         for (input, recipe) in content.cooking.iter() {
             let station = recipe.def.station.clone();
-            let stations: Vec<BlockId> = content.blocks.tagged(&station).collect();
             let input = blocks.item_of(input);
             let with: Vec<(BlockId, u8)> = recipe.with.iter().map(|&(item, n)| (blocks.item_of(item), n)).collect();
-            let uses = [input].into_iter().chain(with.iter().map(|&(item, _)| item)).chain(stations).collect();
-            let method = Method::Cook { input, uses: recipe.def.uses, with, station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
+            let method = Method::Cook { input, uses: recipe.def.uses, with: with.clone(), station, skill: recipe.skill, level: recipe.def.level, burnt: recipe.burnt };
+            let uses = [input].into_iter().chain(with.iter().map(|&(item, _)| item)).chain(method.stations(blocks)).collect();
             book.add(blocks, Entry { method, output: recipe.output, count: (recipe.def.count, recipe.def.count) }, uses);
+            // What is left when it burns is got this way too (the entry says it burns to
+            // it), unless that is what went in (clay left too long in the kiln).
+            if let Some(burnt) = recipe.burnt.filter(|&b| !blocks.merged_away(b) && blocks.item_of(b) != input) {
+                let index = book.entries.len() - 1;
+                book.makes.entry(blocks.item_of(burnt)).or_default().push(index);
+            }
         }
         // Machines: each recipe's outputs and byproducts, worked by every machine that
         // takes its kind.
         for (id, process) in content.machines.processes() {
             let machines: Vec<BlockId> = content.machines.iter().filter(|m| m.processes.contains(&id)).map(|m| m.block).collect();
             let inputs: Vec<(BlockId, u8)> = process.inputs.iter().filter_map(|(accepts, n)| Some((blocks.item_of(*accepts.first()?), *n))).collect();
-            let uses: Vec<BlockId> = process.inputs.iter().flat_map(|(accepts, _)| accepts.iter().copied()).chain(machines.iter().copied()).collect();
             let made = process.outputs.iter().map(|&(item, n)| (item, n, 1.0)).chain(process.byproducts.iter().copied());
             for (item, n, chance) in made {
                 let method = Method::Process { machines: machines.clone(), inputs: inputs.clone(), tier: process.tier, chance };
-                book.add(blocks, Entry { method, output: item, count: (n, n) }, uses.clone());
+                let uses = process.inputs.iter().flat_map(|(accepts, _)| accepts.iter().copied()).chain(method.stations(blocks)).collect();
+                book.add(blocks, Entry { method, output: item, count: (n, n) }, uses);
             }
         }
         // Home stations: each work, left in the station's empty block.
@@ -128,40 +199,69 @@ impl RecipeBook {
             for work in &station.works {
                 let Some(&input) = work.accepts.first() else { continue };
                 let method = Method::Work { station: station.empty, input: blocks.item_of(input), takes: work.takes, skill: work.skill, level: work.level };
-                let uses = work.accepts.iter().copied().chain([station.empty]).collect();
+                let uses = work.accepts.iter().copied().chain(method.stations(blocks)).collect();
                 book.add(blocks, Entry { method, output: work.output, count: (work.gives, work.gives) }, uses);
             }
         }
-        // Crops: what a ripe one gives, and a wild one foraged; the seed goes into both.
+        // Crops: what a ripe one gives, the seed going into it, and what each of its wild
+        // plants gives foraged, the plant going into that.
         for (_, crop) in content.crops.iter() {
             let ripe = crop.ripe();
-            for (forage, list) in [(false, &crop.harvest), (true, &crop.forage)] {
+            let sown = crop.seed.unwrap_or(ripe);
+            let wild: Vec<BlockId> = crop.def.wild.iter().filter_map(|name| blocks.id(name)).map(|plant| blocks.item_of(plant)).collect();
+            let ways = [(false, sown)].into_iter().map(|(forage, from)| (forage, from, &crop.harvest)).chain(wild.into_iter().map(|plant| (true, plant, &crop.forage)));
+            for (forage, from, list) in ways {
                 for (item, loot) in list {
-                    let method = Method::Harvest { crop: ripe, forage, chance: loot.chance, skill: crop.skill, level: crop.def.level };
-                    book.add(blocks, Entry { method, output: *item, count: loot.count }, crop.seed.into_iter().collect());
+                    let method = Method::Harvest { crop: ripe, from, forage, chance: loot.chance, skill: crop.skill, level: crop.def.level };
+                    let uses = if forage { vec![from] } else { crop.seed.into_iter().collect() };
+                    book.add(blocks, Entry { method, output: *item, count: loot.count }, uses);
                 }
             }
         }
         // Breaking a block: what it gives when that is not the block itself, or when it
-        // takes a tier of tool; and what comes instead of it now and then.
+        // takes a tier of tool; and what comes instead of it now and then. A block's looks,
+        // facings and other placed forms read as the block, so each way is listed once.
+        // Each way breaking gives, by what is broken as which tool, and the entry it is: a
+        // form that gives more (a pair of plants) widens the count of the way already there.
+        let mut broken: FxHashMap<_, usize> = FxHashMap::default();
         for block in blocks.ids() {
             let info = blocks.info(block);
             let rule = content.tools.rule(block);
             let tool = rule.and_then(|rule| content.tools.first_of(rule.tool?, rule.tier));
             let (skill, level) = rule.map_or((None, 1), |rule| (rule.skill, rule.level));
             let tiered = rule.is_some_and(|rule| rule.tool.is_some() && rule.tier > 0);
-            if !info.drops.is_air() && info.drop_count > 0 && (blocks.item_of(info.drops) != blocks.item_of(block) || tiered) {
+            // A wild plant whose item merged into another gives that item: a way to it, which
+            // nothing uses (the plant is never held).
+            let merged = blocks.merged_away(block);
+            // A placed form reads as its block (a well facing east breaks as the well, so
+            // gives no way to it); a wild plant merged away reads as itself.
+            let breaks_as = listed_as(blocks, block);
+            let mut once = |book: &mut RecipeBook, output: BlockId, chance: f32, count: u8| match broken.get(&(breaks_as, output, tool, skill, level, chance.to_bits())) {
+                Some(&at) => {
+                    let had = &mut book.entries[at].count;
+                    *had = (had.0.min(count), had.1.max(count));
+                    false
+                }
+                None => {
+                    broken.insert((breaks_as, output, tool, skill, level, chance.to_bits()), book.entries.len());
+                    true
+                }
+            };
+            if !info.drops.is_air() && info.drop_count > 0 && (blocks.item_of(info.drops) != breaks_as || tiered) && once(&mut book, blocks.item_of(info.drops), 1.0, info.drop_count) {
                 let method = Method::Break { block, tool, skill, level, chance: 1.0 };
-                book.add(blocks, Entry { method, output: blocks.item_of(info.drops), count: (info.drop_count, info.drop_count) }, vec![block]);
+                let uses = if merged { Vec::new() } else { vec![block] };
+                book.add(blocks, Entry { method, output: blocks.item_of(info.drops), count: (info.drop_count, info.drop_count) }, uses);
             }
             if let Some((item, chance)) = rule.and_then(|rule| rule.instead) {
                 // One that waits on a kind of tool (tall grass's twine, a knife) shows the least
                 // of that kind, and each of them lists it among its uses.
                 let by = rule.and_then(|rule| rule.by);
-                let tool = by.map_or(tool, |kind| content.tools.first_of(kind, 0));
                 let tools: Vec<BlockId> = by.map(|kind| blocks.ids().filter(|&b| content.tools.tool(Some(b)).kind == Some(kind)).collect()).unwrap_or_default();
-                let method = Method::Break { block, tool, skill, level, chance };
-                book.add(blocks, Entry { method, output: blocks.item_of(item), count: (1, 1) }, [block].into_iter().chain(tools).collect());
+                if once(&mut book, blocks.item_of(item), chance, 1) {
+                    let tool = by.map_or(tool, |kind| content.tools.first_of(kind, 0));
+                    let method = Method::Break { block, tool, skill, level, chance };
+                    book.add(blocks, Entry { method, output: blocks.item_of(item), count: (1, 1) }, [block].into_iter().chain(tools).collect());
+                }
             }
         }
         for catch in content.fishing.iter() {
@@ -179,7 +279,138 @@ impl RecipeBook {
                 book.add(blocks, Entry { method, output: drop.item, count: drop.loot.count }, Vec::new());
             }
         }
+        // Traps: what each creature a trap catches would drop, taken from the sprung trap.
+        for trap in &content.traps.traps {
+            for &creature in &trap.catches {
+                for drop in &content.creatures.get(creature).loot {
+                    let method = Method::Trap { trap: trap.set, creature, chance: drop.loot.chance, skill: trap.skill, level: trap.level };
+                    let uses = method.stations(blocks);
+                    book.add(blocks, Entry { method, output: drop.item, count: drop.loot.count }, uses);
+                }
+            }
+        }
+        // Bees: what each take gives, and what the held item becomes (a skep of bees).
+        for take in &content.bees.takes {
+            let made = take.gives.iter().map(|(item, loot)| (*item, loot.count, loot.chance)).chain(take.held_becomes.map(|item| (item, (1, 1), 1.0)));
+            for (item, count, chance) in made {
+                let method = Method::Bees { block: take.block, holding: take.holding, chance, skill: take.skill, level: take.level };
+                let uses = method.stations(blocks).into_iter().chain(take.holding).collect();
+                book.add(blocks, Entry { method, output: item, count }, uses);
+            }
+        }
+        // Locked chests: their gold, each find, and each of a group's items at its share.
+        let mut chests: Vec<_> = content.treasure.chests().collect();
+        chests.sort_by_key(|(block, _)| *block);
+        for (chest, held) in chests {
+            let table = &content.treasure.tables[held.table];
+            let gold = content.treasure.gold().filter(|_| held.gold.1 > 0).map(|coin| (coin, (held.gold.0.min(255) as u8, held.gold.1.min(255) as u8), 1.0));
+            let finds = table.loot.iter().map(|r| (r.item, r.loot.count, r.loot.chance));
+            let groups = table.one_of.iter().flat_map(|(chance, count, items)| items.iter().map(move |&item| (item, *count, chance / items.len() as f32)));
+            for (item, count, chance) in gold.into_iter().chain(finds).chain(groups) {
+                let method = Method::Chest { chest, chance };
+                book.add(blocks, Entry { method, output: item, count }, vec![chest]);
+            }
+        }
+        // Parties on the road: what their lines give (for what they ask, if anything), and
+        // what a freed captive, a guide, a lure, a show or a hunt's share gives.
+        for (index, event) in content.wandering.iter() {
+            let lines = event.meetings.iter().flat_map(|m| &m.lines);
+            for line in lines {
+                let wants: Vec<Option<(crate::wander::Want, u8)>> = match (&line.wants, line.asks.is_empty()) {
+                    (Some(wants), _) => vec![Some(wants.clone())],
+                    (None, false) => line.asks.iter().map(|&(item, n)| Some((crate::wander::Want::Item(item), n))).collect(),
+                    (None, true) => vec![None],
+                };
+                for wants in wants {
+                    book.trade(content, index, wants, &line.gives, 1.0);
+                }
+            }
+            for gifts in [&event.thanks, &event.guide_thanks, &event.reveal, &event.show, &event.share] {
+                book.trade(content, index, None, gifts, 1.0);
+            }
+        }
+        // Quests: what finishing each gives.
+        for quest in content.quests.iter() {
+            for reward in &quest.rewards {
+                if let crate::quest::Reward::Item(name, count) = reward
+                    && let Some(item) = blocks.id(name)
+                {
+                    book.add(blocks, Entry { method: Method::Reward { quest: quest.name.clone() }, output: item, count: (*count, *count) }, Vec::new());
+                }
+            }
+        }
         book
+    }
+
+    /// Adds the items a party gives, for `wants` if it asks for something, `chance` of the
+    /// time (a pick of one of several, a share of it).
+    fn trade(&mut self, content: &Content, event: usize, wants: Option<(crate::wander::Want, u8)>, gives: &[crate::wander::ResolvedReward], chance: f32) {
+        use crate::wander::{ResolvedReward, Want};
+        for reward in gives {
+            match reward {
+                ResolvedReward::Item(item, count) => {
+                    let uses = match &wants {
+                        Some((Want::Item(asked), _)) => vec![*asked],
+                        Some((Want::Tag(tag), _)) => content.blocks.tagged(tag).collect(),
+                        None => Vec::new(),
+                    };
+                    let method = Method::Trade { event, wants: wants.clone(), chance };
+                    self.add(&content.blocks, Entry { method, output: *item, count: *count }, uses);
+                }
+                ResolvedReward::OneOf(choices) => self.trade(content, event, wants.clone(), choices, chance / choices.len().max(1) as f32),
+                _ => {}
+            }
+        }
+    }
+
+    /// Adds what the world lays (`placed`, from its generator's data) that breaking gives
+    /// back as itself: found, not made. Items that are never placed (seeds) are left out,
+    /// and so are furnishings: one the world placed (a village's bed) gives nothing broken.
+    pub fn found(&mut self, content: &Content, placed: impl IntoIterator<Item = BlockId>) {
+        let blocks = &content.blocks;
+        let mut placed: Vec<BlockId> = placed.into_iter().filter(|&b| !blocks.def(b).has_tag("furnishing")).collect();
+        placed.sort();
+        placed.dedup();
+        self.laid.extend(placed.iter().map(|&b| listed_as(blocks, b)));
+        // A crop the world lays ripe (a wild cabbage) is foraged as it stands.
+        for (_, crop) in content.crops.iter().filter(|(_, crop)| placed.contains(&crop.ripe())) {
+            for (item, loot) in &crop.forage {
+                let method = Method::Harvest { crop: crop.ripe(), from: crop.ripe(), forage: true, chance: loot.chance, skill: crop.skill, level: crop.def.level };
+                self.add(blocks, Entry { method, output: *item, count: loot.count }, vec![crop.ripe()]);
+            }
+        }
+        for block in placed {
+            let info = blocks.info(block);
+            let broken_whole = !blocks.def(block).item && info.drop_count > 0 && blocks.item_of(info.drops) == block && blocks.def(block).hardness >= 0.0;
+            // A block a tool must take whole already says so (`Break` with its tool).
+            let said = self.making(block).iter().any(|e| matches!(e.method, Method::Break { block: b, .. } if b == block));
+            if !broken_whole || said || blocks.merged_away(block) {
+                continue;
+            }
+            let rule = content.tools.rule(block);
+            let tool = rule.and_then(|rule| content.tools.first_of(rule.tool?, rule.tier));
+            let (skill, level) = rule.map_or((None, 1), |rule| (rule.skill, rule.level));
+            self.add(blocks, Entry { method: Method::Found { tool, skill, level }, output: block, count: (info.drop_count, info.drop_count) }, Vec::new());
+        }
+    }
+
+    /// Every item a player could hold that the book has no way to get and that is not
+    /// tagged [`CREATIVE_ONLY`]: a dead entry, which content refuses to load with. Breaking
+    /// the item's own block counts only where the world lays it. And the
+    /// items so tagged that the book does have a way to, whose mark is stale.
+    pub fn unsourced(&self, blocks: &crate::block::BlockRegistry) -> (Vec<BlockId>, Vec<BlockId>) {
+        let (mut dead, mut stale) = (Vec::new(), Vec::new());
+        for id in blocks.ids().filter(|&id| blocks.holdable(id)) {
+            // Breaking an item's own block to get it is no way in, unless the world lays it.
+            let circular = |e: &&Entry| matches!(e.method, Method::Break { block, .. } if listed_as(blocks, block) == e.output && !self.laid.contains(&e.output));
+            let ways = self.making(id).into_iter().filter(|e| !circular(e)).count();
+            match (ways == 0, blocks.def(id).has_tag(CREATIVE_ONLY)) {
+                (true, false) => dead.push(id),
+                (false, true) => stale.push(id),
+                _ => {}
+            }
+        }
+        (dead, stale)
     }
 
     /// Adds an entry, unless it makes a plant whose item merged into another; one using such
@@ -200,7 +431,8 @@ impl RecipeBook {
     }
 
     /// Every entry, in the order the content gives them (crafting, cooking, machines, home
-    /// stations, crops, breaking, fishing, then creatures).
+    /// stations, crops, breaking, fishing, creatures, traps, bees, chests, parties on the
+    /// road, quests, then what is found in the world).
     pub fn entries(&self) -> &[Entry] {
         &self.entries
     }
@@ -341,6 +573,29 @@ mod tests {
         // A crop's harvest, its seed going into it.
         let wheat = ways("base:wheat");
         assert!(wheat.iter().any(|m| matches!(m, Method::Harvest { forage: false, .. })), "{wheat:?}");
+        // Foraging: a carrot from a wild carrot, which is what goes in, not the carrot.
+        let carrot = ways("base:carrot");
+        assert!(carrot.iter().any(|m| matches!(m, Method::Harvest { forage: true, from, .. } if *from == id("base:wild_carrot"))), "{carrot:?}");
+        assert!(book.using(id("base:wild_carrot")).iter().any(|e| e.output == id("base:carrot")));
+        // No way is listed twice: a block's looks and facings break as the block does (a
+        // wild plant merged away, as itself). And none is breaking a block to get that
+        // block back without a tool to take it whole (a well facing east gives no well).
+        let breaks_as = |b: BlockId| listed_as(&content.blocks, b);
+        assert_eq!(breaks_as(id("base:well_east")), id("base:well"), "a well's facing reads as the well");
+        for entry in book.entries() {
+            if let Method::Break { block, tool: None, .. } = entry.method {
+                assert_ne!(breaks_as(block), entry.output, "breaking {} gives itself", content.blocks.def(block).name);
+            }
+        }
+        for item in content.blocks.ids() {
+            let made = book.making(item);
+            for (i, entry) in made.iter().enumerate() {
+                if let Method::Break { block, tool, chance, .. } = &entry.method {
+                    let same = |other: &Entry| matches!(&other.method, Method::Break { block: b, tool: t, chance: c, .. } if breaks_as(*b) == breaks_as(*block) && t == tool && c == chance);
+                    assert!(!made[..i].iter().any(|other| same(other)), "{} lists breaking {} twice", content.blocks.def(item).name, content.blocks.def(*block).name);
+                }
+            }
+        }
         // Breaking: stone gives its loose stones always, with a tool; gravel gives flint an
         // eighth of the time, instead of itself.
         assert!(ways("base:loose_stone").iter().any(|m| matches!(m, Method::Break { block, chance, .. } if *block == id("base:stone") && *chance == 1.0)));
@@ -353,6 +608,86 @@ mod tests {
         // A crafting recipe that takes a level says so.
         let levelled = content.recipes.iter().find(|r| r.skill.is_some() && r.level > 1).expect("a recipe takes a level");
         assert!(book.making(levelled.output).iter().any(|e| matches!(e.method, Method::Craft { skill, level, .. } if skill == levelled.skill && level == levelled.level)));
+    }
+
+    #[test]
+    fn traps_bees_chests_parties_and_quests_are_ways_too() {
+        let content = content();
+        let book = RecipeBook::new(&content);
+        let id = |name: &str| content.blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let ways = |item: &str| book.making(id(item)).into_iter().map(|e| e.method.clone()).collect::<Vec<_>>();
+        // A snare's catch: a rabbit's loot, taken at the trap's level; the snare is among
+        // what the way uses.
+        let snare = id("base:snare");
+        let rabbit = content.creatures.id("base:rabbit").unwrap();
+        let caught: Vec<BlockId> = book.using(snare).iter().filter(|e| matches!(e.method, Method::Trap { creature, .. } if creature == rabbit)).map(|e| e.output).collect();
+        assert_eq!(caught.len(), content.creatures.get(rabbit).loot.len(), "{caught:?}");
+        // Bees: honey from a full skep, and a skep of bees from a nest with a skep in hand.
+        assert!(ways("base:honey").iter().any(|m| matches!(m, Method::Bees { block, holding: None, .. } if *block == id("base:honey_skep"))));
+        assert!(ways("base:bee_skep").iter().any(|m| matches!(m, Method::Bees { block, holding: Some(skep), .. } if *block == id("base:bee_nest") && *skep == id("base:skep"))));
+        // A chest's rarest find, at its chance, and its gold.
+        let amulet = ways("base:grave_ward_amulet");
+        assert!(amulet.iter().any(|m| matches!(m, Method::Chest { chance, .. } if *chance > 0.0 && *chance < 0.05)), "{amulet:?}");
+        let gold = content.treasure.gold().expect("chests hold gold");
+        assert!(book.making(gold).iter().any(|e| matches!(e.method, Method::Chest { .. })));
+        // A party's swap: twine for two hides, the hides among its uses.
+        let twine = book.making(id("base:twine"));
+        let swap = twine.iter().find(|e| matches!(&e.method, Method::Trade { wants: Some((crate::wander::Want::Item(hide), 2)), .. } if *hide == id("base:hide"))).expect("twine for hides");
+        assert!(book.using(id("base:hide")).contains(swap));
+        // A quest's reward.
+        let torch_quests: Vec<&str> = book.making(id("base:torch")).iter().filter_map(|e| if let Method::Reward { quest } = &e.method { Some(quest.as_str()) } else { None }).collect();
+        assert!(content.quests.iter().filter(|q| q.rewards.contains(&crate::quest::Reward::Item("base:torch".into(), 4))).all(|q| torch_quests.contains(&q.name.as_str())) && !torch_quests.is_empty());
+        // Food left too long: the cooking entries it burns in make it.
+        let burnt = book.making(id("base:burnt_food"));
+        assert!(!burnt.is_empty() && burnt.iter().all(|e| matches!(e.method, Method::Cook { burnt: Some(b), .. } if b == id("base:burnt_food"))));
+        // A wild plant whose item merged gives that item when broken, and is used for nothing.
+        let oregano = id("base:oregano");
+        assert!(ways("base:kitchen_herbs").iter().any(|m| matches!(m, Method::Break { block, .. } if *block == oregano)));
+        assert!(book.using(id("base:kitchen_herbs")).iter().all(|e| e.output != id("base:kitchen_herbs")));
+    }
+
+    /// What the world lays and breaking gives back whole is found; what breaks into another
+    /// thing, or is never placed, is not.
+    #[test]
+    fn what_the_world_lays_is_found() {
+        let content = content();
+        let id = |name: &str| content.blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let mut book = RecipeBook::new(&content);
+        let (dirt, stone, seeds) = (id("base:dirt"), id("base:stone"), id("base:wheat_seeds"));
+        book.found(&content, [dirt, stone, seeds, dirt]);
+        let found = |item| book.making(item).iter().filter(|e| matches!(e.method, Method::Found { .. })).count();
+        assert_eq!((found(dirt), found(stone), found(seeds)), (1, 0, 0), "dirt is found, stone breaks to cobblestone, seeds are never laid");
+    }
+
+    /// A station a package adds (a quern) shows its ways, cooked at it and crafted near it,
+    /// with no code for it: one path from data for every station.
+    #[cfg(unix)]
+    #[test]
+    fn a_station_a_package_adds_lists_its_ways_with_no_code() {
+        let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let dir = std::env::temp_dir().join(format!("voxmar-quern-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("mill")).unwrap();
+        for package in ["base", "core"] {
+            std::os::unix::fs::symlink(shipped.join(package).canonicalize().unwrap(), dir.join(package)).unwrap();
+        }
+        std::fs::write(dir.join("mill/blocks.ron"), r#"(blocks: [
+            (name: "quern", textures: All("stone"), hardness: 1.0, color: (120, 120, 120), tags: ["quern"]),
+            (name: "meal", item: true, render: Plant, solid: false, textures: All("wheat"), hardness: 0.0, color: (220, 210, 170)),
+            (name: "cake", item: true, render: Plant, solid: false, textures: All("bread"), hardness: 0.0, color: (220, 190, 130)),
+        ])"#).unwrap();
+        std::fs::write(dir.join("mill/cooking.ron"), r#"(recipes: [(input: "base:wheat", output: "meal", station: "quern", skill: "core:cooking", level: 1, xp: 1.0, stop_burning: 0)])"#).unwrap();
+        std::fs::write(dir.join("mill/recipes.ron"), r#"(recipes: [(ingredients: ["meal", "base:honey"], output: "cake", near: "quern")])"#).unwrap();
+        let content = Content::load(&dir).expect("the mill loads");
+        std::fs::remove_dir_all(&dir).unwrap();
+        let book = RecipeBook::new(&content);
+        let id = |name: &str| content.blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let quern = id("mill:quern");
+        let at: Vec<BlockId> = book.using(quern).iter().map(|e| e.output).collect();
+        assert!(at.contains(&id("mill:meal")) && at.contains(&id("mill:cake")), "{at:?}");
+        for item in ["mill:meal", "mill:cake"] {
+            assert!(book.making(id(item)).iter().all(|e| e.method.stations(&content.blocks) == vec![quern]), "{item}");
+        }
     }
 
     #[test]
