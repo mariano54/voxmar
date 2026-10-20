@@ -6711,7 +6711,13 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.check("home: walls", if snug { Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()) } else { Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))) });
                 gate.check("home: bright room", if bright { Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()) } else { Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")) });
                 gate.check("home: soft furnishings", if cushioned { Ok("a rug and a wall hanging in the walled room showed the Soft furnishings chip".into()) } else { Err(format!("{waited:.1} server s after a rug and a hanging at {soft:?} in the walled room: Soft furnishings chip {cushioned}")) });
-                leave(world, gate);
+                if snug {
+                    // The rest still judged: on to midnight and the evening in.
+                    world.resource::<Net>().command("time set midnight");
+                    gate.advance(now);
+                } else {
+                    leave(world, gate);
+                }
             }
         }
         // At midnight, indoors at home by the hearth: an evening in, its chip, and its line

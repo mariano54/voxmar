@@ -201,7 +201,7 @@
         ]),
         // A woven hanging on a rod against the south side of its cell, the wall's width.
         "wall_hanging": (boxes: [
-            (from: (0, 15, 14), to: (16, 16, 15.5), textures: All("furniture_wood")),
+            (from: (0, 15, 14), to: (16, 16, 15.5), textures: All("cloth_grey")),
             (from: (1, 1, 14.5), to: (15, 15, 15.5)),
         ]),
         // A door's leaf, a block's height (a door is two): shut across the middle of its
