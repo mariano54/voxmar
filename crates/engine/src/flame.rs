@@ -186,6 +186,12 @@ impl Flames {
             }
     }
 
+    /// The tag of what lights `block` again and is used up doing it (`relight_with:`), if
+    /// anything is.
+    pub fn relit_with(&self, block: BlockId) -> Option<&str> {
+        self.relight_with.get(block.0 as usize).and_then(Option::as_deref)
+    }
+
     /// Whether lighting `block` again uses up the item it is lit with.
     pub fn uses_up(&self, block: BlockId) -> bool {
         self.relight_with.get(block.0 as usize).is_some_and(Option::is_some)

@@ -740,9 +740,11 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
             let title = content.quests.get(quest).map_or_else(|| quest.clone(), |q| super::quests::title(locale, q));
             vec![(locale.format("recipes.reward", &[("quest", &title)]), MUTED)]
         }
-        Method::Burn { from, relit } => {
-            let key = if *relit { "recipes.relit" } else { "recipes.burnt" };
-            vec![(locale.format(key, &[("item", &block(*from))]), MUTED)]
+        Method::Burn { from, relit: false, .. } => vec![(locale.format("recipes.burnt_out", &[("item", &block(*from))]), MUTED)],
+        Method::Burn { from, relit: true, fuel: None } => vec![(locale.format("recipes.relit", &[("item", &block(*from))]), MUTED)],
+        Method::Burn { from, relit: true, fuel: Some(tag) } => {
+            let fuel = content.blocks.tagged(tag).next().map_or_else(|| tag.clone(), block);
+            vec![(locale.format("recipes.relit.with", &[("item", &block(*from)), ("fuel", &fuel)]), MUTED)]
         }
         Method::Found { tool, skill, level: at } => {
             let tool = tool.map(|tool| (locale.format("recipes.found.tool", &[("tool", &block(tool))]), SOFT));
