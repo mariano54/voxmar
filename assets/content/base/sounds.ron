@@ -30,8 +30,10 @@
     // What building materials sound like: a step on one, a piece set down, a piece broken.
     // Every block carrying all of a material's tags sounds as it (of several, the one with
     // the most tags); mining taps and landings use the steps. A cue a material lists nothing
-    // for is the block's family's (its `sound`). A package that names a material replaces
-    // it; each must be some block's, or the game does not start.
+    // for is the block's family's (its `sound`). A block whose def names a `material`
+    // sounds as that one whatever its tags (cut cobblestone keeps the rough stone's sound),
+    // and the name must be one listed here. A package that names a material replaces it;
+    // each must be some block's, or the game does not start.
     materials: [
         // Rough stone on stone: gritty taps, a heavy knock set down, stones tumbling loose.
         (
@@ -46,6 +48,55 @@
             step: ["sounds/materials/brick_step_1.ogg", "sounds/materials/brick_step_2.ogg", "sounds/materials/brick_step_3.ogg", "sounds/materials/brick_step_4.ogg"],
             place: ["sounds/materials/brick_place_1.ogg", "sounds/materials/brick_place_2.ogg", "sounds/materials/brick_place_3.ogg"],
             break: ["sounds/materials/brick_break_1.ogg", "sounds/materials/brick_break_2.ogg", "sounds/materials/brick_break_3.ogg"],
+        ),
+        // Posts, beams and lattice: a hollow knock underfoot, a firm knock set in place, splintering.
+        (
+            name: "timber", tags: ["timber"],
+            step: ["sounds/materials/timber_step_1.ogg", "sounds/materials/timber_step_2.ogg", "sounds/materials/timber_step_3.ogg", "sounds/materials/timber_step_4.ogg"],
+            place: ["sounds/materials/timber_place_1.ogg", "sounds/materials/timber_place_2.ogg", "sounds/materials/timber_place_3.ogg"],
+            break: ["sounds/materials/timber_break_1.ogg", "sounds/materials/timber_break_2.ogg", "sounds/materials/timber_break_3.ogg"],
+        ),
+        // Thatch: a dry crush of straw, a soft rustle laid down, stalks pattering as it comes apart.
+        (
+            name: "thatch", tags: ["thatch"],
+            step: ["sounds/materials/thatch_step_1.ogg", "sounds/materials/thatch_step_2.ogg", "sounds/materials/thatch_step_3.ogg", "sounds/materials/thatch_step_4.ogg"],
+            place: ["sounds/materials/thatch_place_1.ogg", "sounds/materials/thatch_place_2.ogg", "sounds/materials/thatch_place_3.ogg"],
+            break: ["sounds/materials/thatch_break_1.ogg", "sounds/materials/thatch_break_2.ogg", "sounds/materials/thatch_break_3.ogg"],
+        ),
+        // Shingles: tiles knocking underfoot, a slide and a clack laid, a clatter prised off.
+        (
+            name: "shingle", tags: ["shingle"],
+            step: ["sounds/materials/shingle_step_1.ogg", "sounds/materials/shingle_step_2.ogg", "sounds/materials/shingle_step_3.ogg", "sounds/materials/shingle_step_4.ogg"],
+            place: ["sounds/materials/shingle_place_1.ogg", "sounds/materials/shingle_place_2.ogg", "sounds/materials/shingle_place_3.ogg"],
+            break: ["sounds/materials/shingle_break_1.ogg", "sounds/materials/shingle_break_2.ogg", "sounds/materials/shingle_break_3.ogg"],
+        ),
+        // Wattle: woven withies creaking underfoot, a springy rattle set in, twigs snapping.
+        (
+            name: "wattle", tags: ["wattle"],
+            step: ["sounds/materials/wattle_step_1.ogg", "sounds/materials/wattle_step_2.ogg", "sounds/materials/wattle_step_3.ogg", "sounds/materials/wattle_step_4.ogg"],
+            place: ["sounds/materials/wattle_place_1.ogg", "sounds/materials/wattle_place_2.ogg", "sounds/materials/wattle_place_3.ogg"],
+            break: ["sounds/materials/wattle_break_1.ogg", "sounds/materials/wattle_break_2.ogg", "sounds/materials/wattle_break_3.ogg"],
+        ),
+        // Daub: a dull pat of dried mud, a wet slap set on, crumbling clods.
+        (
+            name: "daub", tags: ["daub"],
+            step: ["sounds/materials/daub_step_1.ogg", "sounds/materials/daub_step_2.ogg", "sounds/materials/daub_step_3.ogg", "sounds/materials/daub_step_4.ogg"],
+            place: ["sounds/materials/daub_place_1.ogg", "sounds/materials/daub_place_2.ogg", "sounds/materials/daub_place_3.ogg"],
+            break: ["sounds/materials/daub_break_1.ogg", "sounds/materials/daub_break_2.ogg", "sounds/materials/daub_break_3.ogg"],
+        ),
+        // Hide: a taut, drum-like give, a flap laid over poles, leather tearing loose.
+        (
+            name: "hide", tags: ["hide"],
+            step: ["sounds/materials/hide_step_1.ogg", "sounds/materials/hide_step_2.ogg", "sounds/materials/hide_step_3.ogg", "sounds/materials/hide_step_4.ogg"],
+            place: ["sounds/materials/hide_place_1.ogg", "sounds/materials/hide_place_2.ogg", "sounds/materials/hide_place_3.ogg"],
+            break: ["sounds/materials/hide_break_1.ogg", "sounds/materials/hide_break_2.ogg", "sounds/materials/hide_break_3.ogg"],
+        ),
+        // Fired clay: a ringing clink, a pot set down with a knock, shards shattering.
+        (
+            name: "terracotta", tags: ["terracotta"],
+            step: ["sounds/materials/terracotta_step_1.ogg", "sounds/materials/terracotta_step_2.ogg", "sounds/materials/terracotta_step_3.ogg", "sounds/materials/terracotta_step_4.ogg"],
+            place: ["sounds/materials/terracotta_place_1.ogg", "sounds/materials/terracotta_place_2.ogg", "sounds/materials/terracotta_place_3.ogg"],
+            break: ["sounds/materials/terracotta_break_1.ogg", "sounds/materials/terracotta_break_2.ogg", "sounds/materials/terracotta_break_3.ogg"],
         ),
     ],
     // What the player does, heard as they do it, by action: about as loud as placing a

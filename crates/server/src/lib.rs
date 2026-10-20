@@ -762,8 +762,8 @@ impl Server {
         let weather = WeatherState::new(meta.seed, overworld.dials().wind.into(), land, content.weather.clone(), chances);
         let processes = process::core_processes();
         let generator: Arc<dyn Generator> = overworld.clone();
-        // Load the spawn column up front and stand on its highest solid block, so
-        // features like trees never bury the player.
+        // Load the spawn column up front and stand on its highest ground under any tree,
+        // so trees never bury the player or hold them up on a crown (`find_ground`).
         let mut world = VoxelWorld::default();
         let spawn_block = generator.spawn_point();
         let spawn_column = ColumnPos::of_block(spawn_block);
@@ -1339,16 +1339,19 @@ impl Server {
     }
 }
 
-/// The spot nearest `start` within its column whose top block is opaque ground with two
-/// free blocks above it (so the player never spawns in a tree).
+/// The spot nearest `start` within its column whose highest ground, under any tree (blocks
+/// tagged `tree`: trunks, bark, roots, leaves, giant mushroom caps), is opaque with two
+/// free blocks above it: the player wakes on the land under or beside a tree, never on its
+/// crown or in it.
 fn find_ground(world: &VoxelWorld, registry: &BlockRegistry, start: IVec3) -> Vec3 {
     let origin = ColumnPos::of_block(start).origin();
     let mut candidates: Vec<IVec3> =
         (0..CHUNK_SIZE).flat_map(|z| (0..CHUNK_SIZE).map(move |x| origin + IVec3::new(x, 0, z))).collect();
     candidates.sort_by_key(|p| (p.x - start.x).abs() + (p.z - start.z).abs());
     let info = |p: IVec3| world.block(p).map(|b| registry.info(b));
+    let tree = |p: IVec3| world.block(p).is_some_and(|b| registry.def(b).has_tag("tree"));
     for column in candidates {
-        let Some(ground) = (0..WORLD_HEIGHT).rev().map(|y| column.with_y(y)).find(|&p| info(p).is_some_and(|i| i.solid))
+        let Some(ground) = (0..WORLD_HEIGHT).rev().map(|y| column.with_y(y)).find(|&p| info(p).is_some_and(|i| i.solid) && !tree(p))
         else {
             continue;
         };
@@ -1383,6 +1386,10 @@ pub(crate) fn test_server() -> Server {
     test_server_on(test_content())
 }
 
+/// The draw key of every test server's world (`test_server_on`).
+#[cfg(test)]
+pub(crate) const TEST_DRAW_KEY: u64 = 0x0d1a;
+
 /// The game's own content, as `test_server` loads it.
 #[cfg(test)]
 pub(crate) fn test_content() -> Content {
@@ -1393,7 +1400,10 @@ pub(crate) fn test_content() -> Content {
 /// once (a copy shares its tables, so one changed through `Arc::get_mut` must be its own).
 #[cfg(test)]
 pub(crate) fn test_server_on(content: Content) -> Server {
-    let mut config = ServerConfig::default();
+    // One draw key for every test server, as a world's own is random: wandering, grazing
+    // and the world's other keyed rolls draw the same in every run, so a test's outcome
+    // depends on its inputs alone.
+    let mut config = ServerConfig { draw_key: Some(TEST_DRAW_KEY), ..ServerConfig::default() };
     let (save, meta) = open_world(&mut config).expect("no save to open");
     // Every test server is on the one seed: its world, held for the whole run, is the one
     // each shares (`Overworld::shared`), with the land round spawn planned once rather than
@@ -1408,6 +1418,37 @@ pub(crate) fn test_server_on(content: Content) -> Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where a new world of `seed` wakes its first player, from the spawn column alone as
+    /// `Server::new` loads it, and the block they stand on.
+    fn spawn_on(seed: u64, content: &Content, world_content: &WorldContent) -> (Vec3, Option<BlockId>) {
+        let generator = Overworld::shared(seed, content, world_content);
+        let start = generator.spawn_point();
+        let mut world = VoxelWorld::default();
+        world.insert(ColumnPos::of_block(start), Arc::new(generator.generate(ColumnPos::of_block(start))));
+        let spawn = find_ground(&world, &content.blocks, start);
+        (spawn, world.block((spawn - Vec3::Y * 0.5).floor().as_ivec3()))
+    }
+
+    /// A new player never wakes on a tree (a block tagged `tree`): with seed 157 they woke
+    /// on an oak's crown of bark, its top the highest solid block in the column; now they
+    /// stand on the land under or beside it. And over a run of seeds, none does.
+    #[test]
+    fn a_new_player_never_wakes_on_a_tree() {
+        let content = test_content();
+        let world_content = WorldContent::load(&content).expect("checked by load_content");
+        let tree = |b: Option<BlockId>| b.is_some_and(|b| content.blocks.def(b).has_tag("tree"));
+        // Each seed plans its land round spawn (about 1.6 s), so they plan side by side.
+        let woke: Vec<_> = std::thread::scope(|scope| {
+            let (content, world_content) = (&content, &world_content);
+            let runs: Vec<_> = [157, 1, 2, 3, 4, 5].map(|seed| scope.spawn(move || (seed, spawn_on(seed, content, world_content)))).into_iter().collect();
+            runs.into_iter().map(|run| run.join().unwrap()).collect()
+        });
+        for (seed, (spawn, under)) in woke {
+            let name = under.map(|b| content.blocks.def(b).name.clone());
+            assert!(under.is_some_and(|b| content.blocks.info(b).solid) && !tree(under), "seed {seed}: the player wakes at {spawn} on {name:?}");
+        }
+    }
 
     /// A world's draw key is made with it (the config's, else a random one) and kept in its
     /// meta; an older world, saved without one, is given one when it opens.
@@ -1426,6 +1467,16 @@ mod tests {
         assert_ne!(open_world(&mut config(None)).unwrap().1.draw_key, 0, "an older world given one");
         assert_ne!(WorldMeta::new("a", 1, GameMode::Survival).draw_key, WorldMeta::new("a", 1, GameMode::Survival).draw_key, "random without one asked");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Test servers draw by one key, so wandering and the world's other rolls come out the
+    /// same in every run (a random one left a density test failing one run in eight).
+    #[test]
+    fn test_servers_draw_the_same_every_run() {
+        let content = test_content();
+        let (mut a, mut b) = (test_server_on(content.clone()), test_server_on(content));
+        assert_eq!((a.meta.draw_key, b.meta.draw_key), (TEST_DRAW_KEY, TEST_DRAW_KEY));
+        assert_eq!(a.meta.next_roll(crate::save::ROLL_WANDER), b.meta.next_roll(crate::save::ROLL_WANDER));
     }
 
     /// A drop and its rejoin are queued together before one reading loop: the old
