@@ -125,6 +125,10 @@ pub struct ClientWorld {
     /// Columns being meshed, with their newest job: only its result is shown. An edit's
     /// job can start while an older one waits on the shared workers, and finish first.
     in_flight: FxHashMap<ColumnPos, u64>,
+    /// Of those, the ones whose newest job is on the edits' threads: one at a time each,
+    /// or a column edited every tick (flowing water, fire) would start a job every frame,
+    /// each superseding the last, and none would ever be shown.
+    editing: FxHashSet<ColumnPos>,
     /// Jobs started so far.
     jobs: u64,
     results_tx: Sender<MeshResult>,
@@ -173,6 +177,7 @@ impl ClientWorld {
             dirty: FxHashSet::default(),
             edited: FxHashSet::default(),
             in_flight: FxHashMap::default(),
+            editing: FxHashSet::default(),
             jobs: 0,
             results_tx,
             results_rx,
@@ -229,6 +234,7 @@ impl ClientWorld {
         self.edited.remove(&pos);
         // A job still running was of what is gone.
         self.in_flight.remove(&pos);
+        self.editing.remove(&pos);
         for cy in 0..COLUMN_CHUNKS {
             let chunk = pos.chunk(cy);
             if let Some(render) = self.chunks.remove(&chunk) {
@@ -345,12 +351,17 @@ fn dispatch_jobs(
     }
     // Near edits first, at once, whatever the shared workers are busy with. Far ones (a
     // neighbour's, the server's) wait their turn with the rest of the dirty columns.
+    // One whose last edit is still being meshed there waits for it, edited still, and
+    // goes as soon as it is shown.
     let edited: Vec<ColumnPos> = world.edited.drain().filter(|&pos| pos.distance(center) <= NEAR_EDITS).collect();
     for pos in edited {
-        if world.dirty.contains(&pos)
+        if world.editing.contains(&pos) {
+            world.edited.insert(pos);
+        } else if world.dirty.contains(&pos)
             && let Some(columns) = world.neighborhood(pos)
         {
             world.dirty.remove(&pos);
+            world.editing.insert(pos);
             start_job(world, pos, center, columns, Some(&*EDITS));
         }
     }
@@ -428,6 +439,7 @@ fn apply_meshes(mut world: ResMut<ClientWorld>) {
             continue;
         }
         world.in_flight.remove(&result.pos);
+        world.editing.remove(&result.pos);
         if !world.voxels.contains(result.pos) {
             continue;
         }
@@ -706,5 +718,58 @@ mod tests {
         app.update();
         let world = app.world().resource::<ClientWorld>();
         assert_eq!(world.check_meshed(centre), Ok(()), "the job begun before the break showed the block again");
+    }
+
+    /// A column edited every frame (water flowing past, fire spreading) is still shown as
+    /// it changes, one edit's mesh at a time, and settles once the edits stop: a job started
+    /// for each edit, each superseding the last, would never show any.
+    #[test]
+    fn a_column_edited_every_frame_still_shows_its_changes() {
+        let mut world = test_world();
+        let stone = world.registry.id("base:stone").expect("stone");
+        let mut column = Column::default();
+        for x in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                column.set_block(IVec3::new(x, 60, z), stone);
+            }
+        }
+        let column = Arc::new(column);
+        for dz in -2..=2 {
+            for dx in -2..=2 {
+                world.insert_column(ColumnPos::new(dx, dz), column.clone());
+            }
+        }
+        let mut app = App::new();
+        app.insert_resource(world).add_systems(Update, (dispatch_jobs, apply_meshes).chain());
+        let centre = ColumnPos::new(0, 0);
+        let start = std::time::Instant::now();
+        while app.world().resource::<ClientWorld>().meshing(centre) {
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "the land as it came was never meshed");
+            app.update();
+        }
+        // A block set and taken away again every frame for two seconds, frames coming
+        // faster than a column meshes.
+        let chunk = centre.chunk(60 / CHUNK_SIZE);
+        let shown = |app: &App| app.world().resource::<ClientWorld>().chunks.get(&chunk).map(|c| c.hashes);
+        let (mut last, mut changes, mut frames) = (shown(&app), 0, 0);
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(2) {
+            frames += 1;
+            let block = if frames % 2 == 0 { stone } else { BlockId::AIR };
+            app.world_mut().resource_mut::<ClientWorld>().set_block(IVec3::new(5, 60, 5), block);
+            app.update();
+            let now = shown(&app);
+            changes += usize::from(now != last);
+            last = now;
+            let world = app.world().resource::<ClientWorld>();
+            assert!(world.in_flight.len() <= 9, "{} columns in flight after {frames} frames of edits", world.in_flight.len());
+        }
+        assert!(changes >= 3, "the edited chunk changed on screen {changes} times in {frames} frames of edits");
+        let start = std::time::Instant::now();
+        while app.world().resource::<ClientWorld>().meshing(centre) {
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "the column never settled after the edits stopped");
+            app.update();
+        }
+        assert_eq!(app.world().resource::<ClientWorld>().check_meshed(centre), Ok(()));
     }
 }

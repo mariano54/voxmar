@@ -14,8 +14,8 @@
 #   flight  40 s flight from the spawn of seed 1 at his fly speed: the land streaming in
 #
 # Holds ~/Projects/voxmar-wt/QUIET while it times, which pauses memcap's builds and holds
-# new heavy commands, and refuses to run while his game is open. Run it with no gate or
-# train going: QUIET does not pause tests or game runs already running, and numbers taken
+# new heavy commands (waiting while another timing run holds it), and stops whenever his
+# game is open or PLAYING is up. Run it with no gate or train going: QUIET does not pause tests or game runs already running, and numbers taken
 # beside them say nothing about a build. Each scene runs `REPEATS` times (default 2), the
 # builds taking turns, so a passing disturbance shows as runs that disagree.
 
@@ -24,7 +24,8 @@ set -uo pipefail
 repeats=${REPEATS:-2}
 settings=${VOXMAR_SETTINGS:-$HOME/Library/Application Support/voxmar/settings.ron}
 quiet=~/Projects/voxmar-wt/QUIET
-out=$(mktemp -d "${TMPDIR:-/tmp}/play-frames.XXXXXX")
+play=~/Projects/voxmar-wt/PLAYING
+[[ -e $settings ]] || echo "play_frames: no settings at $settings; the games run on their defaults" >&2
 
 game_running() {
   ps -A -o args= | awk '
@@ -32,13 +33,31 @@ game_running() {
     exe == "voxmar" && !/--capture|--gate/ { found = 1 }
     END { exit !found }'
 }
-if game_running; then
-  echo "play_frames: Mariano's game is open; numbers now would be his frames' and ours mixed" >&2
+# His game open, or PLAYING up (he said he will play): numbers now would be his frames'
+# and ours mixed, and he must have the machine.
+playing() { game_running || [[ -e $play ]]; }
+if playing; then
+  echo "play_frames: Mariano is playing (his game is open or PLAYING is up); nothing is timed" >&2
   exit 1
 fi
+
+out=
+held=0
+cleanup() {
+  ((held)) && grep -q "^play_frames $$ " "$quiet" 2>/dev/null && rm -f "$quiet"
+  [[ -n $out ]] && rm -rf "$out"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+out=$(mktemp -d "${TMPDIR:-/tmp}/play-frames.XXXXXX") || { echo "play_frames: no temporary directory" >&2; exit 1; }
+# Another timing run's QUIET (tools/bench --quiet), while fresh, is waited for, never taken.
 mkdir -p ~/Projects/voxmar-wt
-echo "play_frames $(date -u +%FT%TZ)" >"$quiet"
-trap 'rm -f "$quiet"; rm -rf "$out"' EXIT INT TERM
+while [[ -e $quiet && -n $(find "$quiet" -mmin -20 2>/dev/null) ]]; do
+  echo "play_frames: another timing run holds QUIET ($(cat "$quiet" 2>/dev/null)), waiting"
+  sleep 10
+done
+echo "play_frames $$ $(date -u +%FT%TZ)" >"$quiet" && held=1
 
 scene_args() {
   case $1 in
@@ -53,6 +72,10 @@ echo "play_frames: load $(sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg)
 for scene in spawn town flight; do
   for ((round = 1; round <= repeats; round++)); do
     for binary in "$@"; do
+      if playing; then
+        echo "play_frames: Mariano started playing; stopped, and the numbers so far are suspect" >&2
+        exit 1
+      fi
       [[ -x $binary ]] || { echo "$scene: no binary at $binary"; continue; }
       binary=$(cd "$(dirname "$binary")" && pwd)/$(basename "$binary")
       touch "$quiet"
