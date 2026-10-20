@@ -43,7 +43,8 @@ pub use voxmar_engine::weather::Weather;
 // 47: ServerMessage::Bark, a settlement person's wordless greeting, alarm or sigh (45 and
 // 46 are other lanes').
 // 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
-// 49: kept for the 157 branch, landing ahead of this one.
+// 49: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one
+// on.
 // 50: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
 // 52: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
 // and Players told as they change (seen, gone), names once, only those near enough.

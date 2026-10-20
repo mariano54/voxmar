@@ -158,6 +158,10 @@ pub struct WorldMeta {
     /// none in older worlds.
     #[serde(default)]
     pub rolls: u64,
+    /// Whether the spawn kit (`spawn_kit.ron`) lies by the spawn: laid once, on the first
+    /// start of a world or of an older save without it.
+    #[serde(default)]
+    pub spawn_kit: bool,
 }
 
 /// What tells the world's rolls (`WorldMeta::next_roll`) of one kind from another's.
@@ -279,6 +283,7 @@ impl WorldMeta {
             drops: 0,
             loot: 0,
             rolls: 0,
+            spawn_kit: false,
         }
     }
 }
@@ -1201,8 +1206,12 @@ mod tests {
     use voxmar_worldgen::Generator;
 
     fn registry(extra_first: bool) -> Arc<BlockRegistry> {
-        let source = include_str!("../../../assets/content/base/blocks.ron");
-        let mut defs = BlockRegistry::parse("base", source).unwrap();
+        // Every base block file, as the game loads them: worldgen places blocks from several.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.file_name().unwrap().to_str().unwrap().starts_with("blocks")).collect();
+        files.sort();
+        let packages = files.iter().map(|f| ("base".to_owned(), BlockRegistry::read("base", &std::fs::read_to_string(f).unwrap()).unwrap())).collect();
+        let mut defs = BlockRegistry::expand(packages).unwrap();
         if extra_first {
             // A mod loaded before `base` renumbers every base block.
             defs.insert(0, voxmar_engine::block::BlockDef { name: "aaa:marble".into(), ..defs[0].clone() });
@@ -1400,13 +1409,19 @@ mod tests {
     fn players_round_trip_by_name() {
         let dir = temp_dir("players");
         let save = WorldSave::new(&dir);
-        let registry = registry(false);
+        // The game's blocks, and the charm (a creature's drop, from another blocks file).
+        let registry = {
+            let mut defs = BlockRegistry::parse("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+            defs.push(voxmar_engine::block::BlockDef { name: "base:charge_charm".into(), ..defs[0].clone() });
+            Arc::new(BlockRegistry::new(defs).unwrap())
+        };
         let mut inventory = Inventory::default();
         inventory.add(registry.expect("base:cobblestone"), 70);
         inventory.pouched.push((registry.expect("base:cobblestone"), 300));
         // What is worn keeps its slot (the save keeps names; content judges what fits).
         inventory.worn[1] = Some(ItemStack { item: registry.expect("base:dirt"), count: 1 });
         inventory.worn[5] = Some(ItemStack { item: registry.expect("base:cobblestone"), count: 1 });
+        inventory.worn[6] = Some(ItemStack { item: registry.expect("base:charge_charm"), count: 1 });
         let player = SavedPlayer {
             position: Vec3::new(1.5, 80.0, -20.25),
             yaw: 1.25,
@@ -1433,6 +1448,19 @@ mod tests {
         assert_eq!(save.read_player("a/b", &registry).unwrap(), Some(player.clone()));
         assert_eq!(save.read_player("ünï cödé", &registry).unwrap(), Some(player.clone()));
         assert_eq!(save.read_player("alex", &registry).unwrap(), None);
+        // The charm slot keeps its charm, and a save from before the charm slot, with six
+        // worn entries, loads with the six as they were and the charm slot empty.
+        assert_eq!(save.read_player("steve", &registry).unwrap().unwrap().inventory.worn[6], player.inventory.worn[6]);
+        let six = dir.join("players/six.ron");
+        save.write_player("six", &player, &registry).unwrap();
+        let text = std::fs::read_to_string(&six).unwrap();
+        // Pretty-printed, the worn list has an entry a line: the charm's, last, goes.
+        assert_eq!(text.lines().filter(|line| line.contains("base:charge_charm")).count(), 1, "the charm saved once: {text}");
+        let without: Vec<&str> = text.lines().filter(|line| !line.contains("base:charge_charm")).collect();
+        std::fs::write(&six, without.join("\n")).unwrap();
+        let old = save.read_player("six", &registry).unwrap().unwrap().inventory.worn;
+        assert_eq!((old[..6].to_vec(), old[6]), (player.inventory.worn[..6].to_vec(), None), "a six-slot save's worn, the charm slot empty");
+        std::fs::remove_file(&six).unwrap();
         // Names that are not plain file names stay inside the players directory.
         let files = std::fs::read_dir(dir.join("players")).unwrap().count();
         assert!(files >= 4, "{files} player files");
