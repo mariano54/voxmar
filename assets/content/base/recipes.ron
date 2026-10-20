@@ -29,7 +29,7 @@
         (pattern: [["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "campfire", "tag:cobbled"]], output: "pit_kiln", skill: "core:construction", level: 1, xp: 15.0),
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "clay_pot", count: 2, level: 2, xp: 12.0),
         (pattern: [["fired_clay"], ["fired_clay"]], output: "vial", count: 3, level: 4, xp: 8.0),
-        (ingredients: ["fired_clay", "fired_clay", "fired_clay", "fired_clay"], output: "kiln_bricks", level: 5, xp: 6.0),
+        (ingredients: ["fired_clay", "fired_clay", "fired_clay", "fired_clay"], output: "kiln_bricks", count: 2, level: 5, xp: 12.0),
         (pattern: [["kiln_bricks", "", "kiln_bricks"], ["kiln_bricks", "clay_pot", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "crucible", skill: "core:engineering", level: 10, xp: 40.0),
         // A sleeping bag three ways: wool and hide, pelts, or feathers and hide.
         (pattern: [["wool", "wool", "wool"], ["hide", "hide", ""]], output: "sleeping_bag", level: 5, xp: 30.0),

@@ -203,6 +203,7 @@ def book():
     tex("stove_plate", {"iron": "furn_iron"}, [paint("iron", 0.4, "Noise(cells: (4, 4), amount: 0.2), Grain(0.1)"), "Paint(palette: \"iron\", base: 0.15, mask: [Circle(radius: 4.0, soft: 0.5)], above: 0.5)"])
     tex("loom_warp", {"thread": "furn_thread"}, [paint("thread", 0.55, "Stripes(period: 2.0, width: 0.5, amount: 0.4, vertical: true), Noise(cells: (2, 8), amount: 0.2)")])
     tex("wind_flags", {}, [wind_flags()])
+    tex("shingles_grey", wood_pal, [paint(W, 0.6, "Noise(cells: (4, 4), amount: 0.2), Stripes(period: 2.0, width: 0.5, amount: -0.08, vertical: true), Grain(0.12)"), shingles()])
     tex("basket_grey", wood_pal, [paint(W, 0.58, "Boards(height: 2, seam: -0.4, joint: -0.3, value: 0.22, bevel: 0.1), Grain(0.12)")])
     return t
 
@@ -219,6 +220,22 @@ def wind_flags():
     row = "aaabbbcccdddeeee"
     g = [list(row) for _ in range(16)]
     return grid(g, colours)
+
+
+def shingles():
+    # Courses four texels high, as the roof shape steps (shapes.ron "roof"): each course's
+    # top row catches the light, its lowest lies in its own shadow on the course below, and
+    # the joints between shingles break bond from course to course.
+    g = canvas()
+    for c in range(4):
+        y0 = 4 * c
+        for x in range(16):
+            g[y0][x] = "l"
+            g[y0 + 3][x] = "d"
+        for x in range(1 + 2 * (c % 2), 16, 4):
+            for y in range(y0, y0 + 3):
+                g[y][x] = "d"
+    return grid(g, {"d": f"{W}:0", "l": f"{W}:5"})
 
 
 def grid_button():
