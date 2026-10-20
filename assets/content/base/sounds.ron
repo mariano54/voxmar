@@ -113,8 +113,8 @@
     // `ways` are the ways of doing an action that sound their own: the first done `with`
     // any of its items or blocks (by name, or `tag:TAG`) is heard instead of the action's
     // `sounds`. Crafting is done with the grid's items; lighting, loading a station and
-    // cooking with the block worked and what is in hand. Each is checked at launch: named,
-    // with clips, and done with things the content has. Our own (tools/generate_sfx.py,
+    // cooking with the block worked, never what is in hand. Each is checked at launch: named,
+    // with clips whose files are there, and done with things the content has. Our own (tools/generate_sfx.py,
     // under sounds/work/).
     actions: {
         // Three bites and their chews.
