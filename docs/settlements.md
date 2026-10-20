@@ -289,6 +289,36 @@ and unbounded mutation counts before a world can be created.
   old, saltboxes where it grew rather than was planned, gambrels in green, roomy places,
   sheds where it is poor. Round houses take cones and courtyard houses hips whatever
   was rolled, unless flat; A-frames are steep gables.
+- **Shaped roofs.** A style's `roof_pieces` (a `slope` and its `ridge`, each a block that
+  faces four ways, by weight) lay a share (`pieced`) of its steep gables over four walls
+  or a shop front in pieces: each column's top a slope whose low edge faces the eave
+  below it, a ridge cap along the peak where the span is odd. Thatch in stone-cottage,
+  stilt, mudbrick and timber-frame places, shingles in log cabins, blossom houses and
+  maple lodges (dark oak, the woods there making none), birch shingles or thatch in
+  birch cottages; the rest stay whole blocks. Loading fails on a piece missing a facing
+  in any of its style's woods, a slope not tagged `roof` or a ridge not tagged `ridge`.
+- **Fire** (`rules.fire`, `settlements/roofs.rs`). No village stands ready to burn: once
+  a place is drawn, each of its flames (tag `fire`: torches, campfires, braziers) walks
+  out a face at a time through open cells, `reach` (4, fire.ron's most) steps, as fire
+  catches in a home (docs/home.md). A street lamp or fire on the ground that reaches
+  something that catches (`thatch`, `wattle`) goes, post and all; a thatch roof a
+  building's own flame reaches is laid whole in `instead` (dark oak shingles), each piece
+  turned as it was; a flame that still reaches is put out. In the base worlds about one
+  street lamp in seventy goes and one thatch roof in ten turns to shingles. The gate's
+  "settlement roofs" checks the town's pieces stand as planned and none of its flames
+  reaches its thatch.
+- **Jetties** (`jetty`: a `beam` and a `chance`). A two-storey box house with no porch,
+  awning, balcony or dormer may carry its upper storeys one block out over the street,
+  as old town houses do: the front wall above the ground floor steps forward, the floor
+  runs out over it, and a row of jetty beams (tagged `jetty` and `shelter:`, so the house
+  stays a home) holds the overhang up under its front edge. The roof covers the deeper
+  top. The chance grows with crowding, so jetties gather in town streets: timber frame
+  most (0.6), mudbrick towns (a cumba, on timber brought in), birch cottages, maple
+  lodges and stone cottages a little. Loading fails on
+  a beam missing a facing in any of its style's woods, or without its `jetty` and
+  `shelter:` tags. The gate's "settlement jetties" checks, at the walled town it
+  already visits for walls and roofs, that each beam stands with the house behind and
+  above it.
 - `extras`: chimney, porch, lean-to shed, flower boxes, garden, hedge, lamp, woodpile,
   moss, wing, dormer, balcony, outside stair, shutters, awning, sign board, rain barrel,
   weathervane, dovecote and herbs drying under the eaves, each by its own chance; a
@@ -446,6 +476,18 @@ someone's home will not take as yours: sleeping in a bed where the plan put one 
 - `Overworld::settlements_near` lists them with their buildings (each with what it is
   in the lists and the work done in it), doors and gates, for gameplay (villagers,
   shops) and maps; `/locate settlement` finds the nearest.
+- They are heard (ambience.ron, the client's ambience). The ambience measures the nearest
+  one from the same plan: how far its middle is (`settlement`), how far outside its bounds
+  the player is (`settlement_edge`: the ground its buildings and square stand on and six
+  blocks round, 0 within), and how many live there (`settlement_people`). By day its
+  people's talk (`murmur`, fuller the more live there, fewer out in the rain) and its work
+  (hammering, sawing, hens, the well bucket at the well, the smith at the smithy, sheep at
+  the pens and barns); at dusk low talk, doors at the houses and supper things; at night a
+  dog now and then and an owl. A one-shot names the buildings it comes from by kind, house
+  or work (`at: Building(buildings: [...], door: true)`), checked against settlements.ron as
+  the game starts. The first time each day a player steps within a settlement's bounds, the
+  settlement motif plays (music.ron's `settlement` category, on the home motif's clock, and
+  never over a motif playing).
 
 ## Looking at them without the game
 

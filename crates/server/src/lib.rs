@@ -9,6 +9,7 @@ mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
 pub use barks::BARK_COMMAND_REACH;
 pub use commands::{weather_name, weather_numbers};
+pub use creatures::NEAR_THINK_LONGEST;
 mod cooking;
 mod creatures;
 mod fight;

@@ -33,6 +33,7 @@
 
 mod ambience;
 mod breaking;
+mod fx;
 mod butterflies;
 mod capture;
 mod creature_sounds;
@@ -366,6 +367,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recorded.material_of(&content.blocks, id).map_or_else(|| ambience::defs::family(content.blocks.info(id).sound), |m| recorded.materials[m].name.clone())
     })?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
+    fx::ActionFx::load(&content.files)?.check(&content.actions)?;
     if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
         return Err(format!("effects.ron: the effect {effect} has no icon in any bundled texture pack").into());
     }
@@ -373,6 +375,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
     let world_content = Arc::new(WorldContent::load(&content)?);
+    // Every building an ambient sound comes from is one settlements have (ambience.ron).
+    ambience.check_buildings(&world_content.settlements.building_names())?;
     let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings,
     // unless a configuration directory is given explicitly.
@@ -460,7 +464,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
-    app.add_plugins(emitters::EmittersPlugin);
+    app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);
     app.add_plugins(fight_fx::FightFxPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
