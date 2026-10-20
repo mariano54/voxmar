@@ -882,8 +882,9 @@ mod tests {
     }
 
     /// Each Farm path's capstone comes after every other quest of its path, directly or
-    /// through what comes before it, but for side quests and the age's rite. (The Nomad
-    /// book is checked once it is laid out so.)
+    /// through what comes before it, but for side quests and the age's rite. An "a|b" edge
+    /// is followed down neither side, as it makes sure of neither. (The Nomad book is checked
+    /// once it is laid out so.)
     #[test]
     fn a_farm_capstone_comes_after_all_of_its_path() {
         let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
@@ -892,14 +893,14 @@ mod tests {
         assert!(capstones.len() >= 4, "the Farm book has {} capstones", capstones.len());
         for capstone in capstones {
             let mut before: Vec<&str> = Vec::new();
-            let mut next: Vec<&str> = capstone.after.iter().flat_map(|a| a.split('|')).collect();
+            let mut next: Vec<&str> = capstone.after.iter().filter(|a| !a.contains('|')).map(String::as_str).collect();
             while let Some(name) = next.pop() {
                 if before.contains(&name) {
                     continue;
                 }
                 before.push(name);
                 let quest = content.quests.get(name).unwrap_or_else(|| panic!("{} comes after {name}, which is no quest", capstone.name));
-                next.extend(quest.after.iter().flat_map(|a| a.split('|')));
+                next.extend(quest.after.iter().filter(|a| !a.contains('|')).map(String::as_str));
             }
             assert!(!before.contains(&capstone.name.as_str()), "{} comes after itself", capstone.name);
             let skipped: Vec<&str> = farm

@@ -361,15 +361,14 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
 
 ## The Farm book (Oct 20)
 
-The Farm quests stay in `base/quests.ron`'s Farm block (the Nomad book has a file of its
-own), and the road to the lit Crucible Kiln is laid out like a long modpack's book: several
-paths that each make one part of the kiln, meeting at the end, with a way round at each
-fork. Each step is something done in the world (gathered, fired, stored, set down), not
+The Farm quests stay in `base/quests.ron`'s Farm block, and the road to the lit Crucible
+Kiln is laid out like a long modpack's book: several paths that each make one part of the
+kiln, meeting at the end, with a way round at each fork. Each step is something done in the world (gathered, fired, stored, set down), not
 only crafted.
 
 | Path | Quests to the kiln | Ways round |
 |---|---|---|
-| Main | A Pit Kiln (made and set down), Fire the Clay, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln | the store a chest, a barrel or a crate |
+| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
 | Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
 | Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp | |
 | Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln | |
