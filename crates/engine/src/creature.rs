@@ -345,19 +345,48 @@ impl Default for Temperament {
     }
 }
 
-/// How far it notices things, in blocks.
+/// How far it notices things, in blocks, and where it looks.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Senses {
     pub sight: f32,
     pub hearing: f32,
+    /// How far either way of where it faces it sees, in degrees (a half angle): 180 sees
+    /// all round; a deer's eyes on the sides of its head see most of the way round, a
+    /// wolf's to the front. A player out of it, or behind something that hides them, it
+    /// notices only close by (`close`) or once they hurt it.
+    pub field: f32,
+    /// How near, in blocks, it notices a player wherever it looks: it hears and smells them.
+    pub close: f32,
+    /// Seconds it stands and looks at a player it has just noticed before it acts on
+    /// them (runs, chases, comes to look): a double take, the moment a player has to back
+    /// off. Not for one who hurts it.
+    pub react: f32,
 }
 
 impl Default for Senses {
     fn default() -> Self {
-        Self { sight: 16.0, hearing: 12.0 }
+        Self { sight: 16.0, hearing: 12.0, field: 180.0, close: 3.0, react: 0.0 }
     }
 }
+
+impl Senses {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.field > 0.0 && self.field <= 180.0) {
+            return Err(format!("`senses.field` is a half angle above 0 and up to 180 degrees, not {}", self.field));
+        }
+        if !(self.close.is_finite() && (0.0..=self.sight.max(0.0)).contains(&self.close)) {
+            return Err(format!("`senses.close` is from 0 to its sight ({}), not {}", self.sight, self.close));
+        }
+        if !(self.react.is_finite() && (0.0..=MOST_REACT).contains(&self.react)) {
+            return Err(format!("`senses.react` is from 0 to {MOST_REACT} seconds, not {}", self.react));
+        }
+        Ok(())
+    }
+}
+
+/// The longest double take a creature's data may give it (`Senses::react`).
+pub const MOST_REACT: f32 = 2.0;
 
 /// How it moves, in blocks per second and degrees per second.
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -991,6 +1020,7 @@ impl CreatureRegistry {
                 circle.check().map_err(error)?;
             }
             def.death.check().map_err(error)?;
+            def.senses.check().map_err(error)?;
             if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
                 return Err(error(format!("`flees_below` is a share of its health, 0 to 1, not {:?}", def.flees_below)));
             }

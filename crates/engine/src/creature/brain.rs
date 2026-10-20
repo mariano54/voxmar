@@ -45,6 +45,9 @@ pub const HOMEWARD: f32 = 20.0;
 /// How far past a player's reach (`physics::player::REACH`, from their eyes) a boss held
 /// off keeps its body: a player down a hole it cannot reach into strikes nothing from there.
 pub const KEEP_OFF: f32 = 0.5;
+/// Seconds a creature keeps a player it noticed in mind once it no longer sees them
+/// (`Mind::noticed`): turned away from one it has seen, it does not forget them.
+pub const NOTICED: f32 = 10.0;
 /// Seconds a creature remembers the player who hurt it (`Memory::HurtBy`).
 pub const HURT_REMEMBERED: f32 = 45.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
@@ -100,6 +103,10 @@ pub struct Seen {
     /// (the server's `blow_open`): none through a roof or a wall, so it is not close enough
     /// to strike however near.
     pub open: bool,
+    /// Whether it sees them from where it looks (`Senses::field`), with nothing between
+    /// that hides them (the server's look). Out of it, it notices them only close by
+    /// (`Senses::close`) or once they hurt it.
+    pub in_view: bool,
 }
 
 /// Where someone with a routine (villagers) is to be now, as the server's schedule and
@@ -277,6 +284,10 @@ pub struct Mind {
     /// stay there it keeps off out of their reach, watching them (`KEEP_OFF`), and comes
     /// on once they leave it.
     pub held_off: Option<Vec3>,
+    /// The players it has noticed (`Senses`), each with the seconds it keeps them in mind
+    /// out of sight (`NOTICED`) and the seconds since it first noticed them (its double take,
+    /// `Senses::react`).
+    pub noticed: Vec<(u32, f32, f32)>,
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
     /// near, how far it likes to stray).
     pub seed: u64,
@@ -301,6 +312,7 @@ impl Mind {
             zig: 1.0,
             startled_at: None,
             held_off: None,
+            noticed: Vec::new(),
         }
     }
 
@@ -503,6 +515,26 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     let lively = def.habitat.active.liveliness(at.daylight);
     let night_eyes = def.habitat.active == super::Active::Night;
     let sight = def.senses.sight * if night_eyes { 1.0 } else { 0.6 + 0.4 * at.daylight };
+    // Whom it notices (`Senses`): those it sees where it looks, those close by, those
+    // holding its food within its hearing (it smells it, wherever it looks: a sheep comes
+    // round a wall to the wheat), those who hurt it and its keeper; it keeps them in mind a
+    // while out of sight (`NOTICED`), and senses no one else.
+    for (_, left, since) in &mut mind.noticed {
+        (*left, *since) = (*left - dt, *since + dt);
+    }
+    mind.noticed.retain(|n| n.1 > 0.0);
+    for p in at.players {
+        let d = p.position.distance(at.position);
+        let smelt = p.tempting && d < def.senses.hearing;
+        if p.friend || d <= def.senses.close || p.in_view && d < sight || smelt || mind.recalls(Memory::HurtBy(p.id)) {
+            match mind.noticed.iter_mut().find(|n| n.0 == p.id) {
+                Some(n) => n.1 = NOTICED,
+                None => mind.noticed.push((p.id, NOTICED, 0.0)),
+            }
+        }
+    }
+    let noticed: Vec<Seen> = at.players.iter().filter(|p| mind.noticed.iter().any(|n| n.0 == p.id)).copied().collect();
+    let at = &Situation { players: &noticed, ..*at };
     let ctx = Ctx { creature, mind, at, lively, sight };
 
     let wants: Vec<(usize, Band, Want)> = creature
@@ -538,6 +570,14 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         mind.since = 0.0;
         mind.goal = None;
     }
+    // Its double take (`Senses::react`): just noticed, it stands and looks at them before
+    // it acts on them, unless they hurt it.
+    let taking = want.target.filter(|p| {
+        !mind.recalls(Memory::HurtBy(p.id)) && mind.noticed.iter().any(|n| n.0 == p.id && n.2 < def.senses.react)
+    });
+    if let Some(p) = taking {
+        return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
+    }
     let ctx = Ctx { creature, mind: &mind.clone(), at, lively, sight };
     let mut decision = creature.modules[index].0.act(&ctx, mind, want.target, fresh);
     decision.speed *= mind.personality.pace();
@@ -564,7 +604,7 @@ pub(super) mod tests {
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
-        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true }
+        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true }
     }
 
     fn doing<'a>(creature: &'a Creature, mind: &Mind) -> &'a str {

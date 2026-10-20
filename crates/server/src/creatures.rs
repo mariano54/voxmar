@@ -693,13 +693,31 @@ impl Server {
         }
     }
 
+    /// Whether a creature with `body` sees a point (a player's eyes, `eye`) from where it
+    /// looks: within `field` degrees either way of where it faces, from high in its body,
+    /// with nothing that hides it between (`BlockInfo::occludes`, as a player's look is
+    /// judged). Seeing all round, it sees through nothing all the same.
+    fn in_view(&self, body: &Body, field: f32, eye: Vec3) -> bool {
+        let from = body.position + Vec3::Y * body.size.1 * 0.8;
+        let to = eye - from;
+        let distance = to.length();
+        if distance < 0.001 {
+            return true;
+        }
+        let flat = to.with_y(0.0).normalize_or_zero();
+        if field < 180.0 && flat != Vec3::ZERO && body.forward().dot(flat) < field.to_radians().cos() {
+            return false;
+        }
+        voxmar_engine::physics::raycast(from, to, distance, |cell| self.block(cell).is_some_and(|b| self.content.blocks.info(b).occludes)).is_none_or(|hit| hit.distance >= distance)
+    }
+
     /// The players a creature at `at` can sense, nearest first.
     /// The players a creature with `body` sees within `range`; whether its blow, `reach`
     /// past its edge, has a way through the air (`blow_open`) to each `strikes` says it
     /// would strike at (in its reach and strike band), and its charge a way along the
     /// ground (`charge_open`) to each `charges` says only its charge fits: to no other is
     /// it close to striking.
-    fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, charges: impl Fn(Vec3) -> bool, jumps: bool, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
+    fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, charges: impl Fn(Vec3) -> bool, jumps: bool, field: f32, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
         let at = body.position;
         let mut seen: Vec<Seen> = self
             .players
@@ -718,6 +736,7 @@ impl Server {
                 } else {
                     !charges(p.position) || self.charge_open(body, p.position, jumps)
                 },
+                in_view: self.in_view(body, field, p.eye()),
             })
             .collect();
         seen.sort_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)));
@@ -775,7 +794,7 @@ impl Server {
                 let (phase, scale) = (creature.phase, creature.scale);
                 let strikes = |to: Vec3| strikes_from(species, phase, scale, position, to);
                 let charges = |to: Vec3| charges_from(species, phase, scale, position, to);
-                let players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, charges, species.def.movement.jump > 0.0, range, &species.favourite, creature.owner.as_deref());
+                let players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, charges, species.def.movement.jump > 0.0, species.def.senses.field, range, &species.favourite, creature.owner.as_deref());
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
                 // What it grazes, else, kept and hungry, a trough of its food by home.
