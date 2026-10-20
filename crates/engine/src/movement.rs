@@ -403,9 +403,11 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
             }
             body.velocity.y = (body.velocity.y - tuning.gravity * dt).max(-tuning.terminal_velocity);
         }
-        // On a ladder: pressing against it or holding jump climbs; otherwise a slow slide.
+        // On a ladder: pressing against it or holding jump climbs; otherwise a slow slide,
+        // and nobody goes up one faster than they climb it (the server's checks hold them
+        // to that).
         if !swimming && on_ladder(body, world) {
-            body.velocity.y = if jump || (body.against_wall && wish != Vec3::ZERO) { tuning.climb_speed } else { body.velocity.y.max(-tuning.climb_speed) };
+            body.velocity.y = if jump || (body.against_wall && wish != Vec3::ZERO) { tuning.climb_speed } else { body.velocity.y.clamp(-tuning.climb_speed, tuning.climb_speed) };
         }
         // Pushing against a bank low enough to step onto lifts a swimmer out.
         if body.in_water && body.against_wall && wish != Vec3::ZERO && can_step_out(body, world, wish, tuning.step_out) {
@@ -829,7 +831,8 @@ mod tests {
     }
 
     /// A ladder against a wall three blocks high: walked into, the player climbs it and
-    /// steps off its top onto the wall, at any frame rate, never inside either; let go of
+    /// steps off its top onto the wall, at any frame rate, never inside either, as they do
+    /// up a shaft a block across onto the floor round its top; let go of
     /// halfway up, they slide down no faster than `climb_speed` to the ground; and holding
     /// jump climbs a ladder standing on its own, with nothing to press against.
     #[test]
@@ -864,6 +867,24 @@ mod tests {
             cells.insert(IVec3::new(0, y, 0), blocks.expect("base:oak_ladder"));
         }
         let alone = Built { blocks, cells, floor: |_| 0 };
+        // Up a shaft a block across, walled about, out onto the floor at its top.
+        let mut cells = rustc_hash::FxHashMap::default();
+        for y in 0..4 {
+            for x in -2..=2 {
+                for z in -2..=12 {
+                    let cell = IVec3::new(x, y, z);
+                    if (x, z) != (0, 0) {
+                        cells.insert(cell, blocks.expect("base:oak_planks"));
+                    }
+                }
+            }
+            cells.insert(IVec3::new(0, y, 0), blocks.expect("base:oak_ladder"));
+        }
+        let shaft = Built { blocks, cells, floor: |_| 0 };
+        for fps in [30.0, 60.0, 144.0] {
+            let (body, inside) = run(&shaft, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, walking(Vec3::Z, false), 3.0, fps);
+            assert!(!inside && body.on_ground && body.position.y == 4.0 && body.position.z > 1.0, "did not climb out of the shaft at {fps} fps: {body:?}");
+        }
         let (body, _) = run(&alone, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, Controls { jump: true, ..Controls::default() }, 0.5, 60.0);
         assert!(body.position.y > 1.0 && body.velocity.y == tuning.climb_speed, "holding jump did not climb a ladder: {body:?}");
     }

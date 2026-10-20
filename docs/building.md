@@ -82,7 +82,10 @@ in its cell, pressing against it (or the wall behind it) or holding jump takes y
 go slides you down no faster than that. You climb off its top: past the last rung your feet
 leave its cell, and pressing on steps you onto the wall or floor it leads to. The server
 counts a ladder your feet are in as something under you, so a climb taller than a jump is
-not put back (engine `movement.rs` `on_ladder`; tests
+not put back, though nobody rises on one faster than `climb_speed`; and a slide down one is
+no fall, so it neither hurts nor lands a falling blow (`sliding_down_a_ladder_is_no_fall`).
+A ladder is furniture to a home's survey (survival.ron's `home_furniture` names `ladder`),
+so a ladder up to a loft leaves the room as walled as it was (engine `movement.rs` `on_ladder`; tests
 `a_ladder_is_climbed_onto_the_wall_behind_and_slid_down_when_let_go` and gameplay
 `an_honest_climb_up_a_ladder_is_never_put_back`; the gate's Pieces step judges one). At load
 a climbable block must be solid, so there is something to press against. Creatures do not
