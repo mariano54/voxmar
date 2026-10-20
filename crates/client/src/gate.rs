@@ -783,6 +783,8 @@ struct Gate {
     readout_seen: bool,
     /// The Blaze step saw its panel smoulder (smoke rising) before it caught.
     smoulder_seen: bool,
+    /// The tap the Blaze step last asked to set its torch down on.
+    torch_taps: u32,
     /// Whether the creatures step could release its butterfly.
     butterfly: bool,
     /// Whether the struck creature's fall was judged.
@@ -1037,6 +1039,7 @@ impl Gate {
             boss_id: None,
             readout_seen: false,
             smoulder_seen: false,
+            torch_taps: 0,
             butterfly: false,
             fall_judged: false,
             cover_checked: false,
@@ -6458,16 +6461,43 @@ fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
         gate.taps += 1;
     }
     match gate.phase {
+        // The panel by command; the torch set down by hand, so the fire is the player's own
+        // and burns in their own home (a command's fire is no one's: it never takes a home).
         0 => {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} wattle_panel", panel.x, panel.y, panel.z));
-            net.command(&format!("setblock {} {} {} torch", torch.x, torch.y, torch.z));
+            net.command(&format!("setblock {} {} {} air", torch.x, torch.y, torch.z));
+            net.command("give torch 1");
             world.resource_mut::<crate::emitters::Emitters>().watch(panel);
             gate.smoulder_seen = false;
             gate.advance(now);
+            gate.torch_taps = 0;
+        }
+        1 => {
+            let item = world.resource::<ClientWorld>().registry.id("base:torch");
+            let (packed, in_hand) = {
+                let player = world.resource::<LocalPlayer>();
+                (item.is_some_and(|item| player.inventory.count(item) > 0), item.is_some() && player.inventory.get(player.selected).map(|stack| stack.item) == item)
+            };
+            let set = {
+                let client = world.resource::<ClientWorld>();
+                client.block(torch).is_some_and(|b| client.registry.def(b).name == "base:torch")
+            };
+            if set {
+                gate.advance(now);
+            } else if in_hand && gate.taps > gate.torch_taps {
+                gate.torch_taps = gate.taps;
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: torch - IVec3::Y, face: voxmar_engine::coords::Face::PosY });
+            } else if packed && !in_hand && let Some(item) = item {
+                hold(world, Holder::Tool(item));
+            } else if gate.waited_out(4.0) {
+                gate.check("fire: smoulders", Err(format!("the torch was not set down by hand at {torch} (packed {packed}, in hand {in_hand})")));
+                leave(world, gate);
+            }
         }
         // The panel smoulders (the server says so, and smoke rises from it), then catches.
-        1 => {
+        2 => {
             let smouldering = world.resource::<ClientWorld>().smoulders.contains(&panel);
             let amount = world.resource::<crate::render::particles::Particles>().amount;
             let puffs = world.resource::<crate::emitters::Emitters>().watched;
