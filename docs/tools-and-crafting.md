@@ -169,8 +169,8 @@ you wake after dying until a hearth gives you a home: right click it to sleep
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with tempered kiln bricks, with a pillar
 on each corner. Tempered kiln bricks are four fired clay and a straw (two, as plain bricks
-are); straw comes only from harvesting a ripe grain crop (wheat, rye or rice, one or two a
-plant), so the field is a step on the way to the kiln. Straw is fibre too (thatch), three
+are); straw comes of grain: one from a wild wheat or rice tuft picked, one or two from a
+ripe sown plant (wheat, rye or rice). Straw is fibre too (thatch), three
 twist into two twine, and nine bind into a hay bale, which comes apart into the nine when
 broken. A crucible smelts only in a standing kiln with an unexpired paid fire:
 copper ore into ingots, and three copper ingots held with a tin ore carried into four

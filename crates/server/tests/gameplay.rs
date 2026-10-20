@@ -8747,7 +8747,7 @@ impl Fresh {
     /// More of the plot for the Farm age, east and north of the first days' ground: two more
     /// ponds like the first (two blocks wide, clay two deep under a block of water, a bank
     /// each side), fourteen more oak trunks for charcoal, a copper vein's ten ores, and wild
-    /// wheat for a field's seed.
+    /// wheat for straw.
     fn lay_out_the_farm(&mut self) {
         let (o, v) = (self.origin, IVec3::new);
         self.c.fill(o, v(21, 0, -11), v(30, 10, 13), "air");
@@ -8762,11 +8762,9 @@ impl Fresh {
             }
         }
         self.c.fill(o, v(18, 0, 7), v(19, 0, 11), "copper_ore");
-        // Six tufts of wild wheat beyond the east pond for the field's seeds, and a lone
-        // trunk by them for the hoe.
+        // Six tufts of wild wheat beyond the east pond, for straw.
         self.c.fill(o, v(29, 0, 8), v(30, 0, 10), "wild_wheat");
-        self.c.fill(o, v(30, 0, 12), v(30, 0, 12), "oak_log");
-        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(30, 0, 10), "base:wild_wheat"), (v(30, 0, 12), "base:oak_log")];
+        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(30, 0, 10), "base:wild_wheat")];
         self.c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(o + at) == c.content.blocks.id(name)));
     }
 
@@ -8915,43 +8913,14 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         }
     }
 
-    // The field, sown first of the Farm age so it ripens while the line goes on: six tufts
-    // of wild wheat beyond the east pond picked for their seeds, a wooden hoe of the lone
-    // trunk there, and six squares of dirt within the pond's reach tilled and sown. Its
-    // straw tempers the Crucible Kiln's bricks.
-    let planks = "base:oak_planks";
+    // Six tufts of wild wheat beyond the east pond, picked for the straw that tempers the
+    // Crucible Kiln's bricks (one a tuft) and the seeds a field would take.
     for tuft in (8..=10).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, 0, z))) {
         f.walk_toward(Fresh::middle(tuft), 1.3);
         f.propose("core:mine", ActionTarget::Block { block: tuft, face: Face::PosY });
         f.wait(5.0, "picking the wild wheat", |c| c.world.block(tuft) == Some(BlockId::AIR));
     }
-    f.collect("base:wheat_seeds", 6);
-    f.gather("base:stone_axe", vec![o + IVec3::new(30, 0, 12)], log, 1);
-    f.craft(&[(0, log, 1)], planks, 4);
-    if f.have(stick) < 2 {
-        f.craft(&[(0, planks, 1), (3, planks, 1)], stick, 4);
-    }
-    f.at_table(site.table);
-    f.craft(&[(0, planks, 1), (1, planks, 1), (4, stick, 1), (7, stick, 1)], "base:wooden_hoe", 1);
-    let field: Vec<IVec3> = (2..=4).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, -1, z))).collect();
-    let (farmland, sprout, ripe) = (f.c.content.blocks.expect("base:farmland"), f.c.content.blocks.expect("base:wheat_crop_0"), f.c.content.blocks.expect("base:wheat_crop"));
-    let by_the_field = Fresh::middle(o + IVec3::new(29, 0, 6));
-    f.walk_toward(by_the_field, 0.3);
-    f.hold("base:wooden_hoe");
-    for &ground in &field {
-        f.propose("base:till", ActionTarget::Block { block: ground, face: Face::PosY });
-    }
-    f.wait(5.0, "tilling the field", |c| field.iter().all(|&g| c.world.block(g) == Some(farmland)));
-    // One square at a time, each seen sown before the next: from seeds in hand, and once
-    // those are gone from the seed pouch the herbs filled, which sows what it carries.
-    let seeds = f.c.content.blocks.expect("base:wheat_seeds");
-    for &ground in &field {
-        let in_slots = f.c.inventory.slots.iter().flatten().any(|s| s.item == seeds);
-        f.hold(if in_slots { "base:wheat_seeds" } else { "base:seed_pouch" });
-        f.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
-        f.wait(5.0, "sowing the field", |c| c.world.block(ground + IVec3::Y) == Some(sprout));
-    }
-    f.mark("sown");
+    f.collect(straw, 6);
 
     // The Potter: six clay pots at the table, five fired clay round an empty top middle
     // making two (Crafting 2).
@@ -9009,19 +8978,6 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let k = crafts as u8;
     f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
     f.mark("brick_by_brick");
-
-    // First Harvest: the field sown at the start of the age, waited on if it is not yet
-    // ripe, and cut: wheat, seed and the straw the kiln's bricks take, one or two a plant.
-    f.walk_toward(by_the_field, 0.3);
-    f.wait(1200.0, "the wheat ripening", |c| field.iter().all(|&g| c.world.block(g + IVec3::Y) == Some(ripe)));
-    f.hold("");
-    for &ground in &field {
-        let plant = ground + IVec3::Y;
-        f.propose("core:mine", ActionTarget::Block { block: plant, face: Face::PosY });
-        f.wait(5.0, "cutting the wheat", |c| c.world.block(plant) != Some(ripe));
-    }
-    f.collect(straw, 6);
-    f.mark("first_harvest");
 
     // Twelve tempered kiln bricks for the kiln, two from four fired clay and a straw, at
     // the table (five cells).
@@ -9157,7 +9113,6 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("charcoal", "charcoal"),
     ("red_metal", "red_metal"),
     ("brick_by_brick", "brick_by_brick"),
-    ("first_harvest", "first_harvest"),
     ("the_crucible", "the_crucible"),
     ("crucible_kiln", "crucible_kiln"),
 ];
