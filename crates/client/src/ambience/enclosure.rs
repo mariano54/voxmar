@@ -305,24 +305,24 @@ mod tests {
     #[test]
     fn a_hut_is_indoors_with_its_door_open() {
         let eye = IVec3::new(0, 65, 0);
-        let shut = scan(eye, hut(false, false), &kinds(), 1);
+        let shut = scan(eye, hut(false, false), |_| false, &kinds(), 1);
         assert_eq!((shut.shelter, shut.roof), (1.0, 1.0));
-        let open = scan(eye, hut(true, true), &kinds(), 1);
+        let open = scan(eye, hut(true, true), |_| false, &kinds(), 1);
         assert!(open.shelter > 0.85, "{}", open.shelter);
         assert_eq!(open.roof, 1.0);
         // The fill leaks out of the door, so by sky and air alone it is half outdoors.
         assert!(open.air > shut.air && open.sky > 0.0, "{} {}", open.air, open.sky);
         // Standing in the doorway is on the way out; a step outside is outdoors.
-        let doorway = scan(IVec3::new(3, 65, 0), hut(true, true), &kinds(), 1);
+        let doorway = scan(IVec3::new(3, 65, 0), hut(true, true), |_| false, &kinds(), 1);
         assert!(doorway.shelter < open.shelter, "{}", doorway.shelter);
-        let outside = scan(IVec3::new(5, 65, 0), hut(true, true), &kinds(), 1);
+        let outside = scan(IVec3::new(5, 65, 0), hut(true, true), |_| false, &kinds(), 1);
         assert_eq!((outside.shelter, outside.roof), (0.0, 0.0));
     }
 
     #[test]
     fn a_roof_on_posts_is_heard_in_the_rain_but_is_not_indoors() {
         let porch = |p: IVec3| Some(if p.x.abs() <= 3 && p.z.abs() <= 3 && p.y == 67 { STONE } else { field(p).unwrap() });
-        let found = scan(IVec3::new(0, 65, 0), porch, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), porch, |_| false, &kinds(), 1);
         assert_eq!((found.shelter, found.roof), (0.0, 1.0));
     }
 

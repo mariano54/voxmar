@@ -35,7 +35,7 @@
         // Nothing to see on purpose: items moving on a screen, an item thrown (it flies
         // itself), coming back to life (the screen says it), and things that show
         // themselves (a door swinging, a lid lifting, a line cast, an animal fed or let go,
-        // a bed lain in, a lock giving, a pouch emptied, bees tended).
+        // a bed lain in, a seat sat on, a catch taken from a trap, a lock giving, a pouch emptied, bees tended).
         "core:transfer": (none: true),
         "core:quick_move": (none: true),
         "core:lay": (none: true),
@@ -49,6 +49,8 @@
         "base:inspect": (none: true),
         "base:release": (none: true),
         "base:sleep": (none: true),
+        "base:sit": (none: true),
+        "base:take_from_trap": (none: true),
         "base:pick_lock": (none: true),
         "base:empty_pouch": (none: true),
         "base:tend_bees": (none: true),

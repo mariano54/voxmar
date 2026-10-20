@@ -508,7 +508,7 @@ mod tests {
         let fx = ActionFx::load(&content.files).unwrap();
         let world = ClientWorld::new(content.blocks.clone(), 2, crate::render::terrain::Terrain::detached());
         let burst = |name: &str, held: Option<BlockId>| Burst { name: name.into(), effect: fx.effects[name].clone(), at: Vec3::new(0.5, 70.0, 0.5), cell: IVec3::new(0, 69, 0), face: Face::PosY, held, when: 0.0 };
-        let bread = content.blocks.expect("base:cooked_rabbit");
+        let bread = content.blocks.expect("base:cooked_small_game");
         let mut dice = Dice::default();
         let crumbs = burst_particles(&burst("crumbs", Some(bread)), &world, &content.blocks, None, 1.0, &mut dice);
         assert_eq!(crumbs.len(), fx.effects["crumbs"].count as usize);
@@ -540,7 +540,7 @@ mod tests {
             "soil" => "base:dirt",
             _ => "base:crafting_table",
         };
-        let held = content.blocks.expect("base:cooked_rabbit");
+        let held = content.blocks.expect("base:cooked_small_game");
         let times = [0.05f32, 0.2, 0.4, 0.7];
         let (cell, rows) = (220u32, fx.effects.len() as u32);
         let mut sheet = image::RgbImage::from_pixel(cell * times.len() as u32, cell * rows, image::Rgb([28, 30, 36]));

@@ -78,7 +78,8 @@ const STORM: &[(&str, f32)] =
     &[("rain", 1.0), ("raining", 1.0), ("storm", 0.9), ("wind", 11.0), ("gusts", 1.0), ("cover", 1.0), ("wetness", 1.0)];
 /// The same from inside a home with its door open: the fill leaks out of the door, so sky
 /// and air say half outdoors, and rain is heard falling outside it.
-const INDOORS: &[(&str, f32)] = &[("shelter", 1.0), ("roof", 1.0), ("sky", 0.25), ("air", 0.35), ("rain", 0.3), ("reverb", 0.1)];
+// A plank roof over it, so the rain taps on it (`roof_tap`) and is muffled (`sheltered`).
+const INDOORS: &[(&str, f32)] = &[("shelter", 1.0), ("roof", 1.0), ("roof_tap", 1.0), ("sheltered", 0.6), ("sky", 0.25), ("air", 0.35), ("rain", 0.3), ("reverb", 0.1)];
 
 fn scenes(ambience: &Ambience) -> Vec<Scene> {
     let forest = [("leaves", 1.0), ("wood", 0.7), ("grass", 0.5), ("canopy", 0.8)];

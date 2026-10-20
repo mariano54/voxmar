@@ -109,7 +109,7 @@ impl SkillToasts {
 
     /// When the newest refusal showing was last given, to hear it by (`ui::sound`).
     pub fn newest_refusal(&self) -> Option<f32> {
-        self.lines.iter().filter(|l| matches!(l.kind, LineKind::Refused(_))).map(|l| l.at).reduce(f32::max)
+        self.why.as_ref().filter(|(_, at)| self.now - at < WHY_SECONDS).map(|&(_, at)| at)
     }
 
     /// An action refused, with why, at `now`: it shows under the crosshair in place of the
