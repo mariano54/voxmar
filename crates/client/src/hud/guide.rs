@@ -60,7 +60,7 @@ pub fn entries(locale: &Locale, launch: &Launch, skill: SkillId) -> Vec<Entry> {
     // once each.
     {
         let mut cooked: Vec<BlockId> = Vec::new();
-        for (_, recipe) in content.cooking.iter().filter(|(_, r)| r.skill == Some(skill)) {
+        for (_, recipe) in content.player_cooking().filter(|(_, r)| r.skill == Some(skill)) {
             if !cooked.contains(&recipe.output) {
                 cooked.push(recipe.output);
                 let words = locale.format("character.cook", &[("item", &locale.block(content.blocks.def(recipe.output)))]);
@@ -125,7 +125,7 @@ pub fn page(locale: &Locale, launch: &Launch, skill: SkillId, entries: &[Entry],
             gives.extend(crop.harvest.iter().map(|(item, _)| *item));
         }
         Source::Cook(output) => {
-            let recipes: Vec<_> = content.cooking.iter().filter(|(_, recipe)| recipe.output == output).collect();
+            let recipes: Vec<_> = content.player_cooking().filter(|(_, recipe)| recipe.output == output).collect();
             let inputs: Vec<BlockId> = recipes.iter().map(|(input, _)| *input).collect();
             if !inputs.is_empty() {
                 parts.push(Part::Items(inputs));

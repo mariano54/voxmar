@@ -231,6 +231,13 @@ fn letters_apart(a: &str, b: &str) -> usize {
 }
 
 impl Content {
+    /// The cooking recipes a player can work: those whose station some block carries. A
+    /// recipe at a station no block has (the potters' `village_kiln`, worked for the player by
+    /// a wandering party) is left out of the recipe book, the makeable list and the guides.
+    pub fn player_cooking(&self) -> impl Iterator<Item = (BlockId, &crate::cooking::Recipe)> {
+        self.cooking.iter().filter(|(_, recipe)| self.blocks.tagged(&recipe.def.station).next().is_some())
+    }
+
     /// The least tool that is a `kind` of at least `tier`, by property: the lowest tier, then
     /// the lowest worth (value.rs), then the first in registry order. What a refusal names
     /// ("Needs a Flint Pickaxe or better").

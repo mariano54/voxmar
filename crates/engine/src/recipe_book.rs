@@ -97,7 +97,7 @@ impl RecipeBook {
             let stations: Vec<BlockId> = recipe.near.as_deref().map(|tag| blocks.tagged(tag).collect()).unwrap_or_default();
             book.add(blocks, Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items.into_iter().chain(stations).collect());
         }
-        for (input, recipe) in content.cooking.iter() {
+        for (input, recipe) in content.player_cooking() {
             let station = recipe.def.station.clone();
             let stations: Vec<BlockId> = content.blocks.tagged(&station).collect();
             let input = blocks.item_of(input);
@@ -232,6 +232,22 @@ mod tests {
                     let found = content.blocks.id(icon).or_else(|| content.blocks.id(&format!("base:{icon}")));
                     assert!(found.is_some(), "{}'s guide line {:?} names `{icon}`, which is no item", skill.name, step.text);
                 }
+            }
+        }
+    }
+
+    /// A cooking recipe at a station no block carries (the potters' village kiln, which they
+    /// work for the player) is no way the player makes anything: the book, and so the
+    /// makeable list, leaves it out, while the game's own pit kiln is in it.
+    #[test]
+    fn cooking_at_a_station_no_block_carries_is_not_in_the_book() {
+        let content = content();
+        assert!(content.cooking.iter().any(|(_, r)| r.def.station == "village_kiln"), "the potters' recipes are still there");
+        assert!(content.player_cooking().all(|(_, r)| r.def.station != "village_kiln"));
+        let book = RecipeBook::new(&content);
+        for entry in book.entries() {
+            if let Method::Cook { station, .. } = &entry.method {
+                assert!(content.blocks.tagged(station).next().is_some(), "the book cooks {:?} at `{station}`, which no block carries", content.blocks.def(entry.output).name);
             }
         }
     }
