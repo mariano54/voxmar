@@ -310,11 +310,17 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
 fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_engine::multiblock::MultiblockRegistry) -> Kinds {
     let ids = (0..registry.len()).map(|id| registry.info(voxmar_engine::block::BlockId(id as u16)));
     let group = ambience.block_groups(registry);
-    // A structure's core in a group heard only while lit.
+    // A structure's core in a group heard only while lit, and any block in a group heard only
+    // while it smoulders: both only while the server says it burns (`burning` in the scan).
     let lit_only = group
         .iter()
         .enumerate()
-        .map(|(id, g)| g.is_some_and(|g| ambience.groups[g as usize].lit) && multiblocks.with_core(voxmar_engine::block::BlockId(id as u16)).next().is_some())
+        .map(|(id, g)| {
+            g.is_some_and(|g| {
+                let g = &ambience.groups[g as usize];
+                g.smouldering || (g.lit && multiblocks.with_core(voxmar_engine::block::BlockId(id as u16)).next().is_some())
+            })
+        })
         .collect();
     Kinds {
         open: ids.clone().map(|info| !info.solid || info.render == RenderKind::Leaves).collect(),
@@ -421,10 +427,11 @@ fn survey(
     let (seed, generator) = ambient.generator.clone().expect("set above");
     let (kinds, content, tx) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.0.clone());
     let fires = world.fires.clone();
+    let smoulders = world.smoulders.clone();
     let random = mix(time.elapsed().as_nanos() as u64);
     ambient.surveying = true;
     rayon::spawn(move || {
-        let enclosure = enclosure::scan(eye, |p| snapshot.block(p), |p| fires.contains(&p), &kinds, random);
+        let enclosure = enclosure::scan(eye, |p| snapshot.block(p), |p| fires.contains(&p) || smoulders.contains(&p), &kinds, random);
         let generator = generator.get_or_init(|| match WorldContent::load(&content) {
             Ok(world) => Some(Overworld::shared(seed, &content, &world)),
             Err(e) => {

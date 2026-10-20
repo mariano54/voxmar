@@ -63,6 +63,7 @@ fn a_new_player_beats_the_first_age_creatures_as_designed() {
     check("badger", (0.5, 1.0), "a badger is easy");
     check("fox", (0.6, 1.0), "a fox is easy");
     check("aurochs", (0.3, 0.85), "an aurochs is real but fair");
+    check("wild_boar", (0.6, 1.0), "a wild boar answers a blow but is easy");
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
 
@@ -73,6 +74,84 @@ fn a_new_player_catches_a_fleeing_boar_at_a_sprint() {
     let sprint = content.movement.sprint_speed;
     // Half a block a second or more: a chase closes in a few seconds, not never.
     assert!(boar.movement.run + 0.5 <= sprint, "a wild boar runs {} blocks a second, too near a sprint's {sprint} to catch", boar.movement.run);
+    // The liveliest of them too (`Personality::pace`, its energy rolled as far up as it goes).
+    let t = &boar.temperament;
+    let liveliest = voxmar_engine::creature::brain::Personality { energy: (t.energy + t.spread).min(1.0), ..voxmar_engine::creature::brain::Personality::roll(t, 0) }.pace();
+    let fastest = boar.movement.run * liveliest;
+    assert!(fastest <= 0.95 * sprint, "the liveliest wild boar runs {fastest:.2} blocks a second, above 0.95 of a sprint's {sprint}");
+}
+
+/// The wild boar never starts a fight, but struck while it is hale it turns and gores
+/// back; badly hurt it runs instead, and a piglet always runs. Whatever its own temper.
+#[test]
+fn a_wild_boar_struck_gores_back_until_badly_hurt() {
+    use voxmar_engine::creature::brain::{Mind, Seen, Situation, think};
+    use voxmar_engine::glam;
+    let content = content();
+    let boar = content.creatures.get(content.creatures.find("wild_boar").unwrap());
+    let doing = |mind: &Mind| mind.doing.map_or("nothing", |i| boar.modules[i].0.name());
+    let near = [Seen { id: 1, position: glam::Vec3::new(1.2, 0.0, 0.0), tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false }];
+    let at = |health| Situation { position: glam::Vec3::ZERO, home: glam::Vec3::ZERO, health, phase: 0, scale: 1.0, daylight: 1.0, players: &near, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 };
+    // Thinking a blow's worth of time (`every` 1.6 s of the player's swings, near enough).
+    let between = |mind: &mut Mind, health: f32, thinks: u32| {
+        let mut attacked = false;
+        for _ in 0..thinks {
+            attacked |= think(boar, mind, &at(health)).attack.is_some();
+        }
+        attacked
+    };
+    for seed in 0..40 {
+        // One mind played through a fight: it never goes first, gores back each blow while
+        // above 40% of its health, then drops the fight and runs, and keeps running with
+        // no more blows.
+        let mut mind = Mind::new(&boar.def.temperament, seed);
+        assert!(!between(&mut mind, 1.0, 8) && doing(&mind) != "defend", "seed {seed}: a boar went for a player who never struck it ({})", doing(&mind));
+        for health in [0.9, 0.7, 0.5] {
+            mind.hurt(boar, Some(1), health);
+            let attacked = between(&mut mind, health, 8);
+            assert!(attacked && doing(&mind) == "defend", "seed {seed}: a boar struck down to {health} did not gore back ({}, attacked {attacked})", doing(&mind));
+        }
+        mind.hurt(boar, Some(1), 0.3);
+        let _ = between(&mut mind, 0.3, 1);
+        assert_eq!(doing(&mind), "flee", "seed {seed}: a boar struck down to 0.3 did not run");
+        let attacked = between(&mut mind, 0.3, 25);
+        assert!(!attacked && doing(&mind) == "flee", "seed {seed}: 5 s on with no blows a badly hurt boar stopped running ({}, attacked {attacked})", doing(&mind));
+        // A piglet runs, hale or not.
+        let mut mind = Mind::new(&boar.def.temperament, seed);
+        mind.hurt_young(boar, Some(1), 0.8, true);
+        let _ = think(boar, &mut mind, &at(0.8));
+        assert_eq!(doing(&mind), "flee", "seed {seed}: a piglet struck did not run");
+    }
+    // Every kind that fights and runs (a fox, a frost stag, a cave bat): struck while hale it
+    // fights, badly hurt it drops the fight and runs, and keeps running with no more blows.
+    let mut running = Vec::new();
+    for (_, creature) in content.creatures.iter().filter(|(_, c)| c.fights() && c.flees() && !c.def.boss) {
+        let name = creature.def.name.rsplit(':').next().unwrap_or(&creature.def.name);
+        let doing = |mind: &Mind| mind.doing.map_or("nothing", |i| creature.modules[i].0.name());
+        for seed in 0..40 {
+            let mut mind = Mind::new(&creature.def.temperament, seed);
+            mind.hurt(creature, Some(1), 0.9);
+            for _ in 0..4 {
+                let _ = think(creature, &mut mind, &at(0.9));
+            }
+            assert!(matches!(doing(&mind), "defend" | "hunt"), "seed {seed}: a {name} struck while hale did not fight ({})", doing(&mind));
+            mind.hurt(creature, Some(1), 0.05);
+            for _ in 0..25 {
+                let _ = think(creature, &mut mind, &at(0.05));
+            }
+            assert_eq!(doing(&mind), "flee", "seed {seed}: a badly hurt {name} was not running 5 s on");
+        }
+        running.push(name.to_owned());
+    }
+    assert!(running.iter().any(|n| n == "wild_boar"), "the kinds that fight and run: {running:?}");
+    eprintln!("fight, then run: {running:?}");
+    // A kind that never runs fights on badly hurt, its anger kept.
+    for (_, creature) in content.creatures.iter().filter(|(_, c)| c.fights() && !c.flees() && !c.def.boss) {
+        let mut mind = Mind::new(&creature.def.temperament, 3);
+        mind.hurt(creature, Some(1), 0.9);
+        mind.hurt(creature, Some(1), 0.05);
+        assert!(mind.anger > 0.5, "{} gave up its fight badly hurt though it never runs", creature.def.name);
+    }
 }
 
 #[test]

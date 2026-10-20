@@ -52,6 +52,9 @@
     // shelter).
     shelter: (walls: 6, roof: 8, muffle: 700, thunder: 0.5),
     groups: [
+        // Thatch or wattle smouldering by a flame, about to catch (fire.ron): heard only while
+        // it smoulders (`smouldering`), one within a few blocks fully.
+        (name: "smoulder", tags: ["thatch", "wattle"], range: (1, 4), smouldering: true),
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
         (name: "wood", tags: ["log"], range: (5, 60)),
         // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a
@@ -358,6 +361,13 @@
             name: "lava_pop", sound: LavaPop, volume: 0.35, at: Block("lava"), per_minute: 5, cooldown: 4,
             pitch: (0.8, 1.15), reach: 10,
             when: {"lava": (min: 0.3, fade: 0.3)},
+        ),
+        // Thatch about to catch, crackling and spitting, from the thatch itself: quick and
+        // sharp, so it is heard over the house.
+        (
+            name: "smoulder_crackle", sound: Snap, volume: 0.4, at: Block("smoulder"), per_minute: 40, cooldown: 1,
+            pitch: (1.1, 1.45), reach: 8,
+            when: {"smoulder": (min: 0.05, fade: 0.05)},
         ),
         // A log snapping in the fire, from the fire itself.
         (
