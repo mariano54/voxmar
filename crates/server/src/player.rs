@@ -611,6 +611,8 @@ impl Server {
                 player.quests_done = saved.quests;
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
+                player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_unchecked = !player.home_steps.is_empty();
             }
             // The coin purse in the pack's last slot, out of the hotbar's way, and the kit
             // unless this address has had its share.
