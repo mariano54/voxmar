@@ -762,9 +762,12 @@ impl Server {
                 fall: checks.speed_margin * fly.max(tuning.terminal_velocity),
             }
         } else {
+            // Feet on a ladder, a jump climbs it no faster than `climb_speed` (the client's
+            // `movement::step`), so neither does anyone else.
+            let rise = if self.on_ladder(player.position) { tuning.climb_speed } else { tuning.jump_velocity };
             Budgets {
                 across: checks.speed_margin * tuning.top_ground_speed(),
-                rise: checks.speed_margin * tuning.jump_velocity,
+                rise: checks.speed_margin * rise,
                 fall: checks.speed_margin * tuning.terminal_velocity,
             }
         };
@@ -848,8 +851,9 @@ impl Server {
     }
 
     /// What a player standing at `feet` has under them: `Some(true)` a fluid they are in,
-    /// `Some(false)` ground, `None` nothing. What they may jump or swim up from. Where the
-    /// server has not loaded the land yet, it takes the player's word.
+    /// `Some(false)` ground (or a ladder their feet are in, `movement::on_ladder`), `None`
+    /// nothing. What they may jump or swim up from. Where the server has not loaded the land
+    /// yet, it takes the player's word.
     fn standing(&self, feet: Vec3) -> Option<bool> {
         let blocks = &self.content.blocks;
         if !self.world.contains(ColumnPos::of_block(feet.floor().as_ivec3())) {
@@ -861,11 +865,19 @@ impl Server {
         let (depth, _) = voxmar_engine::movement::water_around(blocks, |cell| self.block(cell), &Aabb::standing(feet, dims::WIDTH, dims::HEIGHT));
         if depth > 0.0 {
             Some(true)
-        } else if ground.overlaps(|cell| self.boxes(cell)) {
+        } else if ground.overlaps(|cell| self.boxes(cell)) || self.on_ladder(feet) {
             Some(false)
         } else {
             None
         }
+    }
+
+    /// Whether a player's feet at `feet` are in a ladder's cell, as the client climbs it
+    /// (`movement::on_ladder`).
+    pub(crate) fn on_ladder(&self, feet: Vec3) -> bool {
+        let half = dims::WIDTH / 2.0 - 1e-4;
+        let (lo, hi) = ((feet - Vec3::new(half, 0.0, half)).floor().as_ivec3(), (feet + Vec3::new(half, 0.0, half)).floor().as_ivec3());
+        (lo.x..=hi.x).any(|x| (lo.z..=hi.z).any(|z| self.block(voxmar_engine::glam::IVec3::new(x, lo.y, z)).is_some_and(|b| self.content.blocks.info(b).climbable)))
     }
 
     /// Whether there is ground within `Checks::near_ground` under a player at `feet`.

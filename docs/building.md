@@ -29,6 +29,7 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Shuttered window | `<timber>_shuttered_window` (`_shut`) | a lattice window with two leaves on its face, standing out open, across it shut | faces the placer; a right click shuts and opens them | a lattice window and shutters make 1 (3) |
 | Railing | `<timber>_railing`, `<timber>_railing_corner` | a handrail and a bottom rail along the back of the cell with balusters between, a block high; the corner turns along the east side too | the rail runs along the side away from the placer | 3 beams, 3 sticks make 3 (3); 2 railings make a corner (3) |
 | Fence, gate | `<timber>_fence`, `<timber>_fence_corner`, `<timber>_fence_gate` | half a post at each end and two rails across the middle of the cell, a block high; the corner turns from the west to the north; the gate a frame of rails and uprights, swung out north against its west post when open | runs across the placer's view | 4 posts, 2 sticks make 6 (2); 2 fences make a corner; 2 fences round a slab make a gate (2) |
+| Ladder | `<timber>_ladder` | two rails and four rungs at the back of the cell, against the wall behind | faces the placer, its back to the wall | 6 posts, 3 sticks make 4 (2) |
 | Newel post | `<timber>_newel_post` | a post five texels square with a cap | | a slab on a post makes 1 (3) |
 | Landing | `<timber>_landing` | boards across the top of the cell on two joists, level with a stair's top | joists run away from the placer | 3 slabs on 2 beams make 3 (3) |
 | Balcony door | `balcony_door` (`_top`, `_open`, `_open_top`) | a plank door whose upper half is a lattice | placed whole, as a door; a right click opens and shuts it | a lattice window on a wooden door makes 1 (4) |
@@ -79,6 +80,21 @@ judges a fence, a corner and a gate). It walls no room: a home's survey looks pa
 was. A shut balcony door is a sound lower half and a draughty lattice over it; open, it is
 a way through, as an empty frame is. At load a block tagged `railing` must be solid and a
 block high, and one tagged `landing` solid across the whole top of its cell.
+
+A ladder (`<timber>_ladder`, tagged `climbable`) is climbed as in Minecraft: with your feet
+in its cell, pressing against it (or the wall behind it) or holding jump takes you up at
+`climb_speed` (core `movement.ron`, 3 blocks a second, at most `jump_velocity`), and letting
+go slides you down no faster than that. You climb off its top: past the last rung your feet
+leave its cell, and pressing on steps you onto the wall or floor it leads to. The server
+counts a ladder your feet are in as something under you, so a climb taller than a jump is
+not put back, though nobody rises on one faster than `climb_speed`; and a slide down one is
+no fall, so it neither hurts nor lands a falling blow (`sliding_down_a_ladder_is_no_fall`).
+A ladder is furniture to a home's survey (survival.ron's `home_furniture` names `ladder`),
+so a ladder up to a loft leaves the room as walled as it was (engine `movement.rs` `on_ladder`; tests
+`a_ladder_is_climbed_onto_the_wall_behind_and_slid_down_when_let_go` and gameplay
+`an_honest_climb_up_a_ladder_is_never_put_back`; the gate's Pieces step judges one). At load
+a climbable block must be solid, so there is something to press against. Creatures do not
+climb ladders.
 The home's load check (`Rules::check_shelters`) holds every solid building or roof block
 but furniture to exactly one grade.
 

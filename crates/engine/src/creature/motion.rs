@@ -8,6 +8,7 @@
 
 use glam::{IVec3, Vec3};
 
+use super::path::{self, Walker};
 use super::{Movement, Style, Water};
 use crate::physics::{Aabb, CUBE, move_and_slide_boxes, move_axis_boxes};
 
@@ -53,11 +54,15 @@ pub struct Body {
     /// tread of a stair or the next course of a roof while its feet are on the last one.
     /// Its head (`head_points`) is that much higher; it lowers it again once it can.
     pub lift: f32,
+    /// Whether it goes down where it could not climb back of its own accord: in a chase
+    /// (the server's say), after what it chases. Otherwise it walks into no pit it could
+    /// not get out of (`path::way_out`), however lively its pace.
+    pub bold: bool,
 }
 
 impl Body {
     pub fn new(position: Vec3, yaw: f32, size: (f32, f32)) -> Self {
-        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0, lift: 0.0 }
+        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0, lift: 0.0, bold: false }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -160,6 +165,12 @@ pub trait Surroundings {
     /// ground.
     fn solid(&self, cell: IVec3) -> bool;
     fn water(&self, cell: IVec3) -> bool;
+    /// Whether a cell is lava (or another fluid that burns): a wall to a land animal at any
+    /// depth, as water two deep is. None by default.
+    fn lava(&self, _cell: IVec3) -> bool {
+        false
+    }
+
     /// Whether `cell` is something to stand on, as well as solid: a cell that is only a
     /// wall (over a railing, which stands two high to a creature) or a railing's own narrow
     /// top is no floor, no step to hop onto and no landing.
@@ -330,10 +341,10 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // A low piece in a cell (a slab, below a body's feet as `Surroundings::solid` goes) is
     // that cell's floor: on a slab bridge, what is below it is no ground to judge by.
     let low = |c: IVec3| !world.solid(c) && !world.boxes(c).is_empty();
-    let ground = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || low(c) || world.solid(c - IVec3::Y));
+    let ground = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.lava(c) || low(c) || world.solid(c - IVec3::Y));
     // Ahead, a railing's top, or the wall over it, is no landing: what comes down there is
     // off the way, as over a drop too deep.
-    let landing = |from: IVec3| ground(from).filter(|&c| world.water(c) || low(c) || world.footing(c - IVec3::Y));
+    let landing = |from: IVec3| ground(from).filter(|&c| world.water(c) || world.lava(c) || low(c) || world.footing(c - IVec3::Y));
     // What it stands on is the highest ground under any part of its box (at an edge, its
     // middle may already be over the drop), whatever it is: one already up on a railing,
     // or on the wall over it, still judges the drop beyond from there.
@@ -352,24 +363,61 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // wading in the shallows, it does not walk on into the deep.
     let feet = body.position.floor().as_ivec3();
     let wary = water == Water::Land && !(body.in_water && world.water(feet - IVec3::Y));
+    // Lava is a wall to anything that walks, unless it is already in it: then it walks out,
+    // and no deeper in.
+    let lava_kind = matches!(water, Water::Land | Water::Amphibious);
+    let in_lava = lava_kind && (world.lava(feet) || world.lava(feet - IVec3::Y));
+    let burns = lava_kind && !in_lava;
+    // In lava a block deep, it goes no deeper: lava two deep is shut to it, as deep water is.
+    let lava_deep = |c: IVec3| world.lava(c) && world.lava(c - IVec3::Y);
+    let shallow = in_lava && !lava_deep(feet) && !lava_deep(feet + IVec3::Y);
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
     // Down into a space it would hang in (a trench too short for a long head to come down
     // into with its head clear): no way at a walk, or it walks in and stands stuck there.
     // Judged once, at the first place its way goes down, over all of that space along its
-    // way it fits in: a pit with room to land short of its far wall is open. Running or chasing, a creature drops in (a hop carries
-    // it, and its brain gives a held way up); into water it swims, its head up.
+    // way it fits in: a pit with room to land short of its far wall is open. Running or
+    // chasing, a creature drops in (a hop carries it, and its brain gives a held way up);
+    // into water it swims, its head up.
     // Down is below where its feet are: at a lip its box's corners may all be over the drop
     // (`now`) while its edge still stands on it.
     let feet = (body.position.y + 0.01).floor() as i32;
-    let held = |middle: Vec3, then: IVec3| {
-        if then.y >= feet || pace > movement.walk || world.water(then) {
+    // `pit`: judged for a pit too (below); never from under its own middle, or one whose
+    // middle is over a pit's lip would find no way at all, back onto the bank either.
+    // The first landing deeper than its climb is judged for a pit, once: a dip it would
+    // step back up from, or a crack too narrow to come down in, leaves the next for it.
+    let pit_judged = std::cell::Cell::new(false);
+    let held = |middle: Vec3, then: IVec3, trench: bool, pit: bool| {
+        if then.y >= feet {
             return false;
         }
         let at = |k: i32| Vec3::new(middle.x, then.y as f32, middle.z) + heading * (0.1 * k as f32);
-        // Too narrow along its way for its box (a crack): it never comes down in it.
+        // Too narrow along its way for its box (a crack, a ditch it straddles): it never
+        // comes down in it.
         let open = (-4..=4).filter(|&k| !world.solid((at(k * 5) + Vec3::Y * 0.01).floor().as_ivec3())).count() as f32 * 0.5;
         if open < body.size.0 {
+            return false;
+        }
+        // Deeper than it could climb back, unless in a chase (`Body::bold`), only onto open
+        // ground: never into a pit it would not get out of (a hole a player dug two or three
+        // deep), at any pace; a pit with water in its floor too, as a pool it would swim up
+        // out of only if its top is in reach.
+        let climb = (movement.jump > 0.0) as i32;
+        if pit && !body.bold && feet - then.y > climb {
+            pit_judged.set(true);
+            let walker = Walker {
+                height: body.size.1.ceil() as i32,
+                climbs: climb > 0,
+                step: movement.step,
+                wary: water == Water::Land,
+                span: Walker::span_of(body.size.0),
+                drop: climb,
+            };
+            if !path::way_out(world, &walker, walker.corner(Vec3::new(middle.x, then.y as f32 + 0.01, middle.z)), feet) {
+                return true;
+            }
+        }
+        if !trench || pace > movement.walk || world.water(then) {
             return false;
         }
         let landed = |k: i32| Body { position: at(k), yaw: yaw_of(heading), ..*body };
@@ -392,7 +440,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         && then.y < feet
     {
         judged = true;
-        if held(body.position, then) {
+        if held(body.position, then, true, false) {
             return false;
         }
     }
@@ -412,7 +460,13 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
             None => false,
             Some(then) => {
                 let first_down = then.y < feet && !std::mem::replace(&mut judged, true);
-                now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)) && !(first_down && held(middle, then))
+                let first_pit = then.y < feet && !pit_judged.get();
+                now - then.y <= SAFE_DROP
+                    && !(wary && world.water(then) && world.water(then - IVec3::Y))
+                    && !(burns && world.lava(then))
+                    && !(in_lava && world.lava(then) && then.y < now)
+                    && !(shallow && lava_deep(then))
+                    && !((first_down || first_pit) && held(middle, then, first_down, first_pit))
             }
         }
     })
@@ -1120,15 +1174,36 @@ mod tests {
         let mut swimming = Body::new(Vec3::new(3.5, -2.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
         swimming.in_water = true;
         assert!(open_way(&swimming, &Shelf, &movement, Water::Land, Vec3::X, 3.0, 0.05), "out of its depth, deeper water was a wall");
-        // On a bridge of slabs over a drop, the slab is its floor: its edge is a drop like
-        // any other, not ground level with the land far below.
-        struct SlabBridge;
-        impl Surroundings for SlabBridge {
+        // A step down a block, then a pit three deep and walled all round, both within its look ahead:
+        // the step it would climb back up leaves the pit still judged, and shut.
+        struct Dip;
+        impl Surroundings for Dip {
             fn solid(&self, cell: IVec3) -> bool {
-                cell.y < -8
+                match (cell.x, cell.z) {
+                    (1, _) => cell.y < -1,
+                    (2..=3, -1..=1) => cell.y < -3,
+                    _ => cell.y < 0,
+                }
             }
             fn water(&self, _: IVec3) -> bool {
                 false
+            }
+        }
+        let mut walker = Body::new(Vec3::new(1.2, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
+        walker.on_ground = true;
+        assert!(!open_way(&walker, &Dip, &movement, Water::Land, Vec3::X, 3.0, 0.05), "a step down a block left the pit past it open");
+        // A slab is its cell's floor: on a slab floor or bridge from planks over a room eight
+        // deep, dry or flooded, it walks onto it, along it and back, and its far end is a
+        // drop like any other, not ground level with what is far below.
+        struct SlabBridge {
+            wet: bool,
+        }
+        impl Surroundings for SlabBridge {
+            fn solid(&self, cell: IVec3) -> bool {
+                cell.y < -8 || cell.x < 0 && cell.y < 0
+            }
+            fn water(&self, cell: IVec3) -> bool {
+                self.wet && (-8..0).contains(&cell.y) && !self.solid(cell)
             }
             fn boxes(&self, cell: IVec3) -> &[Aabb] {
                 const SLAB: [Aabb; 1] = [Aabb { min: Vec3::ZERO, max: Vec3::new(1.0, 0.5, 1.0) }];
@@ -1141,10 +1216,18 @@ mod tests {
                 }
             }
         }
-        let mut on_slab = Body::new(Vec3::new(3.6, 0.5, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
-        on_slab.on_ground = true;
-        assert!(!open_way(&on_slab, &SlabBridge, &movement, Water::Land, Vec3::X, 3.0, 0.05), "it walked off a slab bridge's end");
-        assert!(open_way(&on_slab, &SlabBridge, &movement, Water::Land, -Vec3::X, 3.0, 0.05), "a slab bridge was no way along it");
+        for wet in [false, true] {
+            let bridge = SlabBridge { wet };
+            let standing = |x: f32, y: f32| {
+                let mut body = Body::new(Vec3::new(x, y, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
+                body.on_ground = true;
+                body
+            };
+            let open = |body: &Body, heading: Vec3| open_way(body, &bridge, &movement, Water::Land, heading, 3.0, 0.05);
+            assert!(open(&standing(-0.5, 0.0), Vec3::X), "wet {wet}: from the planks the slab floor was a drop");
+            assert!(open(&standing(1.5, 0.5), Vec3::X) && open(&standing(1.5, 0.5), -Vec3::X), "wet {wet}: on the slab floor it found no way along it");
+            assert!(!open(&standing(3.6, 0.5), Vec3::X), "wet {wet}: it walked off the slab floor's end");
+        }
         // Steered at the edge, it goes along it; boxed in by cliffs, it stands.
         let cliff = Edge { drop: 8, wet: 0 };
         let (heading, side) = steer(&body, &cliff, &movement, Water::Land, Vec3::X, 0.0, 2.0, 0.05);
