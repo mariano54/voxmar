@@ -547,7 +547,6 @@
     "multiblock.fuel_stack": "{count} {item}",
     "multiblock.cold": "The {structure} is cold. {fuel}",
     "cooking.needs": "This takes {items}.",
-    "cooking.needs_tool": "Needs a {tool} on you",
     "tag.edible": "food",
     "quest.goal.built": "Build the {item}",
     "quest.goal.step": "Reach {step}",

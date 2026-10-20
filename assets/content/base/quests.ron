@@ -348,7 +348,7 @@
             why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["homestead_hearth", "fire_the_clay"],
-            rewards: [Xp("crafting", 305.0), Item("fired_clay", 4)],
+            rewards: [Xp("crafting", 305.0), Item("firewood", 9)],
         ),
         (
             name: "a_pot_on_the_fire", age: "farm", branch: "cooking", title: "A Pot on the Fire",
@@ -383,7 +383,7 @@
         (
             name: "red_metal", age: "farm", branch: "main", title: "Red Metal",
             why: "Copper tools are faster and find more, and copper is three parts of bronze. A small copper-coloured stone on the ground marks a copper vein below it. Hold copper ore, or crushed copper (it goes half again as far), and right-click the crucible of your lit kiln: it melts into ingots (Engineering 5). Three ingots over two sticks at the table make the pickaxe.",
-            tasks: [[Mine("copper_ore", 9), Craft("copper_pickaxe", 1)]],
+            tasks: [[Cook("copper_ingot", 3), Craft("copper_pickaxe", 1)]],
             after: ["charcoal", "crucible_kiln"],
             rewards: [Xp("mining", 650.0), Xp("engineering", 300.0)],
         ),
@@ -476,7 +476,7 @@
             why: "A stone hoe reaps every ripe crop in the three by three around the one you cut, and an iron hoe the five by five, so a wide field comes in at a few strokes. Sow a field nine across with your well in it, let it ripen, and bring in sixty-four wheat plants; keep thirty-two wheat of the harvest for bread, twine and feed.",
             tasks: [[Pick("wheat_crop", 64), Have("wheat", 32)]],
             after: ["a_well_by_the_field"],
-            rewards: [Xp("farming", 300.0), Item("bread", 6), Item("copper_hoe", 1)],
+            rewards: [Xp("farming", 300.0), Item("bread", 6), Item("stone_hoe", 1)],
         ),
         (
             name: "carrot_patch", age: "farm", branch: "farming", title: "Carrot Patch",
@@ -1068,10 +1068,10 @@
         ),
         (
             name: "fired_whole", age: "farm", branch: "pottery", title: "Fired Whole",
-            why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is a dozen clay for the next kiln load.",
+            why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is a dozen firewood for the next clamp.",
             tasks: [[Met("clay_diggers", 1), Cook("fired_clay", 24)]],
             after: ["a_kiln_load"],
-            rewards: [Xp("crafting", 150.0), Item("clay", 12), Item("kiln_bricks", 4)],
+            rewards: [Xp("crafting", 150.0), Item("firewood", 12)],
         ),
         (
             name: "coal_by_road", age: "nomad", branch: "explore", title: "Coal by Road",
@@ -1141,7 +1141,7 @@
             why: "A child may tag along behind you for a while, watching you work. Once you are good at something (Farming, Mining or Crafting 15), they ask to learn it and pay a coin for the lesson. Days later they pass again as a journeyman, with a gift for their old teacher. Teach them, then meet the journeyman.",
             tasks: [[Met("apprentice", 1), Met("journeyman", 1)]],
             after: ["fired_whole"],
-            rewards: [Xp("crafting", 150.0), Xp("mining", 100.0), Item("copper_ingot", 4)],
+            rewards: [Xp("crafting", 150.0), Xp("mining", 100.0), Item("stone_axe", 1)],
         ),
         (
             name: "the_market_road", age: "nomad", branch: "explore", title: "The Market Road",

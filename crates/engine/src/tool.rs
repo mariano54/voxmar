@@ -579,15 +579,6 @@ impl ToolRegistry {
         }
     }
 
-    /// Every rule that gives something instead, with the first block it covers (in
-    /// registry order) to show it by: for the recipe book.
-    pub fn givers(&self) -> impl Iterator<Item = (&Rule, BlockId)> {
-        self.rules.iter().enumerate().filter(|(_, rule)| rule.instead.is_some()).filter_map(|(i, rule)| {
-            let first = self.covered.iter().position(|&c| c == Some(i))?;
-            Some((rule, BlockId(first as u16)))
-        })
-    }
-
     /// Every item that is a `kind` of at least `tier`, with its tier.
     pub fn all_of(&self, kind: usize, tier: u8) -> impl Iterator<Item = (u8, BlockId)> + '_ {
         self.tools.iter().enumerate().filter(move |(_, t)| t.kind == Some(kind) && t.tier >= tier).map(|(i, t)| (t.tier, BlockId(i as u16)))

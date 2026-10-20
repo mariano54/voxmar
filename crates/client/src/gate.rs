@@ -5901,7 +5901,7 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let content = world.resource::<Launch>().content.clone();
     let Some((log, tool, recipe)) = felled_by(&content) else {
         gate.check("flint", Err("no log in the loaded tools.ron asks for a tool at level 1 that the hand's grid can make".into()));
-        gate.next(Step::Anvil, now);
+        gate.next(Step::LookUp, now);
         return;
     };
     let name = |b: BlockId| content.blocks.def(b).name.clone();
@@ -5916,7 +5916,7 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
         for item in [log, tool].into_iter().chain(recipe.cells().into_iter().flatten()) {
             net.command(&format!("clear {}", short(&name(item))));
         }
-        gate.next(Step::Anvil, now);
+        gate.next(Step::LookUp, now);
     };
     match gate.phase {
         // An empty hand by a standing log: whatever the earlier steps left of the log, the
@@ -19316,6 +19316,53 @@ fn finish(world: &mut World, gate: &Gate, now: f32) {
 
 #[cfg(test)]
 mod tests {
+    /// The steps run one after another to the end: no step's `gate.next` leads, through the
+    /// steps after it, back to itself (a step moved in the order but still handing on to its
+    /// old next would loop the gate). Read from this file: each step's function, from the
+    /// dispatch, and the steps it hands on to. Steps sharing one function are left out.
+    #[test]
+    fn the_steps_never_lead_back_round() {
+        let source = include_str!("gate.rs");
+        let source = &source[..source.find("#[cfg(test)]\nmod tests {").unwrap()];
+        let word = |s: &str| s.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<String>();
+        let mut dispatch: Vec<(String, String)> = Vec::new();
+        for line in source.lines() {
+            let line = line.trim_start();
+            let Some(rest) = line.strip_prefix("Step::") else { continue };
+            let (step, after) = (word(rest), &rest[word(rest).len()..]);
+            let Some(call) = after.strip_prefix(" => ") else { continue };
+            let function = word(call);
+            if !function.is_empty() && call[function.len()..].starts_with('(') {
+                dispatch.push((step, function));
+            }
+        }
+        let shared = |function: &str| dispatch.iter().filter(|(_, f)| f == function).count() > 1;
+        let body = |function: &str| -> &str {
+            let Some(start) = source.find(&format!("\nfn {function}(")) else { return "" };
+            let rest = &source[start + 1..];
+            &rest[..rest[1..].find("\nfn ").map_or(rest.len(), |end| end + 1)]
+        };
+        let next: std::collections::BTreeMap<&str, Vec<String>> = dispatch
+            .iter()
+            .filter(|(_, function)| !shared(function))
+            .map(|(step, function)| (step.as_str(), body(function).split("gate.next(Step::").skip(1).map(word).collect()))
+            .collect();
+        assert!(next.len() > 50, "the dispatch was not found: {} steps", next.len());
+        for &start in next.keys() {
+            let (mut path, mut seen) = (vec![start.to_owned()], std::collections::BTreeSet::new());
+            let mut todo = vec![(start.to_owned(), path.clone())];
+            while let Some((at, way)) = todo.pop() {
+                for to in next.get(at.as_str()).into_iter().flatten() {
+                    assert!(to != start, "the gate loops: {} -> {to}", way.join(" -> "));
+                    if seen.insert(to.clone()) {
+                        path = [way.clone(), vec![to.clone()]].concat();
+                        todo.push((to.clone(), path.clone()));
+                    }
+                }
+            }
+        }
+    }
+
     /// Every item and creature the opening quests ask for has a recipe in the book or is
     /// named in the quest's words or an earlier one's, in English and Japanese.
     #[test]

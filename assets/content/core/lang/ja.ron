@@ -534,7 +534,6 @@
     "multiblock.fuel_stack": "{item} × {count}",
     "multiblock.cold": "{structure}には火が入っていない。{fuel}",
     "cooking.needs": "これには{items}が要る。",
-    "cooking.needs_tool": "{tool}を持っていないとできない",
     "tag.edible": "食べ物",
     "quest.goal.built": "{item}を組み上げる",
     "quest.goal.step": "「{step}」に達する",

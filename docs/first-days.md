@@ -40,8 +40,9 @@ paying Farming, Mining and Fishing experience and two bread.
 **Days 3 to 5, Farm: sustain yourself, then fire.** Plant wheat (First Harvest), keep hens
 (Hens in a Row, Fresh Eggs), cook (Camp Cook, level 5), a flock (A Woolly Flock). The main line
 is clay work: Clay Banks, A Pit Kiln, Fire the Clay (twelve fired clay), The Potter, Brick by
-Brick (nineteen kiln bricks, about 40 fired clay: four make two), and Red Metal for the copper the crucible
-needs. The Crucible then The Crucible Kiln: **lighting it ends Farm**. Everything else
+Brick (nineteen kiln bricks, about 40 fired clay: four make two), Charcoal from a clamp, Hammer
+and Anvil (copper ore crushed for the crucible), The Crucible then The Crucible Kiln: **lighting
+it ends Farm**. Red Metal follows, smelting the crushed copper in the lit kiln. Everything else
 (husbandry, hunting, mail, home furnishings, ores, exploring) is optional breadth with its
 own rewards, so a player can always see two or three things worth doing.
 
@@ -173,11 +174,11 @@ stalled.
 `a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln` (crates/server/tests/gameplay.rs)
 runs in every test run and guards the loop. A scripted player starts with nothing and follows
 the main line in the book's order: Look It Up, the Nomad quests to the lit Homestead Hearth,
-then A Pit Kiln, Fire the Clay, The Potter, Charcoal, Red Metal, Brick by Brick, The Crucible
-and the lit Crucible Kiln. It gathers, crafts with the recipes it has unlocked, fires clay,
-burns charcoal, hunts, and claims each quest's rewards in the book as it finishes, since the
-levels later steps need come from those (Red Metal's copper takes Mining 5, and all the
-mining before it gives Mining 2; Charcoal's reward brings the rest). Nothing is given: the plot
+then A Pit Kiln, Fire the Clay, The Potter, Charcoal (a clamp lit while Brick by Brick's clay
+is fired), Brick by Brick, Hammer and Anvil, The Crucible, the lit Crucible Kiln and Red Metal.
+It gathers, crafts with the recipes it has unlocked, fires clay, chars a clamp, hunts, and claims each quest's rewards in the book as it finishes, since the
+levels later steps need come from those (Hammer and Anvil's copper takes Mining 5, and all
+the mining before it gives Mining 2; Charcoal's reward brings the rest). Nothing is given: the plot
 is laid out with /fill and /summon, standing in for terrain, and the only other shortcut is
 a /tp across the plot. Each quest must show done at its step, so a step whose text and
 recipes cannot be followed fails here.
