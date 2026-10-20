@@ -1148,7 +1148,7 @@ mod tests {
     fn a_home_falling_short_names_the_highest_step_lost() {
         let effects = home_registry();
         let (camp, snug) = (effects.id("core:camp").unwrap(), effects.id("core:snug").unwrap());
-        let survey = |bed: u32, seat: u32| HomeSurvey { counts: vec![("bed".into(), bed), ("seat".into(), seat)] };
+        let survey = |bed: u32, seat: u32| HomeSurvey { counts: vec![("bed".into(), bed), ("seat".into(), seat)], ..Default::default() };
         assert_eq!(effects.falls_short(&["seat"], &survey(1, 2), &survey(1, 1)), Some((snug, "seat".into(), 2)));
         assert_eq!(effects.falls_short(&["bed"], &survey(1, 2), &survey(0, 2)), Some((snug, "bed".into(), 1)), "camp and snug both want it: the higher is named");
         assert_eq!(effects.falls_short(&["bed", "seat"], &survey(1, 0), &survey(0, 0)), Some((camp, "bed".into(), 1)), "snug was never met");
