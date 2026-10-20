@@ -202,6 +202,10 @@ pub struct BlockDef {
     /// Seconds to break by hand. Negative means unbreakable.
     pub hardness: f32,
     pub sound: Sound,
+    /// The building material it sounds as (a `materials` entry of sounds.ron, by name),
+    /// whatever its tags say: cut cobblestone is not `cobbled` for recipes but still sounds
+    /// like cobblestone. Only sounds read it; nothing else may.
+    pub material: Option<String>,
     /// Name of the block dropped when broken, `core:air` for nothing. Defaults to the
     /// block itself.
     pub drops: Option<String>,
@@ -529,6 +533,7 @@ impl Default for BlockDef {
             light_filter: 0,
             hardness: 1.0,
             sound: Sound::Stone,
+            material: None,
             drops: None,
             drop_count: 1,
             color: [255, 0, 255],
@@ -675,6 +680,7 @@ pub struct BlockPatch {
     pub light_filter: Option<u8>,
     pub hardness: Option<f32>,
     pub sound: Option<Sound>,
+    pub material: Option<String>,
     pub drops: Option<String>,
     pub drop_count: Option<u8>,
     pub color: Option<[u8; 3]>,
@@ -701,6 +707,7 @@ impl BlockPatch {
             light_filter,
             hardness,
             sound,
+            material,
             drops,
             drop_count,
             color,
@@ -724,6 +731,7 @@ impl BlockPatch {
         light_filter.into_iter().for_each(|v| def.light_filter = v);
         hardness.into_iter().for_each(|v| def.hardness = v);
         sound.into_iter().for_each(|v| def.sound = v);
+        material.into_iter().for_each(|v| def.material = Some(v));
         drops.into_iter().for_each(|v| def.drops = Some(v));
         drop_count.into_iter().for_each(|v| def.drop_count = v);
         color.into_iter().for_each(|v| def.color = v);
