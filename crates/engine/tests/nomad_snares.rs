@@ -6,7 +6,9 @@
 //! share of a kill's experience); a rabbit that slips one bolts at a run for as long as
 //! its fear lasts. A hunter on the same meadow walks to the nearest rabbit at a sprint and
 //! takes it with a short bow, in the time `nomad_hunting.rs` measures. Seeded, never on
-//! the clock: experience per game hour, each way.
+//! the clock: experience per game hour, each way; the snare line both at the snare's own
+//! level and as the best hunter its `skilled` counts sets it (the hunter kept at the bow's
+//! Nomad pace, so the best snares are held to the stricter bar).
 
 use voxmar_engine::content::Content;
 
@@ -195,24 +197,32 @@ fn a_snare_line_never_out_earns_active_hunting() {
     };
     let (hunted, _) = mean(&|seed| hunter(&content, seed));
     eprintln!("hunter, short bow: {hunted:.1} experience an hour");
-    let trap = &content.traps.traps[0];
+    let trap = content.traps.set(content.blocks.id("base:snare").unwrap()).expect("the snare is a trap");
     let rabbit = content.creatures.find("rabbit").unwrap();
-    let now = Rules { chance: trap.chance(rabbit), share: trap.xp, wear: trap.wear };
+    // At the snare's own level, and set and taken by the best hunter its `skilled` counts.
+    let best = trap.level + trap.skilled.levels;
+    let at = |level: u8| Rules { chance: trap.chance_at(rabbit, level), share: trap.xp, wear: trap.wear_at(level) };
     // As snares were before this pass: sure, the whole kill's experience, never worn out.
     let before = Rules { chance: 1.0, share: 1.0, wear: 0.0 };
     let mut wrong = Vec::new();
-    let mut last = 0.0;
+    let (mut last, mut last_best) = (0.0, 0.0);
     for snares in [4, 16, 64, 256] {
         let (was, _) = mean(&|seed| snare_line(&content, snares, 0x5a4e ^ seed, before));
-        let (xp, spent) = mean(&|seed| snare_line(&content, snares, 0x5a4e ^ seed, now));
-        eprintln!("{snares:>3} snares: {xp:.1} experience an hour, {spent:.1} snares made (before: {was:.1})");
-        if xp >= hunted {
-            wrong.push(format!("{snares} snares earn {xp:.1} experience an hour, a hunter {hunted:.1}: a snare line should never out-earn the hunt"));
+        let (xp, spent) = mean(&|seed| snare_line(&content, snares, 0x5a4e ^ seed, at(trap.level)));
+        let (xp_best, spent_best) = mean(&|seed| snare_line(&content, snares, 0x5a4e ^ seed, at(best)));
+        eprintln!("{snares:>3} snares: {xp:.1} experience an hour, {spent:.1} snares made; at Hunter {best} {xp_best:.1}, {spent_best:.1} made (before: {was:.1})");
+        for (xp, last, who) in [(xp, last, "a new hunter's"), (xp_best, last_best, "the best hunter's")] {
+            if xp >= hunted {
+                wrong.push(format!("{snares} of {who} snares earn {xp:.1} experience an hour, a hunter {hunted:.1}: a snare line should never out-earn the hunt"));
+            }
+            if xp <= 0.0 || xp + 1e-3 < last {
+                wrong.push(format!("{snares} of {who} snares earn {xp:.1} experience an hour, fewer earned {last:.1}: more snares should catch more"));
+            }
         }
-        if xp <= 0.0 || xp + 1e-3 < last {
-            wrong.push(format!("{snares} snares earn {xp:.1} experience an hour, fewer earned {last:.1}: more snares should catch more"));
+        if xp_best <= xp {
+            wrong.push(format!("{snares} of the best hunter's snares earn {xp_best:.1}, no more than a new hunter's {xp:.1}"));
         }
-        last = xp;
+        (last, last_best) = (xp, xp_best);
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

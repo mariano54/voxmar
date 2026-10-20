@@ -11,8 +11,12 @@
         // wears out after five catches or so, leaving a stick of its two; a catch gives half a
         // kill's experience, so a snare line pays for the walk, not more than the hunt; and no
         // game is caught within 6 blocks of a fire, a kiln or a hearth (so none in a home).
+        // A better hunter sets it better: each Hunter level over 1, up to 30 more, holds 0.008
+        // more of what steps in and tears 0.01 and wears out 0.004 fewer (at Hunter 31 a
+        // rabbit is held 0.84 of the time, a snare torn 0.3, worn out 0.08).
         (set: "snare", sprung: "snare_sprung", catches: ["rabbit", "hare", "field_mouse", "junglefowl"], skill: "core:hunter", level: 1,
             chance: 0.6, chances: {"hare": 0.5, "field_mouse": 0.7, "junglefowl": 0.4},
-            holds: 6, tear: 0.6, wear: 0.2, leaves: ["stick"], xp: 0.5, shy_of: ["fire", "heat", "hearth"], shy_reach: 6.0),
+            holds: 6, tear: 0.6, wear: 0.2, leaves: ["stick"], xp: 0.5, shy_of: ["fire", "heat", "hearth"], shy_reach: 6.0,
+            skilled: (chance: 0.008, tear: 0.01, wear: 0.004, levels: 30)),
     ],
 )

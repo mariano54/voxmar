@@ -4,7 +4,9 @@
 //! with the trap until a player takes it: its loot, rolled for them as a kill of theirs, and
 //! the trap's share of its kill experience. The trap is set again, unless that wore it out.
 //! A wild creature too big for it, or that fights, may tear it as it steps in. Every roll is
-//! the trap's own: by the world's draw key, the trap's cell and its count of rolls there.
+//! the trap's own: by the world's draw key, the standing trap's serial and its count of
+//! rolls. A better hunter does better (`Skilled`): the setter's Hunter level when it was
+//! set decides its hold and tear, the taker's its wear.
 
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -38,9 +40,11 @@ pub struct Catch {
 pub struct Catches {
     caught: FxHashMap<IVec3, Catch>,
     seen: FxHashMap<u32, Vec3>,
-    /// Rolls drawn at each cell a trap has stood in (`trap_draw`), saved: kept when the trap
-    /// goes, so one set again there never draws a roll twice.
-    rolls: FxHashMap<IVec3, u64>,
+    /// Each standing trap, set or sprung, by its cell (`Standing`), saved; gone with the
+    /// trap. Its serial is the next of `serials`, so one set again in the same cell is a new
+    /// trap that never draws the old one's rolls.
+    standing: FxHashMap<IVec3, Standing>,
+    serials: u64,
     /// Each wild creature that has stepped into a set trap and was neither held nor tore
     /// it, with that trap's cell: rolled for once, not again at every look while it stays.
     stepped: FxHashMap<u32, IVec3>,
@@ -72,6 +76,22 @@ fn crossed(from: Vec3, to: Vec3) -> Vec<IVec3> {
     cells
 }
 
+/// A standing trap: its serial, its rolls drawn so far (`trap_draw`), and the level of its
+/// skill its setter had when they set it (0 for one no player set: the trap's own).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Standing {
+    pub serial: u64,
+    pub rolls: u64,
+    pub level: u8,
+}
+
+/// A standing trap as `world.ron` keeps it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SavedTrap {
+    pub position: [i32; 3],
+    pub standing: Standing,
+}
+
 /// A catch as `world.ron` keeps it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedCatch {
@@ -87,20 +107,36 @@ impl Catches {
         saved
     }
 
-    /// Each cell's count of trap rolls, in order, as `world.ron` keeps them.
-    pub fn saved_rolls(&self) -> Vec<([i32; 3], u64)> {
-        let mut saved: Vec<([i32; 3], u64)> = self.rolls.iter().map(|(pos, &n)| (pos.to_array(), n)).collect();
+    /// The standing traps, in order, and the serials given out, as `world.ron` keeps them.
+    pub fn saved_traps(&self) -> (Vec<SavedTrap>, u64) {
+        let mut saved: Vec<SavedTrap> = self.standing.iter().map(|(pos, &standing)| SavedTrap { position: pos.to_array(), standing }).collect();
         saved.sort();
-        saved
+        (saved, self.serials)
     }
 
-    /// The saved catches whose species is still known, and the counts of rolls.
-    pub fn restore(saved: &[SavedCatch], rolls: &[([i32; 3], u64)], id: impl Fn(&str) -> Option<CreatureId>) -> Self {
+    /// The saved catches whose species is still known, and the standing traps.
+    pub fn restore(saved: &[SavedCatch], traps: &[SavedTrap], serials: u64, id: impl Fn(&str) -> Option<CreatureId>) -> Self {
         Self {
             caught: saved.iter().filter_map(|c| Some((IVec3::from_array(c.position), Catch { species: id(&c.species)?, seed: c.seed }))).collect(),
-            rolls: rolls.iter().map(|&(pos, n)| (IVec3::from_array(pos), n)).collect(),
+            standing: traps.iter().map(|t| (IVec3::from_array(t.position), t.standing)).collect(),
+            serials,
             ..Self::default()
         }
+    }
+
+    /// The standing trap at `cell`, a new one if none stood there.
+    fn standing(&mut self, cell: IVec3) -> &mut Standing {
+        let serials = &mut self.serials;
+        self.standing.entry(cell).or_insert_with(|| {
+            *serials += 1;
+            Standing { serial: *serials, ..Standing::default() }
+        })
+    }
+
+    /// Rolls drawn by every standing trap.
+    #[cfg(test)]
+    pub fn rolls_drawn(&self) -> u64 {
+        self.standing.values().map(|s| s.rolls).sum()
     }
 
     /// Creature `id` arrived at `at` since the traps last looked.
@@ -132,15 +168,29 @@ impl Process for Traps {
 }
 
 impl Server {
-    /// The next roll of the trap at `cell`: by the world's draw key, the cell and its count
-    /// of rolls there, never the tick or what else rolled first.
+    /// The next roll of the trap at `cell`: by the world's draw key, the standing trap's
+    /// serial and its count of rolls, never the tick or what else rolled first.
     pub(crate) fn trap_draw(&mut self, cell: IVec3) -> f32 {
         use voxmar_engine::creature::mix;
-        let count = self.catches.rolls.entry(cell).or_default();
-        let key = mix(mix(self.meta.draw_key ^ TRAP_SALT, cell.x as u32 as u64 | (cell.z as u32 as u64) << 32), cell.y as u32 as u64);
-        let draw = crate::save::numbered_draws(key, TRAP_SALT, *count)[0];
-        *count += 1;
+        let key = self.meta.draw_key ^ TRAP_SALT;
+        let standing = self.catches.standing(cell);
+        let draw = crate::save::numbered_draws(mix(key, standing.serial), TRAP_SALT, standing.rolls)[0];
+        standing.rolls += 1;
         draw
+    }
+
+    /// The level of its skill the setter of the trap at `cell` had (0 for none).
+    fn setter_level(&self, cell: IVec3) -> u8 {
+        self.catches.standing.get(&cell).map_or(0, |s| s.level)
+    }
+
+    /// `agent` set a block at `cell`: a trap set there is theirs, as good as their level of
+    /// its skill makes it.
+    pub(crate) fn placed_trap(&mut self, agent: PlayerId, cell: IVec3) {
+        let Some(trap) = self.block(cell).and_then(|b| self.content.traps.set(b)) else { return };
+        let Some(player) = self.players.get(&agent) else { return };
+        let level = self.content.skills.level(player.skills.xp(trap.skill));
+        self.catches.standing(cell).level = level;
     }
 
     /// Each wild creature that stood in a set trap's cell, or crossed it since the last
@@ -176,24 +226,32 @@ impl Server {
                 }
                 let Some((kind, seed)) = self.creatures.live.get(&id).map(|c| (c.species, c.seed)) else { break };
                 let species = creatures.get(kind);
-                if trap.torn_by(species) {
-                    if self.trap_draw(cell) < trap.tear {
+                let (torn, held) = (trap.torn_by(species), trap.catches(kind));
+                if !torn && !held {
+                    continue;
+                }
+                // Game keeps off fire: none steps into a trap near one, nor tears it. Looked
+                // for once while it stays (`stepped`).
+                self.catches.stepped.insert(id, cell);
+                if self.fire_within(cell, &trap.shy_of, trap.shy_reach) {
+                    continue;
+                }
+                let level = self.setter_level(cell);
+                if torn {
+                    if self.trap_draw(cell) < trap.tear_at(level) {
                         self.trap_gone(cell, trap);
                     }
-                    self.catches.stepped.insert(id, cell);
                     continue;
                 }
-                if !trap.catches(kind) || self.fire_within(cell, &trap.shy_of, trap.shy_reach) {
-                    continue;
-                }
-                if self.trap_draw(cell) >= trap.chance(kind) {
-                    // Slipped it: off it bolts, frightened.
+                if self.trap_draw(cell) >= trap.chance_at(kind, level) {
+                    // Slipped it: off it bolts, frightened, though no player is near.
                     let live = self.creatures.live.get_mut(&id).expect("checked above");
                     let health = live.health as f32 / species.def.health.max(1) as f32;
                     live.mind.hurt(species, None, health);
-                    self.catches.stepped.insert(id, cell);
+                    live.mind.alarmed();
                     continue;
                 }
+                self.catches.stepped.remove(&id);
                 let catch = Catch { species: kind, seed };
                 self.creature_felled(id, None);
                 self.set_block(cell, trap.sprung);
@@ -229,8 +287,8 @@ impl Server {
             return;
         }
         let catch = self.catches.caught.remove(&pos);
-        // Taken, it is set again, or wears out by `wear`.
-        if self.trap_draw(pos) < trap.wear {
+        // Taken, it is set again, or wears out by `wear` (less for a better hunter).
+        if self.trap_draw(pos) < trap.wear_at(level) {
             self.trap_gone(pos, trap);
         } else {
             self.set_block(pos, trap.set);
@@ -268,10 +326,17 @@ impl Server {
         }
     }
 
-    /// A block changed: a sprung trap broken or replaced loses its catch.
+    /// A block changed: a sprung trap broken or replaced loses its catch; a trap set where
+    /// none stood is a new standing trap, kept while it is set or sprung and gone with it.
     pub(crate) fn trap_changed(&mut self, pos: IVec3, block: BlockId) {
-        if self.content.traps.sprung(block).is_none() {
+        let traps = &self.content.traps;
+        if traps.sprung(block).is_none() {
             self.catches.caught.remove(&pos);
+        }
+        if traps.set(block).is_some() || traps.sprung(block).is_some() {
+            self.catches.standing(pos);
+        } else {
+            self.catches.standing.remove(&pos);
         }
     }
 }
@@ -326,6 +391,10 @@ mod tests {
         let snare = IVec3::new(10, FLOOR + 1, 10);
         server.set_block(snare, server.content.blocks.expect("base:snare"));
         (server, snare)
+    }
+
+    fn snare_trap(server: &Server) -> &voxmar_engine::trap::Trap {
+        server.content.traps.set(server.content.blocks.expect("base:snare")).expect("the snare is a trap")
     }
 
     fn put(server: &mut Server, name: &str, at: Vec3) -> u32 {
@@ -428,9 +497,10 @@ mod tests {
         put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
         server.spring_traps();
         let saved = server.catches.saved(|id| server.content.creatures.get(id).def.name.clone());
-        let restored = Catches::restore(&saved, &server.catches.saved_rolls(), |name| server.content.creatures.id(name));
-        assert_eq!(restored.saved_rolls(), server.catches.saved_rolls(), "the counts of rolls kept");
-        assert!(!restored.saved_rolls().is_empty(), "the catch drew a roll");
+        let (traps, serials) = server.catches.saved_traps();
+        let restored = Catches::restore(&saved, &traps, serials, |name| server.content.creatures.id(name));
+        assert_eq!(restored.saved_traps(), (traps, serials), "the standing traps and their rolls kept");
+        assert!(restored.rolls_drawn() > 0, "the catch drew a roll");
         assert_eq!(restored.get(snare), server.catches.get(snare));
         assert!(restored.get(snare).is_some());
         server.set_block(snare, BlockId::AIR);
@@ -528,7 +598,7 @@ mod tests {
         server.creatures.live.get_mut(&kept).unwrap().owner = Some("keeper".to_owned());
         server.spring_traps();
         assert_eq!(seen(&server), [stays], "only the one still wild and alive is remembered");
-        assert!(Catches::restore(&[], &[], |_| None).seen.is_empty(), "a loaded world remembers no last look");
+        assert!(Catches::restore(&[], &[], 0, |_| None).seen.is_empty(), "a loaded world remembers no last look");
     }
 
     /// Two rabbits that ran through the same two snares in a line between two looks are both
@@ -580,7 +650,7 @@ mod tests {
     #[test]
     fn a_snare_holds_a_rabbit_by_its_chance_and_one_that_slips_it_bolts() {
         let (mut server, snare) = snare_as_it_is(1);
-        let chance = server.content.traps.traps[0].chance(server.content.creatures.id("base:rabbit").unwrap());
+        let chance = snare_trap(&server).chance(server.content.creatures.id("base:rabbit").unwrap());
         let (mut caught, tries) = (0, 200);
         for _ in 0..tries {
             // Set again where taking wore it out.
@@ -595,12 +665,12 @@ mod tests {
                 continue;
             }
             assert!(server.creatures.live[&rabbit].mind.fear > 0.9, "a rabbit that slipped the snare is not frightened");
-            let rolls = server.catches.saved_rolls();
+            let rolls = server.catches.rolls_drawn();
             server.spring_traps();
-            assert_eq!(server.catches.saved_rolls(), rolls, "a rabbit still in the snare was rolled for again");
+            assert_eq!(server.catches.rolls_drawn(), rolls, "a rabbit still in the snare was rolled for again");
             server.creatures.live.get_mut(&rabbit).unwrap().body.position = snare.as_vec3() + Vec3::new(2.5, 0.0, 0.5);
             server.spring_traps();
-            assert_eq!(server.catches.saved_rolls(), rolls, "a rabbit walking out of the snare it slipped was rolled for again");
+            assert_eq!(server.catches.rolls_drawn(), rolls, "a rabbit walking out of the snare it slipped was rolled for again");
             assert!(server.catches.get(snare).is_none());
             server.creature_felled(rabbit, None);
         }
@@ -610,12 +680,12 @@ mod tests {
 
     /// Anything too big for the snare, or that fights, tears it by its `tear` as it steps in
     /// (a deer, a fox), leaving a stick, and is rolled for once while it stays; a rabbit
-    /// never tears it, and a kept creature never steps into it at all.
+    /// never tears it.
     #[test]
     fn a_deer_or_a_fox_tears_a_snare_by_its_chance_and_a_rabbit_never() {
         for name in ["base:red_deer", "base:fox"] {
             let (mut server, snare) = snare_as_it_is(1);
-            let tear = server.content.traps.traps[0].tear;
+            let tear = snare_trap(&server).tear;
             let (mut torn, tries) = (0, 120);
             for _ in 0..tries {
                 server.set_block(snare, server.content.blocks.expect("base:snare"));
@@ -633,40 +703,108 @@ mod tests {
             let share = torn as f32 / tries as f32;
             assert!((share - tear).abs() < 0.12, "a {name} tore {torn} of {tries} snares, the snare's tear is {tear}");
         }
-        let (mut server, snare) = snare_as_it_is(1);
-        let kept = put(&mut server, "base:red_deer", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
-        server.creatures.live.get_mut(&kept).unwrap().owner = Some("keeper".into());
-        for _ in 0..20 {
-            let rabbit = put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
-            server.spring_traps();
-            server.take_from_trap(1, snare);
-            server.creature_felled(rabbit, None);
-            server.set_block(snare, server.content.blocks.expect("base:snare"));
-        }
-        assert!(sticks_lying(&server) <= 20, "a kept deer or a rabbit tore the snare");
-        assert!(server.catches.saved_rolls().iter().all(|(_, n)| *n <= 3 * 20), "the kept deer was rolled for");
     }
 
-    /// Only wild game steps into a snare: a companion, a villager or anything kept never
-    /// springs or tears one, beside a hearth or not.
+    /// Only wild game steps into a snare: a companion, a villager, one a player owns, and a
+    /// deer a village or a wanderer keeps never spring or tear one, nor are rolled for.
     #[test]
     fn a_companion_or_a_villager_never_springs_or_tears_a_snare() {
         let (mut server, snare) = snare_as_it_is(1);
-        let deer = put(&mut server, "base:red_deer", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
-        server.creatures.live.get_mut(&deer).unwrap().companion = true;
-        let villager = put(&mut server, "base:villager", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        let at = snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        let companion = put(&mut server, "base:red_deer", at);
+        server.creatures.live.get_mut(&companion).unwrap().companion = true;
+        let villager = put(&mut server, "base:villager", at);
+        let owned = put(&mut server, "base:red_deer", at);
+        server.creatures.live.get_mut(&owned).unwrap().owner = Some("keeper".into());
+        let herded = put(&mut server, "base:red_deer", at);
+        server.villagers.keep_for_test(herded);
+        let wandering = put(&mut server, "base:red_deer", at);
+        server.wandering.keep_for_test(wandering);
+        let all = [companion, villager, owned, herded, wandering];
         for _ in 0..20 {
             server.spring_traps();
-            for id in [deer, villager] {
+            for id in all {
                 server.creatures.live.get_mut(&id).unwrap().body.position = snare.as_vec3() + Vec3::new(-1.5, 0.0, 0.5);
             }
             server.spring_traps();
-            for id in [deer, villager] {
-                server.creatures.live.get_mut(&id).unwrap().body.position = snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+            for id in all {
+                server.creatures.live.get_mut(&id).unwrap().body.position = at;
             }
         }
-        assert_eq!(named(&server, snare), "base:snare", "a companion or a villager sprang or tore the snare");
-        assert!(server.catches.saved_rolls().is_empty(), "a companion or a villager was rolled for");
+        assert_eq!(named(&server, snare), "base:snare", "a kept creature sprang or tore the snare");
+        assert_eq!(server.catches.rolls_drawn(), 0, "a kept creature was rolled for");
+        // A wild deer walked in the same way is rolled for: it tore the snare, or a roll
+        // stands drawn.
+        put(&mut server, "base:red_deer", at);
+        server.spring_traps();
+        assert!(gone(&server, snare) || server.catches.rolls_drawn() == 1, "a wild deer was not rolled for");
+    }
+
+    /// A rabbit that slips a snare runs from it with no player near, as kin raise the alarm,
+    /// rather than graze on and walk back into it.
+    #[test]
+    fn a_rabbit_that_slips_a_snare_runs_from_it_with_no_one_near() {
+        let (mut server, snare) = snare_as_it_is(1);
+        server.players.get_mut(&1).unwrap().position = Vec3::new(31.5, FLOOR as f32 + 1.0, 31.5);
+        let at = snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        let rabbit = loop {
+            if gone(&server, snare) {
+                server.set_block(snare, server.content.blocks.expect("base:snare"));
+            }
+            let rabbit = put(&mut server, "base:rabbit", at);
+            server.spring_traps();
+            if server.catches.get(snare).is_none() {
+                break rabbit;
+            }
+            server.take_from_trap(1, snare);
+        };
+        // The test world is one column, so a rabbit that runs off its edge is gone: count
+        // the furthest it got while it was here.
+        let mut off = 0.0_f32;
+        for _ in 0..3 * TICKS_PER_SECOND {
+            server.tick();
+            if let Some(c) = server.creatures.live.get(&rabbit) {
+                off = off.max(c.body.position.with_y(0.0).distance(at.with_y(0.0)));
+            }
+        }
+        assert!(off > 4.0, "a rabbit that slipped the snare is at most {off:.1} blocks from it in 3 s");
+    }
+
+    /// A better hunter's snare holds more and is torn less, by its setter's Hunter level when
+    /// it was set (`skilled`); a snare no player set does as its trap says.
+    #[test]
+    fn a_better_hunters_snare_holds_more_and_is_torn_less() {
+        let share = |hunter: u8, name: &str| {
+            let (mut server, snare) = snare_as_it_is(hunter);
+            server.placed_trap(1, snare);
+            let (mut hits, tries) = (0, 240);
+            for _ in 0..tries {
+                if named(&server, snare) != "base:snare" {
+                    server.set_block(snare, server.content.blocks.expect("base:snare"));
+                    server.placed_trap(1, snare);
+                }
+                let id = put(&mut server, name, snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+                server.spring_traps();
+                if server.catches.get(snare).is_some() || gone(&server, snare) {
+                    hits += 1;
+                }
+                if server.catches.get(snare).is_some() {
+                    server.take_from_trap(1, snare);
+                } else {
+                    server.creature_felled(id, None);
+                }
+            }
+            hits as f32 / tries as f32
+        };
+        let (server, _) = snare_as_it_is(1);
+        let trap = snare_trap(&server).clone();
+        let rabbit = server.content.creatures.id("base:rabbit").unwrap();
+        let best = trap.level + trap.skilled.levels;
+        for (level, held, torn) in [(1, trap.chance_at(rabbit, 1), trap.tear_at(1)), (best, trap.chance_at(rabbit, best), trap.tear_at(best))] {
+            let (h, t) = (share(level, "base:rabbit"), share(level, "base:red_deer"));
+            assert!((h - held).abs() < 0.1, "at Hunter {level} {h:.2} of rabbits held, the snare says {held:.2}");
+            assert!((t - torn).abs() < 0.1, "at Hunter {level} {t:.2} of snares torn by a deer, the snare says {torn:.2}");
+        }
     }
 
     /// Taking a catch wears the snare out by its `wear`: over many snares, it lasts about
@@ -675,7 +813,7 @@ mod tests {
     #[test]
     fn a_snare_wears_out_by_its_wear_and_a_catch_gives_its_share_of_a_kill() {
         let (mut server, snare) = snare_as_it_is(1);
-        let trap = server.content.traps.traps[0].clone();
+        let trap = snare_trap(&server).clone();
         let rabbit = server.content.creatures.get(server.content.creatures.id("base:rabbit").unwrap());
         let kill = rabbit.def.xp.kill;
         let (mut taken, mut worn, mut xp) = (0u32, 0u32, 0u32);
@@ -716,7 +854,7 @@ mod tests {
             put(&mut server, "base:rabbit", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
             server.spring_traps();
             assert_eq!(server.catches.get(snare).is_none(), near, "a campfire {off} blocks off");
-            assert_eq!(server.catches.saved_rolls().is_empty(), near, "a campfire {off} blocks off: rolls drawn {:?}", server.catches.saved_rolls());
+            assert_eq!(server.catches.rolls_drawn() == 0, near, "a campfire {off} blocks off: {} rolls drawn", server.catches.rolls_drawn());
         }
     }
 
@@ -743,15 +881,21 @@ mod tests {
                 server.creature_felled(id, None);
                 outcomes.push((caught, named(&server, snare)));
             }
-            (outcomes, server.catches.saved_rolls())
+            (outcomes, server.catches.saved_traps())
         };
         let first = run(1_000, 0);
         assert!(first.0.iter().any(|o| o.0) && first.0.iter().any(|o| !o.0), "24 rabbits were all held or all slipped: {:?}", first.0);
         assert_eq!(run(1_377, 3), first, "the same rabbits later, after other rolls, came out otherwise");
+        // Set again, it is a new snare: its own serial and no rolls drawn, and none is kept
+        // for a cell no trap stands in.
         let (mut server, snare) = snare_as_it_is(1);
         server.trap_draw(snare);
+        let (before, _) = server.catches.saved_traps();
         server.set_block(snare, BlockId::AIR);
+        assert!(server.catches.saved_traps().0.is_empty(), "a snare gone keeps no standing");
         server.set_block(snare, server.content.blocks.expect("base:snare"));
-        assert_eq!(server.catches.saved_rolls(), [(snare.to_array(), 1)], "set again, the snare's count went back");
+        let (after, _) = server.catches.saved_traps();
+        assert_eq!((after.len(), after[0].standing.rolls), (1, 0));
+        assert_ne!(after[0].standing.serial, before[0].standing.serial, "set again, the snare drew the old one's rolls");
     }
 }
