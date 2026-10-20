@@ -9538,21 +9538,26 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// The building pieces the pieces step sets (blocks_building.ron), in a facing or two.
-const PIECES: [&str; 17] = [
+const PIECES: [&str; 19] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
-    "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood",
+    "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
+    "stone_arrow_slit",
 ];
+/// How many pieces the player judges from one spot before the middle one: three, so the
+/// crosshair turned to a piece beside it reaches it before crossing a neighbour.
+const PIECE_BATCH: usize = 3;
 /// The home's whole-block walls, set in the row after the shaped pieces.
 const WALLS: [&str; 2] = ["daub", "half_timber"];
 /// Pieces that frame a way through and stop nothing, set in the row after the walls.
-const WAYS: [&str; 1] = ["birch_door_frame"];
+const WAYS: [&str; 2] = ["birch_door_frame", "oak_window_frame"];
 /// The building pieces in a row in the air three blocks behind the shapes step's, seen
 /// against the sky: they must reach the client and the server alike and change the view.
 /// Then each in turn, from a stone ledge laid along the row two blocks before it (the row
-/// runs past reach from where the player stood), the crosshair turned to its middle names it, and what it stops
+/// runs past reach from where the player stood; the player is sent along it once for each
+/// `PIECE_BATCH` pieces and turns to each of them in turn), the crosshair turned to its middle names it, and what it stops
 /// movement with is its shape's boxes, filling some of its cell but not all (a whole cube
 /// would be a block that only looks shaped), or for the home's walls (daub, half-timber)
-/// the whole cell, or for a door frame nothing at all. A right click on the shutters folds them back, open on client and
+/// the whole cell, or for a door or window frame nothing at all. A right click on the shutters folds them back, open on client and
 /// server and stopping nothing. Last, a three-by-three thatch canopy set beside the row
 /// leaves the cell under its middle darker to the sky than it was open.
 fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
@@ -9560,7 +9565,11 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let names: Vec<&str> = PIECES.iter().chain(&WALLS).chain(&WAYS).copied().collect();
     let cells: Vec<IVec3> = (0..names.len() as i32).map(|i| row + IVec3::X * i).collect();
     let canopy = row + IVec3::new(names.len() as i32 + 2, 0, 0);
-    let shutters = cells[PIECES.iter().position(|&name| name == "wooden_shutters").expect("shutters among the pieces")];
+    let shutters_at = PIECES.iter().position(|&name| name == "wooden_shutters").expect("shutters among the pieces");
+    let shutters = cells[shutters_at];
+    // The player judges the pieces a batch at a time from one spot before the batch's
+    // middle, turning to each in reach rather than sent before every one.
+    let spot = |i: usize| cells[((i / PIECE_BATCH) * PIECE_BATCH + PIECE_BATCH / 2).min(cells.len() - 1)];
     let under = canopy - IVec3::Y;
     // Where the player stands to judge a piece: on the ledge, two blocks before it, eyes
     // level with the row.
@@ -9619,7 +9628,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let net = world.resource::<Net>();
                 net.command(&format!("fill {} {} {} {} {} {} stone", ledge.0.x, ledge.0.y, ledge.0.z, ledge.1.x, ledge.1.y, ledge.1.z));
                 net.command(&format!("fill {} {} {} {} {} {} air", ledge.0.x, row.y - 1, row.z - 2, ledge.1.x, row.y, row.z - 2));
-                go(world, cells[0]);
+                go(world, spot(0));
                 aim(world, cells[0]);
                 gate.advance(now);
             } else {
@@ -9632,7 +9641,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let i = (p - first_piece) as usize;
             let (cell, name) = (cells[i], names[i]);
             let on = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
-            if !(stood(world, cell) && on == Some(cell)) && in_phase < SETTLE_LIMIT {
+            if !(stood(world, spot(i)) && on == Some(cell)) && in_phase < SETTLE_LIMIT {
                 aim(world, cell);
                 return;
             }
@@ -9641,8 +9650,8 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let filled: f32 = boxes.iter().map(|b| (b.max - b.min).element_product()).sum();
             let shaped = i < PIECES.len();
             let way = i >= PIECES.len() + WALLS.len();
-            let result = if !stood(world, cell) {
-                Err(format!("sent to stand before {name} at {}, the player is at {}", stand(cell), world.resource::<LocalPlayer>().position))
+            let result = if !stood(world, spot(i)) {
+                Err(format!("sent to stand before {name} at {}, the player is at {}", stand(spot(i)), world.resource::<LocalPlayer>().position))
             } else if on != Some(cell) {
                 Err(format!("aimed at {name}, the crosshair is on {on:?}, not {cell}"))
             } else if way && !boxes.is_empty() {
@@ -9657,21 +9666,24 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Ok(format!("under the crosshair, on client and server, stopping movement with {} boxes filling {:.0}% of its cell", boxes.len(), filled * 100.0))
             };
             gate.check(&format!("pieces: {name}"), result);
-            // Then the next, or the shutters again to open them.
-            let next = cells.get(i + 1).copied().unwrap_or(shutters);
-            go(world, next);
-            aim(world, next);
+            // Then the next, or the shutters again to open them, from the next batch's spot
+            // when it is in another batch.
+            let next = if i + 1 < cells.len() { i + 1 } else { shutters_at };
+            if spot(next) != spot(i) {
+                go(world, spot(next));
+            }
+            aim(world, cells[next]);
             gate.advance(now);
         }
         // Stood before the shutters with them under the crosshair, opened as a door is.
         p if p == first_piece + names.len() as u32 => {
             let on = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
-            if !(stood(world, shutters) && on == Some(shutters)) {
+            if !(stood(world, spot(shutters_at)) && on == Some(shutters)) {
                 if in_phase < SETTLE_LIMIT {
                     aim(world, shutters);
                     return;
                 }
-                gate.check("pieces: shutters open", Err(format!("sent before the shutters at {}, the player is at {} with the crosshair on {on:?}", stand(shutters), world.resource::<LocalPlayer>().position)));
+                gate.check("pieces: shutters open", Err(format!("sent before the shutters at {}, the player is at {} with the crosshair on {on:?}", stand(spot(shutters_at)), world.resource::<LocalPlayer>().position)));
                 leave(world, gate);
                 return;
             }
