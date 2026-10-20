@@ -153,8 +153,8 @@ pub struct InterfaceStyle {
     pub book_zooms: Vec<f32>,
     /// Which of `book_zooms` the book opens at.
     pub book_zoom_at: usize,
-    /// How much of the window the book takes across, in percent; down, it takes all but the
-    /// keys under it and the HUD at the bottom.
+    /// How much of the window the book takes across, in percent; down, it takes all from
+    /// under the bar of the screens' keys to the HUD at the bottom.
     pub book_width: f32,
 }
 

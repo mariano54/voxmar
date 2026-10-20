@@ -24,7 +24,7 @@ impl Plugin for UiPlugin {
 }
 
 /// The smallest view the interface is laid out for at full size, in logical pixels: the
-/// tallest screen (the menu, with its keys under it) and the widest, with a margin.
+/// tallest screen (the menu, under the bar of the screens' keys) and the widest, with a margin.
 const FULL_SIZE: Vec2 = Vec2::new(1200.0, 800.0);
 
 /// Draws the interface at the size the settings ask for, or at the largest smaller step

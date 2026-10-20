@@ -1564,11 +1564,13 @@ fn show_card(mut view: ResMut<QuestView>, close: Query<&Interaction, (Changed<In
     }
 }
 
-/// The picked quest's glow breathes, a little under once a second.
+/// The picked quest's glow breathes, a little under once a second. Its colour is drawn
+/// from every frame's extraction as it stands, so the change goes unmarked: a changed
+/// image is measured again, and the whole canvas with it.
 fn breathe(time: Res<Time>, mut glows: Query<&mut ImageNode, With<Pulse>>) {
     let alpha = 0.5 + 0.3 * (time.elapsed_secs() * std::f32::consts::TAU * 0.8).sin();
     for mut glow in &mut glows {
-        glow.color.set_alpha(alpha);
+        glow.bypass_change_detection().color.set_alpha(alpha);
     }
 }
 
