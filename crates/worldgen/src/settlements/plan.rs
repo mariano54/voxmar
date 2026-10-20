@@ -28,6 +28,11 @@ pub(super) static GIVEN_UP: [std::sync::atomic::AtomicU32; 12] = [const { std::s
 #[cfg(test)]
 pub(super) static PLACE_FAILS: [std::sync::atomic::AtomicU32; 8] = [const { std::sync::atomic::AtomicU32::new(0) }; 8];
 
+/// Roof pieces laid in shingles because a flame reached them, and flames put out.
+#[cfg(test)]
+pub(super) static ROOFS_RELAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+#[cfg(test)]
+pub(super) static FLAMES_PUT_OUT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 /// Wall blocks left out where the ring runs against a lot, in every plan made (none should be).
 #[cfg(test)]
 pub(super) static WALL_ON_LOTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
@@ -755,6 +760,9 @@ struct Kit {
     fruit: Palette,
     roofs: Vec<(Roof, f32)>,
     window: Option<BlockId>,
+    roof_pieces: Vec<(super::roofs::RoofPieces, f32)>,
+    pieced: f32,
+    jetty: Option<([BlockId; 4], f32)>,
 }
 
 fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, culture: &Culture, crop_level: u32, rng: &mut Rng) -> Kit {
@@ -817,6 +825,22 @@ fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, culture: &Culture, crop_lev
             .map(|&(shape, w)| (shape, w * culture.mult(Listing::Roof, &format!("{shape:?}")) * ctx.def.roofs.iter().find(|r| r.shape == shape).map_or(1.0, |r| r.lean.weigh(r.weight, levers))))
             .collect(),
         window: style.window.as_deref().and_then(|w| ctx.resolved.get(w)),
+        roof_pieces: style
+            .roof_pieces
+            .iter()
+            .filter(|p| p.weight > 0.0)
+            .filter_map(|p| Some((super::roofs::RoofPieces::resolve(p, &wood, &trim, |n| ctx.resolved.get(n))?, p.weight)))
+            .collect(),
+        pieced: style.pieced,
+        // More jettied where the place is crowded, its street narrow.
+        jetty: style.jetty.as_ref().and_then(|j| {
+            let name = fill(&j.beam, &wood, &trim);
+            let mut ids = [BlockId::AIR; 4];
+            for (i, suffix) in super::roofs::SUFFIXES.iter().enumerate() {
+                ids[i] = ctx.resolved.get(&format!("{name}{suffix}"))?;
+            }
+            Some((ids, (j.chance * (0.5 + levers.get(Lever::Crowding))).min(1.0)))
+        }),
         log: style.log.clone(),
         wood,
     }
@@ -844,6 +868,9 @@ impl Kit {
             chimney,
             crops: self.crops.clone(),
             fruit: self.fruit.clone(),
+            roof_pieces: self.roof_pieces.clone(),
+            pieced: self.pieced,
+            jetty: self.jetty,
         }
     }
 }
@@ -2196,6 +2223,14 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
             buildings[i].seats = furnished.seats;
         }
     }
+    // No flame of its own stands within reach of what catches (thatch): such a roof is
+    // laid in shingles instead, and a flame that still reaches is put out.
+    let (_relaid, _put_out) = ctx.fixed.fire.keep_from_flames(&mut canvas, |x, z| raster.ground(x, z, &ground.at(IVec2::new(x, z))));
+    #[cfg(test)]
+    {
+        ROOFS_RELAID.fetch_add(_relaid as u32, std::sync::atomic::Ordering::Relaxed);
+        FLAMES_PUT_OUT.fetch_add(_put_out as u32, std::sync::atomic::Ordering::Relaxed);
+    }
     let voxels = canvas.into_columns();
     #[cfg(test)]
     phase_end("voxel columns", detail_time);
@@ -3457,7 +3492,7 @@ mod level_tests {
         let kit = Kit { wood: String::new(), log: String::new(), foundation: Palette(Vec::new()),
             floor: Vec::new(), walls: Vec::new(), frame: Vec::new(), roof: Vec::new(), trims: Vec::new(),
             paving: Palette(Vec::new()), hedge: Palette(Vec::new()), weathered: Palette(Vec::new()),
-            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None };
+            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None, roof_pieces: Vec::new(), pieced: 0.0, jetty: None };
         let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
         let new = || Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
             extra_chances: vec![0.5; def.extras.len()], style, size: "village", built: FxHashMap::default(),
@@ -3518,7 +3553,7 @@ mod level_tests {
         let kit = Kit { wood: String::new(), log: String::new(), foundation: Palette(Vec::new()),
             floor: Vec::new(), walls: Vec::new(), frame: Vec::new(), roof: Vec::new(), trims: Vec::new(),
             paving: Palette(Vec::new()), hedge: Palette(Vec::new()), weathered: Palette(Vec::new()),
-            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None };
+            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None, roof_pieces: Vec::new(), pieced: 0.0, jetty: None };
         let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
         let mut town = Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
             extra_chances: vec![0.0; def.extras.len()], style, size: "village", built: FxHashMap::default(), choices: Vec::new(), spare_extras: Vec::new(), bounds: rect, square: rect, gap: 1 };
