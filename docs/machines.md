@@ -162,19 +162,18 @@ them.
 Fuel heat. Each fuel has a `heat` (1 when unsaid; 0 is refused): logs and planks 1, firewood
 and charred wood 2, coal, charcoal and coke 3. A machine or multiblock with a `heat` takes
 only fuel at least that hot (`MachineRegistry::burns_in`), so the Crucible Kiln (heat 3)
-wants charcoal or coal; a hearth or campfire (heat 0) burns anything. Load refuses a
-machine whose heat no fuel reaches.
+wants charcoal or coal; a hearth or campfire (heat 0) burns anything.
 
 ## The fuel chain (wood to charcoal)
 
 Raw logs are poor fuel. The way up:
 
-1. **Firewood.** A log right clicked on a chopping block with an axe in hand (cooking.ron,
+1. **Firewood.** A log right clicked on a chopping block with an axe carried (cooking.ron,
    `tool: "axe"`) splits into two firewood, hotter than the log. Any `log`-tagged wood
    splits. The axe's wear is data only (the tool-wear hook adds it).
-2. **The charcoal clamp** (multiblocks.ron `charcoal_clamp`): a 5x5 stack of firewood under
-   soil (earth or turf), kindling at its heart and a flue at the top. Lit with a firebrand or
-   a torch (`lit_by`), it smoulders for game hours (`smoulder.hours`), then the firewood is
+2. **The charcoal clamp** (multiblocks.ron `charcoal_clamp`): nine firewood three by three under
+   soil (earth or turf), kindling in place of the roof's middle earth for its flue. Lit with a
+   torch or campfire in hand (`lit_by: "firelighter"`), it smoulders for game hours (`smoulder.hours`), then the firewood is
    charcoal heaps. Rain on its open flue (a bad seal) spoils to ash heaps the share of its
    wood it rained for, from the top down (rain as survival.ron's `douse_rain`). Opened early (a cell broken) it gives part-burnt
    charred wood. Server: `smoulder.rs`, saved in the world's `smoulders`.
@@ -184,4 +183,3 @@ It is the one route to charcoal (balance call, Oct 20): the earth clamp station,
 charred sixteen logs a minute, and the campfire's log-to-charcoal recipe are gone, so the
 effort of processing stays in one station. Charcoal asks for a clamp lit and sixteen
 charcoal (or twenty-four coal mined); A Second Clamp, for two lit.
-

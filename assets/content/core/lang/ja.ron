@@ -339,7 +339,7 @@
     "farming.needs_water": "{crop}は近くに水がないと育たない。",
     "multiblock.home": "{structure}に火が灯った。ここが家になり、倒れてもここで目覚める。",
     "multiblock.lit": "{structure}に火が灯った。",
-    "multiblock.lit_by": "{structure}に火をつけるには{item}を手に持つ。",
+    "multiblock.lit_by": "{structure}に火をつけるには、次のどれかを手に持つ：{item}。",
     "multiblock.smoulders": "{structure}に火が入り、くすぶり始めた。木炭ができるまであと{hours}時間。開けずに置き、煙道に雨が入らないようにすること。",
     "multiblock.smouldering": "{structure}はくすぶっている。あと{hours}時間。",
     "machine.put": "{item}を{count}個入れた。",

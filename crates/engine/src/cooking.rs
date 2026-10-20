@@ -302,6 +302,28 @@ mod tests {
         }
     }
 
+    /// A recipe's `tool` is a tag something carries, and not what it cooks: split with an
+    /// axe about you, which is found in what is carried.
+    #[test]
+    fn a_recipe_tool_is_carried_by_something_other_than_what_it_cooks() {
+        let blocks = BlockRegistry::new(vec![
+            BlockDef { name: "base:oak_log".into(), tags: vec!["log".into()], ..Default::default() },
+            BlockDef { name: "base:firewood".into(), ..Default::default() },
+            BlockDef { name: "base:stone_axe".into(), tags: vec!["axe".into()], ..Default::default() },
+        ])
+        .unwrap();
+        let build = |tool: &str| {
+            let source = format!(r#"(recipes: [(input: "oak_log", output: "firewood", station: "chopping_block", xp: 1.0, stop_burning: 0, count: 2, tool: Some("{tool}"))])"#);
+            CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default())
+        };
+        let registry = build("axe").unwrap();
+        let recipe = registry.for_item(BlockId(1), &["chopping_block".into()]).unwrap();
+        assert!(!recipe.has_tool(&blocks, [BlockId(1), BlockId(2)]));
+        assert!(recipe.has_tool(&blocks, [BlockId(1), BlockId(3)]));
+        assert!(build("saw").is_err(), "carried by nothing");
+        assert!(build("log").is_err(), "carried by what it cooks");
+    }
+
     #[test]
     fn burning_falls_to_nothing_at_its_level() {
         let registry = registry();

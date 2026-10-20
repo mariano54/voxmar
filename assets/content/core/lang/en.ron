@@ -352,7 +352,7 @@
     "farming.needs_water": "{crop} grows only with water close by.",
     "multiblock.home": "The {structure} is lit: this is your home now, and you will wake here.",
     "multiblock.lit": "The {structure} is lit.",
-    "multiblock.lit_by": "Light the {structure} with a {item} in hand.",
+    "multiblock.lit_by": "Light the {structure} with one of these in hand: {item}.",
     "multiblock.smoulders": "The {structure} is lit and smoulders: its charcoal is done in {hours} hours. Leave it closed and keep the rain off its flue.",
     "multiblock.smouldering": "The {structure} is smouldering: {hours} more hours.",
     "machine.put": "Put in {count} × {item}.",

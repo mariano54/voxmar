@@ -185,9 +185,6 @@ pub fn turned(offset: IVec3, turns: u8) -> IVec3 {
     o
 }
 
-impl Multiblock {
-}
-
 #[derive(Debug, Default)]
 pub struct MultiblockRegistry {
     multiblocks: Vec<Multiblock>,

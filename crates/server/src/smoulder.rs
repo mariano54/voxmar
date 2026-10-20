@@ -42,7 +42,7 @@ enum End {
 
 impl Server {
     /// `agent` lights `structure`, standing round `core`, with what is in hand: anything
-    /// tagged its `lit_by`, used up never. Lit, its core burns, and it chars for its hours.
+    /// tagged its `lit_by` (`firelighter`: a torch or a campfire), used up never. Lit, its core burns, and it chars for its hours.
     pub(crate) fn light_smoulder(&mut self, agent: PlayerId, core: IVec3, structure: &Multiblock) {
         let Some(smoulder) = &structure.smoulder else { return };
         let title = Words::Own(def_key("multiblock", &structure.name), structure.title.clone());
@@ -54,7 +54,8 @@ impl Server {
         let blocks = &self.content.blocks;
         let lit_by = structure.lit_by.as_deref().unwrap_or_default();
         if !self.players.get(&agent).and_then(|p| p.held()).is_some_and(|item| blocks.def(item).has_tag(lit_by)) {
-            let named = blocks.tagged(lit_by).next().map(|item| Words::Block(blocks.def(item).name.clone())).unwrap_or_else(|| Words::Text(lit_by.to_owned()));
+            // Every item that lights it, by name: not a block it only places as (a wall torch).
+            let named = Words::List(blocks.tagged(lit_by).filter(|&item| blocks.item_of(item) == item).map(|item| Words::Block(blocks.def(item).name.clone())).collect());
             self.refuse(agent, Words::key("multiblock.lit_by").with("structure", title).with("item", named));
             return;
         }
@@ -423,10 +424,16 @@ mod tests {
             server.propose(1, cook, ActionTarget::Block { block, face: Face::PosY }, Instant::now());
             server.cook(1, block);
         };
+        // The click itself is refused without an axe carried (`Requirement::CookingTool`).
+        let def = server.content.actions.get(cook).unwrap().clone();
+        let target = ActionTarget::Block { block, face: Face::PosY };
+        let refused = |server: &Server| def.validate(&crate::actions::context(server, 1), target);
+        assert_eq!(refused(&server), Err(voxmar_engine::action::Rejection::Unmet(voxmar_engine::action::Requirement::CookingTool)));
         split(&mut server);
         let count = |server: &Server, name: &str| server.players[&1].inventory.count(server.content.blocks.expect(name));
         assert_eq!((count(&server, "base:oak_log"), count(&server, "base:firewood")), (1, 0), "no axe, no split");
         server.players.get_mut(&1).unwrap().inventory.slots[4] = Some(stack(id(&server, "base:stone_axe"), 1));
+        assert_eq!(refused(&server), Ok(()), "an axe in the pack, not in hand");
         split(&mut server);
         assert_eq!((count(&server, "base:oak_log"), count(&server, "base:firewood"), count(&server, "base:stone_axe")), (0, 2, 1), "split, the axe kept");
         let machines = &server.content.machines;

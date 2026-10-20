@@ -41,14 +41,15 @@
             core: 'C',
         ),
         // A charcoal clamp: nine firewood laid three by three, walled and roofed with earth,
-        // kindling at the middle of the roof for a flue. Lit there from a torch, it smoulders
+        // kindling in place of the roof's middle earth for a flue. Lit there from a torch or a
+        // campfire carried (`firelighter`), it smoulders
         // two game hours, nobody by it, and leaves charcoal where the firewood was (four a
         // heap: thirty-six, a kiln's charge). Opened early the wood is part-burnt; rain on the
         // open flue spoils to ash the share of the burn it fell for, so roof it over.
         (
             name: "charcoal_clamp", title: "Charcoal Clamp",
-            hint: "A clamp is nine firewood laid three by three on the ground, walled round and roofed over with earth, with kindling on the roof's middle for a flue. Light the kindling from a torch.",
-            lit_by: Some("fire"),
+            hint: "A clamp is nine firewood laid three by three on the ground, walled round and roofed over with earth, with kindling in place of the roof's middle earth for a flue. Light the kindling from a torch or campfire.",
+            lit_by: Some("firelighter"),
             smoulder: Some((hours: 2.0, wood: 'F', done: "charcoal_heap", early: "charred_wood_heap", spoiled: "ash_heap", burning: "clamp_flue", spent: "core:air")),
             layers: [
                 ["sssss", "sFFFs", "sFFFs", "sFFFs", "sssss"],
