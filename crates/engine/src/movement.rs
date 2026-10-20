@@ -716,6 +716,35 @@ mod tests {
         }
     }
 
+    /// Every roof corner, hip and valley, thatch and shingles, walked up course by course
+    /// from where its eaves meet without jumping, along the diagonal (a hip's ridge, a
+    /// valley's gutter), to its top a block up, never inside it.
+    #[test]
+    fn every_roof_corner_is_walked_up_course_by_course() {
+        let content = content();
+        let blocks = &content.blocks;
+        let stone = blocks.expect("base:stone");
+        let corners: Vec<_> = blocks.tagged("roof_corner").filter(|&id| !["_east", "_south", "_west"].iter().any(|s| blocks.def(id).name.ends_with(s))).collect();
+        assert!(corners.len() >= 8, "a hip and a valley in thatch and three woods: {}", corners.len());
+        for corner in corners {
+            let name = &blocks.def(corner).name;
+            let mut cells = rustc_hash::FxHashMap::default();
+            cells.insert(IVec3::new(0, 0, 0), corner);
+            // A wall behind its top course, so the walk stops on it.
+            for (x, z) in [(1, 0), (0, 1), (1, 1)] {
+                for y in 0..3 {
+                    cells.insert(IVec3::new(x, y, z), stone);
+                }
+            }
+            let roof = Built { blocks, cells, floor: |_| 0 };
+            for fps in [30.0, 144.0] {
+                let (body, inside) = run(&roof, Body { on_ground: true, ..at(-0.6, 0.0, -0.6) }, walking(Vec3::new(1.0, 0.0, 1.0), false), 3.0, fps);
+                assert!(!inside, "{name}: went into it at {fps} fps: {body:?}");
+                assert!(body.on_ground && (body.position.y - 1.0).abs() < 1e-4, "{name}: did not climb to its top at {fps} fps: {body:?}");
+            }
+        }
+    }
+
     /// A balcony four blocks over the ground, railed along its east and south edges with a
     /// corner where they meet: walked or sprinted at the railing, straight or across the
     /// corner, the player stops at it, on the balcony, never inside it and never over.

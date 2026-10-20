@@ -1395,7 +1395,7 @@ fn drag_web(
 fn way_card(detail: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &Content, locale: &Locale, entry: &voxmar_engine::recipe_book::Entry, (key, shown, of): (String, usize, usize)) {
     let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, ..default() };
     detail.spawn((card, Piece::Well.image())).with_children(|card| {
-        super::recipes::way_inputs(card, font, images, content, &entry.method, None, 0);
+        super::recipes::way_inputs(card, font, images, content, &entry.method, None, None);
         card.spawn(shadowed(font, "→", BODY, GOLD));
         let (low, high) = entry.count;
         super::recipes::item_cell(card, font, images, Some(entry.output), (high > 1 && low == high).then(|| high.to_string()));
