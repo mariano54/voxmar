@@ -42,6 +42,7 @@ impl Plugin for NetPlugin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Proposed {
     pub action: ActionId,
+    pub target: ActionTarget,
     pub with: Vec<BlockId>,
 }
 
@@ -62,6 +63,9 @@ pub struct Net {
     /// The integrated server's ticks as `receive` began: every message of those ticks had
     /// been sent, and was taken in (`taken_ticks`).
     taken: std::sync::atomic::AtomicU64,
+    /// Actions proposed since startup: how a tended animal waiting on the server's word
+    /// knows something else was done meanwhile (`creatures::Tended`).
+    proposals: std::sync::atomic::AtomicU64,
 }
 
 impl Net {
@@ -71,7 +75,7 @@ impl Net {
         let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
         let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
-        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), last: Default::default(), taken: Default::default() }
+        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), last: Default::default(), taken: Default::default(), proposals: Default::default() }
     }
 
     /// The next message from the server, for tests that play without the app.
@@ -105,7 +109,8 @@ impl Net {
     /// worked), which say how it sounds (`sounds.ron`'s `ways`).
     pub fn propose_with(&self, action: ActionId, target: ActionTarget, with: Vec<BlockId>) {
         self.connection.send(ClientMessage::Propose { action, target });
-        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, with });
+        self.proposals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, target, with });
         self.shown.lock().unwrap_or_else(|e| e.into_inner()).push((action, target));
         *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((action, target));
     }
@@ -113,6 +118,11 @@ impl Net {
     /// The last action proposed and what it aimed at, kept after `take_shown`.
     pub fn last_proposed(&self) -> Option<(ActionId, ActionTarget)> {
         *self.last.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// How many actions have been proposed since startup.
+    pub fn proposals(&self) -> u64 {
+        self.proposals.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The actions proposed since the last call: the client proposes only what it has
@@ -387,13 +397,14 @@ pub(crate) fn receive(
                     {
                         cues.write(cue.at(pos.as_vec3() + Vec3::splat(0.5)));
                     }
-                    // Bees taken nearby, by anyone: the swarm smoked into a skep, the honey cut.
+                    // A full skep's honey cut nearby: heard if the player cut it (`sfx::play_done`
+                    // matches it to their own click), not a bear's raid or another's cut.
                     if let Some(old) = old
                         && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
                         && crate::sfx::bees_taken(&launch.content.bees, old, block)
                         && let Some(action) = launch.content.actions.id("base:tend_bees")
                     {
-                        done.write(crate::sfx::Done { at: pos.as_vec3() + Vec3::splat(0.5), action, with: old });
+                        done.write(crate::sfx::Done { at: pos, action, with: old });
                     }
                     // Thatch or wattle catching fire, nearby.
                     if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
