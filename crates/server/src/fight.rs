@@ -1062,7 +1062,7 @@ mod tests {
         let lying = |server: &Server| server.items.saved(|item| format!("{item:?}")).iter().map(|d| (d.count as u32, Vec3::from_array(d.position))).collect::<Vec<_>>();
         let shoot = |server: &mut Server, shots: u32| {
             for _ in 0..shots {
-                let aim = Aim { creature, counter: false, riposte: false, weapon, held };
+                let aim = Aim { creature, counter: false, riposte: false, weapon, held, slot: 0 };
                 server.land_swing(1, aim, 1.0, false, Blow::Plain, false);
             }
         };
@@ -1114,7 +1114,7 @@ mod tests {
         for _ in 0..40 {
             let creature = server.spawn_creature(rabbit, Vec3::new(6.5, 100.0, 0.5), 1).expect("room");
             server.creatures.live.get_mut(&creature).unwrap().health = 1;
-            let aim = Aim { creature, counter: false, riposte: false, weapon, held };
+            let aim = Aim { creature, counter: false, riposte: false, weapon, held, slot: 0 };
             server.land_swing(1, aim, 1.0, true, Blow::Plain, true);
             if server.creatures.live.contains_key(&creature) {
                 server.creatures.take_away(creature);
