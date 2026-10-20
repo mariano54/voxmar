@@ -520,6 +520,25 @@ once, the smoulder told, caught only on time), `a_stone_lined_flue_keeps_a_heart
 `fires_are_saved_with_the_world`. The gate's Blaze step sets a torch by a wattle panel and
 counts the smoke off it before it catches ("fire: smoulders", "fire: catches", "fire: burns out").
 
+## Daubing in place
+
+A wattle panel already standing is daubed where it stands: clay in hand, right click it, and
+it is a daub block, one clay used. Daub is a sound wall (`shelter:sound`) and does not burn,
+so a wattle home grown up round its hearth is made safe without being pulled down, and a panel
+smouldering by a torch, daubed in time, is saved. It is data on the block (`coat: Some((with:
+"clay", into: "daub"))` in blocks_building.ron, load-checked: both blocks exist, and what it
+becomes is not coated again), and asks the level of the easiest recipe that makes what it
+becomes (Construction 2 for daub), teaching that recipe's experience a piece; below it, it is
+refused with the level it takes. Action `base:coat` (requirement `Coats`, silent: it only says
+the click meant it), server `coat.rs`, test `clay_daubs_a_placed_wattle_panel_in_place`; the
+gate's Blaze step daubs a panel by its torch ("daub: coats").
+
+Earth walls daub the same way. Dirt, coarse dirt, gravel, sand and red sand carry the same
+`coat` (blocks.ron), so a room dug into a bank or walled in earth turns from draughty to sound
+one clay at a time. Clay coats only when aimed at a block's side, a wall's face: clay to the
+top of a dirt floor or a panel is laid there as a block as before (test
+`clay_to_the_side_of_an_earth_wall_daubs_it_and_to_the_top_does_not`).
+
 ## Curing hides
 
 A beast's hide comes off **raw**. The drying rack is the one place it dries (stations.ron,
