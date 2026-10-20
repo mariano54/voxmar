@@ -166,7 +166,7 @@ for scene in $scenes; do
       # A traced build's trace of this run: read, then deleted (they run to gigabytes; the
       # temporary directory goes on exit, interrupted or not, with any left).
       if [[ -s $trace ]]; then
-        python3 -I "$root/tools/perf/flight_spikes.py" "$trace" "flight:$flight"
+        python3 -I "$root/tools/perf/flight_spikes.py" "$trace" "marked:$flight"
       fi
       rm -f "$trace"
     done

@@ -9,11 +9,15 @@ second:
     VOXMAR_MUTE=1 VOXMAR_CONFIG=<dir with settings.ron> target/trace/release/voxmar \
         --capture out.png --seed 1 --size 2268x1473 --weather clear --time 0.2 --flight 30
 
-Then, with START_US the trace time the flight began, or flight:SECONDS for the last "ts" in
-the file less the flight's seconds:
+Then, for the frames the capture marked as its flight's (a `capture_flight` span in each),
+or with START_US the trace time to start from:
 
+    python3 tools/perf/flight_spikes.py trace-*.json marked:30
     python3 tools/perf/flight_spikes.py trace-*.json START_US
-    python3 tools/perf/flight_spikes.py trace-*.json flight:30
+
+(marked:SECONDS takes the last "ts" in the file less the flight's seconds as the start in a
+trace from a build that marks nothing, which is late: tracing goes on through the shot and
+the exit, and the flight's seconds are game time.)
 
 (tools/perf/play_frames does both steps for a traced build, SCENES=flight.)
 
@@ -22,7 +26,7 @@ frames, the longest spans that began during them on any thread. Spans of a few
 microseconds' work taking milliseconds mean the thread was preempted: time on a quiet
 machine (see docs/rendering.md, "Measuring").
 """
-import sys, re, statistics
+import bisect, heapq, re, statistics, sys
 path, start = sys.argv[1], sys.argv[2]
 
 
@@ -41,10 +45,6 @@ def last_ts(path):
             back *= 4
 
 
-if start.startswith('flight:'):
-    start = last_ts(path) - float(start[len('flight:'):]) * 1e6
-else:
-    start = float(start)
 name_re = re.compile(r'"name":"((?:[^"\\]|\\.)*)"')
 SKIP = ('schedule: ', 'main app', 'update: ', 'multithreaded executor', 'sub app', 'par_for_each', 'system_commands', 'check_conditions', 'RenderContextState')
 
@@ -78,13 +78,31 @@ def spans_of(path):
 
 # Two passes over the file: the frames (main-thread update to update), then the longest
 # spans begun in the slowest of them.
-frames = sorted(b for b, _, tid, name in spans_of(path) if tid == 0 and name == 'update: ' and b >= start)
+updates, marks = [], []
+for b, _, tid, name in spans_of(path):
+    if tid == 0 and name == 'update: ':
+        updates.append(b)
+    elif name.startswith('capture_flight'):
+        marks.append(b)
+updates.sort()
+if start.startswith('marked:') and marks:
+    # From the frame the first mark is in, through the one after the last mark's.
+    first = bisect.bisect_right(updates, min(marks)) - 1
+    last = bisect.bisect_right(updates, max(marks))
+    frames = updates[max(first, 0):last + 1]
+    start = frames[0] if frames else 0.0
+else:
+    if start.startswith('marked:'):
+        print('no capture_flight marks: from the trace\'s end less the flight\'s seconds', file=sys.stderr)
+        start = last_ts(path) - float(start[len('marked:'):]) * 1e6
+    else:
+        start = float(start)
+    frames = [b for b in updates if b >= start]
 d = [b - a for a, b in zip(frames, frames[1:])]
 if not d:
     sys.exit('no frames after the start in the trace')
 med = statistics.median(d)
 print(f'{len(d)} frames, median {med/1000:.2f} ms, p99 {sorted(d)[int(len(d)*0.99)]/1000:.2f}, max {max(d)/1000:.2f}')
-import bisect, heapq
 worst = sorted(sorted(range(len(d)), key=lambda i: -d[i])[:12])
 windows = [frames[i] for i in worst]
 tops = {i: [] for i in worst}
