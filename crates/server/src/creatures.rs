@@ -72,9 +72,6 @@ const LIT_REACH: i32 = 5;
 /// Where a creature's stuck clock (`Live::stuck`, to 2 s) stands once a search finds no way
 /// to its goal.
 const NO_WAY_STUCK: f32 = 1.5;
-/// How high a shape stands before it is in a creature's way at its feet, in blocks: a lower
-/// slab is open ground to the way-finder, walked up onto (`Movement::step`, never less).
-const HALF_STEP: f32 = 0.5 + 1e-3;
 /// How soon after balking at a chase a second balk makes a creature give it up, in ticks.
 const BALK_WINDOW: u64 = 8 * TICKS_PER_SECOND as u64;
 /// How long after giving a chase up a creature that takes one up again gives it up at its
@@ -328,9 +325,9 @@ impl Creatures {
     }
 
     /// Which blocks stand in the way at a body's feet, by id: a whole block, or a shape
-    /// taller than a half block (`HALF_STEP`); a lower slab is walked up onto.
+    /// taller than a half block (`motion::HALF_STEP`); a lower slab is walked up onto.
     fn in_way_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
-        self.in_way.get_or_init(|| blocks.ids().map(|b| blocks.collision(b).iter().any(|a| a.max.y > HALF_STEP)).collect())
+        self.in_way.get_or_init(|| blocks.ids().map(|b| blocks.collision(b).iter().any(|a| a.max.y > motion::HALF_STEP)).collect())
     }
 
     /// Takes a creature out of the world without a death (`/creatures remove`).
@@ -3956,6 +3953,120 @@ mod fight_tests {
                             // Two blocks high: no creature hops it. Its feet never come up
                             // half way, nor its middle into the fence's or ledge's first
                             // column (x 1).
+                            assert!(f.highest < 1.5 && f.farthest < 1.0, "{scene}: {name} got over: its feet {:.2} up, its middle {:.2} east", f.highest, f.farthest);
+                            let gave_up = f.strikes == 0 && f.pressing < 4.0;
+                            assert!(f.first.is_some_and(|s| s < 3.5) || gave_up, "{scene}: {name} first struck at {:?}, pressed {:.1} s", f.first, f.pressing);
+                        } else {
+                            assert!(f.first.is_some_and(|s| s < 3.0), "{scene}: {name} first struck at {:?}", f.first);
+                            assert!(f.pressing < 1.0, "{scene}: {name} pressed a wall {:.1} s", f.pressing);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    /// Building pieces in a fight, their shapes as they collide (`BlockRegistry::collision`):
+    /// stairs and a roof rising toward the player onto a floor a block up, a flight of two,
+    /// a floor of slabs, sills (beams lying across the way), posts with gaps two across, and
+    /// a wall two high with a lattice window in its top course.
+    fn shaped_scenes() -> [(&'static str, Scene); 7] {
+        [
+            ("stairs", |s, c| {
+                set(s, "base:oak_stairs_west", (-2..=2).map(|z| c + IVec3::new(1, 0, z)));
+                set(s, "base:oak_planks", (2..=4).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, 0, z))));
+                (c.as_vec3() + Vec3::new(3.0, 1.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("flight", |s, c| {
+                set(s, "base:oak_stairs_west", (-2..=2).flat_map(|z| [c + IVec3::new(1, 0, z), c + IVec3::new(2, 1, z)]));
+                set(s, "base:oak_planks", (-2..=2).flat_map(|z| [c + IVec3::new(2, 0, z)]));
+                set(s, "base:oak_planks", (3..=5).flat_map(|x| (-2..=2).flat_map(move |z| (0..2).map(move |y| c + IVec3::new(x, y, z)))));
+                (c.as_vec3() + Vec3::new(4.0, 2.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("roof", |s, c| {
+                set(s, "base:oak_shingles_west", (-2..=2).map(|z| c + IVec3::new(1, 0, z)));
+                set(s, "base:oak_planks", (2..=4).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, 0, z))));
+                (c.as_vec3() + Vec3::new(3.0, 1.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("slab floor", |s, c| {
+                set(s, "base:oak_slab", (1..=4).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, 0, z))));
+                (c.as_vec3() + Vec3::new(2.5, 0.5, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("sills", |s, c| {
+                set(s, "base:oak_beam_east", (-8..=8).flat_map(|z| [c + IVec3::new(-2, 0, z), c + IVec3::new(0, 0, z)]));
+                (c.as_vec3() + Vec3::new(2.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("posts", |s, c| {
+                set(s, "base:oak_post", (-2..=2).map(|i| c + IVec3::new(1, 0, i * 3 - 1)));
+                set(s, "base:oak_post", (-2..=2).map(|i| c + IVec3::new(1, 1, i * 3 - 1)));
+                (c.as_vec3() + Vec3::new(3.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("window", |s, c| {
+                wall(s, (-8..=8).map(|z| c + IVec3::new(1, 0, z)), 1);
+                set(s, "base:oak_lattice_window_east", (-8..=8).map(|z| c + IVec3::new(1, 1, z)));
+                (c.as_vec3() + Vec3::new(2.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+        ]
+    }
+
+    /// Every land kind, jumper or not (a snail, a tortoise), walks up stairs and a roof from
+    /// their low side onto a floor a block up, and onto a floor of slabs, course by course
+    /// as a player steps (`Movement::step`), its head never in a block. Before: each shaped
+    /// piece was a whole block to a creature, so those that cannot jump stayed below.
+    #[test]
+    fn every_walker_walks_up_stairs_a_roof_and_slabs() {
+        let dt = 1.0 / TICKS_PER_SECOND as f32;
+        for (piece, top) in [("base:oak_stairs_west", 1.0), ("base:oak_shingles_west", 1.0), ("base:oak_slab", 0.5)] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            set(&mut server, piece, (-3..=3).map(|z| c + IVec3::new(1, 0, z)));
+            let floor = if top < 1.0 { piece } else { "base:oak_planks" };
+            set(&mut server, floor, (2..=7).flat_map(|x| (-3..=3).map(move |z| c + IVec3::new(x, 0, z))));
+            let ground = Ground::of(&server);
+            let mut tried = 0;
+            for (_, species) in server.content.creatures.iter() {
+                let movement = species.def.movement;
+                if species.def.habitat.water != Water::Land || matches!(movement.style, voxmar_engine::creature::Style::Flier | voxmar_engine::creature::Style::Drifter) {
+                    continue;
+                }
+                let mut body = Body::new(c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5), motion::yaw_of(Vec3::X), species.def.body.size);
+                (body.reach, body.head, body.on_ground) = (species.reach, species.head, true);
+                let (mut side, ticks) = (0.0, ((6.0 / movement.walk + 4.0) * TICKS_PER_SECOND as f32) as u32);
+                for t in 0..ticks {
+                    let (heading, turned) = motion::steer(&body, &ground, &movement, Water::Land, Vec3::X, side, movement.walk, dt);
+                    side = turned;
+                    motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: heading, speed: movement.walk, face: None }, dt);
+                    assert!(!body.head_blocked(&ground), "{} on {piece}: its head in a block {t} ticks on, at {:.2}", species.def.name, body.position - c.as_vec3());
+                    if std::env::var("VOXMAR_TRACE").is_ok_and(|v| v == species.def.name) && t % 3 == 0 {
+                        println!("t {t} at {:.2} v {:.2} ground {} wall {} heading {:.2}", body.position - c.as_vec3(), body.velocity, body.on_ground, body.against_wall, heading);
+                    }
+                    if body.on_ground && body.position.x > c.x as f32 + 3.0 {
+                        break;
+                    }
+                }
+                let at = body.position - c.as_vec3();
+                assert!(at.x > 3.0 && at.y > top - 0.05, "{} never got up the {piece} at a walk: at {at:.2}", species.def.name);
+                tried += 1;
+            }
+            assert!(tried > 10);
+        }
+    }
+
+    /// Among building pieces every fighter gets up stairs, a roof, a flight and a slab
+    /// floor, over sills and between posts, and strikes within 3 s, pressing a wall under
+    /// 1 s of the 10. At a wall two high with a lattice window it never gets over or
+    /// through, and strikes over it within 3.5 s or gives up, pressing under 4 s, as at a
+    /// fence. Before: creatures took every shaped block for a whole one (`info.solid`): a
+    /// slab floor was a step to hop, a post a block-wide pillar, stairs and a roof a wall a
+    /// block high, and nothing that cannot jump got up a flight.
+    #[test]
+    fn fighters_among_building_pieces_climb_to_strike_or_give_up() {
+        std::thread::scope(|threads| {
+            for (scene, set) in shaped_scenes() {
+                threads.spawn(move || {
+                    for name in FIGHTERS {
+                        let f = fight(name, set, 10.0);
+                        if scene == "window" {
                             assert!(f.highest < 1.5 && f.farthest < 1.0, "{scene}: {name} got over: its feet {:.2} up, its middle {:.2} east", f.highest, f.farthest);
                             let gave_up = f.strikes == 0 && f.pressing < 4.0;
                             assert!(f.first.is_some_and(|s| s < 3.5) || gave_up, "{scene}: {name} first struck at {:?}, pressed {:.1} s", f.first, f.pressing);

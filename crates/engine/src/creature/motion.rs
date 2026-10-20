@@ -49,11 +49,15 @@ pub struct Body {
     /// again rather than spin round.
     pub turn_way: f32,
     pub turn_to: f32,
+    /// How far it lifts its head over what it meets low down, 0 to `HEAD_LIFT`: up the next
+    /// tread of a stair or the next course of a roof while its feet are on the last one.
+    /// Its head (`head_points`) is that much higher; it lowers it again once it can.
+    pub lift: f32,
 }
 
 impl Body {
     pub fn new(position: Vec3, yaw: f32, size: (f32, f32)) -> Self {
-        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0 }
+        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0, lift: 0.0 }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -66,7 +70,7 @@ impl Body {
     }
 
     /// Whether its head (and the neck on the way to it), beyond its box, is in something
-    /// solid.
+    /// solid, lifted as it holds it (`lift`).
     pub fn head_blocked(&self, world: &impl Surroundings) -> bool {
         self.head_points().any(|p| inside(world, p))
     }
@@ -128,7 +132,7 @@ impl Body {
         [(1.0, 1.0), (1.0, 0.7), (0.75, 0.85)]
             .into_iter()
             .filter(move |_| beyond)
-            .map(move |(out, up)| self.position + forward * self.reach * out + Vec3::Y * (self.head * up).max(0.2))
+            .map(move |(out, up)| self.position + forward * self.reach * out + Vec3::Y * ((self.head * up).max(0.2) + self.lift))
     }
 }
 
@@ -158,6 +162,15 @@ pub trait Surroundings {
         if self.solid(cell) { &CUBE } else { &[] }
     }
 }
+
+/// How high a shape stands before it is in a body's way at its feet, in blocks: a lower
+/// slab is walked up onto (`Movement::step`, never less), and is open ground to the
+/// way-finder.
+pub const HALF_STEP: f32 = 0.5 + 1e-3;
+
+/// The most a body lifts its head over what it meets (`Body::lift`): half a block, a
+/// stair's tread.
+pub const HEAD_LIFT: f32 = 0.5;
 
 /// Whether a point is in something: in one of its cell's boxes (a whole block's cell, as
 /// the cell it is in).
@@ -447,17 +460,23 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         // or it would leap onto a fence two high. Paddling, it hauls itself out of the water.
         let front = body.position + along * (body.size.0 * 0.5 - 0.01);
         let footed = paddling || inside(world, Vec3::new(front.x, body.position.y - 0.01, front.z));
-        // A half step it walks up (`step_up`) is no step to hop.
+        // A half step it walks up (`step_up`) is no step to hop; a hopper, in the air at
+        // every hop, walks up nothing, and hops it.
         let mut stepped = level;
         stepped.translate(Vec3::Y * movement.step);
-        let boxed = footed && level.overlaps(|p| world.boxes(p)) && stepped.overlaps(|p| world.boxes(p));
+        let walks_up = movement.style != Style::Hopper && !stepped.overlaps(|p| world.boxes(p));
+        let boxed = footed && level.overlaps(|p| world.boxes(p)) && !walks_up;
         // A long head (a boar's snout, a badger's) stops the body short of a step its box
         // never meets (`Body::head_step`): it hops all the same. Either hop springs on toward
         // the step at its pace, its way along having been stopped at the step: else it goes
         // nearly straight up and, slow (a tortoise), comes down short of the step's edge,
         // where it was.
         let head_step = !boxed && body.head_step(world, along, target.length(), hop_speed(movement, dt));
-        if (boxed && !raised.overlaps(|p| world.boxes(p))) || head_step {
+        // Room for it a block up, and in no cell there in the way at a body's feet
+        // (`Surroundings::solid`): a lattice window on a wall's top course, however thin, is
+        // the wall's second block, and nothing hops onto the sill beside it.
+        let room = !raised.overlaps(|p| world.boxes(p)) && !raised.intersects(|p| world.solid(p));
+        if (boxed && room) || head_step {
             body.velocity.y = hop_speed(movement, dt);
             body.velocity.x = target.x;
             body.velocity.z = target.z;
@@ -466,8 +485,19 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     // Hoppers move in hops whenever they move, and so do fliers on the ground: each hop
     // springs the way it wants to go, not the way the last one carried it (it can hardly
     // turn in the air, so a hop still carrying it at a cliff edge would go over).
+    // A step within its hop (a stair's tread, a slab, a block), with ground under its front,
+    // room a block up and nothing in the way there, it hops up onto: its everyday hop clears less than a half
+    // step, and its head would back it off the riser.
     if matches!(movement.style, Style::Hopper | Style::Flier) && body.on_ground && target.length_squared() > 0.05 && body.velocity.y <= 0.0 {
-        body.velocity = target.with_y(movement.jump.min(6.0) * 0.75);
+        let way = target.with_y(0.0).normalize_or_zero();
+        let (mut before, mut over) = (body.aabb(), body.aabb());
+        before.translate(way * 0.6 + Vec3::Y * 0.01);
+        over.translate(way * 0.6 + Vec3::Y * 1.05);
+        // Ground under its front, as for any hop up: a block across a gap is no step.
+        let front = body.position + way * (body.size.0 * 0.5 - 0.01);
+        let footed = inside(world, Vec3::new(front.x, body.position.y - 0.01, front.z));
+        let step = footed && before.overlaps(|p| world.boxes(p)) && !over.overlaps(|p| world.boxes(p)) && !over.intersects(|p| world.solid(p));
+        body.velocity = target.with_y(if step && movement.jump > 0.0 { hop_speed(movement, dt) } else { movement.jump.min(6.0) * 0.75 });
     }
 
     let start_box = body.aabb();
@@ -507,6 +537,13 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     // Where nothing is clear (a long head turning in a doorway) it turns where it stood,
     // its head brushing the frame for a moment, rather than spin or walk on backwards. A
     // step undone counts as against the wall, so it climbs or turns away.
+    // Its head as low as it goes clear: lifted over a tread or a course before it, or let
+    // down again past it. Nowhere clear within its lift, it holds it as it was.
+    if body.reach > body.size.0 * 0.5 + 0.05
+        && let Some(lift) = [0.0, HEAD_LIFT * 0.5, HEAD_LIFT].into_iter().find(|&lift| !Body { lift, ..*body }.head_blocked(world))
+    {
+        body.lift = lift;
+    }
     if !head_was_blocked && body.head_blocked(world) {
         let (moved, turned) = (body.position, body.yaw);
         let fits = |at: Vec3| !Aabb::standing(at, body.size.0, body.size.1).overlaps(|p| world.boxes(p));
