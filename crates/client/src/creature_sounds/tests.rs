@@ -28,8 +28,8 @@ fn every_species_has_a_voice() {
         assert!(voice.event(Kind::Idle).is_some() || voice.event(Kind::Alert).is_some(), "{} never makes a sound", creature.def.name);
         assert!((0.5..=2.0).contains(&voice.pitch), "{}: pitch {}", creature.def.name, voice.pitch);
         // One that warns players off (`creature::Warn`) has a warning of its own: a growl, a
-        // roar, a hiss, not just its alarm.
-        assert!(creature.def.warn.is_none() || voice.event(Kind::Warn).is_some(), "{} warns with no `warn` sound", creature.def.name);
+        // roar, a hiss, not just its alarm (so not `event`, which falls back to it).
+        assert!(creature.def.warn.is_none() || voice.events[Kind::Warn as usize].is_some(), "{} warns with no `warn` sound", creature.def.name);
     }
     let mut bytes = 0;
     for key in &bank.clips {

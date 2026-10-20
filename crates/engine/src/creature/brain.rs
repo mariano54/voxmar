@@ -759,6 +759,14 @@ pub(super) mod tests {
         let _ = think(&wolf, &mut mind, &Situation { kept: true, ..situation(&at) });
         assert_eq!(doing(&wolf, &mind), "warn", "kept, it hunts as before, with its warning");
 
+        // Hunting near and far (a mod's kind), it warns as far as its widest hunt.
+        let pack = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (near: 3.0, seconds: 1.0, stance: (nod: 0.4)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 8.0)), (do: Hunt(radius: 16.0))])])"
+        ));
+        let mut mind = Mind::new(&pack.def.temperament, 2);
+        let _ = think(&pack, &mut mind, &situation(&[player(Vec3::new(12.0, 0.0, 0.0))]));
+        assert_eq!(doing(&pack, &mind), "warn", "past its near hunt, within its far one");
+
         // Backed off out of its reach, they are let be; come back, the warning starts again.
         let mut mind = Mind::new(&wolf.def.temperament, 2);
         for _ in 0..4 {

@@ -622,10 +622,11 @@ impl Module for Warn {
             return None;
         }
         let slack = if ctx.mind.warning.is_some() { WARN_EXIT } else { 0.0 };
-        let hunt = ctx.creature.behaviours.iter().find_map(|b| match b.behaviour {
+        // Its widest hunt: every player one of its hunts would go for, it warns first.
+        let hunt = ctx.creature.behaviours.iter().filter_map(|b| match b.behaviour {
             Behaviour::Hunt { radius } => Some(radius),
             _ => None,
-        });
+        }).reduce(f32::max);
         if hunt.is_none() && (ctx.at.kept || ctx.at.errand.is_some() || ctx.mind.fear > 0.2) {
             return None;
         }
