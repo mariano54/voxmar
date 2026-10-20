@@ -9092,7 +9092,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // (Crafting 5). A Kiln Load falls on the way, done at forty clay fired in all, and pays
     // the first four.
     while !quest_status(&f.c, "a_kiln_load").0 {
-        let more = f.have(fired) + 1;
+        let more = f.have(fired) + 12;
         f.fire_clay(&site, more);
     }
     f.mark("a_kiln_load");
