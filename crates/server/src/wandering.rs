@@ -1375,16 +1375,24 @@ impl Server {
         self.wandering.active.insert(id, inst);
     }
 
-    /// Angers (or, if they cannot fight, frightens) every member of a party at `player`.
+    /// Angers (or, if they cannot fight, are young or are badly hurt, frightens) every
+    /// member of a party at `player`.
     fn stir(&mut self, inst: &Instance, player: PlayerId, fight: bool) {
         for member in &inst.members {
             let Some(creature) = self.creatures.live.get_mut(&member.creature) else { continue };
-            let fights = fight && self.content.creatures.get(creature.species).fights();
+            let species = self.content.creatures.get(creature.species);
+            // One badly hurt that would run from a fight runs rather than be angered again.
+            let health = f32::from(creature.health) / f32::from(species.def.health.max(1));
+            let fights = fight && species.holds(creature.grows_up.is_some(), health, creature.mind.personality.bravery);
             if fights {
                 creature.mind.anger = 1.0;
                 creature.mind.remember(Memory::HurtBy(player), GRUDGE);
             } else {
                 creature.mind.fear = 1.0;
+                // Scattering, it drops any fight it had (a pet boar goes with its party).
+                if species.flees() {
+                    creature.mind.anger = 0.0;
+                }
                 creature.mind.remember(Memory::ScaredBy(player), GRUDGE);
             }
         }
@@ -6324,13 +6332,20 @@ mod tests {
             place(&mut server, name, home + IVec3::new(i as i32 + 1, 0, 0));
         }
         assert!(!comes_at(&server, "fireside_guests", spot), "a bare camp draws no callers");
-        // Seats, a table, stores, more light and a roof over it all: homely.
+        // Seats, a table, stores, more light, and sound plank walls and roof over it all
+        // on a floor: homely.
         for (i, name) in ["base:oak_stool", "base:oak_stool", "base:oak_table", "base:crate", "base:crate", "base:candle", "base:candle"].iter().enumerate() {
             place(&mut server, name, home + IVec3::new(i as i32 - 3, 0, 2));
         }
         for x in -6..=6 {
             for z in -6..=6 {
-                place(&mut server, "base:stone", home + IVec3::new(x, 4, z));
+                place(&mut server, "base:stone", home + IVec3::new(x, -1, z));
+                place(&mut server, "base:oak_planks", home + IVec3::new(x, 4, z));
+                if x.abs() == 6 || z.abs() == 6 {
+                    for y in 0..4 {
+                        place(&mut server, "base:oak_planks", home + IVec3::new(x, y, z));
+                    }
+                }
             }
         }
         assert!(comes_at(&server, "fireside_guests", spot), "a homely home has callers");
@@ -6353,7 +6368,7 @@ mod tests {
         player.position = Vec3::new(128.5, 200.0, 140.5);
         let spot = IVec3::new(128, 200, 150);
         assert!(!comes_at(&server, "neighbours", spot), "a cold hearth is no home to call on");
-        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:hearth".into(), until: u64::MAX });
+        server.lit.insert(core, crate::hearth::Lit { position: core.to_array(), structure: "base:hearth".into(), until: u64::MAX, owner: None });
         assert!(comes_at(&server, "neighbours", spot), "a burning one is");
         server.lit.clear();
         server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(130.5, 200.0, 130.5));

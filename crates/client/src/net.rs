@@ -388,13 +388,21 @@ pub(crate) fn receive(
                 creatures.struck(creature, damage, blow, killed, time.elapsed_secs());
                 fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
-            ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
+            ServerMessage::Hurt { creature, damage, defended } => {
+                let combat = &launch.content.combat;
+                let held = player.inventory.get(player.selected).map(|s| s.item);
+                let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+                let spoil = combat.spoiled_by_hits(&weapon).then(|| (combat.timing(&weapon), combat.feel));
+                fighting.hurt(creature, damage, defended, time.elapsed_secs_f64(), spoil)
+            }
             ServerMessage::Ping { id } => {
                 net.pong(id);
                 fighting.pings += 1;
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
             ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
+            ServerMessage::Bark { creature, bark } => creatures.bark(creature, bark),
+            ServerMessage::Smoulders { at } => world.smoulders = at.into_iter().collect(),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
             ServerMessage::Station { block, load, fire } => stations.tell(block, load, fire, time.elapsed_secs_f64()),
         }

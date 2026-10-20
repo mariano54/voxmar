@@ -250,8 +250,8 @@
         ),
         (
             name: "hide_and_seek", age: "nomad", branch: "hunter", title: "Hide and Seek",
-            why: "Hide makes armour, pouches and bedding. Rabbits on grassland drop it, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
-            tasks: [[Have("hide", 4), Have("bone", 2)]],
+            why: "Hide makes armour, pouches and bedding once it has hung a minute on a drying rack. Rabbits on grassland drop raw hide, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four raw hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
+            tasks: [[Have("raw_hide", 4), Have("bone", 2)]],
             after: ["small_game", "a_sharp_edge"],
             rewards: [Xp("hunter", 60.0), Xp("crafting", 30.0)],
         ),

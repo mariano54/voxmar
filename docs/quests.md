@@ -472,8 +472,8 @@ base/recipes_weapons.ron), checked at load:
 
 | Weapon | Age | Level | Max hit | Cooldown | Reach | Ammo | Recipe |
 |---|---|---|---|---|---|---|---|
-| Sling | Nomad | Ranged 1 | 2 | 0.53 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
-| Short Bow | Nomad (late) | Ranged 3 | 4 | 0.6 s | 20 | Arrows | Three sticks, three twine (Crafting 3) |
+| Sling | Nomad | Ranged 1 | 2 | 0.8 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
+| Short Bow | Nomad (late) | Ranged 3 | 4 | 1.0 s | 20 | Arrows | Three sticks, three twine (Crafting 3) |
 | Arrow (x4) | Nomad (late) | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 3) |
 
 Next to early melee: fists hit 1, a stone sword 3, copper swords 5 and a copper axe 6. The

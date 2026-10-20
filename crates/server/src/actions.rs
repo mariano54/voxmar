@@ -29,7 +29,7 @@ use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Ef
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::crop::CropRegistry;
 use voxmar_engine::skill::SkillId;
-use voxmar_engine::glam::{IVec3, Vec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec3};
 use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
@@ -142,7 +142,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn occupied(&self, cell: IVec3) -> bool {
-        self.server.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
+        self.server.player_in(cell)
     }
 
     fn creature_in(&self, cell: IVec3) -> bool {
@@ -289,8 +289,19 @@ impl Server {
         }
     }
 
-    /// Applies an action's effects. Validation already guaranteed they can all apply.
+    /// Applies an action's effects, as `agent`'s doing (`fire_origin`, `changed_by`) whenever
+    /// it commits: as their message arrives or later, when it falls due in the run loop.
     fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
+        let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+        let fire_was = std::mem::replace(&mut self.fire_origin, by.clone());
+        let changed_was = std::mem::replace(&mut self.changed_by, by);
+        self.commit_effects(agent, def, target);
+        self.fire_origin = fire_was;
+        self.changed_by = changed_was;
+    }
+
+    /// Applies an action's effects. Validation already guaranteed they can all apply.
+    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget) {
         for &effect in &def.effects {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
@@ -401,6 +412,7 @@ impl Server {
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
                     self.set_blocks(&changes);
                 }
+                (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
@@ -458,9 +470,18 @@ impl Server {
 
     /// `agent` sleeps at the bed at `bed`: it is where they wake after dying (their hearth
     /// first, once they have one), and they wake rested, as well as the home around the
-    /// bed allows (effects.ron's `sleeps`). A bed always works, as a bed; the rest is held back
+    /// bed allows (effects.ron's `sleeps`). A bed a village home was furnished with is its
+    /// resident's and turns them away, but in creative. A bed always works, as a bed; the rest is held back
     /// while one is still on them, so the buff cannot be had again until it wears off.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
+        // A bed a village furnished a home with (its settlement's plan says so, and no player
+        // has set one down there since) is its resident's; any other works, however it came
+        // to be (placed, /setblock, an older save). In creative nothing stops them.
+        let creative = self.players.get(&agent).is_some_and(|p| p.allow_flight);
+        if !creative && !self.placed.contains(&bed) && self.planned_bed(bed) {
+            self.refuse(agent, Words::key("bed.someones"));
+            return;
+        }
         let player = self.players.get_mut(&agent).unwrap();
         player.bed = Some(bed.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
         let key = if player.home.is_some() { "bed.set_home" } else { "bed.set" };
@@ -495,6 +516,16 @@ impl Server {
             let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
+    }
+
+    /// Whether a settlement's plan furnished one of its homes with a bed at `bed`, and that
+    /// very bed still stands there: one set down in its place (a bag, another bed, by hand
+    /// or by command) is not the village's.
+    fn planned_bed(&self, bed: IVec3) -> bool {
+        let Some(now) = self.block(bed) else { return false };
+        self.content.blocks.def(now).has_tag("bed")
+            && self.overworld.settlements_near(IVec2::new(bed.x, bed.z), 64).iter().any(|s| s.buildings.iter().any(|b| b.beds.contains(&bed)))
+            && voxmar_worldgen::Generator::generate(&*self.overworld, voxmar_engine::coords::ColumnPos::of_block(bed)).block(bed) == now
     }
 
     /// Why `agent` cannot lie down now, if they cannot: a creature that hunts players (but

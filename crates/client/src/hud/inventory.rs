@@ -148,6 +148,14 @@ pub struct InterfaceStyle {
     pub home_fade: f32,
     /// The item whose icon marks home, if a package names one.
     pub home_icon: Option<String>,
+    /// A quest's icon on the book's web at each zoom, smallest first, in interface pixels:
+    /// whole multiples of its 16 texels' half, so the pixel art stays sharp.
+    pub book_zooms: Vec<f32>,
+    /// Which of `book_zooms` the book opens at.
+    pub book_zoom_at: usize,
+    /// How much of the window the book takes across, in percent; down, it takes all but the
+    /// keys under it and the HUD at the bottom.
+    pub book_width: f32,
 }
 
 #[derive(Default, serde::Deserialize)]
@@ -160,6 +168,9 @@ struct InterfaceFile {
     home_dawn: Option<u64>,
     home_fade: Option<f32>,
     home_icon: Option<String>,
+    book_zooms: Option<Vec<f32>>,
+    book_zoom_at: Option<usize>,
+    book_width: Option<f32>,
 }
 
 impl InterfaceStyle {
@@ -169,6 +180,7 @@ impl InterfaceStyle {
         let options = ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME);
         let (mut alpha, mut hidden, mut icon) = (None, None, None);
         let (mut beyond, mut dusk, mut dawn, mut fade) = (None, None, None, None);
+        let (mut zooms, mut zoom_at, mut width) = (None, None, None);
         for file in files.iter().filter(|f| f.name == Self::FILE) {
             let given: InterfaceFile = options.from_str(&file.source).map_err(|e| format!("{}/{}: {e}", file.package, Self::FILE))?;
             alpha = given.worn_glyph_alpha.or(alpha);
@@ -178,6 +190,9 @@ impl InterfaceStyle {
             dawn = given.home_dawn.or(dawn);
             fade = given.home_fade.or(fade);
             icon = given.home_icon.or(icon);
+            zooms = given.book_zooms.or(zooms);
+            zoom_at = given.book_zoom_at.or(zoom_at);
+            width = given.book_width.or(width);
         }
         let worn_glyph_alpha = alpha.ok_or(format!("no package's {} gives worn_glyph_alpha", Self::FILE))?;
         if !(0.0..=1.0).contains(&worn_glyph_alpha) {
@@ -203,7 +218,20 @@ impl InterfaceStyle {
         if !(0.0..=5.0).contains(&home_fade) {
             return Err(format!("{}: home_fade {home_fade} is not from 0 to 5 seconds", Self::FILE));
         }
-        Ok(InterfaceStyle { worn_glyph_alpha, home_hidden_within, home_shown_beyond, home_dusk, home_dawn, home_fade, home_icon: icon })
+        let book_zooms: Vec<f32> = given(zooms, "book_zooms")?;
+        let sharp = |icon: &f32| *icon > 0.0 && (icon / 8.0).fract() == 0.0;
+        if book_zooms.is_empty() || !book_zooms.iter().all(sharp) || !book_zooms.windows(2).all(|pair| pair[0] < pair[1]) {
+            return Err(format!("{}: book_zooms {book_zooms:?} are not sizes from small to big, each a multiple of 8", Self::FILE));
+        }
+        let book_zoom_at: usize = given(zoom_at, "book_zoom_at")?;
+        if book_zoom_at >= book_zooms.len() {
+            return Err(format!("{}: book_zoom_at {book_zoom_at} is not one of the {} book_zooms", Self::FILE, book_zooms.len()));
+        }
+        let book_width: f32 = given(width, "book_width")?;
+        if !(50.0..=100.0).contains(&book_width) {
+            return Err(format!("{}: book_width {book_width} is not from 50 to 100 percent", Self::FILE));
+        }
+        Ok(InterfaceStyle { worn_glyph_alpha, home_hidden_within, home_shown_beyond, home_dusk, home_dawn, home_fade, home_icon: icon, book_zooms, book_zoom_at, book_width })
     }
 }
 
@@ -231,6 +259,14 @@ pub(crate) struct InventoryCard;
 struct PointerStack;
 #[derive(Component)]
 struct Tooltip;
+/// How wide the tooltip grows.
+const TIP_WIDTH: f32 = 180.0 * PX;
+
+/// One tooltip line's box: as wide as the tooltip's inside at most, so a line that wraps is
+/// measured, and the tooltip's backing grows, by every line it wraps to.
+fn tip_line() -> Node {
+    Node { max_width: Val::Px(TIP_WIDTH - 2.0 * space::GAP), ..default() }
+}
 #[derive(Component)]
 pub(crate) struct TooltipLines;
 /// What the crafting grid makes: click to craft one onto the pointer, shift-click to craft
@@ -359,7 +395,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
         position_type: PositionType::Absolute,
         flex_direction: FlexDirection::Column,
         row_gap: Val::Px(PX),
-        max_width: Val::Px(180.0 * PX),
+        max_width: Val::Px(TIP_WIDTH),
         padding: UiRect::axes(Val::Px(space::GAP), Val::Px(space::INNER)),
         ..default()
     };
@@ -415,7 +451,7 @@ fn craft(
     mut count: Query<&mut Text, (With<OutputCount>, Without<CraftName>, Without<CraftHint>)>,
     mut name: Query<&mut Text, (With<CraftName>, Without<OutputCount>, Without<CraftHint>)>,
     mut hint: Query<&mut Text, (With<CraftHint>, Without<OutputCount>, Without<CraftName>)>,
-    (locale, settings): (Res<Locale>, Res<Settings>),
+    locale: Res<Locale>,
 ) {
     if !ui.inventory_open {
         return;
@@ -440,6 +476,8 @@ fn craft(
     let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
     let made = found.filter(|r| allowed(r)).map(|r| (r.output, r.count));
     let filled = player.inventory.grid().iter().any(Option::is_some);
+    // How to look a recipe up is in the key row under the screen, where no item's name
+    // reaches it; here only what to do with what the grid makes.
     let (title, how) = match made {
         _ if let Some(age) = &locked => {
             let age = locale.get(&format!("quest.age.{age}")).to_owned();
@@ -447,11 +485,11 @@ fn craft(
         }
         _ if let Some((skill, level)) = lacking => {
             let skill = locale.skill(skills.get(skill));
-            (locale.format("skills.needs", &[("skill", &skill), ("level", &level)]), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))]))
+            (locale.format("skills.needs", &[("skill", &skill), ("level", &level)]), String::new())
         }
         Some((item, _)) => (locale.block(launch.content.blocks.def(item)), locale.get("inventory.craft.take").to_owned()),
-        None if filled => (locale.get("inventory.craft.nothing").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
-        None => (locale.get("inventory.craft").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
+        None if filled => (locale.get("inventory.craft.nothing").to_owned(), String::new()),
+        None => (locale.get("inventory.craft").to_owned(), String::new()),
     };
     for (query, words) in [(name.single_mut().ok(), title), (hint.single_mut().ok(), how)] {
         if let Some(mut text) = query
@@ -1171,8 +1209,8 @@ fn tooltip(
         let key = voxmar_engine::combat::Slot::ALL[slot - WORN].key();
         let name = locale.get_or(&format!("item.slot.{key}"), key).to_owned();
         commands.entity(entity).despawn_children().with_children(|lines| {
-            lines.spawn(shadowed(&font.0, name, BODY, TEXT));
-            lines.spawn(text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED));
+            lines.spawn((shadowed(&font.0, name, BODY, TEXT), tip_line()));
+            lines.spawn((text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED), tip_line()));
         });
         visibility.set_if_neq(Visibility::Inherited);
         place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
@@ -1199,13 +1237,13 @@ fn tooltip(
         commands.entity(entity).despawn_children().with_children(|lines| {
             if in_japanese {
                 for line in &readings {
-                    lines.spawn(text(&font.0, line, BODY, SOFT));
+                    lines.spawn((text(&font.0, line, BODY, SOFT), tip_line()));
                 }
             }
-            lines.spawn(shadowed(&font.0, locale.block(def), BODY, rarity_color(def.rarity)));
+            lines.spawn((shadowed(&font.0, locale.block(def), BODY, rarity_color(def.rarity)), tip_line()));
             if !in_japanese {
                 for line in &readings {
-                    lines.spawn(text(&font.0, line, BODY, SOFT));
+                    lines.spawn((text(&font.0, line, BODY, SOFT), tip_line()));
                 }
             }
             // Where it comes from and what it goes into, before the rest.
@@ -1220,11 +1258,11 @@ fn tooltip(
                 .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
-                lines.spawn(text(&font.0, line, BODY, color));
+                lines.spawn((text(&font.0, line, BODY, color), tip_line()));
             }
             // How to look it up.
             let keys = [("recipes", settings.recipes_key.name(&locale)), ("uses", settings.uses_key.name(&locale))];
-            lines.spawn(text(&font.0, locale.format("tooltip.lookup", &[(keys[0].0, &keys[0].1), (keys[1].0, &keys[1].1)]), BODY, MUTED));
+            lines.spawn((text(&font.0, locale.format("tooltip.lookup", &[(keys[0].0, &keys[0].1), (keys[1].0, &keys[1].1)]), BODY, MUTED), tip_line()));
         });
     }
     visibility.set_if_neq(Visibility::Inherited);
@@ -1269,7 +1307,23 @@ mod tests {
         assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (8.0, Some("base:hearthstone")), "core's distance, base's icon");
         assert_eq!((style.home_shown_beyond, style.home_dusk, style.home_dawn, style.home_fade), (48.0, 16500, 23500, 0.5));
         // Each way home number is checked as it loads.
-        for bad in ["(home_hidden_within: -1.0)", "(home_shown_beyond: 4.0)", "(home_dusk: 24000)", "(home_dawn: 16500)", "(home_fade: -0.5)", "(home_fade: 9.0)"] {
+        assert_eq!((style.book_zooms.len(), style.book_zoom_at, style.book_width), (5, 1, 96.0));
+        // As is each of the quest book's: sharp zooms from small to big, opening at one of
+        // them, across most of the window.
+        for bad in [
+            "(home_hidden_within: -1.0)",
+            "(home_shown_beyond: 4.0)",
+            "(home_dusk: 24000)",
+            "(home_dawn: 16500)",
+            "(home_fade: -0.5)",
+            "(home_fade: 9.0)",
+            "(book_zooms: [])",
+            "(book_zooms: [16.0, 20.0])",
+            "(book_zooms: [24.0, 16.0])",
+            "(book_zoom_at: 5)",
+            "(book_width: 40.0)",
+            "(book_width: 101.0)",
+        ] {
             files.push(file(bad));
             assert!(InterfaceStyle::load(&files).is_err(), "{bad}");
             files.pop();

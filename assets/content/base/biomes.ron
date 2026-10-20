@@ -1338,7 +1338,7 @@
                 forest: 0.04,
                 trees: [Name("oak", 1.0), Name("shrub", 0.5)],
                 cover: 0.8, flowers: 0.12,
-                plants: [Name("short_grass", 2.0), Name("wild_wheat", 0.2), Name("sunspire", 300.0), Name("starlily", 0.42), Name("marigold", 1.0), Name("goldenrod", 1.0), Name("sunpetal", 0.4)],
+                plants: [Name("short_grass", 2.0), Name("wild_wheat", 0.2), Name("sunspire", 300.0), Name("starlily", 0.34), Name("marigold", 1.0), Name("goldenrod", 1.0), Name("sunpetal", 0.4)],
                 wonders: [],
             ),
             surface: (
