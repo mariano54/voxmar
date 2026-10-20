@@ -387,6 +387,7 @@
     "block.base.{name}_fence_corner": "{name}の柵の角",
     "block.base.{name}_fence_gate": "{name}の柵の門",
     "block.base.{name}_fence_gate_open": "{name}の柵の門",
+    "block.base.{name}_ladder": "{name}の梯子",
     "block.base.{name}_newel_post": "{name}の親柱",
     "block.base.{name}_landing": "{name}の踊り場",
     "block.base.balcony_door": "格子戸",
