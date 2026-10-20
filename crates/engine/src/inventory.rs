@@ -53,20 +53,9 @@ pub fn pouch_for(item: BlockId) -> Option<BlockId> {
 pub const POUCH_EACH: u16 = 1000;
 pub const POUCH_KINDS: usize = 40;
 
-/// How many times content has set the item tables (stack limits, pouches, worn slots,
-/// store holds; a load sets all four, stack limits first).
-static TABLES_SET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 /// Sets each item's most per stack, by block id.
 pub fn set_stack_limits(limits: Vec<u8>) {
     *LIMITS.write().unwrap_or_else(|e| e.into_inner()) = limits;
-    TABLES_SET.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-}
-
-/// How many times content has set the item tables: one held content can tell another
-/// load set them since its own (a mod's, in a test) and load again to set its own back.
-pub fn tables_set() -> u64 {
-    TABLES_SET.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 /// The most of `item` one stack holds.

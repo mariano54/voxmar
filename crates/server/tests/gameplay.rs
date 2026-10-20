@@ -166,16 +166,52 @@ fn keep_world(seed: u64, content: &Content) {
 
 /// The game's content, loaded and checked once for the whole run: every server a test
 /// starts gets the same, as a player's game gives each world it opens. The item tables a
-/// load sets are the process's own: when a test has loaded a mod's since, they are loaded
-/// again, so no test plays on another's stack limits, pouches, worn slots or store holds.
+/// load sets (stack limits, pouches, worn slots, store holds) are the process's own, so a
+/// test that loads other content checks it set the same tables (`assert_base_tables`).
 fn content() -> Content {
-    static LOADED: std::sync::Mutex<Option<(Content, u64)>> = std::sync::Mutex::new(None);
-    let mut loaded = LOADED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if loaded.as_ref().is_none_or(|(_, set)| *set != voxmar_engine::inventory::tables_set()) {
+    base().0.clone()
+}
+
+/// The game's content, and its item tables as its load set them.
+fn base() -> &'static (Content, BaseTables) {
+    static LOADED: std::sync::OnceLock<(Content, BaseTables)> = std::sync::OnceLock::new();
+    LOADED.get_or_init(|| {
         let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
-        *loaded = Some((content, voxmar_engine::inventory::tables_set()));
+        let tables = BaseTables::read(&content);
+        (content, tables)
+    })
+}
+
+/// The item tables content sets for the whole process, read for the game's own blocks.
+#[derive(Debug, PartialEq)]
+struct BaseTables {
+    stacks: Vec<u8>,
+    pouches: Vec<Option<(voxmar_engine::block::BlockId, u16)>>,
+    worn: Vec<Option<usize>>,
+    /// Per store, what of every block it takes.
+    holds: Vec<(voxmar_engine::block::BlockId, Vec<bool>)>,
+}
+
+impl BaseTables {
+    fn read(base: &Content) -> Self {
+        use voxmar_engine::inventory;
+        let ids: Vec<_> = base.blocks.ids().collect();
+        let stores = base.machines.iter().filter(|m| m.is_store()).map(|m| m.block).collect::<Vec<_>>();
+        Self {
+            stacks: ids.iter().map(|&id| inventory::max_stack(id)).collect(),
+            pouches: ids.iter().map(|&id| inventory::pouch_holding(id)).collect(),
+            worn: ids.iter().map(|&id| inventory::worn_slot(id)).collect(),
+            holds: stores.into_iter().map(|store| (store, ids.iter().map(|&id| inventory::store_takes(store, id)).collect())).collect(),
+        }
     }
-    loaded.as_ref().unwrap().0.clone()
+}
+
+/// The item tables a load of other content (a mod's) left are still the game's own, for
+/// its blocks: the tables are the process's, shared by every test running beside it.
+#[track_caller]
+fn assert_base_tables() {
+    let (content, tables) = base();
+    assert!(BaseTables::read(content) == *tables, "loading other content changed the game's item tables (stack limits, pouches, worn slots or store holds) for every test");
 }
 
 /// Opens and registers a local connection only once its Hello is ready.
@@ -1044,7 +1080,9 @@ fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
     let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound"]"#;
     assert!(source.contains(mossy));
     std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound", "tagged"]"#)).unwrap();
+    base();
     let tagged = load_content(&assets).expect("content loads");
+    assert_base_tables();
     assert!(warned(tagged), "a block's tags changed");
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&assets).unwrap();
@@ -2645,6 +2683,8 @@ fn looking_an_item_up_finishes_the_look_it_up_quest() {
 /// A content directory with one more package, `zz_test`, holding `files`: what a mod adds.
 /// Returns where it is (to remove) and the content loaded from it.
 fn with_mod(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Content) {
+    // The game's tables first, to check the mod's load against.
+    base();
     let assets = world_dir(name);
     copy_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), &assets.join("content"));
     let package = assets.join("content/zz_test");
@@ -2653,6 +2693,7 @@ fn with_mod(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Content)
         std::fs::write(package.join(file), source).unwrap();
     }
     let content = load_content(&assets).expect("content loads");
+    assert_base_tables();
     (assets, content)
 }
 
