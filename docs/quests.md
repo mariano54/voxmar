@@ -66,7 +66,7 @@ Quests done, quests claimed and the tallies are saved with the player.
 ## Claiming
 
 Finishing a quest pays nothing by itself. A done quest with rewards waits in the quest
-book: it glows gold on the web, its chapter shows a gold "!", the chat says so, and its
+book: its shape on the web is gold with a "!" in its corner, its chapter shows a gold "!", the chat says so, and its
 page has a Claim button (`ClientMessage::ClaimQuest`) beside the rewards, which list the
 experience and the items. The server then gives the items and the experience once. A quest
 that pays nothing is claimed as it finishes. If the pack cannot hold every item, nothing
