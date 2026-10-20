@@ -59,4 +59,11 @@
     // about x, y and z, in that order), and how wide it is drawn (blocks): flat items, and
     // blocks.
     hand: (at: (0.0, -0.42, -0.2), turn: (0.0, 90.0, 0.0), flat: 0.6, block: 0.28),
+    // Their fight, as the server tells it: the right arm (degrees forward of hanging; 90
+    // straight ahead, 180 straight up) is raised through a swing's wind-up to `raise`, and
+    // as the blow lands brought down through `strike` over `follow` seconds. With the guard
+    // up it is held at `guard`, what is in it turned `guard_turn` degrees across the body;
+    // drawing a bow or sling both arms are held out at `draw`. Between poses the arms ease
+    // at `ease`, a share a second.
+    fight: (raise: 150.0, strike: 20.0, follow: 0.16, guard: 70.0, guard_turn: 70.0, draw: 88.0, ease: 18.0),
 )

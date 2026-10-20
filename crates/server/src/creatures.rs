@@ -4818,6 +4818,108 @@ mod fight_tests {
         }
     }
 
+    /// A wolf fighting a player who stands and strikes back circles between bites
+    /// (`Attack::circle`): once it has recovered it gets clear of its reach and swings
+    /// round them, facing them, then comes in and bites again; never nose to nose for the
+    /// whole fight, and its body and head never in a block.
+    #[test]
+    fn a_wolf_circles_between_bites() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        let player = join(&mut server, stand);
+        let id = put(&mut server, "base:wolf", stand - Vec3::X * 3.0, Vec3::X);
+        let def = &server.content.creatures.get(server.creatures.live[&id].species).def;
+        let attack = def.attack.expect("a wolf bites");
+        let circle = attack.circle.expect("a wolf circles");
+        let clear = def.body.size.0 * server.creatures.live[&id].scale * 0.5 + attack.reach + circle.away * 0.5;
+        server.tick = 1000;
+        server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+        let bearing = |at: Vec3| (at - stand).z.atan2((at - stand).x);
+        let (mut bites, mut was) = (0u32, false);
+        // Each circle: the furthest it got from the player, and how far round it went.
+        let (mut circles, mut now): (Vec<(f32, f32)>, Option<(f32, f32, f32)>) = (Vec::new(), None);
+        for t in 0..20 * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            let d = server.players[&player].position.distance(server.creatures.live[&id].body.position);
+            if t % TICKS_PER_SECOND as u64 == 0 && d < 3.5 {
+                server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+            }
+            // As `Server::tick` runs them: the creatures think and move, then the fights.
+            server.think_and_move();
+            server.tick_fights();
+            server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+            let ground = Ground::of(&server);
+            let wolf = &server.creatures.live[&id];
+            assert!(!wolf.body.aabb().intersects(|p| motion::Surroundings::solid(&ground, p)), "the wolf went into a block at {} (tick {t})", wolf.body.position);
+            assert!(!wolf.body.head_blocked(&ground), "the wolf's head went into a block at {} (tick {t})", wolf.body.position);
+            let biting = wolf.decision.attack.is_some();
+            bites += (biting && !was) as u32;
+            was = biting;
+            let at = wolf.body.position;
+            if wolf.mind.circling > 0.0 && server.tick >= wolf.held_until {
+                let (far, last, round) = now.unwrap_or((0.0, bearing(at), 0.0));
+                let step = (bearing(at) - last + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                now = Some((far.max(at.with_y(0.0).distance(stand.with_y(0.0))), bearing(at), round + step));
+            } else if let Some((far, _, round)) = now.take() {
+                circles.push((far, round.abs().to_degrees()));
+            }
+        }
+        assert!(bites >= 6, "the wolf bit only {bites} times in 20 s");
+        assert!(circles.len() >= 5, "the wolf circled only {} times in 20 s: {circles:?}", circles.len());
+        for (i, &(far, round)) in circles.iter().enumerate() {
+            assert!(far >= clear, "circle {i}: the wolf got only {far:.2} blocks from the player, {clear:.2} wanted: {circles:?}");
+            assert!(round >= 15.0, "circle {i}: the wolf went only {round:.0} degrees round the player: {circles:?}");
+        }
+    }
+
+    /// A field fence pens as a railing does: a mouflon led by wheat stays in a ring of fences
+    /// (corners at the corners, a shut gate on the west side) for 10 s; with the gate swung
+    /// open it follows the wheat out through it.
+    #[test]
+    fn a_fenced_pen_holds_a_led_mouflon_until_its_gate_opens() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let middle = c + IVec3::new(3, 0, 0);
+        let mut fences = Vec::new();
+        for i in -1..=1 {
+            fences.push((IVec3::new(i, 0, -2), "base:oak_fence"));
+            fences.push((IVec3::new(i, 0, 2), "base:oak_fence"));
+            fences.push((IVec3::new(2, 0, i), "base:oak_fence_east"));
+            fences.push((IVec3::new(-2, 0, i), if i == 0 { "base:oak_fence_gate_east" } else { "base:oak_fence_east" }));
+        }
+        for (cell, corner) in [((-2, -2), "base:oak_fence_corner_south"), ((2, -2), "base:oak_fence_corner_west"), ((2, 2), "base:oak_fence_corner"), ((-2, 2), "base:oak_fence_corner_east")] {
+            fences.push((IVec3::new(cell.0, 0, cell.1), corner));
+        }
+        for (cell, name) in fences {
+            let id = server.content.blocks.expect(name);
+            server.set_block(middle + cell, id);
+        }
+        let player = join(&mut server, middle.as_vec3() + Vec3::new(-6.5, 0.0, 0.5));
+        let wheat = server.content.blocks.expect("base:wheat");
+        let held = server.players.get_mut(&player).unwrap();
+        held.inventory.add(wheat, 1);
+        held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == wheat)).expect("the wheat is held");
+        let sheep = put(&mut server, "base:mouflon", middle.as_vec3() + Vec3::new(1.5, 0.0, 0.5), -Vec3::X);
+        server.tick = 1000;
+        let off = |server: &Server| server.creatures.live[&sheep].body.position - middle.as_vec3();
+        for t in 0..10 * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.think_and_move();
+            let off = off(&server);
+            assert!((-1.0..2.0).contains(&off.x) && (-1.0..2.0).contains(&off.z), "the mouflon got out of the fenced pen {t} ticks on: at {off:.2} from its middle cell");
+        }
+        let open = server.content.blocks.expect("base:oak_fence_gate_open_east");
+        assert_eq!(server.content.blocks.swapped(server.content.blocks.expect("base:oak_fence_gate_east")), Some(open), "the gate swings open");
+        server.set_block(middle + IVec3::new(-2, 0, 0), open);
+        let out = (0..15 * TICKS_PER_SECOND as u64).find(|_| {
+            server.tick += 1;
+            server.think_and_move();
+            off(&server).x < -2.0
+        });
+        assert!(out.is_some(), "the mouflon never came out through the open gate after the wheat: at {:.2}", off(&server));
+    }
+
     /// Prints the table (`cargo test -p voxmar_server --lib fight_table -- --ignored --nocapture`).
     #[test]
     #[ignore = "a measurement: prints a table"]

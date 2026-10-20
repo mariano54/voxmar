@@ -291,8 +291,9 @@ let go (`--idle-seconds N`; the game's network thread says it is there every 5 s
 while the game is minimized). `--limits FILE` changes how much one connection may ask of the
 server, from a RON file naming any of `messages_per_tick` (64), `chat_burst` (8 lines) and
 `chat_per_second` (2), `hello_seconds` (3), `max_pending` (16), `max_pending_per_address`
-(4), `name_length` (32), `ipv6_prefix` (64 bits counted as one address) and `rejoin_silence`
-(6 seconds, over the 5-second keepalive), as in `(chat_burst: 4.0, max_pending_per_address: 2)`.
+(4), `name_length` (32), `ipv6_prefix` (64 bits counted as one address), `rejoin_silence`
+(6 seconds, over the 5-second keepalive), `players_seen` (160 blocks within which others are
+shown) and `players_seen_margin` (8 blocks further one shown must go to be hidden), as in `(chat_burst: 4.0, max_pending_per_address: 2)`.
 
 ### Saved worlds
 
