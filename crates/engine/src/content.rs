@@ -298,8 +298,9 @@ impl Content {
             let mut names: Vec<String> = std::fs::read_dir(&path)
                 .map_err(|e| read_error(&path, e))?
                 .flatten()
-                // Files only, through links too: a folder named `x.ron` is no definition file.
-                .filter(|entry| entry.path().is_file())
+                // No folders, through links too: a folder named `x.ron` is no definition file
+                // (a dangling link still fails the load, read below).
+                .filter(|entry| !entry.path().is_dir())
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .filter(|name| name.ends_with(".ron"))
                 .collect();

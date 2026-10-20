@@ -10074,11 +10074,12 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
     fit_tool(world, matches!(view, Some(View::Inventory)));
     if let Some(View::Quests) = view {
         // A quest still waiting on another, so its page reads so, beside those done and open.
-        use crate::hud::quests::{QuestView, Standing, standing};
+        use crate::hud::quests::{QuestView, Standing, chapters, standing};
         let picked = {
             let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
             let content = &launch.content;
-            let first_age = content.quests.iter().next().map(|q| q.age.clone());
+            // Chapter 0, the age the book opens on, whatever file its quests are in.
+            let first_age = chapters(content).into_iter().next();
             let chapter: Vec<_> = content.quests.iter().filter(|q| Some(&q.age) == first_age.as_ref()).collect();
             chapter.iter().find(|q| standing(content, player, q) == Standing::Waiting).or(chapter.first()).map(|q| q.name.clone())
         };
