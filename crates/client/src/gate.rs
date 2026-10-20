@@ -6204,6 +6204,22 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 };
                 let distinct = icons.iter().all(Option::is_some) && icons.iter().enumerate().all(|(i, a)| icons[i + 1..].iter().all(|b| a != b));
                 gate.check("home: icons", if distinct { Ok("the Camp, Rested and Healing Sleep chips each show an icon of their own".into()) } else { Err(format!("the Camp, Rested and Healing Sleep chips share an icon: {icons:?}")) });
+                // And every effect's chip, as the HUD loaded them: none shares another's
+                // picture (the plain buff or debuff, as an effect without its own would).
+                let shared = {
+                    let (images, effects) = (world.resource::<crate::hud::HudImages>(), &world.resource::<Launch>().content.effects);
+                    let mut seen: Vec<(Handle<Image>, &str)> = Vec::new();
+                    let mut shared = Vec::new();
+                    for id in effects.ids() {
+                        let (image, name) = (images.effect(id), effects.get(id).name.as_str());
+                        match seen.iter().find(|(other, _)| *other == image) {
+                            Some((_, other)) => shared.push(format!("{name} and {other}")),
+                            None => seen.push((image, name)),
+                        }
+                    }
+                    (shared, seen.len())
+                };
+                gate.check("effects: icons", if shared.0.is_empty() { Ok(format!("all {} effects' chips show an icon of their own", shared.1)) } else { Err(format!("chips share an icon: {}", shared.0.join(", "))) });
                 // Shown however near and at any hour, for the mark's own checks.
                 let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
                 gate.home_style = Some(style.clone());
@@ -10532,7 +10548,7 @@ fn weapon(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 const SLING: &str = "base:sling";
 const SLING_LEVEL: u8 = 70;
 const SLING_STONES: u32 = 12;
-/// Seconds between shots (past the sling's 0.53 s cooldown), by the game's clock.
+/// Seconds between shots (past the sling's 0.8 s cooldown), by the game's clock.
 const SLING_EVERY: f32 = 1.0;
 
 /// The sling step's run: what stood before it began, its bear, and its shots.
@@ -10557,6 +10573,8 @@ struct SlingRun {
     /// whatever else earlier steps or the land left there), and what each was: taken away
     /// for the shots and put back on every way out.
     cleared: Vec<(IVec3, String)>,
+    /// The least share of pace the player kept while a stone was drawn, as they moved.
+    pace: Option<f32>,
 }
 
 /// One cell set to `block` by name.
@@ -10744,6 +10762,9 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 return;
             }
             gate.sling.in_the_way = None;
+            if let Some(pace) = world.resource::<crate::fight::Fighting>().drawing_pace {
+                gate.sling.pace = Some(gate.sling.pace.map_or(pace, |least| least.min(pace)));
+            }
             let run = &gate.sling;
             let xp = skill_level(world, "core:ranged").1;
             let unanswered = run.shot_at.map_or(0.0, |(game, server)| (now - game).min(gate.server_now - server));
@@ -10762,6 +10783,7 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             mouse(world, MouseButton::Left, false);
             match next {
                 SlingNext::Hit => {
+                    let pace = run.pace;
                     // Every shot the server answered spent a stone: the hit, and any misses before it.
                     let spent = run.stones.saturating_sub(stones);
                     let distance = world.resource::<LocalPlayer>().eye().distance(view.position + Vec3::Y * 0.6);
@@ -10771,6 +10793,14 @@ fn sling(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                         Err(format!("a stone hit from {distance:.1} blocks, but no cobblestone was spent ({stones} left)"))
                     };
                     gate.check("sling shot", result);
+                    // Drawing slows the player to the class's share of their pace.
+                    let combat = &world.resource::<Launch>().content.combat;
+                    let wanted = world.resource::<Launch>().content.blocks.id(SLING).map(|sling| combat.drawing_speed(&combat.wielded(Some(sling), |_| SLING_LEVEL)));
+                    let result = match (pace, wanted) {
+                        (Some(pace), Some(wanted)) if (pace - wanted).abs() < 1e-4 => Ok(format!("drawing a stone the player kept {pace:.2} of their pace")),
+                        (pace, wanted) => Err(format!("drawing a stone the player kept {pace:?} of their pace, the sling's {wanted:?} wanted")),
+                    };
+                    gate.check("sling draw", result);
                     end_weapon(world, gate, now);
                 }
                 SlingNext::Fail(why) => {
@@ -12820,7 +12850,7 @@ fn tell_blows(world: &mut World, creature: u32) {
         fighting.struck(creature, damage, blow, (i as u8 + 1).min(pips), false, now);
     }
     for (damage, defended) in HURT_SHOWN {
-        fighting.hurt(creature, damage, defended, now);
+        fighting.hurt(creature, damage, defended, now, None);
     }
     // All pips lit: the next blow on the beat would be a flourish.
     fighting.rhythm.set_pips(pips, now);
@@ -13124,7 +13154,7 @@ fn combat_feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let mut fighting = world.resource_mut::<crate::fight::Fighting>();
             fighting.struck(id, FEEL_STRUCK, voxmar_engine::combat::Blow::Flourish, pips, false, at);
             for (damage, defended) in FEEL_HURT {
-                fighting.hurt(id, damage, defended, at);
+                fighting.hurt(id, damage, defended, at, None);
             }
             gate.advance(now);
         }
