@@ -3,9 +3,10 @@
 Oct 13, 2026. The first two ages are **Nomad** (age 1, ends when the Homestead Hearth is lit)
 and **Farm** (age 2, ends when the Crucible Kiln is lit and Bronze opens). Mariano's ask:
 at least thirty quests an age, an idea of the loop in the first few days, and a check that
-a new player can tell what to do from the quest text, the recipes and play. Nomad has 35
-quests and Farm 44 (`assets/content/base/quests.ron`; `crates/engine/tests/early_quests.rs`
-keeps the floor at 30 and checks every name they use exists).
+a new player can tell what to do from the quest text, the recipes and play. Nomad had 35
+quests and Farm 44 then (Oct 20: 64 and 105; `assets/content/base/quests.ron`;
+`crates/engine/tests/early_quests.rs` keeps the floor at 30 and checks every name they use
+exists).
 
 What exists is what is written here; designed-but-unbuilt things (prayers, altars, the quern,
 locked age chests, a sling) have no quest.

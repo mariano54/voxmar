@@ -8396,10 +8396,9 @@ const QUEST_BOOK_ORDER: &[&str] = &[
     "fire_the_clay",
     "the_potter",
     "fuel_to_hand",
-    "kiln_plans",
     "charcoal",
-    "red_metal",
-    "a_kiln_yard",
+    "kiln_plans",
+    "a_clay_store",
     "a_kiln_load",
     "first_bricks",
     "brick_by_brick",
@@ -8556,8 +8555,8 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let mut f = Fresh::lay_out(c);
     f.lay_out_the_farm();
     let o = f.origin;
-    let (stick, log, charcoal) = ("base:stick", "base:oak_log", "base:charcoal");
-    let (fired, bricks, ingot, copper) = ("base:fired_clay", "base:kiln_bricks", "base:copper_ingot", "base:copper_ore");
+    let (log, charcoal) = ("base:oak_log", "base:charcoal");
+    let (fired, bricks) = ("base:fired_clay", "base:kiln_bricks");
 
     // Look It Up, pinned in a new book: the stone pickaxe looked up in the recipe viewer.
     let pickaxe = f.c.content.blocks.expect("base:stone_pickaxe");
@@ -8582,8 +8581,8 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, fired, 3), (2, fired, 3), (3, fired, 3), (4, fired, 3), (5, fired, 3)], "base:clay_pot", 6);
     f.mark("the_potter");
 
-    // Fuel to Hand: forty logs carried at once, past its thirty-two, for the charcoal of the
-    // copper ingots and the kiln's whole charge, and a log for sticks.
+    // Fuel to Hand: forty logs carried at once, past its thirty-two, for the clamp's charcoal
+    // and the planks of a chest; the rest of the trunks are felled for the kiln's charge.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
     f.gather("base:stone_axe", trunks.clone(), log, 40);
     f.wait(5.0, "the server counting the logs carried", |c| quest_status(c, "fuel_to_hand").0);
@@ -8594,13 +8593,6 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // is taken.
     let clamp = site.clamp.expect("the clamp set down for Fire the Clay");
     f.tend_clamp(clamp, Some(log));
-    // Plans for the Kiln, while the clamp chars: the crucible and kiln bricks looked up.
-    for item in ["base:crucible", "base:kiln_bricks"] {
-        let item = f.c.content.blocks.expect(item);
-        f.c.connection.send_at(ClientMessage::LookedUp { item }, f.now());
-    }
-    f.wait(5.0, "the server counting the plans looked up", |c| quest_status(c, "kiln_plans").0);
-    f.mark("kiln_plans");
     while f.have(charcoal) < 16 {
         let more = f.have(fired) + 1;
         f.fire_clay(&Site { clamp: None, ..site.clone() }, more);
@@ -8612,34 +8604,45 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     }
     f.mark("charcoal");
     f.make_room(8);
+    // Plans for the Kiln, with fuel coming: the crucible and kiln bricks looked up.
+    for item in ["base:crucible", "base:kiln_bricks"] {
+        let item = f.c.content.blocks.expect(item);
+        f.c.connection.send_at(ClientMessage::LookedUp { item }, f.now());
+    }
+    f.wait(5.0, "the server counting the plans looked up", |c| quest_status(c, "kiln_plans").0);
+    f.mark("kiln_plans");
 
-    // Red Metal: nine copper ores (Mining 5) with the stone pickaxe; a copper ore over a
-    // charcoal in the grid makes an ingot (Engineering 5); three ingots over two sticks at
-    // the table make the copper pickaxe.
-    let vein: Vec<IVec3> = (18..=19).flat_map(|x| (7..=11).map(move |z| o + IVec3::new(x, 0, z))).collect();
-    f.gather("base:stone_pickaxe", vein, copper, 9);
-    f.craft(&[(0, copper, 3), (3, charcoal, 3)], ingot, 3);
-    if f.have(stick) < 2 {
-        f.craft(&[(0, log, 1)], "base:oak_planks", 4);
-        f.craft(&[(0, "base:oak_planks", 1), (3, "base:oak_planks", 1)], stick, 4);
+    // Clay in Store: thirty-two clay dug (Clay Banks on the way), and a chest by the pit
+    // kiln, eight planks round an empty middle at the table, with them put by in it.
+    let clay = "base:clay";
+    f.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, 32);
+    f.wait(5.0, "the server counting the clay carried", |c| quest_status(c, "clay_banks").0);
+    let planks = "base:oak_planks";
+    if f.have(planks) < 8 {
+        let logs = (8 - f.have(planks)).div_ceil(4);
+        f.craft(&[(0, log, logs as u8)], planks, logs * 4);
     }
     f.at_table(site.table);
-    f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
-    f.mark("red_metal");
-
-    // A Kiln Yard: a second pit kiln (a campfire walled in with four cobblestone) set down
-    // beside the first, with the clamp by them.
-    let cobble = "base:cobblestone";
-    if f.have(cobble) < 6 {
-        let stone: Vec<IVec3> = (9..=17).flat_map(|x| (-3..=2).map(move |z| o + IVec3::new(x, 0, z))).filter(|&p| f.c.world.block(p) == f.c.content.blocks.id("base:stone")).collect();
-        f.gather("base:stone_pickaxe", stone, cobble, 6);
-    }
-    f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
-    f.at_table(site.table);
-    f.craft(&[(0, cobble, 1), (2, cobble, 1), (3, cobble, 1), (4, "base:campfire", 1), (5, cobble, 1)], "base:pit_kiln", 1);
+    f.craft(&[(0, planks, 1), (1, planks, 1), (2, planks, 1), (3, planks, 1), (5, planks, 1), (6, planks, 1), (7, planks, 1), (8, planks, 1)], "base:chest", 1);
     f.walk_toward(Fresh::middle(f.rel(4, 0, 3)), 0.3);
-    f.place("base:pit_kiln", f.rel(2, -1, 3));
-    f.mark("a_kiln_yard");
+    let chest = f.place("base:chest", f.rel(2, -1, 3));
+    f.propose("base:open_store", ActionTarget::Block { block: chest, face: Face::PosY });
+    f.wait(5.0, "the chest opening", |c| c.inventory.store.is_some());
+    let clay_id = f.c.content.blocks.expect(clay);
+    let (mut put, mut to) = (0u32, voxmar_engine::inventory::STORE);
+    while put < 32 {
+        let (from, count) = (0..voxmar_engine::inventory::SLOTS)
+            .find_map(|s| f.c.inventory.get(s).filter(|x| x.item == clay_id).map(|x| (s, x.count as u32)))
+            .expect("clay to put by");
+        let n = count.min(32 - put);
+        f.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: to as u8, count: n as u8 });
+        f.wait(5.0, "the clay going into the chest", |c| c.inventory.get(to).is_some_and(|x| x.item == clay_id && x.count as u32 == n));
+        put += n;
+        to += 1;
+    }
+    f.propose("core:stow", ActionTarget::None);
+    f.wait(5.0, "the server counting the clay put by", |c| quest_status(c, "a_clay_store").0);
+    f.mark("a_clay_store");
 
     // A Kiln Load: forty clay fired in all.
     while !quest_status(&f.c, "a_kiln_load").0 {
@@ -8741,12 +8744,11 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("a_kiln_load", "a_kiln_load"),
     ("fuel_to_hand", "fuel_to_hand"),
     ("kiln_plans", "kiln_plans"),
-    ("a_kiln_yard", "a_kiln_yard"),
+    ("a_clay_store", "a_clay_store"),
     ("first_bricks", "first_bricks"),
     ("the_kiln_ring", "the_kiln_ring"),
     ("the_kiln_charge", "the_kiln_charge"),
     ("charcoal", "charcoal"),
-    ("red_metal", "red_metal"),
     ("brick_by_brick", "brick_by_brick"),
     ("the_crucible", "the_crucible"),
     ("crucible_kiln", "crucible_kiln"),

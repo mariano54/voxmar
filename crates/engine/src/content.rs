@@ -881,6 +881,64 @@ mod tests {
         }
     }
 
+    /// Each Farm path's capstone comes after every other quest of its path, directly or
+    /// through what comes before it, but for side quests and the age's rite. (The Nomad
+    /// book is checked once it is laid out so.)
+    #[test]
+    fn a_farm_capstone_comes_after_all_of_its_path() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let farm: Vec<&crate::quest::QuestDef> = content.quests.iter().filter(|q| q.age == "farm").collect();
+        let capstones: Vec<_> = farm.iter().filter(|q| q.capstone).collect();
+        assert!(capstones.len() >= 4, "the Farm book has {} capstones", capstones.len());
+        for capstone in capstones {
+            let mut before: Vec<&str> = Vec::new();
+            let mut next: Vec<&str> = capstone.after.iter().flat_map(|a| a.split('|')).collect();
+            while let Some(name) = next.pop() {
+                if before.contains(&name) {
+                    continue;
+                }
+                before.push(name);
+                let quest = content.quests.get(name).unwrap_or_else(|| panic!("{} comes after {name}, which is no quest", capstone.name));
+                next.extend(quest.after.iter().flat_map(|a| a.split('|')));
+            }
+            assert!(!before.contains(&capstone.name.as_str()), "{} comes after itself", capstone.name);
+            let skipped: Vec<&str> = farm
+                .iter()
+                .filter(|q| q.branch == capstone.branch && q.name != capstone.name && !q.side && q.opens.is_none() && !before.contains(&q.name.as_str()))
+                .map(|q| q.name.as_str())
+                .collect();
+            assert!(skipped.is_empty(), "{} (the {} path's capstone) does not come after {skipped:?}: chain them in, or mark them `side`", capstone.name, capstone.branch);
+        }
+    }
+
+    /// The Farm book's kiln quests ask for what the Crucible Kiln takes: A Full Charge for
+    /// one of its fuels in full, The Kiln Ring for every kiln brick of it but the crucible's.
+    #[test]
+    fn the_kiln_quests_ask_for_the_kiln_as_it_stands() {
+        use crate::quest::Goal;
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let blocks = &content.blocks;
+        let kiln = content.multiblocks.get("base:crucible_kiln").expect("the Crucible Kiln");
+        let fuels: Vec<(String, u32)> = kiln.fuels.iter().map(|&(item, n)| (blocks.def(item).name.clone(), u32::from(n))).collect();
+        let charge = content.quests.get("base:the_kiln_charge").expect("A Full Charge");
+        let asked: Vec<(String, u32)> = charge
+            .tasks
+            .iter()
+            .map(|task| match task.as_slice() {
+                [Goal::Have(item, n)] => (item.clone(), *n),
+                other => panic!("A Full Charge asks for one fuel held a way, not {other:?}"),
+            })
+            .collect();
+        assert_eq!(asked, fuels, "A Full Charge asks for the kiln's fuels");
+        let bricks = blocks.expect("base:kiln_bricks");
+        let ring: u32 = kiln.pieces().iter().filter(|(takes, _)| *takes == [bricks]).map(|(_, n)| n).sum();
+        let placed: Vec<u32> = content.quests.get("base:the_kiln_ring").expect("The Kiln Ring").tasks.iter().flatten().filter_map(|g| match g {
+            Goal::Placed(item, n) if item == "base:kiln_bricks" => Some(*n),
+            _ => None,
+        }).collect();
+        assert_eq!(placed, [ring], "The Kiln Ring sets down the kiln's {ring} bricks");
+    }
+
     /// The main quest line, walked in order, reaches every level it asks for from what it
     /// guarantees: quest rewards and the things it has the player make, all read from the
     /// content (each quest's crafts, cooks and ores; the pieces of the multiblocks it
@@ -1011,6 +1069,18 @@ mod tests {
                             if content.multiblocks.get(&name).is_some() {
                                 route.build(&name);
                             }
+                        }
+                        // Put by in a store: the store made, and what goes in it used up.
+                        Goal::Stocked(item, store, n) if !item.starts_with("tag:") => {
+                            // A store nothing makes is no way through (a barrel is found, not made).
+                            let store = route.item(store);
+                            if route.recipe(store, Way::Either).is_none() {
+                                route.walls.push(format!("{}: nothing makes a {}", quest.name, content.blocks.def(store).name));
+                            } else if route.made.get(&store).copied().unwrap_or(0) == 0 {
+                                route.produce(store, 1, Way::Either);
+                            }
+                            let id = route.item(item);
+                            route.consume(&[id], *n, &format!("stocking {item}"));
                         }
                         Goal::Visit(_) | Goal::LookUp(_) => {}
                         // A rite asks for quests done, on whatever paths: nothing made.

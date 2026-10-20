@@ -361,25 +361,38 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
 
 ## The Farm book (Oct 20)
 
-The Farm quests live in their own file, `base/quests_farm.ron` (the loader reads
-`quests.ron` and any `quests_*.ron`, so a mod can add a book the same way), and the
-road to the lit Crucible Kiln is laid out like a long modpack's book: several paths that
-each make one part of the kiln, meeting at the end, with a way round at each fork. Each
-step is something done in the world (gathered, fired, stored, set down), not only crafted.
+The Farm quests stay in `base/quests.ron`'s Farm block (the Nomad book has a file of its
+own), and the road to the lit Crucible Kiln is laid out like a long modpack's book: several
+paths that each make one part of the kiln, meeting at the end, with a way round at each
+fork. Each step is something done in the world (gathered, fired, stored, set down), not
+only crafted.
 
 | Path | Quests to the kiln | Ways round |
 |---|---|---|
-| Main | A Pit Kiln, A Kiln Yard (two pit kilns set down), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible, Crucible Kiln | |
-| Fuel (new) | Fuel to Hand, Charcoal, A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
-| Pottery | A Kiln Load, Fired Whole (capstone); Clay in Store (new) beside them | |
-| Mining | Red Metal (moved here from main), then on to An Ore Run (capstone) | |
+| Main | A Pit Kiln (made and set down), Fire the Clay, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln | the store a chest, a barrel or a crate |
+| Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
+| Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp | |
+| Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln | |
 
-Crucible Kiln waits on all three of its parts: the crucible, the ring of bricks and the
-charge. The Bronze Age rite is unchanged (30 Farm quests, 4 Farm capstones); A Full Charge is
-a new capstone on the way, and Fired Whole one step off it. Rewards
-that handed out what the route now asks for (kiln bricks, charcoal) are gone, so the bricks
-and the charge are earned. The kiln bot (`a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln`)
-walks the whole route, one quest at a time.
+Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore run come after
+it (Hammer and Anvil, from the kiln-age PR, goes before The Crucible when it lands). Crucible
+Kiln waits on all three of its parts: the crucible, the ring of bricks and the charge. The
+Bronze Age rite is unchanged (30 Farm quests, 4 Farm capstones). Rewards that handed out
+what the route asks for (kiln bricks, charcoal) are gone, so the bricks and the charge are
+earned; Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
+does.
+
+Every Farm path's capstone comes after all of its path's quests, directly or through what
+comes before them, but those marked `side: true` (met on the road, the bees and meadow,
+the bow, ducks and such) and the age's rite; `content.rs`
+`a_farm_capstone_comes_after_all_of_its_path` checks it. The kiln bot
+(`a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln`) walks the whole route,
+one quest at a time, and lights the kiln about 330 server seconds in.
+
+Saves (pre-release, accepted): a quest's finished state is kept by name, but quests whose
+tasks changed count from what a save already tallied: Brick by Brick now counts bricks
+crafted rather than held, The Crucible and A Pit Kiln also want theirs set down, and A
+Kiln Yard is gone. A save part way along may have a step to do again.
 
 ## Readable to a newcomer (Oct 13)
 

@@ -146,6 +146,10 @@ pub struct QuestDef {
     /// rite asks for some of these (`Capstones`).
     #[serde(default)]
     pub capstone: bool,
+    /// Off its path's line: a side quest its capstone need not come after (every other
+    /// quest of a path does, directly or through what comes before it).
+    #[serde(default)]
+    pub side: bool,
     /// The age this quest, done, opens: its rite. Recipes that name the age (`age` in
     /// recipes.ron) are refused until it is done. One rite to an age, load-checked.
     #[serde(default)]

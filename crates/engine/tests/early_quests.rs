@@ -56,14 +56,13 @@ fn farm_quests_come_after_farm_quests_or_the_rite() {
 #[test]
 fn a_farm_quest_that_skips_the_rite_is_refused() {
     use voxmar_engine::quest::QuestRegistry;
-    let read = |name: &str| std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base").join(name)).unwrap();
-    let (nomad, source) = (read("quests.ron"), read("quests_farm.ron"));
-    let both = |farm: &str| QuestRegistry::new(vec![QuestRegistry::read("base", &nomad).unwrap(), QuestRegistry::read("base", farm).unwrap()]);
-    assert!(both(&source).is_ok(), "the quests as they ship load");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base/quests.ron");
+    let source = std::fs::read_to_string(path).unwrap();
+    assert!(QuestRegistry::new(vec![QuestRegistry::read("base", &source).unwrap()]).is_ok(), "the quests as they ship load");
     let at = source.find(r#"name: "clay_banks""#).expect("Clay Banks");
     let after = at + source[at..].find(r#"after: ["the_farm_age"],"#).expect("Clay Banks follows the rite");
     let skipped = format!("{}after: [],{}", &source[..after], &source[after + r#"after: ["the_farm_age"],"#.len()..]);
-    let refused = both(&skipped).err().expect("Clay Banks without its rite loads");
+    let refused = QuestRegistry::new(vec![QuestRegistry::read("base", &skipped).unwrap()]).err().expect("Clay Banks without its rite loads");
     assert!(refused.0.contains("base:clay_banks") && refused.0.contains("base:the_farm_age"), "{}", refused.0);
 }
 
