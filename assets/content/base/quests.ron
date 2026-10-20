@@ -26,7 +26,7 @@
             why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["the_farm_age", "fire_the_clay"],
-            rewards: [Xp("crafting", 305.0), Item("fired_clay", 4)],
+            rewards: [Xp("crafting", 305.0), Item("earthen_jug", 1), Item("earthen_plate", 2)],
         ),
         (
             name: "a_pot_on_the_fire", age: "farm", branch: "cooking", title: "A Pot on the Fire",
@@ -40,7 +40,7 @@
             capstone: true,
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
-            after: ["a_pot_on_the_fire", "roots_in_the_embers"],
+            after: ["a_pot_on_the_fire", "roots_in_the_embers", "seed_mix", "a_proper_breakfast"],
             rewards: [Xp("cooking", 300.0), Item("honey", 2)],
         ),
         // Fuel: logs to char or coal from a seam, two ways to the Crucible Kiln's charge.
@@ -53,7 +53,7 @@
         ),
         (
             name: "kiln_plans", age: "farm", branch: "fuel", title: "Plans for the Kiln",
-            why: "With fuel coming, plan the kiln it is for: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up tempered kiln bricks, the straw-bound bricks its ring is built of, to see what they take.",
+            why: "With fuel in hand, charcoal or coal, plan the kiln it burns in: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up tempered kiln bricks, the straw-bound bricks its ring is built of, to see what they take.",
             tasks: [[LookUp("crucible"), LookUp("tempered_kiln_bricks")]],
             after: ["charcoal"],
             rewards: [Xp("engineering", 30.0)],
@@ -117,14 +117,14 @@
             why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest, a barrel or a crate and leave it there. Clay keeps for ever, and the next load is a step away.",
             tasks: [[Stocked("clay", "chest", 32)], [Stocked("clay", "barrel", 32)], [Stocked("clay", "crate", 32)]],
             after: ["clay_banks", "fire_the_clay"],
-            rewards: [Xp("crafting", 80.0), Item("fired_clay", 4)],
+            rewards: [Xp("crafting", 80.0), Item("bread", 2)],
         ),
         (
             name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",
-            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and a dozen clay comes back for the next load. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
+            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
             tasks: [[Cook("fired_clay", 40)]],
             after: ["the_potter"],
-            rewards: [Xp("crafting", 120.0), Item("clay", 12)],
+            rewards: [Xp("crafting", 120.0), Item("kiln_bricks", 4)],
         ),
         (
             name: "a_pit_kiln", age: "farm", branch: "main", title: "A Pit Kiln",
@@ -160,8 +160,9 @@
             tasks: [[Craft("kiln_bricks", 7), Craft("tempered_kiln_bricks", 12)]],
             after: ["first_bricks", "a_kiln_load", "straw_for_the_kiln"],
             // Its Engineering pays for The Crucible's level 10 until Hammer and Anvil (the kiln-age
-            // PR) does: drop it when that lands, so it is never paid twice.
-            rewards: [Xp("crafting", 300.0), Xp("engineering", 650.0)],
+            // PR) does: drop it when that lands, so it is never paid twice. 750 makes the level on
+            // The Crucible's own chain (about 1,180 of the 1,154 xp, with the crafts it forces).
+            rewards: [Xp("crafting", 300.0), Xp("engineering", 750.0)],
         ),
         (
             name: "the_kiln_ring", age: "farm", branch: "main", title: "The Kiln Ring",
@@ -179,7 +180,7 @@
         ),
         (
             name: "first_harvest", age: "farm", branch: "farming", title: "First Harvest",
-            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds (wild wheat gives them) on the farmland (right-click), keeping it within four blocks of water (beside a river, pond or lake), and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest; a stone hoe reaps the ripe crops around the one you cut. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: fish (Patient Angler), tame hens (Hens in a Row) or make seats and a table for the hearth (A Table for Two).",
+            why: "Till grass or dirt with a hoe (right-click), sow wheat seeds (wild wheat gives them) on the farmland (right-click), keeping it within four blocks of water (beside a river, pond or lake), and wait: wheat ripens in about twelve minutes. Break the ripe plants to harvest; a stone hoe reaps the ripe crops around the one you cut. Harvest four. Keep the four wheat you harvest in your pack. While it grows, there is plenty to do: explore (Far Horizons), tame hens (Hens in a Row) or make seats and a table for the hearth (A Table for Two).",
             tasks: [[Pick("wheat_crop", 4), Have("wheat", 4)]],
             after: ["the_farm_age"],
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
@@ -264,14 +265,13 @@
         ),
         (
             name: "fresh_eggs", age: "farm", branch: "husbandry", title: "Fresh Eggs",
-            why: "A kept hen lays on the ground near her, and a hen that is fed, watered and sheltered lays more. Fry your first egg on a campfire to taste the reward, then collect five more and keep them. A hen lays about every five minutes: meanwhile go after a mouflon (A Woolly Flock) or tame more animals about the house (A Full House).",
+            why: "A kept hen lays on the ground near her, and a hen that is fed, watered and sheltered lays more. Fry your first egg on a campfire to taste the reward, then collect five more and keep them. A hen lays about every five minutes: meanwhile hunt big game (Bigger Game) or tame more animals about the house (A Full House).",
             tasks: [[Have("egg", 5), Cook("fried_egg", 1)]],
             after: ["hens_in_a_row"],
             rewards: [Xp("farming", 100.0)],
         ),
         (
             name: "a_proper_breakfast", age: "farm", branch: "cooking", title: "A Proper Breakfast",
-            side: true,
             why: "A fried egg is the quickest cooking there is: hold an egg and right-click a campfire. Fry three.",
             tasks: [[Cook("fried_egg", 3)]],
             after: ["a_full_house"],
@@ -281,7 +281,7 @@
             name: "a_woolly_flock", age: "farm", branch: "husbandry", title: "A Woolly Flock",
             why: "Mouflon, the wild sheep, need Hunter 5 to tame (taming, hunting and Bigger Game teach it); look on mountains and heath. Hold wheat, its favourite, approach calmly and right-click. A kept sheep grows its wool back: shear it with your shears. Have your shears made before you go.",
             tasks: [[Tame("mouflon", 1), Craft("shears", 1)]],
-            after: ["fresh_eggs"],
+            after: ["fresh_eggs", "bigger_game"],
             rewards: [Xp("hunter", 200.0), Xp("farming", 100.0)],
         ),
         (
@@ -311,7 +311,7 @@
             capstone: true,
             why: "Six animals under your care is a real farm. Keep each fed, watered, roofed against rain and given room; condition decides what they give. You can keep up to 64 animals.",
             tasks: [[Tame("any", 6)]],
-            after: ["the_milk_pail", "a_trough_for_the_pen"],
+            after: ["the_milk_pail", "a_trough_for_the_pen", "a_full_house"],
             rewards: [Xp("farming", 200.0), Item("feed_trough", 1), Item("seed_mix", 4)],
         ),
         (
@@ -323,7 +323,7 @@
         ),
         (
             name: "full_hide_wraps", age: "farm", branch: "combat", title: "Full Hide Wraps",
-            why: "A whole set guards head, body and legs. At the crafting table a hood takes five hides, a tunic eight and trousers seven.",
+            why: "A whole set guards head, body and legs. At the crafting table a hood takes five hides, a tunic eight and trousers seven. Rabbits, deer and boar drop raw hide; hung a while on a drying rack (four sticks and three twine), it turns to hide.",
             tasks: [[Craft("hide_hood", 1), Craft("hide_tunic", 1), Craft("hide_trousers", 1)]],
             after: ["bigger_game"],
             rewards: [Xp("crafting", 150.0), Xp("defence", 150.0)],
@@ -338,7 +338,7 @@
         (
             name: "bow_and_arrow", age: "farm", branch: "combat", title: "Bow and Arrow",
             side: true,
-            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
+            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then: a sling is a hide between two twine in a row at the crafting table. Make the bow and eight arrows, and reach Ranged 5.",
             tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
             after: ["full_hide_wraps"],
             rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],
@@ -397,9 +397,9 @@
         ),
         (
             name: "patient_angler", age: "farm", branch: "fishing", title: "Patient Angler",
-            why: "Every catch trains Fishing, and the bigger fish bite only at higher levels. Fish until you reach Fishing 5, when sardines start biting in the sea.",
+            why: "Every catch trains Fishing, and the bigger fish bite only at higher levels, in the seas and lakes your travels found (Far Horizons). A rod is three sticks on a diagonal at the crafting table, with two twine hanging from its tip. Fish until you reach Fishing 5, when sardines start biting in the sea.",
             tasks: [[Level("fishing", 5)]],
-            after: ["the_farm_age"],
+            after: ["far_horizons"],
             rewards: [Xp("cooking", 100.0)],
         ),
         (
@@ -420,7 +420,7 @@
         (
             name: "what_sleeps_below", age: "farm", branch: "explore", title: "What Sleeps Below",
             side: true,
-            why: "Farm chests lie further from where you began, on wilder land, and deeper: on cave floors ten blocks and more under the ground. A bone lockpick still opens one, as a pick of the age before always does. Four in ten wake one or two cave crawlers as the lock gives. A crawler has twice a bat's health: come with a copper weapon and food. Open two Farm chests in all and bring down a cave crawler.",
+            why: "Farm chests lie further from where you began, on wilder land, and deeper: on cave floors ten blocks and more under the ground. A bone lockpick still opens one, as a pick of the age before always does: a bone on a twine grip at the crafting table (Crafting 5). Four in ten wake one or two cave crawlers as the lock gives. A crawler has twice a bat's health: come with a copper weapon and food. Open two Farm chests in all and bring down a cave crawler.",
             tasks: [[Opened("farm_treasure_chest", 2), Kill("cave_crawler", 1)]],
             after: ["far_horizons"],
             rewards: [Xp("mining", 270.0), Xp("attack", 80.0)],
@@ -469,7 +469,7 @@
         ),
         (
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
-            why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3), a softer light than a torch for a table or shelf.",
+            why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3; raw hide hung a while on a drying rack turns to hide), a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
             after: ["shelves_and_cupboards"],
             rewards: [Xp("crafting", 60.0)],
@@ -592,7 +592,6 @@
         ),
         (
             name: "a_full_house", age: "farm", branch: "husbandry", title: "A Full House",
-            side: true,
             why: "Keep four animals about the house: you heal a fifth faster and learn a little more at home. Junglefowl, mallards and mouflon tamed near home all count.",
             tasks: [[Built("home_full_house", 1)]],
             after: ["fresh_eggs"],
@@ -665,7 +664,7 @@
             side: true,
             why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12): the bees move in, and you carry home a skep of bees. Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
-            after: ["herb_garden"],
+            after: ["herb_garden", "food_enough"],
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
         ),
         (
@@ -731,10 +730,10 @@
         (
             name: "fired_whole", age: "farm", branch: "pottery", title: "Fired Whole",
             capstone: true,
-            why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is a dozen clay for the next kiln load.",
+            why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is six gold coins from the potters.",
             tasks: [[Met("clay_diggers", 1), Cook("fired_clay", 24)]],
             after: ["a_kiln_load", "clay_banks", "earthenware", "an_earth_clamp"],
-            rewards: [Xp("crafting", 150.0), Item("clay", 12)],
+            rewards: [Xp("crafting", 150.0), Item("gold_coin", 6)],
         ),
         (
             name: "the_last_sheaf", age: "farm", branch: "farming", title: "The Last Sheaf",
