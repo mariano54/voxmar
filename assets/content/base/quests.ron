@@ -264,7 +264,6 @@
         ),
         (
             name: "a_proper_breakfast", age: "farm", branch: "cooking", title: "A Proper Breakfast",
-            side: true,
             why: "A fried egg is the quickest cooking there is: hold an egg and right-click a campfire. Fry three.",
             tasks: [[Cook("fried_egg", 3)]],
             after: ["a_full_house"],
@@ -304,7 +303,7 @@
             capstone: true,
             why: "Six animals under your care is a real farm. Keep each fed, watered, roofed against rain and given room; condition decides what they give. You can keep up to 64 animals.",
             tasks: [[Tame("any", 6)]],
-            after: ["the_milk_pail", "a_trough_for_the_pen"],
+            after: ["the_milk_pail", "a_trough_for_the_pen", "a_full_house"],
             rewards: [Xp("farming", 200.0), Item("feed_trough", 1), Item("seed_mix", 4)],
         ),
         (
@@ -331,7 +330,7 @@
         (
             name: "bow_and_arrow", age: "farm", branch: "combat", title: "Bow and Arrow",
             side: true,
-            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then. Make the bow and eight arrows, and reach Ranged 5.",
+            why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then: a sling is a hide between two twine in a row at the crafting table. Make the bow and eight arrows, and reach Ranged 5.",
             tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
             after: ["full_hide_wraps"],
             rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],
@@ -585,7 +584,6 @@
         ),
         (
             name: "a_full_house", age: "farm", branch: "husbandry", title: "A Full House",
-            side: true,
             why: "Keep four animals about the house: you heal a fifth faster and learn a little more at home. Junglefowl, mallards and mouflon tamed near home all count.",
             tasks: [[Built("home_full_house", 1)]],
             after: ["fresh_eggs"],

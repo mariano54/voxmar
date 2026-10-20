@@ -18647,8 +18647,6 @@ struct TarnVisit {
     return_teleports: (u32, u32),
 }
 
-/// `/tp` centres integer-looking horizontal coordinates on a block. Retain the saved
-/// f32's full decimal precision and spell integral positions with a fractional part.
 /// Sends the observer away with the `tp` in `line`, keeping where it floated before for
 /// `observer_back` (the first such move's start, while no step has put it back yet: the ore
 /// and gorge steps move it twice before the tarns step returns it).
@@ -18668,6 +18666,8 @@ fn observer_back(gate: &mut Gate) {
     }
 }
 
+/// `/tp` centres integer-looking horizontal coordinates on a block. Retain the saved
+/// f32's full decimal precision and spell integral positions with a fractional part.
 fn return_teleport(at: Vec3) -> String {
     let horizontal = |value: f32| {
         let word = value.to_string();
