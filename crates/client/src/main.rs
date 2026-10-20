@@ -326,7 +326,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .thread_name(|i| format!("worker-{i}"))
-        .start_handler(|_| priority::background_thread())
+        .start_handler(|_| priority::streaming_worker())
         .build_global()?;
     // The generator's region builds borrow helper threads besides: no more than there are
     // workers.

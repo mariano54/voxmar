@@ -17,7 +17,8 @@
 //! Helpers take their caller's scheduling class: on macOS a new thread starts at the default
 //! class whatever its creator's, so the game's background workers (utility) would otherwise
 //! start up to a worker count of helpers above themselves, level with the frame threads.
-//! On Linux a thread inherits its creator's nice value already.
+//! On Linux a thread inherits its creator's nice value already. `VOXMAR_THREAD_PRIORITY=off`
+//! (the game's timing switch, see the client's `priority.rs`) leaves helpers as they start.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -93,6 +94,10 @@ impl SchedulingClass {
     fn current() -> Self {
         #[cfg(target_os = "macos")]
         {
+            static CARRIED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            if !*CARRIED.get_or_init(|| std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off")) {
+                return Self(None);
+            }
             let mut class = libc::qos_class_t::QOS_CLASS_UNSPECIFIED;
             let mut relative = 0;
             // SAFETY: writes the calling thread's class and relative priority into the two

@@ -11,15 +11,18 @@
 //! nothing needs elevated rights.
 //!
 //! On Linux, where raising a thread needs privileges, frame threads stay as they are and
-//! background ones are niced by 5. `VOXMAR_THREAD_PRIORITY=off` leaves every thread at the
-//! system's default, for timing one build both ways.
+//! background ones are niced by 5. `VOXMAR_THREAD_PRIORITY=off` gives the threads the
+//! classes they had before this split, for timing one build both ways: the streaming workers
+//! lowered as they always were, every other thread left as it starts. (Leaving the workers at
+//! the default too halved flight's frame rate on a busy Mac: that compares against no build.)
 
 use std::sync::OnceLock;
 
 use bevy::prelude::*;
 use bevy::render::{Render, RenderApp};
 
-/// Whether threads are given a class at all (not with `VOXMAR_THREAD_PRIORITY=off`).
+/// Whether threads other than the streaming workers are given a class (not with
+/// `VOXMAR_THREAD_PRIORITY=off`).
 fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off"))
@@ -53,9 +56,18 @@ pub fn default_thread() {
 
 /// Lowers the calling thread below the game's frame threads.
 pub fn background_thread() {
-    if !enabled() {
-        return;
+    if enabled() {
+        lower();
     }
+}
+
+/// Lowers a streaming worker (the shared pool's) below the frame threads, with
+/// `VOXMAR_THREAD_PRIORITY=off` too: they were lowered before the frame threads had a class.
+pub fn streaming_worker() {
+    lower();
+}
+
+fn lower() {
     #[cfg(target_os = "macos")]
     // SAFETY: only changes the scheduling class of the current thread.
     unsafe {

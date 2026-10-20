@@ -8,8 +8,9 @@
 #
 # e.g. tools/perf/play_frames ~/Projects/voxmar-wt/play/target/release/voxmar OLD/voxmar
 #
-# A binary given as off:PATH runs with VOXMAR_THREAD_PRIORITY=off (every thread at the
-# system's default class, see crates/client/src/priority.rs), to time one build both ways.
+# A binary given as off:PATH runs with VOXMAR_THREAD_PRIORITY=off (the thread classes from
+# before the frame threads had one, see crates/client/src/priority.rs), to time one build
+# both ways.
 #
 #   spawn   standing at the spawn of seed 1, looking over the land, once it has loaded
 #   town    over Ashhurst, the village of seed 1 nearest its spawn (21 houses, 14
