@@ -119,6 +119,9 @@ pub(crate) struct Fights {
     /// lower by the share, until when).
     pinned: FxHashMap<u32, (f32, f64)>,
     sundered: FxHashMap<u32, (f32, f64)>,
+    /// Fight time in tests that drive it by game time (`run_clock`), not the wall clock.
+    #[cfg(test)]
+    clock: Option<f64>,
 }
 
 impl Default for Fights {
@@ -130,6 +133,8 @@ impl Default for Fights {
             bleeds: Vec::new(),
             pinned: FxHashMap::default(),
             sundered: FxHashMap::default(),
+            #[cfg(test)]
+            clock: None,
         }
     }
 }
@@ -140,14 +145,18 @@ impl Fights {
     }
 
     fn now(&self) -> f64 {
+        #[cfg(test)]
+        if let Some(clock) = self.clock {
+            return clock;
+        }
         self.secs(Instant::now())
     }
 
-    /// Passes `seconds` of fight time at once, as if they had gone by (tests that tick
-    /// faster than the clock).
+    /// Runs fight time by game time from here on, `seconds` on from where it is (tests that
+    /// tick faster than the clock): the wall clock no longer counts.
     #[cfg(test)]
-    pub(crate) fn pass(&mut self, seconds: f32) {
-        self.epoch = self.epoch.checked_sub(std::time::Duration::from_secs_f32(seconds)).unwrap_or(self.epoch);
+    pub(crate) fn run_clock(&mut self, seconds: f32) {
+        self.clock = Some(self.clock.unwrap_or_else(|| self.secs(Instant::now())) + seconds as f64);
     }
 
     /// The share a pin slows `creature` by now.
@@ -373,6 +382,10 @@ impl Server {
         let edge = species.edge(to.length(), live.scale);
         let Some(index) = species.choose(live.phase, edge, live.attack, species.level(live.body.position.y, target.position.y, live.scale)) else { return };
         let Some(attack) = species.attack_at(index) else { return };
+        // No wind-up at a player its blow has no way through the air to (`blow_open`).
+        if attack.charge.is_none() && !self.blow_open(&live.body, attack.reach, target.position) {
+            return;
+        }
         let feel = self.content.combat.feel;
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
         let lands = self.fights.now() + windup as f64;
@@ -656,6 +669,9 @@ impl Server {
         let reach = attack.reach + size.0 * scale * 0.5 + 0.3 + feel.reach_slack;
         let flat = (to - at).with_y(0.0).length();
         let tall = self.content.creatures.get(species).in_band(at.y, to.y, voxmar_engine::physics::player::HEIGHT, scale);
+        // And through the air, not through a roof or a wall (`blow_open`); a charge that ran
+        // into them met them.
+        let open = contact || self.blow_open(&voxmar_engine::creature::motion::Body { position: at, ..live.body }, attack.reach + feel.reach_slack, to);
         // A charge that runs onto a braced point is stopped on it, heavy or not.
         if let Some(charge) = attack.charge.filter(|_| contact) {
             let bracing = self.guard_of(player).filter(|g| g.braces(look, at - to));
@@ -670,7 +686,7 @@ impl Server {
         }
         let guard = self.guard_of(player).and_then(|g| g.takes(attack.style, attack.heavy, look, at - to, &feel));
         let fighter = self.fights.fighters.entry(player).or_default();
-        let defended = if flat > reach || !tall { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
+        let defended = if flat > reach || !tall || !open { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
         match defended {
             Defended::Dodged => fighter.riposte_until = lands + feel.riposte as f64,
             Defended::Perfect => fighter.counter_until = lands + feel.counter as f64,
