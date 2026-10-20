@@ -26,6 +26,10 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Door frame | `<timber>_door_frame` (`_top`) | jambs either side and a lintel, two blocks high; stops nothing | placed whole, as a door; faces the placer | 2 posts, a beam make 1 (3) |
 | Window frame | `<timber>_window_frame` | jambs, a sill and a lintel round an opening, one block high; stops nothing | faces the placer | 2 posts, 2 beams make 2 (3) |
 | Shuttered window | `<timber>_shuttered_window` (`_shut`) | a lattice window with two leaves on its face, standing out open, across it shut | faces the placer; a right click shuts and opens them | a lattice window and shutters make 1 (3) |
+| Railing | `<timber>_railing`, `<timber>_railing_corner` | a handrail and a bottom rail along the back of the cell with balusters between, a block high; the corner turns along the east side too | the rail runs along the side away from the placer | 3 beams, 3 sticks make 3 (3); 2 railings make a corner (3) |
+| Newel post | `<timber>_newel_post` | a post five texels square with a cap | | a slab on a post makes 1 (3) |
+| Landing | `<timber>_landing` | boards across the top of the cell on two joists, level with a stair's top | joists run away from the placer | 3 slabs on 2 beams make 3 (3) |
+| Balcony door | `balcony_door` (`_top`, `_open`, `_open_top`) | a plank door whose upper half is a lattice | placed whole, as a door; a right click opens and shuts it | a lattice window on a wooden door makes 1 (4) |
 | Arrow slit | `stone_arrow_slit` | dressed stone with an upright slit three texels wide through it | the slit runs away from the placer | 2 stone bricks, a brick slab make 2 (5) |
 
 The home's ladder runs from a hide lean-to through wattle and daub and timber to stone and
@@ -52,6 +56,18 @@ light out. Every window lets light in: a block tagged `window`, `lattice`, `wind
 `slit` or `draught`, or lit through, is refused at load if it is a whole cube or dims light
 by more than 2 (`light_filter`); a misspelt `shelter:` tag, or `draught` on anything but a
 draughty wall, is refused too.
+
+Stairs and upper floors: the woods' and the cut stones' stairs climb in half-block steps
+without a jump to a landing level with the top stair, and a railing along a balcony, a
+gallery or a landing keeps anyone from walking off it. A railing stands a block high, so
+nobody steps onto it, and to a creature it stands two high, as a fence does, so nothing
+hops over it: no animal walks on its top or on air over it, even from a step beside it.
+A boss, or a fighter after a player, climbs it as the block-high step it is, so a ring of
+railings is no pen to fight from. It walls no room: a home's survey looks past it (survival.ron's
+`home_furniture` names `railing`), so a gallery round a hall leaves the hall as walled as it
+was. A shut balcony door is a sound lower half and a draughty lattice over it; open, it is
+a way through, as an empty frame is. At load a block tagged `railing` must be solid and a
+block high, and one tagged `landing` solid across the whole top of its cell.
 The home's load check (`Rules::check_shelters`) holds every solid building or roof block
 but furniture to exactly one grade.
 
