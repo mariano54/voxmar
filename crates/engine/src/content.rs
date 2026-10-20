@@ -206,7 +206,7 @@ pub struct ContentFile {
 /// are every name a package's `.ron` may have; any other is read by nothing, which the load
 /// notes (a misspelt `quest.ron` would otherwise be dropped without a word).
 pub const READ_ELSEWHERE: &[&str] = &[
-    "ambience.ron", "ambient.ron", "biomes.ron", "cave_biomes.ron", "celebrations.ron", "climate.ron", "combat_fx.ron",
+    "action_fx.ron", "ambience.ron", "ambient.ron", "biomes.ron", "cave_biomes.ron", "celebrations.ron", "climate.ron", "combat_fx.ron",
     "combat_hud.ron", "creature_motion.ron", "creature_sounds.ron", "cultures.ron", "decorations.ron", "hoards.ron",
     "interface.ron", "lairs.ron", "land.ron", "look.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron",
     "quest_paths.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
