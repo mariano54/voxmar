@@ -631,7 +631,13 @@ room** (Rooms above; home audit 2, item 10: windows used to count for nothing), 
 a package tags `window` (`two_windows_at_home_make_a_bright_room`, the server's
 `windows_at_home_make_a_bright_room`, the gate's walls step: "home: bright room"). A dark
 room's window stays dark; a wall keeps the light in
-(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). A curtain hung inside a
+window draws across and back with a right click (`swaps`, as a door; drawn back it is
+`{name}_curtain_open` and gives the curtain): drawn across, it keeps most of the room's
+light in (`light_filter: 8`), so a lit home's window glows low at night, and drawn back
+the light goes through as air (`a_drawn_curtain_keeps_the_light_in`; the gate's walls step
+hangs one inside a pane and draws it back: "home: curtain"). Either way it is a curtain for
+the ladder's steps and a drape (`drape`, which Soft furnishings asks beside a rug). The gate's Door step then
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).
 

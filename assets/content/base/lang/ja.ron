@@ -395,6 +395,7 @@
     "block.base.{name}_banner": "{name}の旗",
     "block.base.{name}_curtain": "{name}のカーテン",
     "block.base.{name}_wall_hanging": "{name}の壁掛け",
+    "block.base.{name}_curtain_open": "{name}のカーテン",
     "block.base.{name}_paper_lantern": "{name}の提灯",
     "block.base.{name}_cushion": "{name}のクッション",
     "block.base.{name}_bunting": "{name}のガーランド",

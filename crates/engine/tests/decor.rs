@@ -12,14 +12,16 @@ fn content() -> Content {
 }
 
 /// The decor blocks the templates made with a baked colour, not the facings they are
-/// placed in, and not the singles and the metal lanterns (see [`the_singles_load_and_can_be_made`]).
+/// placed in, nor the state one swaps into and comes back as (a curtain drawn back), and not
+/// the singles and the metal lanterns (see [`the_singles_load_and_can_be_made`]).
 fn made(content: &Content) -> Vec<BlockId> {
     content
         .blocks
         .ids()
         .filter(|&id| {
             let def = content.blocks.def(id);
-            def.has_tag("decor") && def.family.is_some() && def.form_of().is_none() && !def.has_tag("metal") && matches!(def.tint, BlockTint::Fixed(..))
+            let state = def.swaps.is_some() && def.drops == def.swaps;
+            def.has_tag("decor") && def.family.is_some() && def.form_of().is_none() && !state && !def.has_tag("metal") && matches!(def.tint, BlockTint::Fixed(..))
         })
         .collect()
 }

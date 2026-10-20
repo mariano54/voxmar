@@ -398,6 +398,7 @@
     "block.base.{name}_banner": "{name} Banner",
     "block.base.{name}_curtain": "{name} Curtain",
     "block.base.{name}_wall_hanging": "{name} Wall Hanging",
+    "block.base.{name}_curtain_open": "{name} Curtain",
     "block.base.{name}_paper_lantern": "{name} Paper Lantern",
     "block.base.{name}_cushion": "{name} Cushion",
     "block.base.{name}_bunting": "{name} Bunting",
