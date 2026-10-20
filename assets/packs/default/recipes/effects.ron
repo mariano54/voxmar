@@ -831,5 +831,18 @@
             ".kddddddk.",
             ".kkkkkkkk.",
         ])]),
+        // Old Tusk's charge charm: a curved tusk hung on a cord.
+        "ui/effect/tusk_stride": (size: (10, 10), layers: [Grid(legend: {'k': "#1a1008", 'c': "#8a5a30", 'i': "#e8dcc0", 'I': "#fff8e8", 's': "#b8a888"}, rows: [
+            "c........c",
+            ".c......c.",
+            "..c....c..",
+            "...cccc...",
+            "...kiik...",
+            "..kiIsk...",
+            "..kIisk...",
+            "...kisk...",
+            "....kik...",
+            ".....kk...",
+        ])]),
     },
 )
