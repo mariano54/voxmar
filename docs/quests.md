@@ -24,7 +24,9 @@ reward, shown first), tasks, after, rewards. A book of its own can go in a
 the topics follow in byte order (uppercase before lowercase), and the quests are held in that
 order. A quest may come `after` one in any file. A quest name written twice, in one file or
 two, fails the load naming both files, across packages too: a mod cannot replace a quest by
-writing its name.
+writing its name. A file no part of the game reads (a misspelt `quest.ron`) still loads, and
+the load notes it with the likeliest name meant (`zz_mod/quest.ron is read by nothing (meant
+quests.ron?)`); the names other crates read are `content::READ_ELSEWHERE`.
 Goals:
 
 | Goal | Reads |
