@@ -163,6 +163,31 @@ fn herbs_drying_at_home_make_a_nook_for_the_garden_and_the_brew() {
     assert_eq!(content.blocks.def(herbs).drops.as_deref(), Some("core:air"));
 }
 
+/// The hearth corner: the homestead hearth under the roof with a settle at it and a woodpile
+/// is a hearth corner; any of the three missing, or out under the sky, it is not. Every wood makes
+/// the settle and the woodpile, and the settle is sat in as any seat.
+#[test]
+fn a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner() {
+    let content = content();
+    let effects = &content.effects;
+    let corner = [("hearth", 1), ("settle", 1), ("woodpile", 1)];
+    assert_eq!(rooms(&corner), ["base:hearth_corner"]);
+    for missing in 0..corner.len() {
+        let short: Vec<_> = corner.iter().enumerate().filter(|&(i, _)| i != missing).map(|(_, &c)| c).collect();
+        assert!(!rooms(&short).contains(&"base:hearth_corner".to_owned()), "no {}, no hearth corner", corner[missing].0);
+    }
+    assert!(rooms(&[("hearth", 1), ("seat", 1), ("woodpile", 1)]).is_empty(), "a stool is no settle");
+    assert!(rooms_in(&corner, &Weather::NONE, true).is_empty(), "no roof, no hearth corner");
+    let corner_room = effects.get(effects.id("base:hearth_corner").unwrap());
+    assert_eq!((corner_room.modifiers.warmth, corner_room.modifiers.heal), (1.0, 1.05));
+    for wood in ["birch", "oak", "dark_oak"] {
+        let settle = content.blocks.def(content.blocks.expect(&format!("base:{wood}_settle")));
+        assert!(settle.has_tag("seat") && settle.has_tag("settle") && !settle.solid, "{wood} settle");
+        let pile = content.blocks.expect(&format!("base:{wood}_woodpile"));
+        assert!(content.blocks.def(pile).has_tag("woodpile") && content.recipes.iter().any(|r| r.output == pile), "{wood} woodpile");
+    }
+}
+
 /// Windows count at home: two in its walls under a roof make a bright room; one does not,
 /// nor two out under the sky. Every window the content has is one (`window`).
 #[test]

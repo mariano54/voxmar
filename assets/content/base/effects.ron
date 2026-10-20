@@ -137,6 +137,12 @@
         (name: "bright_room", kind: Buff, title: "Bright room", description: "Daylight through two windows: you learn a twentieth more here, and heal a twentieth faster.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("window", 2)])),
             replaces: [], modifiers: (xp: 1.05, heal: 1.05)),
+        // A hearth corner, the Nomad's last comfort before the Farm: the homestead hearth under
+        // the home's roof with a settle to sit at it (`settle`) and a woodpile (`woodpile`)
+        // to keep it fed.
+        (name: "hearth_corner", kind: Buff, title: "Hearth corner", description: "A settle by the hearth and wood stacked to hand: 1° warmer here, and you heal a twentieth faster.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("settle", 1), HomeHas("woodpile", 1)])),
+            replaces: [], modifiers: (warmth: 1.0, heal: 1.05)),
         // A bee garden, the Farm age's: a skep with bees in it among flowers at home
         // (bees.ron). Its bees make the crops about it grow a quarter faster, which the
         // apiary does; the home itself heals a tenth faster and is sweeter to come back to.

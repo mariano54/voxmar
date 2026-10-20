@@ -610,6 +610,20 @@
             ".kwwdwwwk.",
             ".kkkkkkkk.",
         ])]),
+        // A hearth corner: a high-backed settle with its cushion, and logs stacked beside it,
+        // their round ends out.
+        "ui/effect/hearth_corner": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'w': "#a06a3a", 'd': "#6a4222", 'c': "#c23a2a", 'e': "#e0b070", 'r': "#8a5a2e"}, rows: [
+            "ww........",
+            "wd........",
+            "wd........",
+            "wd........",
+            "wdcccw....",
+            "wwwwww.rr.",
+            "wd..dw.ee.",
+            "wd..dwreer",
+            "wd..dweeee",
+            "kk..kkkkkk",
+        ])]),
         // A four-paned window with the sun in its corner.
         "ui/effect/bright_room": (size: (10, 10), layers: [Grid(legend: {'k': "#3a2410", 'w': "#a0703a", 's': "#ffe070", 'b': "#9ad0f0", 'c': "#d8f0ff"}, rows: [
             "s.s.......",
