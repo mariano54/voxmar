@@ -346,6 +346,7 @@ impl Server {
         self.arrival = at;
         // A fire this sets off is theirs.
         self.fire_origin = self.players.get(&id).map(|p| crate::player_key(&p.name));
+        self.changed_by = self.fire_origin.clone();
         if let Some(player) = self.players.get_mut(&id) {
             player.last_heard = player.last_heard.max(at);
         }
@@ -381,6 +382,7 @@ impl Server {
         // What they did that set something smouldering, they are told why.
         self.blaze_hint(id);
         self.fire_origin = None;
+        self.changed_by = None;
     }
 
     /// A player looked an item up in the recipe viewer: counted once for quests, if the item

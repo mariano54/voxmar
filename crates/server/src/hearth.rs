@@ -71,6 +71,9 @@ impl Server {
             return;
         };
         self.tally(agent, "built", &structure.name, 1);
+        // What catches by it as it is lit is the lighter's fire, whoever's home it is: lit by a
+        // stranger, it never catches their thatch in its owner's home.
+        let lighter = self.players.get(&agent).map(|p| crate::player_key(&p.name));
         if !structure.fuels.is_empty() && !self.station_lit(core) {
             let fuel = self.players.get(&agent).and_then(|p| p.inventory.get(p.selected))
                 .and_then(|stack| structure.fuels.iter().find(|&&(item, count)| item == stack.item && stack.count >= count).copied());
@@ -85,14 +88,14 @@ impl Server {
             let until = self.tick.saturating_add((seconds * TICKS_PER_SECOND as f32).ceil() as u64);
             let owner = self.hearth_owner(agent, core, structure);
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until, owner });
-            self.hearth_blaze(core);
+            self.hearth_blaze(core, lighter.clone());
             self.tally(agent, "lit", &structure.name, 1);
         } else if structure.fuels.is_empty() && !self.lit.contains_key(&core) {
             // A fire that needs no fuel burns until the structure breaks; lit again while it
             // burns, it is the same fire (and the same lighting, for quests).
             let owner = self.hearth_owner(agent, core, structure);
             self.lit.insert(core, Lit { position: core.to_array(), structure: structure.name.clone(), until: u64::MAX, owner });
-            self.hearth_blaze(core);
+            self.hearth_blaze(core, lighter);
             self.tally(agent, "lit", &structure.name, 1);
         }
         self.send_fires();
@@ -193,7 +196,7 @@ impl Server {
         // flood, a command) it stays its owner's, and their home stays theirs.
         if let Some(owner) = self.hearth_owners.get(&pos)
             && owner.is_some()
-            && *owner == self.fire_origin
+            && *owner == self.changed_by
             && !self.content.multiblocks.with_core(block).any(|m| m.home)
         {
             self.hearth_owners.remove(&pos);
