@@ -4929,6 +4929,11 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
         1 => {
             let stood = world.resource::<ClientWorld>().block(block) == Some(log);
             let there = world.resource::<LocalPlayer>().position.distance(stand) < 0.5;
+            // Whatever came to hand since (the flint the spawn kit lays by the fire, picked
+            // up on the way, fills the slot the setup emptied), the hand is emptied again.
+            if holding_any(world).is_some() {
+                clear_hand(world);
+            }
             let held = holding_any(world);
             let wanted = why_by_hand(world, log);
             let tool_name = world.resource::<Locale>().block(content.blocks.def(tool));
@@ -9042,6 +9047,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.check(name, Err(why));
         mouse(world, MouseButton::Left, false);
         world.resource::<Net>().command("weather clear 600");
+        world.resource::<Net>().command(&format!("clear {DEPTHS_PICK}"));
         // Back up to the test ground, and the fog lifting.
         gate.phase = 9;
         gate.phase_since = now;
@@ -9130,13 +9136,21 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             world.resource::<Net>().command("weather clear 600");
             gate.advance(now);
         }
-        // In the sealed room, before the wall is touched: the face is dark.
+        // In the sealed room, before the wall is touched: the face is dark, and a pickaxe is
+        // in hand (bare hands do not break stone, and the steps before may have left
+        // anything selected).
         3 => {
+            if gate.settled == 0 {
+                world.resource::<Net>().command(&format!("give {DEPTHS_PICK} 1"));
+                gate.settled = 1;
+            }
+            let held = select(world, &format!("base:{DEPTHS_PICK}"));
             let dark = face_light(world) == [0, 0];
-            if !(stand(world, room_floor) && dark) {
+            if !(stand(world, room_floor) && dark && held) {
                 if gate.server_in_phase() > 15.0 {
                     let [sky, block] = face_light(world);
-                    bail(world, gate, "depths: room", format!("the player never stood in the sealed room, or its wall's face was lit (sky {sky}, block {block})"));
+                    let holding = holding_any(world);
+                    bail(world, gate, "depths: room", format!("the player never stood in the sealed room with a {DEPTHS_PICK} in hand, or its wall's face was lit (sky {sky}, block {block}, holding {holding:?})"));
                 }
                 return;
             }
@@ -9215,6 +9229,7 @@ fn depths(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // The shot of the lit cracks is in.
         7 => {
             if gate.shot(world, "crack-lit").is_some() || gate.server_in_phase() > 15.0 {
+                world.resource::<Net>().command(&format!("clear {DEPTHS_PICK}"));
                 gate.advance(now);
             }
         }
@@ -9274,6 +9289,9 @@ fn clear_owed(world: &mut World, gate: &mut Gate) {
 
 /// Seconds the depths step holds the button for a crack to show before it lets go.
 const CRACK_HOLD: f32 = 3.0;
+/// The pickaxe the depths step mines its wall with: the slowest, so a stint lets go long
+/// before the block breaks.
+const DEPTHS_PICK: &str = "flint_pickaxe";
 
 /// Whether every change of weather so far (the commands' storm, snow and clearing among
 /// them) eased in without a jump.
