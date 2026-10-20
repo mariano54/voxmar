@@ -1313,6 +1313,11 @@ impl Server {
         self.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
     }
 
+    /// Whether a live creature's body is in `cell`.
+    pub(crate) fn creature_in(&self, cell: IVec3) -> bool {
+        self.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+    }
+
     /// Whether putting `block` at `cell` would shut a player inside it: a solid block where
     /// a player stands, which no hand may place. Admin fills leave such a cell as it is
     /// (`/fill`, `/setblock`); regrowth brings back only plants that are not solid.

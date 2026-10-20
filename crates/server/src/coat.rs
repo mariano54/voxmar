@@ -14,6 +14,10 @@ impl Server {
     pub(crate) fn coat(&mut self, agent: PlayerId, pos: IVec3) {
         let Some(here) = self.block(pos) else { return };
         let Some((with, into)) = self.content.blocks.coating(here) else { return };
+        // Never daubed shut around someone, whatever action asked (`CoatClear` tells them).
+        if self.content.blocks.info(into).solid && (self.player_in(pos) || self.creature_in(pos)) {
+            return;
+        }
         let Some(player) = self.players.get(&agent) else { return };
         let selected = player.selected;
         if player.inventory.get(selected).is_none_or(|stack| stack.item != with) {
@@ -131,11 +135,14 @@ mod tests {
 
     /// A panel never daubs shut on a player: clay held to a wattle panel another player
     /// leans into is refused (the thin panel would turn a whole daub block around them), as
-    /// placing a block on them is; once they step off it, the same clay daubs it.
+    /// placing a block on them is, and they are told why. So is one a creature or the dauber
+    /// leans into, and `coat` itself never daubs around anyone; once clear, the clay daubs it.
     #[test]
     fn a_panel_someone_leans_on_is_not_daubed_around_them() {
         use voxmar_engine::action::ActionTarget;
         use voxmar_engine::coords::Face;
+        use voxmar_engine::lang::Words;
+        use voxmar_protocol::ServerMessage;
         let mut server = crate::test_server();
         let mut keep = Vec::new();
         for id in [1, 2] {
@@ -169,8 +176,32 @@ mod tests {
         server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
         assert_eq!(server.block(at), Some(wattle), "daubed shut around a player");
         assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 3, "the clay spent for nothing");
-        // Stepped back off it: the same clay daubs it.
+        // Their client cannot see the other body, so the server says why.
+        let told = |client: &voxmar_protocol::ClientConnection| {
+            std::iter::from_fn(|| client.try_recv().ok().flatten())
+                .any(|m| matches!(m, ServerMessage::Refused { why: Words::Key(key, _) } if key == "refusal.someone_there"))
+        };
+        assert!(told(&keep[0]), "the dauber was not told someone is there");
+        // Nor by any other action that coats: `coat` itself keeps the cell clear.
+        server.coat(1, at);
+        assert_eq!(server.block(at), Some(wattle), "coat() daubed shut around a player");
         server.players.get_mut(&2).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, 2.5);
+        // A creature leaning in from the far side, as the player did.
+        let mouflon = server.content.creatures.id("base:mouflon").expect("species");
+        let beast = server.spawn_creature(mouflon, at.as_vec3() + Vec3::new(0.5, 0.0, 1.2), 1).expect("room");
+        assert!(server.creature_in(at), "the creature stands partly in the panel's cell");
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(wattle), "daubed shut around a creature");
+        assert!(told(&keep[0]), "the dauber was not told a creature is there");
+        server.creatures.live.remove(&beast);
+        // The dauber leaning in themselves.
+        server.players.get_mut(&1).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, -0.2);
+        assert!(server.player_in(at), "the dauber stands partly in the panel's cell");
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(wattle), "daubed shut around the dauber");
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 3, "the clay spent for nothing");
+        // Everyone stepped back off it: the same clay daubs it.
+        server.players.get_mut(&1).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, -1.5);
         server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
         assert_eq!(server.block(at), Some(daub), "not daubed once clear");
         assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 2);

@@ -67,5 +67,7 @@
         "trap.needs",
         // No sleep with a hunter near or a wound fresh, or in a bed of someone's home.
         "bed.threatened", "bed.just_hurt", "bed.someones",
+        // Daubing a panel another player or a creature leans on, which their client cannot see.
+        "refusal.someone_there",
     ],
 )

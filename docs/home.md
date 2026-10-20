@@ -577,8 +577,10 @@ top of a dirt floor or a panel is laid there as a block as before (test
 
 A panel never daubs shut on anyone. The thin panel turns into a whole daub block, so clay held
 to one a player or a creature leans into is refused with placing's words ("Someone is standing there":
-`CoatClear`, refusals.ron), as placing a block on them and shutting a door on them are; once
-they step off, the same clay daubs it (test `a_panel_someone_leans_on_is_not_daubed_around_them`).
+`CoatClear`, refusals.ron), as placing a block on them and shutting a door on them are. The
+dauber's client sees no other body, so the server sends those words itself; and `coat` keeps
+the cell clear whatever action asks for it. Once they step off, the same clay daubs it (test
+`a_panel_someone_leans_on_is_not_daubed_around_them`).
 
 ## Curing hides
 
