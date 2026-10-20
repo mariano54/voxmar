@@ -447,6 +447,10 @@ steps! {
     /// draws by the fire; with the inventory open the client finds it within reach, and the
     /// toolstone laid in the grid there is ground to a head.
     Grind,
+    /// A pickaxe of the first tier breaks a plain stone into loose stones (what its `drops`
+    /// say), and four of those in the hand's grid knock together into what their recipe makes
+    /// (cobblestone in the base game).
+    Rubble,
     /// A survival player's inventory search finds the stone pickaxe by "pick"; its recipe
     /// opened in the viewer finishes the "Look It Up" quest; the quest book's page for the
     /// pickaxe shows its recipe inline, an item clicked there opens the viewer, and Back
@@ -1878,6 +1882,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Chop => chop(world, gate, now),
         Step::Flint => flint(world, gate, now),
         Step::Grind => grind(world, gate, now),
+        Step::Rubble => rubble(world, gate, now),
         Step::LookUp => look_up(world, gate, now, in_phase),
         Step::Refusal => refusal(world, gate, now, in_phase),
         Step::Merged => merged(world, gate, now, in_phase),
@@ -4675,7 +4680,9 @@ fn ground_at(content: &voxmar_engine::content::Content) -> Option<(voxmar_engine
         r.near.is_some() && wanted.contains(&r.output) && r.alternatives().into_iter().flatten().all(|cell| cell.iter().all(|&i| blocks.def(i).has_tag("toolstone")))
     })?;
     let tag = recipe.near.clone()?;
-    let stone = recipe.cells().into_iter().flatten().next()?;
+    // What a player holds: the cobbles some natural toolstone breaks into.
+    let dropped = |item: BlockId| blocks.ids().any(|b| blocks.def(b).has_tag("natural") && blocks.def(b).has_tag("toolstone") && blocks.info(b).drops == item);
+    let stone = recipe.alternatives().into_iter().flatten().flatten().copied().find(|&item| dropped(item))?;
     let workshop = blocks.tagged(&tag).find(|&b| !blocks.def(b).item)?;
     Some((recipe.clone(), stone, workshop, tag))
 }
@@ -4691,7 +4698,7 @@ fn grind(world: &mut World, gate: &mut Gate, now: f32) {
     let content = world.resource::<Launch>().content.clone();
     let Some((recipe, stone, workshop, tag)) = ground_at(&content) else {
         gate.check("grind", Err("no tier-2 tool in the loaded recipes asks for something ground near a block from toolstone".into()));
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Rubble, now);
         return;
     };
     let name = |b: BlockId| content.blocks.def(b).name.clone();
@@ -4702,7 +4709,7 @@ fn grind(world: &mut World, gate: &mut Gate, now: f32) {
         net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
         net.command(&format!("clear {}", short(stone)));
         net.command(&format!("clear {}", short(recipe.output)));
-        gate.next(Step::LookUp, now);
+        gate.next(Step::Rubble, now);
     };
     match gate.phase {
         // One toolstone in hand's reach and the workshop block set by the fire.
@@ -4720,7 +4727,7 @@ fn grind(world: &mut World, gate: &mut Gate, now: f32) {
             let stood = world.resource::<ClientWorld>().block(block) == Some(workshop);
             let there = world.resource::<LocalPlayer>().position.distance(stand) < 0.5;
             let carried = holding(world, &name(stone)).0;
-            if stood && there && carried == 1 && drawn(world, block) {
+            if stood && there && carried == 1 && drawn(world, block) && gate.shot(world, "grindstone").is_some() {
                 world.resource_mut::<UiState>().inventory_open = true;
                 gate.advance(now);
             } else if outwaited {
@@ -4748,6 +4755,112 @@ fn grind(world: &mut World, gate: &mut Gate, now: f32) {
                 end(world, gate);
             } else if waited {
                 gate.check("grind", Err(format!("a {} ground by the {} gave {made} {} (wanted {}; {left} left, grid emptied {empty}) in {GRIND_WAIT} server seconds", name(stone), name(workshop), name(recipe.output), recipe.count)));
+                end(world, gate);
+            }
+        }
+    }
+}
+
+/// Longest a rubble stage may wait for the server.
+const RUBBLE_WAIT: f32 = 10.0;
+
+/// What the rubble step breaks and knocks together: plain stone, which breaks into several
+/// of an item, a first-tier pickaxe, and a recipe of four of that item.
+fn rubble_of(content: &voxmar_engine::content::Content) -> Option<(BlockId, BlockId, BlockId, u8, voxmar_engine::craft::Recipe)> {
+    let blocks = &content.blocks;
+    let stone = blocks.id("base:stone")?;
+    let (loose, count) = (blocks.info(stone).drops, blocks.info(stone).drop_count);
+    let pickaxe = blocks.tagged("pickaxe").find(|&b| blocks.def(b).has_tag("tier:1"))?;
+    let recipe = content.recipes.iter().find(|r| {
+        let cells: Vec<BlockId> = r.cells().into_iter().flatten().collect();
+        cells.len() == 4 && cells.iter().all(|&c| c == loose)
+    })?;
+    (loose != stone && count > 1).then(|| (stone, loose, pickaxe, count, recipe.clone()))
+}
+
+/// The rubble step: at Mining 1 a first-tier pickaxe breaks a plain stone into its loose
+/// stones, which come to hand; four laid in the hand's grid knock together into cobblestone.
+fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
+    let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
+    let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 2.0);
+    let waited = gate.server_in_phase() > RUBBLE_WAIT;
+    let content = world.resource::<Launch>().content.clone();
+    let Some((stone, loose, pickaxe, count, recipe)) = rubble_of(&content) else {
+        gate.check("rubble", Err("plain stone in the loaded blocks breaks into no several of an item four of which make something, or no pickaxe is of the first tier".into()));
+        gate.next(Step::LookUp, now);
+        return;
+    };
+    let name = |b: BlockId| content.blocks.def(b).name.clone();
+    let short = |b: BlockId| name(b).strip_prefix("base:").unwrap_or(&name(b)).to_owned();
+    let end = |world: &mut World, gate: &mut Gate| {
+        mouse(world, MouseButton::Left, false);
+        world.resource_mut::<UiState>().inventory_open = false;
+        let net = world.resource::<Net>();
+        net.command(&format!("setblock {} {} {} air", block.x, block.y, block.z));
+        for item in [loose, pickaxe, recipe.output] {
+            net.command(&format!("clear {}", short(item)));
+        }
+        gate.next(Step::LookUp, now);
+    };
+    match gate.phase {
+        // The pickaxe given at Mining 1, a plain stone set and the player stood before it.
+        0 => {
+            let net = world.resource::<Net>();
+            for item in [loose, pickaxe, recipe.output] {
+                net.command(&format!("clear {}", short(item)));
+            }
+            net.command(&format!("give {} 1", short(pickaxe)));
+            net.command("skill mining 1");
+            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(stone)));
+            net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
+            gate.advance(now);
+        }
+        // Struck until it breaks; the loose stones come to hand, and nothing else.
+        1 => {
+            let got = holding(world, &name(loose)).0;
+            let gone = world.resource::<ClientWorld>().block(block).is_some_and(|b| b.is_air());
+            if gone && got >= u32::from(count) {
+                mouse(world, MouseButton::Left, false);
+                let made = holding(world, &name(recipe.output)).0;
+                let judged = if got == u32::from(count) && made == 0 {
+                    Ok(format!("the {} broke the {} into {got} {}", name(pickaxe), name(stone), name(loose)))
+                } else {
+                    Err(format!("the {} gave {got} {} and {made} {}, not {count} and none", name(stone), name(loose), name(recipe.output)))
+                };
+                gate.check("rubble: broken", judged);
+                // The rest of the four the recipe takes.
+                world.resource::<Net>().command(&format!("give {} {}", short(loose), 4u32.saturating_sub(got)));
+                gate.advance(now);
+            } else if waited {
+                gate.check("rubble: broken", Err(format!("holding {:?}, the {} at {block} broke {gone}, {got} {} carried", holding_any(world), name(stone), name(loose))));
+                end(world, gate);
+            } else if world.resource::<ClientWorld>().block(block) == Some(stone) && select(world, &name(pickaxe)) {
+                aim_at(world, block.as_vec3() + Vec3::splat(0.5));
+                mouse(world, MouseButton::Left, true);
+            }
+        }
+        // Four laid in the hand's grid and crafted.
+        2 => {
+            if holding(world, &name(loose)).0 >= 4 {
+                let cells: Vec<(usize, String)> = recipe.cells().iter().enumerate().filter_map(|(cell, item)| item.map(|item| (cell, name(item)))).collect();
+                let laid: Vec<(usize, &str)> = cells.iter().map(|(cell, item)| (*cell, item.as_str())).collect();
+                if lay_and_craft(world, &laid) {
+                    gate.advance(now);
+                }
+            } else if waited {
+                gate.check("rubble: knocked together", Err(format!("four {} never came to hand: carried {}", name(loose), holding(world, &name(loose)).0)));
+                end(world, gate);
+            }
+        }
+        _ => {
+            let made = holding(world, &name(recipe.output)).0;
+            let left = holding(world, &name(loose)).0;
+            let grid = world.resource::<LocalPlayer>().inventory.grid().iter().all(Option::is_none);
+            if made == u32::from(recipe.count) && left == 0 && grid {
+                gate.check("rubble: knocked together", Ok(format!("four {} in the hand's grid made {made} {}", name(loose), name(recipe.output))));
+                end(world, gate);
+            } else if waited {
+                gate.check("rubble: knocked together", Err(format!("four {} in the grid gave {made} {} (wanted {}; {left} left, grid emptied {grid})", name(loose), name(recipe.output), recipe.count)));
                 end(world, gate);
             }
         }

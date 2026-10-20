@@ -170,11 +170,11 @@ is what counts. Medians of three runs on 2026-10-13, with the range:
 |---|---|---|---|
 | Look It Up | 2 | 2 | The recipe viewer. |
 | Timber, Crafting Table | 41 | 40 to 42 | Sixteen logs punched by hand (35 s). |
-| Stone in Hand | 53 | 53 to 57 | Nine cobblestone with the wooden pickaxe. |
+| Stone in Hand | 53 | 53 to 57 | Nine cobblestone: stone broken with the flint pickaxe into two loose stones each, four loose stones to two cobblestone in the 2×2 grid. |
 | First Night | 73 | 66 to 73 | Hunting in the lane, two seconds a cooking. |
 | A Bed of Your Own, Torchlight | 85 | 77 to 90 | Two feathers and two hides; two coal. |
-| Homestead Hearth lit | 118 | 106 to 119 | 28 cobblestone and 4 clay (A Pile of Stone and Dig In fall on the way; Make Camp with the hearth). |
-| A Pit Kiln | 122 | 113 to 127 | Seven cobblestone, a campfire. |
+| Homestead Hearth lit | 118 | 106 to 119 | 28 cobblestone (loose stones from stone, four to two in the 2×2 grid) and 4 clay (A Pile of Stone and Dig In fall on the way; Make Camp with the hearth). |
+| A Pit Kiln | 122 | 113 to 127 | Seven cobblestone (from loose stones, four to two), a campfire. |
 | Fire the Clay | 175 | 171 to 180 | 28 clay dug (Clay Banks on the way), twelve fired with cracks at Crafting 1 to 3. |
 | The Potter | 183 | 179 to 194 | Three more fired, three crafts. |
 | Charcoal | 260 | 258 to 268 | 52 logs chopped for all the charcoal ahead (33 s), sixteen burnt (35 s). |
@@ -363,10 +363,10 @@ nothing, bare hands on the first trees. "Range" is the fastest and slowest run o
 |---|---|---|---|---|---|
 | 8 logs (Timber) | 14.8 s | 14.8 s | 35.2 s | 35.2 | Punching 16 logs by hand (33 s; the axe made it 13), 2 s of walking between trunks. |
 | Crafting table | 14.8 s | 14.8 s | 35.2 s | 35.2 | Four logs to sixteen planks, the table, sticks and a wooden pickaxe: crafting takes no server time. |
-| Stone pickaxe and axe (Stone in Hand) | 23.9 s | 23.9 s | 44.3 s | 44.3 to 44.8 | 9 cobble with the wooden pickaxe (about 7 s of mining), then crafting. |
+| Stone pickaxe and axe (Stone in Hand) | 23.9 s | 23.9 s | 44.3 s | 44.3 to 44.8 | 9 cobble from loose stones, stone broken with the flint pickaxe and four loose stones to two cobble in the 2×2 grid (about 7 s of mining), then crafting. |
 | Campfire and a cooked meal (First Night) | 66 s | 53.5 s | 76.2 s | 74 to 81 | Walking to and chasing animals, killing rabbits and junglefowl, 2 s per cook. |
 | Torches and sleeping bag (A Bed of Your Own) | 89 s | 56.8 s | 84.7 s | 82 to 106 | Two feathers and two hides, crafted in the hand grid. Torches add 4 to 10 s (2 coal). |
-| Hearth materials (28 cobble, 4 clay) | 113 s | 83.2 s | 110.1 s | 110 to 134 | About 15 s of mining cobble, clay from the pond bank with a stone shovel, 6 to 8 s of walking. |
+| Hearth materials (28 cobble, 4 clay) | 113 s | 83.2 s | 110.1 s | 110 to 134 | About 15 s of mining stone into loose stones (two each, four to two cobble), clay from the pond bank with a stone shovel, 6 to 8 s of walking. |
 | Homestead Hearth built and lit | 117 s | 86.2 s | 113.6 s | 113 to 138 | 3 s: ring of 8 cobble, hearthstone, 2 chimneys, light. Home is set ("your home"). |
 | Pit kiln built | 124 s | 92.4 s | 119.7 s | 120 to 144 | 6 s: 7 more cobble, a campfire, the kiln recipe. |
 | 12 fired clay (Fire the Clay) | 176 s | 145.8 s | 168.5 s | 164 to 197 | 28 clay to dig (7 s), then 31 to 40 s of cooking: about a fifth of the attempts crack, and a cracked clay comes back as clay. |

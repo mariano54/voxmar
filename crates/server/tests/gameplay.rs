@@ -2998,6 +2998,52 @@ fn a_bare_hand_fells_no_tree_and_a_flint_axe_does() {
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == log));
 }
 
+/// Plain stone breaks under a flint pickaxe at Mining 1 into two loose stones and no
+/// cobblestone (no level bonus, and flint finds no extra); four loose stones in the hand's
+/// grid knock together into two cobblestone, and a cobblestone breaks back to one.
+#[test]
+fn stone_breaks_into_two_loose_stones_and_four_make_two_cobblestone() {
+    let mut client = Client::join();
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    for line in ["/clear", "/skill mining 1", "/give flint_pickaxe 1"] {
+        client.ok(line);
+    }
+    let id = |c: &Client, name: &str| c.content.blocks.expect(name);
+    let (stone, loose, cobble, pick) = (id(&client, "base:stone"), id(&client, "base:loose_stone"), id(&client, "base:cobblestone"), id(&client, "base:flint_pickaxe"));
+    // Carried, or lying loose on the way to the pack.
+    let has = |c: &Client, item: BlockId| -> u32 { c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>() + c.items.values().filter(|i| i.stack.item == item).map(|i| i.stack.count as u32).sum::<u32>() };
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == pick));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    let target = ActionTarget::Block { block: below, face: Face::PosY };
+    client.ok("/setblock ~ ~-1 ~ stone");
+    client.pump_until(|c| c.world.block(below) == Some(stone));
+    client.propose("core:mine", target);
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR) && has(c, loose) >= 2);
+    client.after_server_ticks(4);
+    assert_eq!((has(&client, loose), has(&client, cobble)), (2, 0), "plain stone breaks to two loose stones, no cobblestone");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == loose && s.count == 2));
+
+    // Two more, and four laid one to a cell of the two by two grid.
+    client.ok("/give loose_stone 2");
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == loose && s.count == 4));
+    let from = (0..voxmar_engine::inventory::SLOTS).find(|&s| client.inventory.get(s).is_some_and(|x| x.item == loose)).unwrap();
+    for cell in [0, 1, 3, 4] {
+        client.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: (voxmar_engine::inventory::CRAFT + cell) as u8, count: 1 });
+    }
+    client.pump_until(|c| c.inventory.craft.iter().flatten().count() == 4);
+    client.propose("core:craft", ActionTarget::Slot(0));
+    client.pump_until(|c| has(c, cobble) == 2);
+    assert_eq!(has(&client, loose), 0, "all four went into the two cobblestone");
+
+    // A cobblestone set down breaks back to itself, one.
+    client.ok("/setblock ~ ~-1 ~ cobblestone");
+    client.pump_until(|c| c.world.block(below) == Some(cobble));
+    client.propose("core:mine", target);
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR) && has(c, cobble) >= 3);
+    client.after_server_ticks(4);
+    assert_eq!((has(&client, cobble), has(&client, loose)), (3, 0), "a cobblestone breaks to one cobblestone");
+}
+
 // Seed 3 has a village at (368, 135, 784), 421 blocks from spawn (432, 134, 368).
 // Keeping the locate radius small avoids planning hundreds of squares on the server.
 const VILLAGE_SEED: u64 = 3;
@@ -7835,9 +7881,11 @@ impl Fresh {
         c.fill(origin, v(11, 0, 12), v(11, 2, 12), "dead_log");
         c.fill(origin, v(9, 0, 14), v(25, 10, 17), "air");
         c.fill(origin, v(9, -4, 14), v(25, -1, 17), "dirt");
-        // Ninety gravel: at one flint in eight, a key whose draws run short still finds four.
+        // A hundred and twenty gravel for the six flint the bot needs: at one flint in eight a
+        // key finds fifteen on average, and about 1 key in 300 finds fewer than six (ninety
+        // left about 1 in 30 short).
         for z in [14, 17] {
-            c.fill(origin, v(10, 0, z), v(24, 2, z), "gravel");
+            c.fill(origin, v(10, 0, z), v(24, 3, z), "gravel");
         }
         // A patch of natural stone one block high, with two coal ores on its near edge.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
@@ -8080,7 +8128,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let leaves = (-12..=9).step_by(3).flat_map(|x| (0..=3).map(move |y| v(x, y, 12)));
     let (flint, sticks) = ("base:flint", rel(f, leaves.chain((0..=2).map(|y| v(11, y, 12))).collect()));
     f.gather_chance("", sticks, stick, 3);
-    let gravel = rel(f, (10..=24).flat_map(|x| (0..=2).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
+    let gravel = rel(f, (10..=24).flat_map(|x| (0..=3).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
     f.gather_chance("", gravel, flint, 6);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
     f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1), (4, stick, 1)], "base:flint_pickaxe", 1);

@@ -22,6 +22,7 @@
 //   log, stripped, wood, planks, leaves, sapling, fuel
 //   plant, flower, herb, grass, fern, reed, bush, fungus, groundcover
 //   natural, cobbled, polished, bricks, building, light (gives light), glass
+//   rubble (loose stones broken from rock, knocked together into cobbles)
 //   mossy, ruined (weathered building blocks), volcanic, dripstone, stalagmite,
 //   stalactite, hanging (grows down from a ceiling)
 // Rock: igneous, sedimentary, metamorphic; where it shows: cliff (bare rock faces), cave

@@ -17,10 +17,10 @@ pub enum Method {
     /// Laid into the crafting grid, cell by cell, row by row; shapeless recipes take
     /// their ingredients in any arrangement. A family of recipes making the same thing
     /// from different woods (or stones) is one entry with each way laid out, as NEI
-    /// cycles them. `first` is the first of its recipes, in content order (its variants
-    /// follow), for laying one into the grid. `near` is the tag of a block it is made
-    /// near, if any.
-    Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool, first: usize, near: Option<String> },
+    /// cycles them, and a cell that takes any of several items shows each in turn. `first`
+    /// is the first of its `ways` recipes, in content order (the rest follow it), for
+    /// laying one into the grid. `near` is the tag of a block it is made near, if any.
+    Craft { variants: Vec<[Option<BlockId>; GRID]>, shapeless: bool, first: usize, ways: usize, near: Option<String> },
     /// Cooked (or fired, or smelted) at a station (blocks with the station's tag), from
     /// `level` in `skill`: `uses` of the held `input` and the other items `with` it; what
     /// is left when it burns, if anything.
@@ -53,19 +53,23 @@ impl RecipeBook {
         let mut book = Self::default();
         let blocks = &content.blocks;
         for (index, recipe) in content.recipes.iter().enumerate() {
-            // A merged-away plant in a cell is shown as the item it merged into.
-            let cells = recipe.cells().map(|cell| cell.map(|b| blocks.item_of(b)));
-            let items: Vec<BlockId> = cells.iter().flatten().copied().collect();
+            // A merged-away plant in a cell is shown as the item it merged into; a cell taking
+            // any of several items (`tag:toolstone`) shows each in turn, as variants do.
+            let layouts: Vec<[Option<BlockId>; GRID]> = recipe.layouts().into_iter().map(|cells| cells.map(|cell| cell.map(|b| blocks.item_of(b)))).collect();
+            let cells = layouts[0];
+            // It is a use of everything any cell takes.
+            let items: Vec<BlockId> = recipe.alternatives().into_iter().flatten().flatten().map(|&b| blocks.item_of(b)).collect();
             // The same thing from the same shape: another variant of the entry before.
             if let Some(last) = book.entries.last_mut()
                 && last.output == recipe.output
                 && last.count == (recipe.count, recipe.count)
-                && let Method::Craft { variants, shapeless, near, .. } = &mut last.method
+                && let Method::Craft { variants, shapeless, near, ways, .. } = &mut last.method
                 && *shapeless == recipe.shapeless()
                 && *near == recipe.near
                 && variants[0].map(|c| c.is_some()) == cells.map(|c| c.is_some())
             {
-                variants.push(cells);
+                variants.extend(layouts);
+                *ways += 1;
                 let index = book.entries.len() - 1;
                 for item in items {
                     let uses = book.uses.entry(item).or_default();
@@ -75,7 +79,7 @@ impl RecipeBook {
                 }
                 continue;
             }
-            let method = Method::Craft { variants: vec![cells], shapeless: recipe.shapeless(), first: index, near: recipe.near.clone() };
+            let method = Method::Craft { variants: layouts, shapeless: recipe.shapeless(), first: index, ways: 1, near: recipe.near.clone() };
             // The blocks it is made near are among what it uses, as a cooking station is.
             let stations: Vec<BlockId> = recipe.near.as_deref().map(|tag| blocks.tagged(tag).collect()).unwrap_or_default();
             book.add(blocks, Entry { method, output: recipe.output, count: (recipe.count, recipe.count) }, items.into_iter().chain(stations).collect());
@@ -202,5 +206,28 @@ mod tests {
         assert!(book.using(id("base:campfire")).iter().any(|e| matches!(e.method, Method::Cook { .. })));
         // Shears are used on a creature for its product.
         assert!(book.using(id("base:shears")).iter().any(|e| matches!(&e.method, Method::Product { tool: Some(tool), .. } if tool == "shears")));
+    }
+
+    /// A cell taking a tag (`tag:toolstone`) is a use of every item it takes, and the card
+    /// shows each a player can hold in turn: never the natural rock that breaks into them.
+    #[test]
+    fn a_tag_cell_is_a_use_of_each_item_it_takes() {
+        let content = content();
+        let book = RecipeBook::new(&content);
+        let id = |name: &str| content.blocks.id(name).unwrap_or_else(|| panic!("no {name}"));
+        let head = id("base:stone_head");
+        for cobbles in ["base:cobbled_granite", "base:cobbled_diorite", "base:cobbled_andesite", "base:cobbled_basalt", "base:cobbled_deepslate"] {
+            assert!(book.using(id(cobbles)).iter().any(|e| e.output == head), "{cobbles} goes into no stone head");
+        }
+        let [entry] = book.making(head)[..] else { panic!("one way to a stone head: {:?}", book.making(head)) };
+        let Method::Craft { variants, ways, .. } = &entry.method else { panic!("{entry:?}") };
+        let shown: Vec<BlockId> = variants.iter().flat_map(|v| v.iter().flatten().copied()).collect();
+        assert_eq!(*ways, 1);
+        assert!(shown.contains(&id("base:cobbled_granite")) && shown.contains(&id("base:cobbled_deepslate")), "{shown:?}");
+        assert!(!shown.contains(&id("base:deepslate")) && !shown.contains(&id("base:granite")), "natural rock on the card: {shown:?}");
+        // And what a cell wants, short, is one a player can hold.
+        let recipe = content.recipes.iter().find(|r| r.output == head).unwrap();
+        assert!(!content.blocks.def(recipe.cells().into_iter().flatten().next().unwrap()).has_tag("natural"));
+        assert!(recipe.short(&Default::default()).iter().all(|&(item, _)| !content.blocks.def(item).has_tag("natural")));
     }
 }
