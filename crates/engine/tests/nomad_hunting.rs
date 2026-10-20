@@ -24,8 +24,9 @@ const START: f32 = 24.0;
 /// stops running.
 const FEAR_FADE: f32 = 0.12;
 const FEAR_RUNS: f32 = 0.1;
-/// Runs per weapon and creature.
-const RUNS: u64 = 400;
+/// Runs per weapon and creature: enough that a mean kill time is known to about half a
+/// percent (the aurochs' bow-to-melee ratio, 0.961, to a standard error of about 0.005).
+const RUNS: u64 = 6400;
 
 /// What came of the hunts of one creature with one weapon, on average over the kills.
 #[derive(Debug, Default, Clone, Copy)]
@@ -43,8 +44,11 @@ struct Hunt {
 }
 
 fn content() -> Content {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
-    Content::load(&dir).unwrap()
+    Content::load(&content_dir()).unwrap()
+}
+
+fn content_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")
 }
 
 /// A run's own numbers in 0..1, from its seed (splitmix64).
@@ -74,13 +78,17 @@ fn shy(creature: &Creature) -> Option<f32> {
     })
 }
 
+/// The key of an item's rolls: its name hashed (FNV-1a), which stays put however many
+/// blocks the content holds, where its block id moves with every block loaded before it.
+fn key(name: &str) -> u64 {
+    name.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3))
+}
+
 /// One hunt of `creature` with `item`, from `seed`.
 fn hunt(content: &Content, creature: &Creature, item: &str, seed: u64) -> (bool, f32, f32, u32, u32, bool) {
-    // Keyed by the item's name (FNV-1a), not its id: a block added anywhere renumbers the
-    // ids after it, and would draw every hunt's rolls afresh.
-    let key = item.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
     let combat = &content.combat;
     let feel = combat.feel;
+    let name = item;
     let item = content.blocks.id(item).unwrap_or_else(|| panic!("no {item}"));
     let weapon: Weapon = combat.wielded(Some(item), |_| LEVEL);
     let shoots = !combat.ammo(&weapon).is_empty();
@@ -92,7 +100,7 @@ fn hunt(content: &Content, creature: &Creature, item: &str, seed: u64) -> (bool,
     let hitpoints = content.skills.get(content.skills.id("core:hitpoints").expect("hitpoints"));
     let health = 2.0 * f32::from(hitpoints.start);
     let ours = hit_chance_with(LEVEL, weapon.accuracy, defence_against(def.defence, def.weak, weapon.style), 0, feel.beat_accuracy);
-    let mut rolls = Rolls(seed.wrapping_mul(0x2545_f491_4f6c_dd1d) ^ key);
+    let mut rolls = Rolls(seed.wrapping_mul(0x2545_f491_4f6c_dd1d) ^ key(name));
     let (mut gap, mut life, mut taken) = (START, f32::from(def.health), 0.0f32);
     let (mut fear, mut angry) = (0.0f32, false);
     let (mut ready, mut lands, mut blow_at) = (0.0f32, None::<f32>, 0.0f32);
@@ -287,4 +295,31 @@ fn the_short_bow_is_safer_but_slower_and_costlier_than_melee_in_the_nomad_age() 
         wrong.push(format!("a red deer is taken {:.0}% of the time with a bow and {:.0}% in melee: skittish prey is the bow's", deer.0.killed * 100.0, deer.1.killed * 100.0));
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
+
+/// A hunt's rolls are its own, keyed by the weapon's name: a package of blocks loaded ahead
+/// of the base game's (which moves every weapon's block id along) leaves every hunt as it
+/// was. Before: the rolls were keyed by the block id, so a building piece added before the
+/// weapons' file drew another sample, and the aurochs' bow, 4% quicker than the spear,
+/// came out 6% quicker and failed the bow test.
+#[test]
+fn blocks_loaded_ahead_of_the_weapons_leave_the_hunts_as_they_were() {
+    let dir = std::env::temp_dir().join(format!("voxmar-hunt-ids-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("aaa")).unwrap();
+    for package in ["base", "core"] {
+        std::os::unix::fs::symlink(content_dir().join(package).canonicalize().unwrap(), dir.join(package)).unwrap();
+    }
+    let extra: String = (0..40).map(|i| format!("(name: \"filler_{i}\", textures: All(\"stone\"), hardness: 1.0, color: (120, 120, 120)),")).collect();
+    std::fs::write(dir.join("aaa/blocks.ron"), format!("(blocks: [{extra}])")).unwrap();
+    let more = Content::load(&dir);
+    std::fs::remove_dir_all(&dir).unwrap();
+    let more = more.unwrap();
+    let base = content();
+    assert_ne!(more.blocks.id(BOW), base.blocks.id(BOW), "the fixture must move the weapons' ids");
+    let (before, after) = (table(&base), table(&more));
+    for ((name, item, a), (_, _, b)) in before.iter().zip(&after) {
+        let same = |x: f32, y: f32| x == y || x.is_nan() && y.is_nan();
+        assert!(same(a.killed, b.killed) && same(a.seconds, b.seconds) && same(a.hurt, b.hurt) && same(a.spent, b.spent), "{name} with {item}: {a:?} before, {b:?} with blocks ahead");
+    }
 }
