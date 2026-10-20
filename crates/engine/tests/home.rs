@@ -163,6 +163,28 @@ fn herbs_drying_at_home_make_a_nook_for_the_garden_and_the_brew() {
     assert_eq!(content.blocks.def(herbs).drops.as_deref(), Some("core:air"));
 }
 
+/// Things set out in the yard count at home: an awning and two more out under the sky make
+/// a dooryard; fewer do not, nor no awning, nor the same under the roof. The yard pieces are
+/// a bench, bunting, a hay bale and the awning (`yard`), and nothing sat on indoors only.
+#[test]
+fn an_awning_and_yard_pieces_out_of_doors_make_a_dooryard() {
+    let content = content();
+    let effects = &content.effects;
+    let outside = |counts: &[(&str, u32)]| rooms_in(counts, &Weather::NONE, true);
+    assert_eq!(outside(&[("awning", 1), ("yard", 3)]), ["base:dooryard"]);
+    assert!(outside(&[("awning", 1), ("yard", 2)]).is_empty(), "an awning and one more is not a dooryard");
+    assert!(outside(&[("yard", 3)]).is_empty(), "no awning, no dooryard");
+    assert!(rooms(&[("awning", 1), ("yard", 3)]).is_empty(), "under the roof is not the yard");
+    let yard = effects.get(effects.id("base:dooryard").unwrap());
+    assert_eq!((yard.modifiers.heal, yard.modifiers.xp), (1.05, 1.0), "one small multiplier");
+    for name in ["base:oak_bench", "base:red_bunting", "base:red_awning", "base:hay_bale"] {
+        assert!(content.blocks.def(content.blocks.expect(name)).has_tag("yard"), "{name} is a yard piece");
+    }
+    for name in ["base:oak_chair", "base:red_rug"] {
+        assert!(!content.blocks.def(content.blocks.expect(name)).has_tag("yard"), "{name} is not a yard piece");
+    }
+}
+
 /// What a survey with these counts shows of the rooms (the side branches) in this weather.
 fn rooms_in(counts: &[(&str, u32)], weather: &Weather, outdoors: bool) -> Vec<String> {
     let content = content();

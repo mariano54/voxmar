@@ -2807,6 +2807,41 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.pump_until(|c| !has(c, "base:snug") && has(c, "base:well_rested"));
 }
 
+/// Things set out in the yard count at home (docs/home.md Rooms): an awning, a bench and a
+/// hay bale by a slept-in bag under the sky make a Dooryard, announced; under a roof it goes,
+/// and with the bale taken away it goes again.
+#[test]
+fn an_awning_a_bench_and_a_bale_make_a_dooryard() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let bag = feet + IVec3::new(2, 0, 0);
+    let (awning, bench, bale) = (feet + IVec3::new(0, 2, 2), feet + IVec3::new(-2, 0, 2), feet + IVec3::new(4, 0, 2));
+    for line in [
+        format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z),
+        format!("/setblock {} {} {} red_awning", awning.x, awning.y, awning.z),
+        format!("/setblock {} {} {} oak_bench", bench.x, bench.y, bench.z),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(bench) == c.content.blocks.id("base:oak_bench"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested"));
+    assert!(!has(&client, "base:dooryard"), "an awning and a bench is not a dooryard");
+    client.chat.clear();
+    client.ok(&format!("/setblock {} {} {} hay_bale", bale.x, bale.y, bale.z));
+    client.pump_until(|c| has(c, "base:dooryard") && told(c, "Dooryard:"));
+    // A roof overhead: indoors, not the yard.
+    let roof = feet + IVec3::new(0, 3, 0);
+    client.ok(&format!("/setblock {} {} {} stone", roof.x, roof.y, roof.z));
+    client.pump_until(|c| !has(c, "base:dooryard"));
+    client.ok(&format!("/setblock {} {} {} air", roof.x, roof.y, roof.z));
+    client.pump_until(|c| has(c, "base:dooryard"));
+    client.ok(&format!("/setblock {} {} {} air", bale.x, bale.y, bale.z));
+    client.pump_until(|c| !has(c, "base:dooryard"));
+}
+
 /// A proper bed rests better than a bag (A Proper Bed: "something better than the ground"),
 /// out under the sky with nothing around it: well rested, and a longer mend.
 #[test]

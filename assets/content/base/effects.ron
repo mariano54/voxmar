@@ -131,6 +131,12 @@
         (name: "bee_garden", kind: Buff, title: "Bee garden", description: "Bees at work among your flowers: you heal a tenth faster here, and crops near the hive grow a quarter faster.", announce: true,
             when: Some(All([AtHome, HomeHas("hive", 1), HomeHas("flower", 3)])),
             replaces: [], modifiers: (heal: 1.1)),
+        // A dooryard, the Farm age's: an awning over the door and the things set out under the
+        // sky about it (`yard`: a bench, bunting, a hay bale, an awning), standing where they
+        // were placed. Out in the yard, not under the roof, the home is a place to sit a while.
+        (name: "dooryard", kind: Buff, title: "Dooryard", description: "An awning at your door, a bench, bunting or bales about it: out in the yard you heal a twentieth faster.", announce: true,
+            when: Some(All([AtHome, Not(Indoors), HomeHas("awning", 1), HomeHas("yard", 3)])),
+            replaces: [], modifiers: (heal: 1.05)),
         // Reactions: a home answers what is around it. A roof and a fire in a storm, animals
         // kept in the yard (`kept` counts those within reach) and crops growing by the door
         // each give something, with no code of their own.

@@ -564,6 +564,8 @@
     "quest.base.heart_of_the_wood.why": ("The Rootmother leaves three heartroot. Eaten, one gives Heartwood for ten minutes: room for a fifth more health, and you heal a quarter faster. Another eaten while it lasts only starts the ten minutes again, so keep the rest for the next hard fight. Eat one and keep two.", "根の母は心根を3個残す。1個食べると10分間「心材」になる。体力の上限が5分の1増え、回復が4分の1速くなる。効いている間にもう1個食べても、10分が始めからになるだけなので、残りは次の厳しい戦いにとっておこう。1個食べ、2個持っておく。"),
     "effect.base.bee_garden": ("Bee garden", "ミツバチの庭"),
     "effect.base.bee_garden.description": ("Bees at work among your flowers: you heal a tenth faster here, and crops near the hive grow a quarter faster.", "花の間でミツバチが働いている。ここでは回復が1割速く、巣箱の近くの作物は4分の1速く育つ。"),
+    "effect.base.dooryard": ("Dooryard", "戸口の庭"),
+    "effect.base.dooryard.description": ("An awning at your door, a bench, bunting or bales about it: out in the yard you heal a twentieth faster.", "戸口に日よけ、そのまわりに長椅子や旗飾りや干し草。庭に出ていると回復が20分の1速い。"),
     "effect.base.smoky": ("Smoky", "煙たい"),
     "effect.base.smoky.description": ("Smoke clings to you: bees take you for a fire and stay calm.", "煙が体にまとわりついている。ハチは火と思っておとなしくしている。"),
     "effect.base.tusk_stride": ("Tusk Stride", "牙の足取り"),

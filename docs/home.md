@@ -116,6 +116,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
 | Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
+| Dooryard | out under the sky, an awning and 3 yard pieces in all (`yard`: a bench, bunting, a hay bale, the awning) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
 beside the sleeping bag. Before any roof or hearth it is the warmer night and the better rest
@@ -125,6 +126,12 @@ The herb nook is the Farm age's: two herbs tied with twine hang to dry (Crafting
 bunches); two bunches and a jar, basket or crate make it. Its farming level counts where it
 is felt, sowing the kitchen garden at the door (a crop a level early) and harvesting it, and
 its alchemy level at the bench.
+The dooryard is the Farm age's too, the home's outside (home audit 2, item 10: outdoor decor
+used to count for nothing): an awning at the door and two more things set out under the sky
+about it. Only blocks still standing count, so a bale taken away or broken takes its part
+with it, and it holds only out in the yard, never under the roof
+(`an_awning_and_yard_pieces_out_of_doors_make_a_dooryard`, the server's
+`an_awning_a_bench_and_a_bale_make_a_dooryard`, the gate's walls step: "home: dooryard").
 
 `boosts` are the effect vocabulary's own (they stop at +6 and recipes marked firm ignore
 them); `meal_heal` and `meal_time` are two new modifiers, applied as the meal is eaten from

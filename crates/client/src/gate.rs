@@ -6612,8 +6612,8 @@ const WALLS_WAIT: f32 = 8.0;
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
 /// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound) it
 /// turns Snug. Then, set to midnight (`/time`, no waiting for dark), indoors by the hearth
-/// it is an evening in, and noon again after. All of it goes again after, the camp left for
-/// the way home.
+/// it is an evening in, and noon again after; with the roof off, an awning, a bench and a hay
+/// bale set out about it, a dooryard. All of it goes again after, the camp left for the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase();
     let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
@@ -6625,6 +6625,9 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     // beyond, the roof over the walls.
     let (low, high) = (bag + IVec3::new(-5, 0, -3), bag + IVec3::new(3, 3, 3));
     let (hearth, light) = (bag + IVec3::new(0, 0, 2), bag + IVec3::new(-3, 0, -2));
+    // The yard, set out in the room once its roof is off: an awning over the stand's corner,
+    // a bench and a hay bale.
+    let yard = [(bag + IVec3::new(-2, 2, -2), "red_awning"), (bag + IVec3::new(1, 0, -2), "oak_bench"), (bag + IVec3::new(2, 0, 1), "hay_bale")];
     let walls = |net: &Net, block: &str| {
         for (a, b) in [
             (low, IVec3::new(low.x, high.y, high.z)),
@@ -6640,7 +6643,7 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         walls(net, "air");
         roof(net, "air");
-        for at in [hearth, light] {
+        for at in [hearth, light].into_iter().chain(yard.map(|(at, _)| at)) {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("effect clear");
@@ -6694,16 +6697,33 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // At midnight, indoors at home by the hearth: an evening in, its chip, and its line
-        // (told once a session, so seen at any point in the run).
-        _ => {
+        // (told once a session, so seen at any point in the run). Then noon, the roof off, and
+        // the yard set out.
+        3 => {
             let (evening, told) = (has(world, "base:evening_in"), gate.evening_told);
-            if evening && told {
+            let done = evening && told;
+            if done {
                 gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()));
-                world.resource::<Net>().command("time set noon");
-                leave(world, gate);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")));
-                world.resource::<Net>().command("time set noon");
+            }
+            if done || gate.waited_out(WALLS_WAIT) {
+                let net = world.resource::<Net>();
+                net.command("time set noon");
+                roof(net, "air");
+                for (at, block) in yard {
+                    net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
+                }
+                gate.advance(now);
+            }
+        }
+        // Under the sky again, an awning, a bench and a bale about the home: a dooryard.
+        _ => {
+            if has(world, "base:dooryard") {
+                gate.check("home: dooryard", Ok("the roof off, an awning, a bench and a hay bale set out about the home showed the Dooryard chip".into()));
+                leave(world, gate);
+            } else if gate.waited_out(WALLS_WAIT) {
+                gate.check("home: dooryard", Err(format!("{waited:.1} server s after taking the roof off and setting out {yard:?}: Dooryard chip false, Evening in {}", has(world, "base:evening_in"))));
                 leave(world, gate);
             }
         }
