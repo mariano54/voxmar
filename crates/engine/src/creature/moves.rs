@@ -197,9 +197,12 @@ impl super::Creature {
     }
 
     /// Whether a target with its feet at `target` is level with it, its feet at `feet` at
-    /// its individual `scale`: where a charge along the ground runs into them.
+    /// its individual `scale`: where a charge along the ground runs into them, from a block
+    /// below its feet (down a step) to below the top of its body. Two blocks down a hole,
+    /// a charge runs over them, however tall the charger.
     pub fn level(&self, feet: f32, target: f32, scale: f32) -> bool {
-        (target - feet).abs() < self.def.body.size.1 * scale + 1.0
+        let dy = target - feet;
+        dy >= -1.0 - 1e-3 && dy < self.def.body.size.1 * scale
     }
 
     /// The attack it winds up at a target `edge` blocks from its body's edge, in `phase`,

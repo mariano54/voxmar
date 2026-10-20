@@ -3741,6 +3741,19 @@ mod fight_tests {
         }
     }
 
+    /// A player two blocks down a hole is not level with Old Tusk, at any scale, so he
+    /// never picks his charge at them from afar; down a step, or up one, they are. Before:
+    /// level was within his height and a block, so two down counted, and he charged.
+    #[test]
+    fn old_tusk_takes_a_player_down_a_hole_for_no_charge() {
+        let server = crate::test_server();
+        let tusk = server.content.creatures.get(server.content.creatures.id("base:old_tusk").expect("Old Tusk"));
+        for scale in [0.8, 1.0, 1.25] {
+            assert!(!tusk.level(0.0, -2.0, scale) && !tusk.level(0.0, -3.0, scale), "at {scale}");
+            assert!(tusk.level(0.0, -1.0, scale) && tusk.level(0.0, 0.0, scale) && tusk.level(0.0, 1.0, scale), "at {scale}");
+        }
+    }
+
     /// With the player down a hole a block across and four deep, out of their reach down
     /// (`moves::Strike`), the fighters (not a boss, who fights to the end) strike nothing,
     /// never stand a second over the hole, and give the chase up, ending well off it. Before:
