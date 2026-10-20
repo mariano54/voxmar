@@ -643,6 +643,9 @@ impl Server {
                     }
                     creature.body.velocity = voxmar_engine::glam::Vec3::ZERO;
                 }
+                // Let go of a hold now (`hold`, `/summon ... held`): the gate's Climb step lets
+                // its wolf go at the foot of the step.
+                "release" => creature.held_until = tick,
                 "hasten" => {
                     creature.products_due.iter_mut().for_each(|due| *due = tick);
                     if creature.grows_up.is_some() {

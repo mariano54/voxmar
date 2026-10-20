@@ -13113,9 +13113,9 @@ const WOLF: &str = "base:wolf";
 const CLIMB_AT: IVec3 = IVec3::new(0, 0, 36);
 /// Blocks back along the step's top the player stands once the wolf is struck.
 const CLIMB_BACK: f32 = 3.0;
-/// What the climb allows past the wolf's recovery, thoughts, run over the way and wind-up:
-/// the client's frames. Without a client the wolf strikes within those alone
-/// (`creatures::way_tests`, `a_wolf_bitten_from_a_step_comes_up_and_strikes_within_the_climb_allowance`
+/// What the climb allows past the wolf's thoughts, chase and wind-up: the client's frames.
+/// Without a client the wolf comes in reach within its chase and strikes at its next thought
+/// (`creatures::way_tests`, `a_wolf_let_go_below_a_step_comes_up_it_and_strikes_within_its_chase`
 /// in the server).
 const CLIMB_SPARE: f32 = 0.5;
 
@@ -13128,30 +13128,29 @@ struct ClimbRun {
     /// The blows each way the server had answered as the phase began.
     struck: u32,
     hurts: u32,
-    /// The wolf's blows at the player before the timing began: the count taken of them; the
-    /// latest, at the server seconds taken in by the frame before it was seen (it came
-    /// after them); and the server seconds of the last frame.
-    told: u32,
-    bitten: Option<f32>,
-    taken_before: f32,
-    /// Server seconds the wolf is allowed, from the player standing back to its blow, and
-    /// what they were made of.
+    /// Server seconds the wolf is allowed, from its being let go to its blow, and what they
+    /// were made of.
     allowed: f32,
     allowance: String,
-    /// The wolf at its highest, and where it was when the player stood back.
+    /// The wolf at its highest; where it stood held as it was let go, and where it was first
+    /// seen to move from there.
     highest: f32,
+    held_at: Option<Vec3>,
     from: Vec3,
     /// `Gate::frames` as the phase began.
     frames_at: u32,
 }
 
-/// A wolf on level ground below a step a block high: struck from the step's edge, then,
-/// with the player three blocks back along the top, it comes up the step and strikes.
-/// What is judged derives from the setup: its blow lands with its feet up on the step,
-/// within the server seconds of what is left of its recovery from a blow it struck at the
-/// edge, a thought to start the chase and one to strike in reach (`NEAR_THINK_LONGEST`
-/// each), its own run over the way from where it was to its reach of the player, its
-/// wind-up and `CLIMB_SPARE`. Before the fix to heads meeting
+/// A wolf held at the foot of a step a block high (`/summon ... held`): struck from the
+/// step's edge, then let go (`/creatures release`) with the player three blocks back along
+/// the top, it comes up the step and strikes. What is judged derives from the setup: timed
+/// from its first move (its first thought once let go), its blow lands with its feet up on
+/// the step within the server seconds of its chase up the step to its reach of the player by
+/// its own physics (`motion::chase_with_hop`: its way at its run, the hop's time in the air,
+/// its gathering speed), a thought to strike once in reach (`NEAR_THINK_LONGEST`), its
+/// wind-up and `CLIMB_SPARE`.
+/// Held, it is below the step when let go, so the step is climbed every run: let loose at
+/// the edge, it had come up while it fought there. Before the fix to heads meeting
 /// steps (`motion::step`) a wolf coming straight at a step met it with its head first and
 /// was turned along it.
 fn climb(world: &mut World, gate: &mut Gate, now: f32) {
@@ -13185,27 +13184,14 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
         gate.climb.frames_at = gate.frames;
         gate.advance(now);
     };
-    // A blow the wolf strikes at the edge holds it its recovery, and it may come on to the
-    // end: so the latest before the timing begins, at the earliest it could have been.
-    if gate.phase > 0 && gate.climb.allowed == 0.0 {
-        let fighting = world.resource::<crate::fight::Fighting>();
-        let new = fighting.hurt_count.saturating_sub(gate.climb.told) as usize;
-        if fighting.hurt.iter().rev().take(new).any(|h| Some(h.0) == gate.climb.wolf) {
-            gate.climb.bitten = Some(gate.climb.taken_before);
-        }
-        gate.climb.told = fighting.hurt_count;
-    }
-    gate.climb.taken_before = gate.server_now;
     match gate.phase {
         0 => {
             // In creative while it is built: level ground, the step across it a block high
             // from the edge on, the wild creatures about it sent away, and the wolf summoned
-            // below it, two blocks out.
+            // below it, two blocks out, and held there.
             gate.climb = ClimbRun {
                 before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(),
-                told: world.resource::<crate::fight::Fighting>().hurt_count,
                 highest: f32::MIN,
-                taken_before: gate.server_now,
                 ..default()
             };
             let net = world.resource::<Net>();
@@ -13219,7 +13205,7 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
             net.command("creatures disperse");
             // /summon sets the first one 1.8 blocks west of the cell's middle (`summon`):
             // asked two east, it lands about on the edge's line.
-            net.command(&format!("summon {} 1 {} {} {}", WOLF.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
+            net.command(&format!("summon {} 1 {} {} {} held", WOLF.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
             advance(gate);
         }
         1 => {
@@ -13277,38 +13263,57 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
                 fail(world, gate, format!("the wolf went out of view (its feet {:.2} up at most)", gate.climb.highest));
                 return;
             };
-            // Timed from this client's player standing back, within a quarter block.
+            // Let go once this client's player stands back, within a quarter block; timed from
+            // its first move seen, which its first thought made.
             if gate.climb.allowed == 0.0 {
-                // A blow before it stands back was struck at the edge: not counted.
+                // A blow before it moves was struck at the edge: not counted.
                 gate.climb.hurts = world.resource::<crate::fight::Fighting>().hurt_count;
-                if me.xz().distance(back.xz()) > 0.25 {
+                let Some(held_at) = gate.climb.held_at else {
+                    if me.xz().distance(back.xz()) > 0.25 {
+                        if waited(gate, NARROW_WAIT) {
+                            fail(world, gate, format!("the player never came to stand back along the step: at {me:.2}, sent to {back:.2}"));
+                        }
+                        return;
+                    }
+                    world.resource::<Net>().command("creatures release");
+                    gate.climb.held_at = Some(view.position);
+                    to_phase(gate, 3, now);
+                    gate.climb.frames_at = gate.frames;
+                    return;
+                };
+                if view.position.distance(held_at) < 0.05 {
                     if waited(gate, NARROW_WAIT) {
-                        fail(world, gate, format!("the player never came to stand back along the step: at {me:.2}, sent to {back:.2}"));
+                        fail(world, gate, format!("the wolf never moved from {held_at:.2} once let go"));
                     }
                     return;
                 }
-                // What is left of its recovery from its last blow at the edge, a thought to
-                // set off and one to strike once in reach; its way, from its body's front to
-                // its reach of the player, at its run; and its wind-up before the blow lands.
+                // Held where it stood, its chase is from there: its first move is seen a frame
+                // late at most, which `CLIMB_SPARE` is for.
+                let up = held_at.y - at.y as f32;
+                if up > 0.5 {
+                    fail(world, gate, format!("the wolf was held {up:.2} up the step, not at its foot: at {held_at:.2}"));
+                    return;
+                }
+                // A thought to strike once in reach; its chase, from its body's edge where it
+                // stood to its reach of the player, by its own physics; and its wind-up before
+                // the blow lands.
                 let content = &world.resource::<Launch>().content;
-                let def = &content.creatures.get(species).def;
-                let run = def.movement.run.max(0.1);
-                let attack = def.attack;
-                let reach = attack.map_or(1.0, |a| a.reach);
-                let windup = attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
-                let recovery = attack.and_then(|a| a.recovery).unwrap_or(content.combat.feel.creature_recovery).max(0.0);
-                let held = gate.climb.bitten.map_or(0.0, |at| (at + recovery - gate.server_now).clamp(0.0, recovery));
-                let thoughts = 2.0 * voxmar_server::NEAR_THINK_LONGEST as f32 / voxmar_protocol::TICKS_PER_SECOND as f32;
-                let half = def.body.size.0 * view.scale / 2.0;
-                let way = (view.position.xz().distance(me.xz()) - half - reach).max(0.0);
-                gate.climb.allowed = held + thoughts + way / run + windup + CLIMB_SPARE;
+                let creature = content.creatures.get(species);
+                let movement = &creature.def.movement;
+                let windup = creature.def.attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
+                let second = voxmar_protocol::TICKS_PER_SECOND as f32;
+                let thought = voxmar_server::NEAR_THINK_LONGEST as f32 / second;
+                let way = (creature.edge(held_at.xz().distance(me.xz()), view.scale) - creature.longest_reach(0)).max(0.0);
+                let chase = voxmar_engine::creature::motion::chase_with_hop(movement, way, movement.run, 1.0 / second);
+                gate.climb.allowed = chase + thought + windup + CLIMB_SPARE;
                 gate.climb.allowance = format!(
-                    "{held:.2} s left of its {recovery:.2} s recovery, {thoughts:.2} s for two thoughts, {way:.2} blocks at its run of {run:.2} a second, a wind-up of {windup:.2} s and {CLIMB_SPARE:.1} s to spare"
+                    "a chase of {chase:.2} s ({way:.2} blocks at its run of {:.2} a second, the hop up and its gathering speed), {thought:.2} s for a thought in reach, a wind-up of {windup:.2} s and {CLIMB_SPARE:.1} s to spare",
+                    movement.run
                 );
-                gate.climb.from = view.position;
+                gate.climb.from = held_at;
                 to_phase(gate, 3, now);
                 gate.climb.frames_at = gate.frames;
-                info!("gate: climb: the player stands back at {me:.2}, the wolf at {:.2}; allowed {:.2} server s ({})", view.position, gate.climb.allowed, gate.climb.allowance);
+                info!("gate: climb: let go at {held_at:.2} with the player back at {me:.2}, the wolf first seen moving at {:.2}; allowed {:.2} server s ({})", view.position, gate.climb.allowed, gate.climb.allowance);
                 return;
             }
             let up = view.position.y - at.y as f32;
