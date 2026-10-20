@@ -122,7 +122,9 @@ impl Server {
                 opened.push(core);
                 continue;
             }
-            let cells: Vec<IVec3> = self.content.multiblocks.get(&s.structure).and_then(|m| m.smoulder.as_ref()).map_or_else(Vec::new, |sm| sm.wood.iter().map(|&o| core + turned(o, s.turn)).collect());
+            // All of it, not only its wood: a piece broken where the land is not loaded is
+            // judged (opened, above) before its time can be up.
+            let cells: Vec<IVec3> = self.content.multiblocks.get(&s.structure).map_or_else(Vec::new, |m| m.cells_at(core, s.turn).collect());
             let loaded = self.block(core).is_some() && cells.iter().all(|&p| self.block(p).is_some());
             if self.block(core).is_some() {
                 let roofed = !self.open_sky(core + IVec3::Y);
@@ -385,8 +387,9 @@ mod tests {
         let mut column = server.world.remove(ColumnPos::new(0, 0)).unwrap();
         std::sync::Arc::make_mut(&mut column).set_block(CORNER, BlockId::AIR);
         server.smoulder_changed(CORNER);
+        server.day += burn_ticks(&server);
         server.tend_smoulders();
-        assert_eq!(server.smoulders.len(), 1, "not judged with its land unloaded");
+        assert_eq!(server.smoulders.len(), 1, "not judged with its land unloaded, its time up or not");
         server.world.insert(ColumnPos::new(0, 0), column);
         server.tend_smoulders();
         assert!(server.smoulders.is_empty(), "opened once loaded");
