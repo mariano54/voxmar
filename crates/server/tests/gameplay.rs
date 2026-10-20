@@ -574,6 +574,18 @@ impl Client {
         self.pump_until(|c| c.server_tick >= from + ticks);
     }
 
+    /// Waits until at least `ticks` server ticks have passed from now, and little longer:
+    /// it asks the server's clock (`/time add 0` tells it at once and moves nothing) rather
+    /// than waiting on its once-a-second tell, which made a one-second wait one to two.
+    #[track_caller]
+    fn after_ticks_asked(&mut self, ticks: u64) {
+        self.ok("/time add 0");
+        let from = self.server_tick;
+        while self.server_tick < from + ticks {
+            self.ok("/time add 0");
+        }
+    }
+
     /// Waits until `count` holds still across 20 server ticks after everything sent was
     /// handled (drops still landing, pick-ups on the way), and returns it.
     #[track_caller]
@@ -4784,7 +4796,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.chat.iter().any(|(_, line)| line.contains("Nothing to shoot")));
-    client.wait_server(1);
+    client.after_ticks_asked(TICKS_PER_SECOND as u64);
     assert_eq!(client.blows, 0, "a sling with no stone still swung");
     // With stones: each shot takes one, hit or miss, and a hit trains Ranged.
     client.ok("/give cobblestone 16");
@@ -4805,7 +4817,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     // A wall between is a miss, and the stone is still spent.
     let x = at.x + 4.0;
     client.ok(&format!("/fill {} {} {} {} {} {} stone", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
-    client.wait_server(1);
+    client.after_ticks_asked(TICKS_PER_SECOND as u64);
     // Two shots, the second on the sling's beat (0.53 s): both are at the air, so off the
     // beat, and earn no pip.
     let (blows, left, pips) = (client.blows, carried_of(&client, stone), client.pips.last().copied().unwrap_or(0));
@@ -4819,6 +4831,8 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     assert_eq!(kinds, [voxmar_engine::combat::Blow::Plain; 2], "shots into a wall counted as {kinds:?}");
     assert!(client.pips.last().copied().unwrap_or(0) <= pips, "shots into a wall earned a pip: {:?}", client.pips);
     client.pump_until(|c| carried_of(c, stone) == left - 2);
+    // The wall down again: with a clear line, only the stone gone makes the next shot miss.
+    client.ok(&format!("/fill {} {} {} {} {} {} air", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
     // The last stone gone while a shot winds up: still answered, as a miss at the air, and
     // the player told why.
     let slots: Vec<(usize, u8)> = (0..voxmar_engine::inventory::SLOTS).filter_map(|s| client.inventory.get(s).filter(|k| k.item == stone).map(|k| (s, k.count))).collect();
@@ -4830,7 +4844,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
         client.propose("core:drop", ActionTarget::Stack { slot: last as u8, count: count - 1 });
     }
     client.pump_until(|c| carried_of(c, stone) == 1);
-    client.wait_server(1);
+    client.after_ticks_asked(TICKS_PER_SECOND as u64);
     client.chat.clear();
     let blows = client.blows;
     client.propose("core:attack", ActionTarget::Creature(id));
