@@ -28,7 +28,7 @@
             comfort: (temperature: (2.0, 28.0), moisture: (0.25, 1.5)),
             harvest: [(item: "wheat", count: (1, 2)), (item: "wheat_seeds", count: (1, 3), chance: 0.95)],
             wild: ["wild_wheat"],
-            forage: [(item: "wheat_seeds", count: (1, 2)), (item: "wheat", chance: 0.3)],
+            forage: [(item: "wheat_seeds", count: (1, 2)), (item: "wheat", chance: 0.6)],
         ),
         (
             name: "carrot", seed: "carrot", level: 5, xp: (plant: 3.0, harvest: 11.0, forage: 2.0), minutes: 14.0,
