@@ -11,7 +11,7 @@ use voxmar_engine::glam::Vec3;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
 use voxmar_engine::lang::Words;
 use voxmar_engine::movement::Checks;
-use voxmar_engine::physics::{Aabb, player as dims};
+use voxmar_engine::physics::{Aabb, CUBE, player as dims};
 use voxmar_engine::skill::{SkillRegistry, Skills};
 use voxmar_engine::traits::{self, Health, TraitDecl};
 use voxmar_engine::vitals::Vitals;
@@ -847,7 +847,7 @@ impl Server {
         let (depth, _) = voxmar_engine::movement::water_around(blocks, |cell| self.block(cell), &Aabb::standing(feet, dims::WIDTH, dims::HEIGHT));
         if depth > 0.0 {
             Some(true)
-        } else if ground.intersects(|cell| self.is_solid(cell)) {
+        } else if ground.overlaps(|cell| self.boxes(cell)) {
             Some(false)
         } else {
             None
@@ -858,24 +858,62 @@ impl Server {
     fn near_ground(&self, feet: Vec3) -> bool {
         let half = dims::WIDTH / 2.0;
         let below = Aabb { min: feet - Vec3::new(half, self.content.movement.checks.near_ground, half), max: feet + Vec3::new(half, 0.0, half) };
-        below.intersects(|cell| self.is_solid(cell))
+        below.overlaps(|cell| self.boxes(cell))
     }
 
-    /// Where a player above `from` would stand on the first solid block under them (within
-    /// 64 blocks; otherwise where they are).
+    /// Where a player above `from` would stand on the first solid block under them, on the
+    /// highest top under their footprint (a slab's at half a block; a post only where they
+    /// are over it), within 64 blocks; otherwise where they are.
     fn ground_below(&self, from: Vec3) -> Vec3 {
-        let cell = from.floor().as_ivec3();
+        let half = dims::WIDTH / 2.0;
+        let (lo, hi) = (from - Vec3::new(half, 0.0, half), from + Vec3::new(half, 0.0, half));
+        let (a, b) = (lo.floor().as_ivec3(), hi.floor().as_ivec3());
         (0..64)
-            .map(|down| cell - voxmar_engine::glam::IVec3::Y * down)
-            .find(|&below| self.is_solid(below) && !self.inside(below.as_vec3().with_x(from.x).with_z(from.z) + Vec3::Y))
-            .map_or(from, |below| Vec3::new(from.x, below.y as f32 + 1.0, from.z))
+            .map(|down| from.floor().y as i32 - down)
+            .find_map(|y| {
+                let mut top = None::<f32>;
+                for x in a.x..=b.x {
+                    for z in a.z..=b.z {
+                        let cell = voxmar_engine::glam::IVec3::new(x, y, z);
+                        for b in self.boxes(cell) {
+                            let (min, max) = (b.min + cell.as_vec3(), b.max + cell.as_vec3());
+                            if min.x < hi.x && max.x > lo.x && min.z < hi.z && max.z > lo.z {
+                                top = Some(top.map_or(max.y, |t: f32| t.max(max.y)));
+                            }
+                        }
+                    }
+                }
+                let on = from.with_y(top?);
+                (!self.inside(on)).then_some(on)
+            })
+            .unwrap_or(from)
     }
 
-    /// Whether a player at `feet` would be in a wall (with a slightly smaller box than
-    /// theirs, for rounding: `Checks::wall_box`).
+    /// Whether a player at `feet` would be in a wall, with a slightly smaller box than theirs
+    /// for rounding: a share of it against whole blocks (`Checks::wall_box`), their own less
+    /// a fixed margin against shaped blocks' boxes (`Checks::wall_margin`), so a gap between
+    /// shapes narrower than the player is no way through.
     fn inside(&self, feet: Vec3) -> bool {
-        let (width, height) = self.content.movement.checks.wall_box;
-        Aabb::standing(feet, dims::WIDTH * width, dims::HEIGHT * height).intersects(|cell| self.is_solid(cell))
+        let checks = &self.content.movement.checks;
+        let (width, height) = checks.wall_box;
+        let m = checks.wall_margin;
+        let half = dims::WIDTH / 2.0 - m;
+        let tight = Aabb { min: feet - Vec3::new(half, -m, half), max: feet + Vec3::new(half, dims::HEIGHT - m, half) };
+        // Near a shape every block is judged by the margin: a whole block's share and a
+        // shape's margin together would leave a gap narrower than the player open. Near is
+        // a shape in a cell the margin box itself reaches into, past rounding: a shape can
+        // only come or go in a cell the player's own box at most touches (one placed is
+        // refused in a cell they are in), and the share box sits inside the margin box, so
+        // which box judges a spot never flips it from clear to inside.
+        let near_shape = tight.intersects(|cell| {
+            let boxes = self.boxes(cell);
+            !boxes.is_empty() && boxes != CUBE
+        });
+        if near_shape {
+            tight.overlaps(|cell| self.boxes(cell))
+        } else {
+            Aabb::standing(feet + Vec3::Y * m, dims::WIDTH * width, dims::HEIGHT * height).overlaps(|cell| self.boxes(cell))
+        }
     }
 
     /// Whether a player could have got from `from` to `to` without passing through a wall.
@@ -896,7 +934,67 @@ impl Server {
         };
         let across_first = Vec3::new(to.x, from.y, to.z);
         let up_first = Vec3::new(from.x, to.y, from.z);
-        clear(from, to) || (clear(from, across_first) && clear(across_first, to)) || (clear(from, up_first) && clear(up_first, to))
+        clear(from, to) || (clear(from, across_first) && clear(across_first, to)) || (clear(from, up_first) && clear(up_first, to)) || self.stepped_between(from, to)
+    }
+
+    /// Whether a walker could have got from `from` to `to` along the ground, stepping up onto
+    /// each block in the way no taller than `step_up` as the client does: between two inputs
+    /// a sprint at a low frame rate climbs a slab and then a stair under a ceiling that no
+    /// straight or one-turn path clears.
+    fn stepped_between(&self, from: Vec3, to: Vec3) -> bool {
+        let tuning = &self.content.movement;
+        // As many steps as the rise budget lets one input climb (about a block and a half):
+        // each is checked below.
+        if to.y < from.y {
+            return false;
+        }
+        let across = (to - from).with_y(0.0);
+        let steps = (across.length() / tuning.checks.sweep_step).ceil().max(1.0) as u32;
+        let mut at = from;
+        for i in 1..=steps {
+            let mut next = (from + across * (i as f32 / steps as f32)).with_y(at.y);
+            if self.inside(next) {
+                // Up onto what is in the way, from where the walker was: its top, no more
+                // than a step up.
+                let Some(top) = self.top_within(next, tuning.step_up) else { return false };
+                next.y = top;
+                if self.inside(at.with_y(top)) || self.inside(next) {
+                    return false;
+                }
+            }
+            at = next;
+        }
+        // Then down, if the last step overshot, to where they are: through nothing on the way
+        // (a roof walked up onto is no way into the room under it).
+        if at.y + 1e-3 < to.y {
+            return false;
+        }
+        let drop = ((at.y - to.y) / tuning.checks.sweep_step).ceil().max(1.0) as u32;
+        (1..=drop).all(|i| !self.inside(to.with_y(at.y + (to.y - at.y) * i as f32 / drop as f32)))
+    }
+
+    /// The highest top of a block's boxes under a player's footprint at `feet` that is above
+    /// their feet but at most `rise` above.
+    fn top_within(&self, feet: Vec3, rise: f32) -> Option<f32> {
+        let half = dims::WIDTH / 2.0;
+        let (lo, hi) = (feet - Vec3::new(half, 0.0, half), feet + Vec3::new(half, rise, half));
+        let (a, b) = (lo.floor().as_ivec3(), hi.floor().as_ivec3());
+        let mut top = None::<f32>;
+        for x in a.x..=b.x {
+            for y in a.y..=b.y {
+                for z in a.z..=b.z {
+                    let cell = voxmar_engine::glam::IVec3::new(x, y, z);
+                    for b in self.boxes(cell) {
+                        let (min, max) = (b.min + cell.as_vec3(), b.max + cell.as_vec3());
+                        let over = min.x < hi.x && max.x > lo.x && min.z < hi.z && max.z > lo.z;
+                        if over && max.y > feet.y && max.y <= feet.y + rise {
+                            top = Some(top.map_or(max.y, |t| t.max(max.y)));
+                        }
+                    }
+                }
+            }
+        }
+        top
     }
 
     fn settings(&mut self, id: PlayerId, view_distance: u8, fly_speed: f32) {
@@ -1123,5 +1221,31 @@ mod tests {
         drop(returning);
         drop(server);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A player let down lands on a post's top only where they are over it: beside it, in
+    /// the empty part of its cell, they go on down to the floor under it.
+    #[test]
+    fn a_let_down_lands_on_a_post_only_where_it_is_under_the_player() {
+        let mut server = crate::test_server();
+        let at = server.spawn.floor().as_ivec3() + voxmar_engine::glam::IVec3::new(0, 20, 0);
+        server.load_area(at - voxmar_engine::glam::IVec3::splat(4), at + voxmar_engine::glam::IVec3::splat(4));
+        let air = voxmar_engine::block::BlockId::AIR;
+        let (stone, post) = (server.content.blocks.id("base:stone").unwrap(), server.content.blocks.id("base:oak_post").unwrap());
+        for y in -3..=2 {
+            for z in -2..=2 {
+                for x in -2..=2 {
+                    let cell = at + voxmar_engine::glam::IVec3::new(x, y, z);
+                    server.set_block(cell, if y == -3 { stone } else { air });
+                }
+            }
+        }
+        server.set_block(at - voxmar_engine::glam::IVec3::Y, post);
+        let cell = at.as_vec3();
+        // Over the post: on its top.
+        assert_eq!(server.ground_below(cell + Vec3::new(0.5, 1.5, 0.5)).y, cell.y);
+        // Beside it in its cell, the footprint clear of it: down to the stone.
+        let beside = cell + Vec3::new(0.99, 1.5, 0.99);
+        assert_eq!(server.ground_below(beside), beside.with_y(cell.y - 2.0), "stood on a post's top beside it");
     }
 }

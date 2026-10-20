@@ -70,6 +70,13 @@ pub struct Target {
     mine_cooldown: f32,
 }
 
+impl Target {
+    /// How long the block being mined takes to break, as worked out when the mining began.
+    pub fn mining_seconds(&self) -> Option<f32> {
+        self.mining.is_some().then_some(self.mining_seconds)
+    }
+}
+
 /// The number keys pick a hotbar slot, and so does the wheel unless it is zooming.
 fn select_slot(
     keys: Res<ButtonInput<KeyCode>>,
