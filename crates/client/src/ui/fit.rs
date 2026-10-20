@@ -241,14 +241,26 @@ pub fn find(world: &mut World) -> Vec<Spill> {
         .filter(|(_, image, node, _, visible)| visible.get() && pictures.contains(&image.image.id()) && node.size().min_element() > 0.0)
         .map(|(entity, _, node, transform, _)| (entity, rect(node, transform)))
         .collect();
-    let icons: Vec<Rect> = drawn.into_iter().filter_map(|(entity, icon)| clipped(world, &mut parents, &mut boxes, entity, icon)).collect();
+    let icons: Vec<(Entity, Rect)> = drawn.into_iter().filter_map(|(entity, icon)| Some((entity, clipped(world, &mut parents, &mut boxes, entity, icon)?))).collect();
+    // A text drawn on a layer above an icon's (a tooltip, on its own backing over the
+    // slots) covers it rather than runs into it.
+    let layer = |mut entity: Entity| loop {
+        if let Some(z) = world.get::<GlobalZIndex>(entity) {
+            return z.0;
+        }
+        match world.get::<ChildOf>(entity) {
+            Some(parent) => entity = parent.parent(),
+            None => return 0,
+        }
+    };
     for &(i, seen) in &shown {
         let text = &candidates[i].1;
         if text.chars().filter(|c| !c.is_whitespace()).count() <= 2 {
             continue;
         }
-        if let Some(icon) = icons.iter().find(|icon| {
-            let both = seen.intersect(**icon);
+        let above = layer(candidates[i].0);
+        if let Some((_, icon)) = icons.iter().filter(|(entity, _)| layer(*entity) >= above).find(|(_, icon)| {
+            let both = seen.intersect(*icon);
             both.width() > slack && both.height() > slack
         }) {
             found.push(Spill { text: text.clone(), past: [0.0; 4], own: false, size: icon.size(), lines: seen.size(), over: Some("an icon".into()), broken: None, unmatched: None });

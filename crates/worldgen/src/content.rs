@@ -1179,6 +1179,9 @@ pub enum Shape {
     StandingStones { radius: (f32, f32), count: (i32, i32), height: (i32, i32), stones: Material },
     /// A ring of plants (mushrooms) `radius` blocks across, one block wide.
     FairyRing { radius: (f32, f32), plants: Vec<Select> },
+    /// `count` of `block` lying loose on the ground within `spread` blocks: things a hand
+    /// picks up (flint nodules).
+    Scatter { count: (i32, i32), spread: f32, block: String },
     /// Ornament: the ground under the tree's crown, where `cover` of it is reached,
     /// becomes `top` (needles, leaf mould), densest near the trunk.
     Litter { top: Material, cover: f32 },
@@ -1232,6 +1235,7 @@ impl GroundDecorationDef {
             Shape::Rocks { spread, size, .. } => spread + size.1,
             Shape::StandingStones { radius, .. } => radius.1 + 2.0,
             Shape::FairyRing { radius, .. } => radius.1 + 1.0,
+            Shape::Scatter { spread, .. } => spread + 1.0,
             // Centred on its position; a thick trunk is three wide, branches stick out two
             // more, and the stump stands up to four blocks behind its foot.
             Shape::FallenLog { length, .. } => length.1 as f32 / 2.0 + 4.0,
@@ -1244,7 +1248,7 @@ impl GroundDecorationDef {
         self.ground.clone().unwrap_or_else(|| match self.shape {
             Shape::Patch { .. } | Shape::Litter { .. } | Shape::LeafPiles { .. } | Shape::Foot { .. } => vec![Ground::Soil],
             Shape::Boulder { .. } | Shape::Rocks { .. } | Shape::StandingStones { .. } => vec![Ground::Soil, Ground::Snow, Ground::Sand, Ground::Bare],
-            Shape::FairyRing { .. } => vec![Ground::Soil],
+            Shape::FairyRing { .. } | Shape::Scatter { .. } => vec![Ground::Soil],
             Shape::Bush { .. } | Shape::FallenLog { .. } | Shape::Stump { .. } => vec![Ground::Soil, Ground::Snow],
         })
     }
@@ -1860,6 +1864,7 @@ impl WorldContent {
         let world = Self::from_files(content.files.iter(), &content.blocks)?;
         world.settlements.check_furnishings(&content.blocks)?;
         world.settlements.people.check_against(&content.creatures, &world.settlements.works())?;
+        world.settlements.interiors.check_who(&world.settlements.people.species(), &world.settlements.works())?;
         if let Some(lair) = world.lairs.iter().find(|l| content.creatures.id(&l.boss).is_none()) {
             return Err(ContentError(format!("lairs.ron: lair `{}` is the home of `{}`, which no package has", lair.name, lair.boss)));
         }
@@ -2782,6 +2787,13 @@ impl WorldContent {
                     range("radius", *radius, 7.0)?;
                     plants(list)?;
                 }
+                Shape::Scatter { count, spread, block: name } => {
+                    if count.0 < 1 || count.0 > count.1 || count.1 > 12 {
+                        return Err(ContentError(format!("{}: count must be a range within 1..=12", at())));
+                    }
+                    range("spread", (*spread, *spread), 6.0)?;
+                    block(&at, name)?;
+                }
                 Shape::Litter { top, cover } => {
                     material(top)?;
                     share("cover", *cover)?;
@@ -3099,6 +3111,7 @@ fn qualify_decoration(package: &str, def: GroundDecorationDef) -> GroundDecorati
         Shape::Stump { height, growth, plants } => Shape::Stump { height, growth, plants: selects(plants) },
         Shape::StandingStones { radius, count, height, stones } => Shape::StandingStones { radius, count, height, stones: qualify_material(package, stones) },
         Shape::FairyRing { radius, plants } => Shape::FairyRing { radius, plants: selects(plants) },
+        Shape::Scatter { count, spread, block } => Shape::Scatter { count, spread, block: q(&block) },
         Shape::Litter { top, cover } => Shape::Litter { top: qualify_material(package, top), cover },
         Shape::LeafPiles { cover } => Shape::LeafPiles { cover },
         Shape::Foot { plants, cover } => Shape::Foot { plants: selects(plants), cover },
