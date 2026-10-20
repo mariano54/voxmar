@@ -464,7 +464,7 @@ impl Server {
         let (mother, father) = (self.creatures.live[&a].genome.clone(), self.creatures.live[&b].genome.clone());
         // Mutations are likelier where aether is high (docs/breeding.md, "Mutation").
         let aether = self.overworld.site(at.x.floor() as i32, at.z.floor() as i32).aether;
-        let mutation = genes::MUTATION * (1.0 + 4.0 * aether.clamp(0.0, 1.0));
+        let mutation = self.config.mutation.unwrap_or(genes::MUTATION) * (1.0 + 4.0 * aether.clamp(0.0, 1.0));
         let mut born = 0;
         for i in 0..count {
             // Each young's genes, looks and mind by the world's count of rolls, never by the

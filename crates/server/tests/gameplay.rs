@@ -1529,7 +1529,8 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
 
 #[test]
 fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
-    let mut client = Client::join();
+    // No mutation, so the chick's genes are only its parents'.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, mutation: Some(0.0), ..Default::default() });
     let hen = client.content.creatures.find("junglefowl").expect("junglefowl in the content");
     let wheat = client.content.blocks.id("base:wheat").unwrap();
     client.ok("/summon junglefowl 2 ~ ~ ~");
@@ -1567,7 +1568,8 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
         client.pump_until(|_| Instant::now() > until);
     }
     // The chick inherits its plumage from its parents: each of its two alleles is one of
-    // theirs (no mutation is that likely here).
+    // theirs (mutation is off on this server; at the game's rate, a few chicks in a
+    // thousand would carry a new allele).
     let genes = &client.content.creatures.get(hen).def.genes;
     assert!(!genes.is_empty(), "junglefowl have genes");
     let alleles = |v: &voxmar_protocol::CreatureView| match voxmar_engine::genes::unpack(genes, &v.genes).0[0] {
@@ -3762,9 +3764,25 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     eprintln!("VILLAGER lifecycle: {name} seed {} resting at {bed:?}", victim.seed);
     // Where they lie: a block to one side may be a wall.
     client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
-    client.pump_ticks(2 * TICKS_PER_SECOND as u64, |_| false);
-    let near = |c: &Client| -> Vec<u32> { villagers(c).into_iter().filter(|v| v.position.distance(bed) < 16.0).map(|v| v.seed).collect() };
-    let housemates = near(&client);
+    // Everyone of their kind in sight, once all have come out: a person comes out only onto
+    // land the server holds, and as its search allows, so the looks begin once the land is
+    // all in and go on until the same people are there two looks running.
+    let kind = |c: &Client| -> std::collections::BTreeSet<u32> { villagers(c).into_iter().filter(|v| species_name(c, v) == name).map(|v| v.seed).collect() };
+    let settle = |client: &mut Client| -> std::collections::BTreeSet<u32> {
+        client.land_within(SETTLEMENT_VIEW);
+        let mut before = kind(client);
+        for _ in 0..20 {
+            client.pump_ticks(3 * TICKS_PER_SECOND as u64, |_| false);
+            let now = kind(client);
+            if now == before {
+                return now;
+            }
+            before = now;
+        }
+        panic!("the {name}s in sight never held still: {before:?}");
+    };
+    let housemates = settle(&mut client);
+    assert!(housemates.contains(&victim.seed), "the {name} asleep was not among those in sight");
     arm_for_villager_death(&mut client);
     strike_until(&mut client, victim.id, 20, |c| !c.creatures.contains_key(&victim.id));
     assert!(!client.creatures.contains_key(&victim.id), "the {name} did not die");
@@ -3775,13 +3793,14 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     drop(client);
     assert!(dir.join("villagers.ron").is_file());
     let mut client = Client::join_with(config());
-    client.ok(&format!("/tp {} {} {}", bed.x + 1.0, bed.y + 1.0, bed.z));
-    client.pump_until(|c| !villagers(c).is_empty());
-    client.pump_ticks(4 * TICKS_PER_SECOND as u64, |_| false);
+    // From the same spot, settled the same way: a {name} never seen before is a newcomer.
+    client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
+    let after = settle(&mut client);
     assert!(gone(&client), "the {name} came back with a restart");
+    let strangers: Vec<u32> = after.iter().copied().filter(|s| !housemates.contains(s)).collect();
+    assert!(strangers.is_empty(), "a newcomer came the same night: {strangers:?} beside {housemates:?}");
     // `newcomer` days on (the base game's five), someone new lives there.
     let newcomer = |c: &Client| villagers(c).into_iter().any(|v| species_name(c, &v) == name && v.position.distance(bed) < 16.0 && !housemates.contains(&v.seed) && v.seed != victim.seed);
-    assert!(!newcomer(&client), "a newcomer came the same night");
     client.ok("/time add 6d");
     client.ok("/time set midnight");
     client.pump_ticks(6 * TICKS_PER_SECOND as u64, |c| newcomer(c));

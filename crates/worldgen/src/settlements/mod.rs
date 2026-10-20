@@ -71,6 +71,8 @@ pub struct Building {
     /// Ground-floor room columns in world (x, z), clear of walls and exterior extras.
     /// Empty for buildings whose activity is outdoors.
     pub room: Vec<IVec2>,
+    /// The floor columns of its byre, behind the room, for the animals kept there.
+    pub byre: Vec<IVec2>,
     /// Where its path leaves the door, two blocks out, at the height of a foot standing there.
     pub door: Option<IVec3>,
     pub facing: Facing,

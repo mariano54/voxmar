@@ -1012,7 +1012,7 @@ mod tests {
             culture: CultureInfo { family: "hearth".into(), title: ("Hearth".into(), "炉辺".into()), second: None,
                 quirks: Vec::new(), axes: [0.5; 8], dropped: Vec::new(), borrowed: Vec::new() },
             buildings: vec![SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(4, 4), max: IVec2::new(12, 12), floor: 199,
-                room: (6..=10).flat_map(|x| (6..=10).map(move |z| IVec2::new(x, z))).collect(),
+                room: (6..=10).flat_map(|x| (6..=10).map(move |z| IVec2::new(x, z))).collect(), byre: Vec::new(),
                 door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None, beds: Vec::new(), seats: Vec::new() }],
             people: (0..count).map(|i| Resident { species: species.into(), home: 0, work: None, routine, guard: species == "base:guard", seed: 100 + i as u64 }).collect(),
             walls: Vec::new(), wall_block: None,
