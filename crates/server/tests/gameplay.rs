@@ -454,7 +454,7 @@ impl Client {
                     self.connection.send(ClientMessage::Pong { id });
                 }
             }
-            ServerMessage::Hurt { creature, damage, defended } => {
+            ServerMessage::Hurt { creature, damage, defended, .. } => {
                 self.hurt.push((damage, defended));
                 self.hurt_by.push((creature, damage));
                 self.hurt_at.push(Instant::now());

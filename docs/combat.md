@@ -56,14 +56,13 @@ A class may also say what drawing costs (`combat.ron`, load-checked; only a clas
 ammo may): `spoiled_by_hits` lets a draw go when a creature's blow hurts the player, as
 raising the guard does (the meter starts again from `cancel_to`, and the shot spends
 nothing), and `drawing_speed` is the share of their pace the player keeps while a shot is
-drawn (bow 0.4, sling 0.7). Both the server and the client spoil the draw, the client on
-the hit it is told of. The slowing is the client's own, as the guard's is (gate check `sling draw`).
+drawn (bow 0.4, sling 0.7). The server spoils the draw and says so on the `Hurt` it
+sends (`spoiled`, protocol 55); the client lets its draw go only then. The slowing is the client's own, as the guard's is (gate check `sling draw`).
 A draw's last moments cannot be spoiled across a slow connection: the server lands a swing
 as its wind-up ends, and a creature's blow is judged up to the player's round trip later
 (`lag_allowance`), so at a 200 ms round trip about the last tenth of a second of a draw has
-already loosed. For about one round trip the client and server can also disagree on a
-spoil, the client going by the `Hurt` it is told of; telling it on `Hurt` itself needs a
-protocol change, left for after the Nomad hunting pass.
+already loosed. Since the client follows the server's `spoiled`, the two never disagree on a
+spoil.
 
 Creatures' styles and weaknesses (systems agreed them, 7 Oct): wolves, foxes, cave crawlers
 and crocodiles bite (stab) and are weak to crush; bears and snow leopards claw (slash),
