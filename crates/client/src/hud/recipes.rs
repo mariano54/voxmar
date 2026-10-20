@@ -40,7 +40,7 @@ impl Plugin for RecipesPlugin {
         app.init_resource::<RecipeViewer>()
             .init_resource::<HoveredItem>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (look_up, click, report, draw).chain().run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (look_up, click, report, draw, cycle).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
                 viewer.trail.clear();
                 viewer.reported.clear();
@@ -75,7 +75,7 @@ pub struct RecipeViewer {
     pub trail: Vec<Lookup>,
     book: Option<Arc<RecipeBook>>,
     /// What was drawn last, to draw again only on a change.
-    drawn: Option<(Lookup, String, u32, bool, Vec<String>)>,
+    drawn: Option<(Lookup, String, bool, Vec<String>)>,
     /// The item and language the quests row was drawn for: it is drawn again only when
     /// they change, never as a family's recipes cycle, so its links hold still to click.
     quests_drawn: Option<(BlockId, String)>,
@@ -155,6 +155,12 @@ pub(crate) const QUESTS_SHOWN: usize = 4;
 /// An item drawn in the viewer: hover to look it up, click for its recipes.
 #[derive(Component)]
 pub struct ViewerItem(pub BlockId);
+
+/// A grid cell of a family of recipes, which shows each variant's item in turn, a second
+/// each: its item and icon change in place, so the card under the pointer (its Lay button,
+/// its cells) is never rebuilt for it.
+#[derive(Component)]
+pub(crate) struct CycleCell(Vec<BlockId>);
 
 fn spawn(mut commands: Commands, font: Res<UiFont>) {
     let font = &font.0;
@@ -336,6 +342,56 @@ mod tests {
         assert_eq!(viewer.unreported_item(), Some(BlockId(1)), "a new game needs its own report");
     }
 
+    /// A family of recipes cycling and the quests asking for it, drawn by the viewer: a
+    /// second later the variant shown has turned in place, and nothing under the pointer
+    /// was rebuilt (the cards, the Lay button, the quest links); another language draws
+    /// the quest links again.
+    #[test]
+    fn a_cycling_family_turns_in_place_and_keeps_its_buttons_and_links() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let campfire = content.blocks.id("base:campfire").unwrap();
+        let book = Arc::new(RecipeBook::new(&content));
+        assert!(book.making(campfire).iter().any(|e| matches!(&e.method, Method::Craft { variants, .. } if variants.len() > 1)), "a campfire is made from any wood");
+        let mut app = App::new();
+        app.add_plugins(bevy::app::TaskPoolPlugin::default())
+            .insert_resource(Time::<()>::default())
+            .insert_resource(UiState { recipes_open: true, inventory_open: true, ..default() })
+            .insert_resource(Launch { name: "tester".into(), host: false, content })
+            .insert_resource(Locale::load(&assets.join("content"), "en"))
+            .insert_resource(UiFont(Handle::default()))
+            .insert_resource(HudImages { icons: Vec::new(), crosshair: Handle::default(), skills: Vec::new(), effects: Vec::new() })
+            .insert_resource(crate::player::LocalPlayer::default())
+            .insert_resource(RecipeViewer { book: Some(book), trail: vec![Lookup { item: campfire, uses: false, page: 0 }], ..default() })
+            .add_systems(Startup, spawn)
+            .add_systems(Update, (draw, cycle).chain());
+        let links = |app: &mut App| app.world_mut().query_filtered::<Entity, With<QuestLink>>().iter(app.world()).collect::<Vec<_>>();
+        let lay = |app: &mut App| app.world_mut().query_filtered::<Entity, With<LayButton>>().iter(app.world()).collect::<Vec<_>>();
+        let cards = |app: &mut App| {
+            let body = app.world_mut().query_filtered::<Entity, With<ViewerBody>>().single(app.world()).unwrap();
+            app.world().get::<Children>(body).map(|c| c.to_vec()).unwrap_or_default()
+        };
+        let shown = |app: &mut App| app.world_mut().query_filtered::<&ViewerItem, With<CycleCell>>().iter(app.world()).map(|item| item.0).collect::<Vec<_>>();
+        app.update();
+        let (first_links, first_lay, first_cards, first_shown) = (links(&mut app), lay(&mut app), cards(&mut app), shown(&mut app));
+        assert!(!first_links.is_empty() && !first_lay.is_empty() && !first_cards.is_empty() && !first_shown.is_empty(), "links {first_links:?}, lay {first_lay:?}, cards {first_cards:?}, cycling cells {first_shown:?}");
+        app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs(1));
+        app.update();
+        assert_ne!(shown(&mut app), first_shown, "a second later the family shows another wood");
+        assert_eq!((links(&mut app), lay(&mut app), cards(&mut app)), (first_links.clone(), first_lay, first_cards.clone()), "nothing under the pointer was rebuilt");
+        // Logs in the pack change what each way still wants: the cards are drawn again,
+        // the quest links are not.
+        let log = app.world().resource::<Launch>().content.blocks.id("base:oak_log").unwrap();
+        app.world_mut().resource_mut::<crate::player::LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack { item: log, count: 8 });
+        app.update();
+        assert_ne!(cards(&mut app), first_cards, "what the pack holds redraws the cards");
+        assert_eq!(links(&mut app), first_links, "and leaves the quest links");
+        app.insert_resource(Locale::load(&assets.join("content"), "ja"));
+        app.update();
+        let again = links(&mut app);
+        assert!(!again.is_empty() && again.iter().all(|link| !first_links.contains(link)), "another language draws the links again: {again:?}");
+    }
+
     /// The quests row is drawn once for an item and language: a family's recipes cycling
     /// (another draw of the same lookup) leaves its links in place to be clicked.
     #[test]
@@ -373,8 +429,8 @@ fn draw(
         (viewer.drawn, viewer.quests_drawn) = (None, None);
         return;
     };
-    // Families of recipes show each of their variants in turn, a second each.
-    let cycles = viewer.found().iter().skip(lookup.page * PER_PAGE).take(PER_PAGE).any(|e| matches!(&e.method, Method::Craft { variants, .. } if variants.len() > 1));
+    // Families of recipes show each of their variants in turn, a second each (`cycle`
+    // turns them in place): drawn on the variant of this second.
     let tick = time.elapsed_secs() as u32;
     // What each crafting way on the page still wants, from what the pack holds (and the
     // home's stores, standing in it).
@@ -393,7 +449,7 @@ fn draw(
             Some((super::makeable::words(&locale, content, entry.output, &near), colour))
         })
         .collect();
-    let key = (lookup, locale.code().to_owned(), if cycles { tick } else { 0 }, ui.inventory_open, wants.iter().flatten().map(|(w, _)| w.clone()).collect::<Vec<_>>());
+    let key = (lookup, locale.code().to_owned(), ui.inventory_open, wants.iter().flatten().map(|(w, _)| w.clone()).collect::<Vec<_>>());
     if viewer.drawn.as_ref() == Some(&key) {
         return;
     }
@@ -440,7 +496,7 @@ fn draw(
             let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::GAP)), ..default() };
             body.spawn((card, Piece::Well.image())).with_children(|card| {
                 // What goes in, as it is laid out in the game.
-                way_inputs(card, font, &images, content, &entry.method, lookup.uses.then_some(lookup.item), tick);
+                way_inputs(card, font, &images, content, &entry.method, lookup.uses.then_some(lookup.item), Some(tick));
                 card.spawn(shadowed(font, "→", LARGE, GOLD));
                 // A fixed count sits on the slot's corner, as in the inventory; a range of
                 // amounts is too wide for that and goes with the name instead.
@@ -480,17 +536,24 @@ fn draw(
 /// three by three for what takes a crafting table) and any block it is made near, a cooked
 /// item and its station, or the
 /// tool that takes a creature's product. A family of recipes shows the variant with `using`
-/// if it has one, else each in turn by `tick`.
-pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &voxmar_engine::content::Content, method: &Method, using: Option<BlockId>, tick: u32) {
+/// if it has one, else, given the second `tick`, that second's and each in turn after it
+/// (`CycleCell`), else its first.
+pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &voxmar_engine::content::Content, method: &Method, using: Option<BlockId>, tick: Option<u32>) {
     match method {
         Method::Craft { variants, near, .. } => {
             let wanted = |cells: &&[Option<BlockId>; GRID]| using.is_some_and(|item| cells.contains(&Some(item)));
-            let cells = variants.iter().find(wanted).unwrap_or(&variants[tick as usize % variants.len()]);
+            let found = variants.iter().find(wanted);
+            let cycles = found.is_none() && variants.len() > 1 && tick.is_some();
+            let cells = found.unwrap_or(&variants[tick.unwrap_or(0) as usize % variants.len()]);
             let side = if variants.iter().any(|v| (0..GRID).any(|i| v[i].is_some() && (i % SIDE == 2 || i / SIDE == 2))) { SIDE } else { 2 };
             let grid = Node { display: Display::Grid, grid_template_columns: RepeatedGridTrack::px(side as u16, SLOT), row_gap: Val::Px(PX), column_gap: Val::Px(PX), ..default() };
             card.spawn(grid).with_children(|grid| {
                 for i in (0..GRID).filter(|i| i % SIDE < side && i / SIDE < side) {
-                    item_cell(grid, font, images, cells[i], None);
+                    let cell = item_cell(grid, font, images, cells[i], None);
+                    // Every variant fills the same cells (a family shares its shape).
+                    if cycles && cells[i].is_some() {
+                        grid.commands().entity(cell).insert(CycleCell(variants.iter().map(|v| v[i].unwrap_or(BlockId::AIR)).collect()));
+                    }
                 }
             });
             // Made near a block: that block beside the grid, as a cooking station is.
@@ -622,10 +685,11 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
 
 /// A slot showing `item` (or empty), with a count under it if given; hover it to look it
 /// up, click it for its recipes.
-pub(super) fn item_cell(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, item: Option<BlockId>, count: Option<String>) {
+pub(super) fn item_cell(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, item: Option<BlockId>, count: Option<String>) -> Entity {
     let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), flex_shrink: 0.0, ..default() };
     let mut cell = parent.spawn((node, Piece::Well.image()));
-    let Some(item) = item else { return };
+    let id = cell.id();
+    let Some(item) = item else { return id };
     cell.insert((Button, Silent, ViewerItem(item), RelativeCursorPosition::default(), crate::ui::widgets::HoverLight)).with_children(|cell| {
         let inset = (SLOT - 16.0 * PX) / 2.0;
         let icon = Node { position_type: PositionType::Absolute, left: Val::Px(inset), top: Val::Px(inset), width: Val::Px(16.0 * PX), height: Val::Px(16.0 * PX), ..default() };
@@ -634,4 +698,23 @@ pub(super) fn item_cell(parent: &mut ChildSpawnerCommands, font: &Handle<Font>, 
             cell.spawn((Node { position_type: PositionType::Absolute, right: Val::Px(super::COUNT_INSET), bottom: Val::Px(super::COUNT_INSET), ..default() }, shadowed(font, count, BODY, TEXT)));
         }
     });
+    id
+}
+
+/// Turns each family's cells to this second's variant, in place: the cell's item (what
+/// hovering and clicking it look up) and its icon.
+fn cycle(time: Res<Time>, images: Res<HudImages>, mut cells: Query<(&CycleCell, &mut ViewerItem, &Children)>, mut icons: Query<&mut ImageNode>) {
+    let tick = time.elapsed_secs() as usize;
+    for (cycle, mut shown, children) in &mut cells {
+        let item = cycle.0[tick % cycle.0.len()];
+        if shown.0 == item {
+            continue;
+        }
+        shown.0 = item;
+        if let Some(child) = children.iter().find(|&child| icons.contains(child))
+            && let Ok(mut icon) = icons.get_mut(child)
+        {
+            icon.image = images.icons.get(item.0 as usize).cloned().unwrap_or_default();
+        }
+    }
 }
