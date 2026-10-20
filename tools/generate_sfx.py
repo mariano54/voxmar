@@ -897,16 +897,6 @@ def heap(rng):
     return out
 
 
-def clamp(rng):
-    """An earth clamp loaded: things laid in with a hollow knock, then soil shovelled over."""
-    out = np.zeros(int(0.7 * RATE))
-    place(out, 0.0, knock(rng, rng.uniform(200, 240)), 0.8)
-    place(out, 0.0, thud(rng, 0.1, 0.04, 0.03), 0.6)
-    place(out, 0.18, thud(rng, 0.15, 0.025, 0.05), 0.8)
-    place(out, 0.2, trickle(rng, 0.45, 1600, 260), 0.8)
-    return out
-
-
 def kiln_load(rng):
     """Clay set into a pit kiln: a pot knocked into the embers and a breath of flame."""
     out = np.zeros(int(0.8 * RATE))
@@ -1042,7 +1032,6 @@ SOUNDS = {
     "work/hang": (hang, 2),
     "work/stir": (stir, 2),
     "work/heap": (heap, 2),
-    "work/clamp": (clamp, 2),
     "work/kiln_load": (kiln_load, 2),
     "work/smelt": (smelt, 2),
     "work/kindle_hearth": (kindle_hearth, 2),
