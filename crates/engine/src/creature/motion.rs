@@ -231,6 +231,22 @@ pub fn hop_speed(movement: &Movement, dt: f32) -> f32 {
     movement.jump.min(rise_speed(movement.step_rise, dt)).max(climb_speed(dt))
 }
 
+/// How quickly a body on the ground (or in water, or flying) takes up the speed it wants:
+/// the share of the difference made up in a second.
+pub const GROUND_CONTROL: f32 = 10.0;
+
+/// Seconds a chase from a standstill over `way` blocks at `speed` takes with a hop up a
+/// block on the way, by the body's own physics: the way at its speed; the hop's time in the
+/// air at its own jump (`hop_speed`), counted as making no way; and its gathering speed from
+/// a standstill before and after the hop (`GROUND_CONTROL`, made up a share a step).
+pub fn chase_with_hop(movement: &Movement, way: f32, speed: f32, dt: f32) -> f32 {
+    let rise = hop_speed(movement, dt);
+    let airborne = (rise + (rise * rise - 2.0 * GRAVITY).max(0.0).sqrt()) / GRAVITY;
+    let share = (GROUND_CONTROL * dt).min(1.0);
+    let gathering = dt * (1.0 - share) / share;
+    way / speed.max(0.1) + airborne + 2.0 * gathering
+}
+
 /// Whether the body can go a little way along `heading` (horizontal, unit length): sliding
 /// along a wall counts, and so does a single step up for anything that jumps; its head must
 /// not meet rock there, and on the ground it must not step off a drop deeper than
@@ -472,7 +488,7 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     let along = drive.wish.with_y(0.0).normalize_or_zero();
     let aligned = along.dot(facing).max(0.0);
     let target = along * drive.speed * (0.3 + 0.7 * aligned);
-    let control = if body.on_ground || body.in_water || floating || flying { 10.0 } else if flier { 6.0 } else { 2.0 };
+    let control = if body.on_ground || body.in_water || floating || flying { GROUND_CONTROL } else if flier { 6.0 } else { 2.0 };
     let horizontal = body.velocity.with_y(0.0).lerp(target.with_y(0.0), (control * dt).min(1.0));
     body.velocity = horizontal.with_y(body.velocity.y);
 
