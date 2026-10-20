@@ -155,11 +155,11 @@ impl RecipeBook {
                 book.add(blocks, Entry { method, output: blocks.item_of(info.drops), count: (info.drop_count, info.drop_count) }, vec![block]);
             }
             if let Some((item, chance)) = rule.and_then(|rule| rule.instead) {
-                // One that waits on a kind of tool (tall grass's twine, cut with a knife) is
-                // shown by the first of that kind, and is used by every one of them.
+                // One that waits on a kind of tool (tall grass's twine, a knife) shows the least
+                // of that kind, and each of them lists it among its uses.
                 let by = rule.and_then(|rule| rule.by);
                 let tool = by.map_or(tool, |kind| content.tools.first_of(kind, 0));
-                let tools = by.map(|kind| blocks.ids().filter(|&b| content.tools.tool(Some(b)).kind == Some(kind)).collect::<Vec<_>>()).unwrap_or_default();
+                let tools: Vec<BlockId> = by.map(|kind| blocks.ids().filter(|&b| content.tools.tool(Some(b)).kind == Some(kind)).collect()).unwrap_or_default();
                 let method = Method::Break { block, tool, skill, level, chance };
                 book.add(blocks, Entry { method, output: blocks.item_of(item), count: (1, 1) }, [block].into_iter().chain(tools).collect());
             }

@@ -14,6 +14,7 @@
         (age: "nomad", branch: "mining", title: "Mining", icon: "stone_pickaxe"),
         (age: "nomad", branch: "explore", title: "The Wilds", icon: "hide_boots"),
         (age: "farm", branch: "main", title: "The Kiln", icon: "crucible"),
+        (age: "farm", branch: "fuel", title: "Fuel", icon: "charcoal"),
         (age: "farm", branch: "pottery", title: "Pottery", icon: "fired_clay"),
         (age: "farm", branch: "farming", title: "Fields", icon: "wheat"),
         (age: "farm", branch: "cooking", title: "Kitchen", icon: "bread"),

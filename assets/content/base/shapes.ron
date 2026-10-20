@@ -527,8 +527,8 @@
             (from: (9.5, 2, 7), to: (11, 14, 9)),
             (from: (2, 5, 7.5), to: (14, 6.5, 8.5)),
             (from: (2, 9.5, 7.5), to: (14, 11, 8.5)),
-            (from: (0.5, 2, 0), to: (2, 14, 6)),
-            (from: (14, 2, 0), to: (15.5, 14, 6)),
+            (from: (0.5, 2, 0), to: (2, 14, 6), textures: All("furniture_grain")),
+            (from: (14, 2, 0), to: (15.5, 14, 6), textures: All("furniture_grain")),
         ]),
         "lattice_shutters_shut": (boxes: [
             (from: (0, 0, 6), to: (2, 16, 10), cull: true),

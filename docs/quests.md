@@ -68,7 +68,7 @@ Quests done, quests claimed and the tallies are saved with the player.
 ## Claiming
 
 Finishing a quest pays nothing by itself. A done quest with rewards waits in the quest
-book: it glows gold on the web, its chapter shows a gold "!", the chat says so, and its
+book: its shape on the web is gold with a "!" in its corner, its chapter shows a gold "!", the chat says so, and its
 page has a Claim button (`ClientMessage::ClaimQuest`) beside the rewards, which list the
 experience and the items. The server then gives the items and the experience once. A quest
 that pays nothing is claimed as it finishes. If the pack cannot hold every item, nothing
@@ -373,6 +373,40 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
   out. The Farm book's side marks are placeholders until its own pass (piece 13) chains it.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
+
+## The Farm book (Oct 20)
+
+The Farm quests stay in `base/quests.ron`'s Farm block, and the road to the lit Crucible
+Kiln is laid out like a long modpack's book: several paths that each make one part of the
+kiln, meeting at the end, with a way round at each fork. Each step is something done in the world (gathered, fired, stored, set down), not
+only crafted.
+
+| Path | Quests to the kiln | Ways round |
+|---|---|---|
+| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
+| Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
+| Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp | |
+| Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln | |
+
+Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore run come after
+it (Hammer and Anvil, from the kiln-age PR, goes before The Crucible when it lands). Crucible
+Kiln waits on all three of its parts: the crucible, the ring of bricks and the charge. The
+Bronze Age rite is unchanged (30 Farm quests, 4 Farm capstones). Rewards that handed out
+what the route asks for (kiln bricks, charcoal) are gone, so the bricks and the charge are
+earned; Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
+does.
+
+Every Farm path's capstone comes after all of its path's quests, directly or through what
+comes before them, but those marked `side: true` (met on the road, the bees and meadow,
+the bow, ducks and such) and the age's rite; `content.rs`
+`a_farm_capstone_comes_after_all_of_its_path` checks it. The kiln bot
+(`a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln`) walks the whole route,
+one quest at a time, and lights the kiln about 330 server seconds in.
+
+Saves (pre-release, accepted): a quest's finished state is kept by name, but quests whose
+tasks changed count from what a save already tallied: Brick by Brick now counts bricks
+crafted rather than held, The Crucible and A Pit Kiln also want theirs set down, and A
+Kiln Yard is gone. A save part way along may have a step to do again.
 
 ## Readable to a newcomer (Oct 13)
 

@@ -474,7 +474,7 @@
     "screen.quests": "Quests",
     "settings.key.quests": "Quests key",
     "settings.key.quests.hint": "Opens the quest book.",
-    "quest.hint": "Click a quest to read it. Drag the space between to look around, and turn the wheel or press + and - to zoom. Pin a quest to follow it on screen. A glowing quest has its reward waiting.",
+    "quest.hint": "Click a quest to read it. Drag the space between to look around, and turn the wheel or press + and - to zoom. Pin a quest to keep it at the right of the screen. A quest marked ! has its reward waiting.",
     "quest.current": "Current Quest",
     "quest.pick": "Pick a quest to read why it is worth doing.",
     "quest.empty": "No quests here yet.",

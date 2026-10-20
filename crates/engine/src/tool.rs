@@ -243,15 +243,6 @@ impl ToolRegistry {
         }
     }
 
-    /// Every rule that gives something instead, with the first block it covers (in
-    /// registry order) to show it by: for the recipe book.
-    pub fn givers(&self) -> impl Iterator<Item = (&Rule, BlockId)> {
-        self.rules.iter().enumerate().filter(|(_, rule)| rule.instead.is_some()).filter_map(|(i, rule)| {
-            let first = self.covered.iter().position(|&c| c == Some(i))?;
-            Some((rule, BlockId(first as u16)))
-        })
-    }
-
     /// The first item, in registry order, that is a `kind` of at least `tier` and of the
     /// lowest such tier. What a refusal names is `Content::least_tool`, which also weighs
     /// worth.
@@ -385,39 +376,6 @@ mod tests {
         assert!(refused.is_empty(), "cobble a bare hand cannot break: {refused:?}");
     }
 
-    /// Stone tools want hard rock (Mariano, Oct 15: stone should take searching): every
-    /// recipe of a tier-2 tool asks for something made only near a workshop block from
-    /// toolstone, never plain cobble; that block is made in the hand's grid; and toolstone is
-    /// found as natural rock, deepslate among it so mining down reaches it anywhere, while the
-    /// commonest stone is not.
-    #[test]
-    fn stone_tools_take_toolstone_ground_at_a_workshop() {
-        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
-        let content = crate::content::Content::load(&assets).unwrap();
-        let blocks = &content.blocks;
-        let toolstone = |item: BlockId| blocks.def(item).has_tag("toolstone");
-        let natural: Vec<&str> = blocks.tagged("toolstone").filter(|&b| blocks.def(b).has_tag("natural")).map(|b| blocks.def(b).name.as_str()).collect();
-        assert!(natural.contains(&"base:deepslate"), "deepslate, under every province, is no toolstone: {natural:?}");
-        assert!(!toolstone(blocks.expect("base:stone")) && !toolstone(blocks.expect("base:cobblestone")), "plain stone takes an edge");
-        let tools: Vec<BlockId> = blocks.tagged("tool").filter(|&t| blocks.def(t).has_tag("tier:2")).collect();
-        assert!(!tools.is_empty(), "no tier-2 tools");
-        for tool in tools {
-            let name = &blocks.def(tool).name;
-            let recipes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == tool).collect();
-            assert!(!recipes.is_empty(), "{name} has no recipe");
-            for recipe in recipes {
-                let ground: Vec<BlockId> = recipe.alternatives().into_iter().flatten().flatten().copied().filter(|&i| {
-                    let makes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == i).collect();
-                    !makes.is_empty() && makes.iter().all(|r| r.near.is_some() && r.alternatives().into_iter().flatten().all(|cell| cell.iter().all(|&c| toolstone(c))))
-                }).collect();
-                let head = ground.first().unwrap_or_else(|| panic!("{name} is made without a head ground from toolstone"));
-                let near = content.recipes.iter().find(|r| r.output == *head).and_then(|r| r.near.clone()).unwrap();
-                let workshop = blocks.tagged(&near).find(|&b| content.recipes.iter().any(|r| r.output == b && !r.needs_table()));
-                assert!(workshop.is_some(), "no block tagged {near} is made in the hand's grid, for {name}");
-            }
-        }
-    }
-
     /// Coal wants a stone pickaxe, deep coal too, while its sample on the ground lifts with
     /// a flint one: the seam is found before it can be dug. Every sample of ore that teaches
     /// prospecting is tagged as one, so the experience goes only with a find.
@@ -478,8 +436,8 @@ mod tests {
         let content = crate::content::Content::load(&assets).unwrap();
         let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
         let wheat = id("wheat_crop");
-        let reaps: Vec<u8> = ["stone_hoe", "copper_hoe", "iron_hoe"].iter().map(|hoe| content.tools.reap(Some(id(hoe)), wheat)).collect();
-        assert_eq!(reaps, [1, 1, 2]);
+        let reaps: Vec<u8> = ["flint_knife", "stone_hoe", "copper_hoe", "iron_hoe"].iter().map(|hoe| content.tools.reap(Some(id(hoe)), wheat)).collect();
+        assert_eq!(reaps, [0, 1, 1, 2]);
         assert_eq!(content.tools.reap(None, wheat), 0, "by hand");
         assert_eq!(content.tools.reap(Some(id("iron_hoe")), id("stone")), 0, "a hoe reaps only what it is made for");
         assert_eq!(content.tools.reap(Some(id("iron_axe")), wheat), 0, "an axe reaps nothing");
@@ -493,6 +451,39 @@ mod tests {
             let file = ToolRegistry::read("t", r#"(kinds: [(name: "hoe", mines: ["crop"])])"#).unwrap();
             let err = ToolRegistry::new(vec![file], &blocks, &skills).unwrap_err();
             assert!(err.0.contains("not a whole number"), "{tag}: {}", err.0);
+        }
+    }
+
+    /// Stone tools want hard rock (Mariano, Oct 15: stone should take searching): every
+    /// recipe of a tier-2 tool asks for something made only near a workshop block from
+    /// toolstone, never plain cobble; that block is made in the hand's grid; and toolstone is
+    /// found as natural rock, deepslate among it so mining down reaches it anywhere, while the
+    /// commonest stone is not.
+    #[test]
+    fn stone_tools_take_toolstone_ground_at_a_workshop() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let blocks = &content.blocks;
+        let toolstone = |item: BlockId| blocks.def(item).has_tag("toolstone");
+        let natural: Vec<&str> = blocks.tagged("toolstone").filter(|&b| blocks.def(b).has_tag("natural")).map(|b| blocks.def(b).name.as_str()).collect();
+        assert!(natural.contains(&"base:deepslate"), "deepslate, under every province, is no toolstone: {natural:?}");
+        assert!(!toolstone(blocks.expect("base:stone")) && !toolstone(blocks.expect("base:cobblestone")), "plain stone takes an edge");
+        let tools: Vec<BlockId> = blocks.tagged("tool").filter(|&t| blocks.def(t).has_tag("tier:2")).collect();
+        assert!(!tools.is_empty(), "no tier-2 tools");
+        for tool in tools {
+            let name = &blocks.def(tool).name;
+            let recipes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == tool).collect();
+            assert!(!recipes.is_empty(), "{name} has no recipe");
+            for recipe in recipes {
+                let ground: Vec<BlockId> = recipe.alternatives().into_iter().flatten().flatten().copied().filter(|&i| {
+                    let makes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == i).collect();
+                    !makes.is_empty() && makes.iter().all(|r| r.near.is_some() && r.alternatives().into_iter().flatten().all(|cell| cell.iter().all(|&c| toolstone(c))))
+                }).collect();
+                let head = ground.first().unwrap_or_else(|| panic!("{name} is made without a head ground from toolstone"));
+                let near = content.recipes.iter().find(|r| r.output == *head).and_then(|r| r.near.clone()).unwrap();
+                let workshop = blocks.tagged(&near).find(|&b| content.recipes.iter().any(|r| r.output == b && !r.needs_table()));
+                assert!(workshop.is_some(), "no block tagged {near} is made in the hand's grid, for {name}");
+            }
         }
     }
 

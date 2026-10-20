@@ -3440,7 +3440,7 @@ fn a_knife_cuts_twine_from_tall_grass() {
 }
 
 /// A stone hoe cutting a ripe wheat in a patch of nine reaps all nine, each giving its
-/// harvest; a bare hand cuts only the one.
+/// harvest; a bare hand or a knife cuts only the one.
 #[test]
 fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
     let mut client = Client::join();
@@ -3451,7 +3451,7 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         let lying: u32 = c.items.values().filter(|i| i.stack.item == wheat || i.stack.item == seeds).map(|i| i.stack.count as u32).sum();
         lying + c.inventory.slots.iter().flatten().filter(|s| s.item == wheat || s.item == seeds).map(|s| s.count as u32).sum::<u32>()
     };
-    for (hoe, reaped) in [("bare hand", 1), ("stone_hoe", 9)] {
+    for (hoe, reaped) in [("bare hand", 1), ("flint_knife", 1), ("stone_hoe", 9)] {
         client.ok("/clear");
         client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
         if hoe != "bare hand" {
@@ -3603,7 +3603,8 @@ fn villagers_sleep_at_night_and_go_about_their_day() {
     let asleep = |c: &Client| villagers(c).iter().filter(|v| v.pose == Pose::Resting).count();
     client.pump_until(|c| asleep(c) * 3 >= villagers(c).len() * 2);
     let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
-    let overworld = voxmar_worldgen::Overworld::with_content(VILLAGE_SEED, client.content.blocks.clone(), &world_content);
+    // The server's own generator (`Overworld::shared`), the village round it already planned.
+    let overworld = voxmar_worldgen::Overworld::shared(VILLAGE_SEED, &client.content, &world_content);
     let towns = overworld.settlements_near(client.position.floor().as_ivec3().xz(), 256);
     let mut resting: Vec<_> = villagers(&client).into_iter().filter(|v| v.pose == Pose::Resting)
         .map(|v| (v.seed, species_name(&client, &v), v.position)).collect();
@@ -9086,10 +9087,10 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
     f.at_table(table);
     f.craft(&[(0, cobble, 1), (2, cobble, 1), (3, cobble, 1), (4, "base:campfire", 1), (5, cobble, 1)], "base:pit_kiln", 1);
-    f.mark("pit_kiln");
     let kiln = f.rel(2, 0, 1);
     f.walk_toward(Fresh::middle(kiln), 3.0);
     f.place("base:pit_kiln", kiln - up);
+    f.mark("pit_kiln");
     // An Earth Clamp, which Fire the Clay names: eight dirt dug from a bank of it on the farm
     // plot round a log at the table (Construction 3), set down by the kiln and loaded with
     // sixteen clay. It fires them, none cracked, while clay is fired by hand toward the
@@ -9137,10 +9138,16 @@ const QUEST_BOOK_ORDER: &[&str] = &[
     "a_pit_kiln",
     "fire_the_clay",
     "the_potter",
+    "fuel_to_hand",
     "charcoal",
-    "red_metal",
+    "kiln_plans",
+    "a_clay_store",
+    "a_kiln_load",
+    "first_bricks",
     "brick_by_brick",
     "the_crucible",
+    "the_kiln_ring",
+    "the_kiln_charge",
     "crucible_kiln",
 ];
 
@@ -9291,8 +9298,8 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let mut f = Fresh::lay_out(c);
     f.lay_out_the_farm();
     let o = f.origin;
-    let (stick, log, charcoal) = ("base:stick", "base:oak_log", "base:charcoal");
-    let (fired, bricks, ingot, copper) = ("base:fired_clay", "base:kiln_bricks", "base:copper_ingot", "base:copper_ore");
+    let (log, charcoal) = ("base:oak_log", "base:charcoal");
+    let (fired, bricks) = ("base:fired_clay", "base:kiln_bricks");
 
     // Look It Up, pinned in a new book: the stone pickaxe looked up in the recipe viewer.
     let pickaxe = f.c.content.blocks.expect("base:stone_pickaxe");
@@ -9317,11 +9324,13 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, fired, 3), (2, fired, 3), (3, fired, 3), (4, fired, 3), (5, fired, 3)], "base:clay_pot", 6);
     f.mark("the_potter");
 
-    // Charcoal: logs held and burnt down at the campfire, sixteen. The trunks give the
-    // charcoal for the copper ingots and what the kiln's charge lacks after The Crucible's
-    // sixteen (three more), and a log for sticks: twenty-four is a few to spare.
+    // Fuel to Hand: forty logs carried at once, past its thirty-two, for the clamp's charcoal
+    // and the planks of a chest; the rest of the trunks are felled for the kiln's charge.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
-    f.gather("base:stone_axe", trunks, log, 24);
+    f.gather("base:stone_axe", trunks.clone(), log, 40);
+    f.wait(5.0, "the server counting the logs carried", |c| quest_status(c, "fuel_to_hand").0);
+    f.mark("fuel_to_hand");
+    // Charcoal: sixteen logs burnt down.
     // The earth clamp from Fire the Clay, taken of its clay and loaded with sixteen logs. It
     // chars them while clay is fired by hand toward A Kiln Load; Charcoal is done when it
     // is taken.
@@ -9338,43 +9347,82 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     }
     f.mark("charcoal");
     f.make_room(8);
+    // Plans for the Kiln, with fuel coming: the crucible and kiln bricks looked up.
+    for item in ["base:crucible", "base:kiln_bricks"] {
+        let item = f.c.content.blocks.expect(item);
+        f.c.connection.send_at(ClientMessage::LookedUp { item }, f.now());
+    }
+    f.wait(5.0, "the server counting the plans looked up", |c| quest_status(c, "kiln_plans").0);
+    f.mark("kiln_plans");
 
-    // Red Metal: nine copper ores (Mining 5) with the stone pickaxe; a copper ore over a
-    // charcoal in the grid makes an ingot (Engineering 5); three ingots over two sticks at
-    // the table make the copper pickaxe.
-    let vein: Vec<IVec3> = (18..=19).flat_map(|x| (7..=11).map(move |z| o + IVec3::new(x, 0, z))).collect();
-    f.gather("base:stone_pickaxe", vein, copper, 9);
-    f.craft(&[(0, copper, 3), (3, charcoal, 3)], ingot, 3);
-    if f.have(stick) < 2 {
-        f.craft(&[(0, log, 1)], "base:oak_planks", 4);
-        f.craft(&[(0, "base:oak_planks", 1), (3, "base:oak_planks", 1)], stick, 4);
+    // Clay in Store: thirty-two clay dug (Clay Banks on the way), and a chest by the pit
+    // kiln, eight planks round an empty middle at the table, with them put by in it.
+    let clay = "base:clay";
+    f.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, 32);
+    f.wait(5.0, "the server counting the clay carried", |c| quest_status(c, "clay_banks").0);
+    let planks = "base:oak_planks";
+    if f.have(planks) < 8 {
+        let logs = (8 - f.have(planks)).div_ceil(4);
+        f.craft(&[(0, log, logs as u8)], planks, logs * 4);
     }
     f.at_table(site.table);
-    f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
-    f.mark("red_metal");
+    f.craft(&[(0, planks, 1), (1, planks, 1), (2, planks, 1), (3, planks, 1), (5, planks, 1), (6, planks, 1), (7, planks, 1), (8, planks, 1)], "base:chest", 1);
+    f.walk_toward(Fresh::middle(f.rel(4, 0, 3)), 0.3);
+    let chest = f.place("base:chest", f.rel(2, -1, 3));
+    f.propose("base:open_store", ActionTarget::Block { block: chest, face: Face::PosY });
+    f.wait(5.0, "the chest opening", |c| c.inventory.store.is_some());
+    let clay_id = f.c.content.blocks.expect(clay);
+    let (mut put, mut to) = (0u32, voxmar_engine::inventory::STORE);
+    while put < 32 {
+        let (from, count) = (0..voxmar_engine::inventory::SLOTS)
+            .find_map(|s| f.c.inventory.get(s).filter(|x| x.item == clay_id).map(|x| (s, x.count as u32)))
+            .expect("clay to put by");
+        let n = count.min(32 - put);
+        f.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: to as u8, count: n as u8 });
+        f.wait(5.0, "the clay going into the chest", |c| c.inventory.get(to).is_some_and(|x| x.item == clay_id && x.count as u32 == n));
+        put += n;
+        to += 1;
+    }
+    f.propose("core:stow", ActionTarget::None);
+    f.wait(5.0, "the server counting the clay put by", |c| quest_status(c, "a_clay_store").0);
+    f.mark("a_clay_store");
 
-    // Brick by Brick: nineteen kiln bricks in hand, two from four fired clay in the grid
-    // (Crafting 5). A Kiln Load falls on the way, done at forty clay fired in all, and pays
-    // the first four.
+    // A Kiln Load: forty clay fired in all.
     while !quest_status(&f.c, "a_kiln_load").0 {
         let more = f.have(fired) + 1;
         f.fire_clay(&site, more);
     }
     f.mark("a_kiln_load");
+    // First Bricks: four kiln bricks, two from four fired clay in the grid (Crafting 5),
+    // with sixteen more fired clay kept for the next.
+    f.fire_clay(&site, 24);
+    f.craft(&[(0, fired, 2), (1, fired, 2), (3, fired, 2), (4, fired, 2)], bricks, 4);
+    f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
+    f.mark("first_bricks");
+    // Brick by Brick: nineteen kiln bricks shaped in all.
     let crafts = 19u32.saturating_sub(f.have(bricks)).div_ceil(2);
     f.fire_clay(&site, crafts * 4);
     let k = crafts as u8;
     f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
     f.mark("brick_by_brick");
 
-    // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).
+    // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10), done
+    // once it is set down in the kiln's middle.
     f.at_table(site.table);
     f.craft(&[(0, bricks, 1), (2, bricks, 1), (3, bricks, 1), (4, "base:clay_pot", 1), (5, bricks, 1), (6, bricks, 1), (7, bricks, 1), (8, bricks, 1)], "base:crucible", 1);
-    f.mark("the_crucible");
 
-    // The Crucible Kiln: the crucible set down, ringed with eight kiln bricks, one more on
-    // each corner of the ring; thirty-two charcoal held and the crucible right-clicked.
+    // A Full Charge: thirty-two charcoal held at once, from the rest of the trunks.
+    let short = 32u32.saturating_sub(f.have(charcoal) + f.have(log));
+    if short > 0 {
+        let more = f.have(log) + short;
+        f.gather("base:stone_axe", trunks, log, more);
+    }
     f.burn_charcoal(&site, 32);
+    f.wait(5.0, "the server counting the charge carried", |c| quest_status(c, "the_kiln_charge").0);
+    f.mark("the_kiln_charge");
+    // The Kiln Ring, then the crucible set down in its middle, and the kiln lit: eight kiln
+    // bricks round the crucible's cell, one more on each corner of the ring; the crucible
+    // right-clicked with the charge in hand.
     let centre = f.rel(13, 0, 9);
     // The site cleared first, whatever the earlier steps left on it.
     f.c.fill(f.origin, IVec3::new(12, 0, 8), IVec3::new(14, 2, 10), "air");
@@ -9382,12 +9430,14 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.c.pump_until(|c| site.iter().all(|&p| c.world.block(p) == Some(BlockId::AIR)));
     f.walk_toward(Fresh::middle(f.rel(13, 0, 6)), 0.05);
     let core = f.place("base:crucible", centre - IVec3::Y);
+    f.mark("the_crucible");
     for (dx, dz) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
         f.place(bricks, centre + IVec3::new(dx, -1, dz));
     }
     for (dx, dz) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
         f.place(bricks, centre + IVec3::new(dx, 0, dz));
     }
+    f.mark("the_kiln_ring");
     f.hold(charcoal);
     f.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
     f.mark("crucible_kiln");
@@ -9493,8 +9543,13 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("fire_the_clay", "fire_the_clay"),
     ("the_potter", "the_potter"),
     ("a_kiln_load", "a_kiln_load"),
+    ("fuel_to_hand", "fuel_to_hand"),
+    ("kiln_plans", "kiln_plans"),
+    ("a_clay_store", "a_clay_store"),
+    ("first_bricks", "first_bricks"),
+    ("the_kiln_ring", "the_kiln_ring"),
+    ("the_kiln_charge", "the_kiln_charge"),
     ("charcoal", "charcoal"),
-    ("red_metal", "red_metal"),
     ("brick_by_brick", "brick_by_brick"),
     ("the_crucible", "the_crucible"),
     ("crucible_kiln", "crucible_kiln"),
@@ -9864,7 +9919,8 @@ fn a_village_bed_is_someones() {
     let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
     let refused = |c: &Client| c.refused.iter().any(|t| t.contains("belongs to someone"));
     let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
-    let overworld = voxmar_worldgen::Overworld::with_content(VILLAGE_SEED, client.content.blocks.clone(), &world_content);
+    // The server's own generator (`Overworld::shared`), the village round it already planned.
+    let overworld = voxmar_worldgen::Overworld::shared(VILLAGE_SEED, &client.content, &world_content);
     let towns = overworld.settlements_near(client.position.floor().as_ivec3().xz(), 256);
     // A ground-floor bed, by the floor its home stands on.
     let (home, bed) = towns.iter().flat_map(|t| &t.buildings).find_map(|b| b.beds.iter().find(|p| p.y == b.floor + 1).map(|&p| (b.clone(), p))).expect("a village home with a bed on its ground floor");
@@ -9945,7 +10001,8 @@ fn a_bed_far_out_in_a_town_is_someones() {
     let mut client = Client::join_with(ServerConfig { seed, view_distance: 2, allow_flight: false, ..Default::default() });
     client.admin = true;
     let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
-    let overworld = voxmar_worldgen::Overworld::with_content(seed, client.content.blocks.clone(), &world_content);
+    // The server's own generator (`Overworld::shared`): the town is planned once, for both.
+    let overworld = voxmar_worldgen::Overworld::shared(seed, &client.content, &world_content);
     let town = overworld.nearest_settlement(client.position.floor().as_ivec3().xz(), 10000, |s| s.size == "town").expect("a town");
     // Its farthest ground-floor bed from the middle, and the home it stands in.
     let (far, home, bed) = town
