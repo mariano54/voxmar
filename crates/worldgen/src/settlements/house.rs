@@ -17,7 +17,7 @@
 use voxmar_engine::block::BlockId;
 use voxmar_engine::glam::IVec2;
 
-use super::canvas::{Canvas, Frame, Palette, Put, unit};
+use super::canvas::{Canvas, Facing, Frame, Palette, Put, unit};
 use super::def::{Centre, Extra, Fitting, Form, Roof};
 use crate::rng::{Rng, hash3};
 
@@ -85,9 +85,37 @@ pub struct Mats {
     pub crops: Vec<(Vec<BlockId>, f32)>,
     /// The fruit trees it grows: only those of its size's crop level or below.
     pub fruit: Palette,
+    /// The pieces a pitched gable may be laid in, by weight, and the share of such roofs
+    /// that are.
+    pub roof_pieces: Vec<(super::roofs::RoofPieces, f32)>,
+    pub pieced: f32,
+    /// The beam a jettied house's upper storeys stand out on, in each facing, and the share
+    /// of houses that can be that are.
+    pub jetty: Option<([BlockId; 4], f32)>,
 }
 
 impl Mats {
+    /// The pieces a pitched gable roof of the building `seed` is laid in, if it is.
+    pub fn pieces(&self, seed: u64) -> Option<super::roofs::RoofPieces> {
+        if self.roof_pieces.is_empty() || unit(hash3(seed, 0x7007, 0, 0)) >= self.pieced {
+            return None;
+        }
+        let total: f32 = self.roof_pieces.iter().map(|p| p.1).sum();
+        let mut t = unit(hash3(seed, 0x7007, 1, 0)) * total;
+        for &(p, w) in &self.roof_pieces {
+            if t < w {
+                return Some(p);
+            }
+            t -= w;
+        }
+        self.roof_pieces.last().map(|p| p.0)
+    }
+
+    /// The beams the building `seed` is jettied on, if it is.
+    pub fn jetty(&self, seed: u64) -> Option<[BlockId; 4]> {
+        self.jetty.filter(|j| unit(hash3(seed, 0x7e77, 0, 0)) < j.1).map(|j| j.0)
+    }
+
     /// The first stone of the foundation, for hearths, ovens and plinths.
     pub fn stone(&self) -> BlockId {
         self.foundation.0.first().map_or(self.wall, |b| b.0)
@@ -120,6 +148,10 @@ pub struct Fixed {
     pub sacks: Palette,
     pub crates: Palette,
     pub cloth: Palette,
+    /// What stands in homes; none where content gives no interiors.
+    pub interiors: Option<super::interior::Interiors>,
+    /// What village flames are kept from (`rules.fire`).
+    pub fire: super::roofs::Fire,
     pub dirt: BlockId,
     /// The chance of a stone lowest course, and old walls' share of weathered blocks.
     pub plinth: f32,
@@ -180,6 +212,19 @@ impl Spec {
             let p = frame.at(x, 0, z);
             IVec2::new(p.x, p.z)
         }).collect()
+    }
+
+    /// The room columns of the storeys above the ground, which no wing reaches.
+    pub fn upper_room(&self, frame: &Frame) -> Vec<IVec2> {
+        let foot = Foot { x0: 0, z0: 0, w: self.w, d: self.d, form: self.form };
+        (0..self.d)
+            .flat_map(|z| (0..self.w).map(move |x| (x, z)))
+            .filter(|&(x, z)| foot.room(x, z))
+            .map(|(x, z)| {
+                let p = frame.at(x, 0, z);
+                IVec2::new(p.x, p.z)
+            })
+            .collect()
     }
 
     /// The building's own box, everything it puts down included: overhangs, porch,
@@ -457,6 +502,22 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
         }
     }
     let gabled = matches!(shape, Roof::Gable | Roof::HalfHip | Roof::Saltbox | Roof::Gambrel);
+    // A pitched gable over four walls may be laid in shaped pieces: each column's top a
+    // slope whose low edge faces its eave, and a ridge cap along the peak.
+    let pieces = if shape == Roof::Gable && pitch == 1 && matches!(foot.form, Form::Box | Form::ShopFront) { mats.pieces(spec.seed) } else { None };
+    let facing = pen.frame.facing;
+    let piece = |x: i32, z: i32| -> Option<BlockId> {
+        let p = pieces?;
+        let s = if ridge_x { z - z0 } else { x - x0 };
+        let down = (s + 1).cmp(&(span - s));
+        let local = |d: i32| if ridge_x { IVec2::new(0, d) } else { IVec2::new(d, 0) };
+        Some(match down {
+            std::cmp::Ordering::Less => p.slope[super::roofs::facing_of(turned(facing, local(-1)))],
+            std::cmp::Ordering::Greater => p.slope[super::roofs::facing_of(turned(facing, local(1)))],
+            // A bare ridge runs east to west, one turned east north to south.
+            std::cmp::Ordering::Equal => p.ridge[usize::from(turned(facing, if ridge_x { IVec2::X } else { IVec2::Y }).x == 0)],
+        })
+    };
     for z in z0 - 1..=z0 + d {
         for x in x0 - 1..=x0 + w {
             let Some(h) = heights.at(x, z) else { continue };
@@ -469,6 +530,9 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
             }
             for y in lo..=h {
                 pen.set(x, y, z, block);
+            }
+            if let Some(cap) = piece(x, z) {
+                pen.set(x, h, z, cap);
             }
             if !foot.inside(x, z) {
                 continue;
@@ -508,6 +572,11 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
         pen.set(x, y + 1, z, mats.frame);
     }
     heights
+}
+
+/// A step `d` in a building's own frame, in the world.
+fn turned(facing: Facing, d: IVec2) -> IVec2 {
+    facing.turn(d.x, d.y)
 }
 
 fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Canvas) {
@@ -645,7 +714,16 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     }
 
     let gable_windows = if spec.form == Form::AFrame { 3 } else { 1 };
-    let heights = roof(spec, &mut pen, mats, top, &foot, spec.ridge_x, spec.roof, mats.roof, gable_windows, chimney.map(|c| c.1));
+    // A jettied house: its storeys over the ground stand a block out over the street (moved
+    // out once the front is drawn), so its roof covers a block more at the front. Not over
+    // a porch, an awning or a balcony, nor with a dormer in the roof's front.
+    let jetty = (spec.form == Form::Box
+        && spec.storeys >= 2
+        && ![Extra::Porch, Extra::Awning, Extra::Balcony, Extra::Dormer].iter().any(|&e| spec.has(e)))
+    .then(|| mats.jetty(spec.seed))
+    .flatten();
+    let covered = if jetty.is_some() { Foot { z0: -1, d: d + 1, ..foot } } else { foot };
+    let heights = roof(spec, &mut pen, mats, top, &covered, spec.ridge_x, spec.roof, mats.roof, gable_windows, chimney.map(|c| c.1));
 
     // The door, a lintel over it, and a step or stair to it; barns, boathouses and inns
     // have wide doors.
@@ -814,7 +892,8 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             pen.set(x, lift + 1, z, fixed.torch);
             lit = true;
         }
-    } else if d >= 5 && w >= 4 {
+    } else if d >= 5 && w >= 4 && !(spec.kind == Kind::House && fixed.interiors.is_some()) {
+        // A home with interiors is furnished once its people are known (`interior`).
         let (tx, tz) = if rng.chance(0.5) { (w - 2, d - 2) } else { (w - 2, 1) };
         let (tx, tz) = if tx == door && tz == 1 { (1, d - 2) } else { (tx, tz) };
         let (tx, tz) = free(tx, tz);
@@ -1051,6 +1130,46 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             }
         }
     }
+    if let Some(beams) = jetty {
+        jettied(&mut pen, spec, mats, lift, top, beams);
+    }
+}
+
+/// Moves the front of a house's storeys over the ground a block out, with what hangs on
+/// it (shutters, flower boxes), the floor of the first carried on a row of jetty `beams`
+/// whose braces rest on the wall below; the old front of each storey becomes room.
+fn jettied(pen: &mut Pen, spec: &Spec, mats: &Mats, lift: i32, top: i32, beams: [BlockId; 4]) {
+    let w = spec.w;
+    let floor = lift + spec.wall + 1;
+    for y in floor..=top {
+        for z in [-1, 0] {
+            for x in -1..=w {
+                let (from, to) = (pen.frame.at(x, y, z), pen.frame.at(x, y, z - 1));
+                match pen.canvas.absolute.get(&from).copied() {
+                    Some(put) => pen.canvas.put(to, put),
+                    None => {
+                        pen.canvas.absolute.remove(&to);
+                    }
+                }
+                // Where the front wall stood, each storey's floor runs on to the wall's
+                // new line; the rest is room.
+                let storey_floor = (y - lift) % (spec.wall + 1) == 0 && (y - lift) / (spec.wall + 1) < spec.storeys;
+                if z == 0 && x > 0 && x < w - 1 {
+                    if storey_floor { pen.set(x, y, 0, mats.floor) } else { pen.clear(x, y, 0) }
+                } else if z == 0 && (x < 0 || x >= w) {
+                    pen.canvas.absolute.remove(&from);
+                }
+            }
+        }
+    }
+    let out = super::roofs::facing_of(turned(pen.frame.facing, IVec2::new(0, -1)));
+    // Under the overhang, but never over what already hangs there (a sign board at the
+    // top of walls of three).
+    for x in 0..w {
+        if !pen.canvas.absolute.contains_key(&pen.frame.at(x, floor - 1, -1)) {
+            pen.set(x, floor - 1, -1, beams[out]);
+        }
+    }
 }
 
 /// What stands inside a working building, on its ground floor.
@@ -1084,6 +1203,13 @@ pub fn make_room_for_stairs(spec: &mut Spec) {
 /// Steps of a stair under the hole in the floor above: a player jumps a block with three
 /// blocks of air overhead, so every step within three of the floor above opens to it.
 const STAIRWELL: usize = 3;
+
+/// The stairs `house` draws for `spec`, as `stairs` gives them.
+pub(super) fn flights(spec: &Spec) -> Vec<Option<Vec<(i32, i32)>>> {
+    let foot = Foot { x0: 0, z0: 0, w: spec.w, d: spec.d, form: spec.form };
+    let chimney = spec.chimney().filter(|&((x, z), _)| foot.room(x, z));
+    stairs(spec, spec.door.clamp(1, spec.w - 2), chimney.map(|c| c.0))
+}
 
 pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<Option<Vec<(i32, i32)>>> {
     let (w, d) = (spec.w, spec.d);

@@ -299,7 +299,8 @@ def level_milestone(rng):
     return perform(score)
 
 
-def write_ogg(stereo, path):
+def write_ogg(stereo, path, comment=None):
+    """Writes `stereo` as Ogg Vorbis, with `comment` (say, what rendered it) in its tags."""
     pcm = (np.clip(stereo.T, -1, 1) * 32767).astype("<i2")
     with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
         with wave.open(tmp.name, "wb") as w:
@@ -307,7 +308,8 @@ def write_ogg(stereo, path):
             w.setsampwidth(2)
             w.setframerate(RATE)
             w.writeframes(pcm.tobytes())
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", tmp.name, "-c:a", "libvorbis", "-q:a", "6", str(path)], check=True)
+        tags = ["-metadata", f"comment={comment}"] if comment else []
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", tmp.name, "-c:a", "libvorbis", "-q:a", "6", *tags, str(path)], check=True)
 
 
 # Each jingle: how it is composed, how many takes, and whether it is put in the small room

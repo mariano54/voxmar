@@ -33,6 +33,7 @@
 
 mod ambience;
 mod breaking;
+mod fx;
 mod butterflies;
 mod capture;
 mod creature_sounds;
@@ -359,6 +360,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err(format!("{}: settlement people with no greet, alarm or content of their own: {}", creature_sounds::defs::FILE, unbarked.join(", ")).into());
     }
     recorded.check_materials(&content.blocks)?;
+    recorded.check_fire(&content.fire)?;
     // Every roof's rain patters or is silent (ambience.ron's `roofs`), by its building
     // material or else its family sound.
     let ambience = ambience::defs::Ambience::load(&content.files)?;
@@ -366,11 +368,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let roof_patters = ambience.roof_patters(&content.blocks, &materials, |id| {
         recorded.material_of(&content.blocks, id).map_or_else(|| ambience::defs::family(content.blocks.info(id).sound), |m| recorded.materials[m].name.clone())
     })?;
+    // Every shelter tag on a block says how it sounds: muffling the rain, or whistling.
+    ambience.check_shelter_tags(&content.blocks)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
+    fx::ActionFx::load(&content.files)?.check(&content.actions)?;
+    if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
+        return Err(format!("effects.ron: the effect {effect} has no icon in any bundled texture pack").into());
+    }
     let content_weather = content.weather.clone();
     let shader_packs = render::pack::ShaderPacks::load(&assets);
     let registry = content.blocks.clone();
     let world_content = Arc::new(WorldContent::load(&content)?);
+    // Every building an ambient sound comes from is one settlements have (ambience.ron).
+    ambience.check_buildings(&world_content.settlements.building_names())?;
     let launch = Launch { name: options.name.clone(), host: options.host, content: content.clone() };
     // Captures are benchmarks and visual checks, so they ignore the player's saved settings,
     // unless a configuration directory is given explicitly.
@@ -458,7 +468,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
-    app.add_plugins(emitters::EmittersPlugin);
+    app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);
     app.add_plugins(fight_fx::FightFxPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print

@@ -290,10 +290,15 @@
             // gores back, a short readable jab of the tusks (block it); under 40% of its
             // health it drops the fight and runs (`flees_below`), so a first fight answers
             // and ends in a short chase. Its piglets only run. Old Tusk, the boss, is the one
-            // that charges.
-            name: "wild_boar", level: 4, health: 10, flees_below: 0.4,
+            // that charges. Being a fighter it lets one come near, watching, and edges off
+            // only from one close on it (`Flee` radius 4). Its hide and the gristle over its
+            // shoulders turn many blows and shots (defence 9), but a spear's point goes in
+            // under them (weak to Stab: the boar spear), so a boar that charges the shooter
+            // is no quicker game for a bow than for a spear (engine/tests/nomad_hunting.rs;
+            // combat lane, Oct 20).
+            name: "wild_boar", level: 4, health: 10, flees_below: 0.4, weak: Some(Stab),
             attack: (windup: 0.55, recovery: 0.6, damage: (1, 2), reach: 0.9, every: 1.6, lunge: 1.0, style: Stab),
-            defence: 4,
+            defence: 9,
             body: (
                 size: (0.8, 0.85),
                 model: Quadruped(body: (0.6, 0.55, 0.92), head: (0.38, 0.38, 0.42), legs: 0.3, ears: (0.1, 0.12), ear_lean: 30.0, horns: (0.05, 0.12), horn_shape: Tusks, snout: (0.22, 0.16, 0.16), hump: 0.2, tail: (0.05, 0.05, 0.22), tail_droop: 60.0),
@@ -310,7 +315,7 @@
             leash: 28.0,
             diet: (eats: ["brown_mushroom", "red_mushroom", "short_grass"], favourite: ["apple", "carrot"]),
             behaviours: [
-                (do: Wander(radius: 12.0)), (do: LookAround), (do: Graze), (do: Flee(radius: 8.0), weight: 1.2), (do: Defend, weight: 1.2),
+                (do: Wander(radius: 12.0)), (do: LookAround), (do: Graze), (do: Flee(radius: 4.0), weight: 1.2), (do: Defend, weight: 1.2),
                 (do: Curious(distance: 7.0), weight: 0.6), (do: StandToLook), (do: Herd(spacing: 3.0)), (do: Tempted(radius: 10.0)),
             ],
             xp: (kill: 12.0, skill: "hunter"),

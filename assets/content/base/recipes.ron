@@ -43,6 +43,11 @@
         // `anvil`) goes half again as far: the hammer and the anvil that does it.
         (pattern: [["cobblestone", "cobblestone"], ["", "stick"]], output: "stone_hammer", skill: "core:crafting", level: 3, xp: 8.0),
         (pattern: [["stone", "stone", "stone"], ["", "cobblestone", ""], ["cobblestone", "cobblestone", "cobblestone"]], output: "stone_anvil", skill: "core:crafting", level: 5, xp: 20.0),
+        // Flint tools (tier 1), Engineering 1, in the hand's grid: what bare hands make first,
+        // since breaking stone or felling a tree needs a pickaxe or an axe (tools.ron). Flint
+        // from gravel, sticks from leaves.
+        (pattern: [["flint", "flint"], ["stick", "stick"]], output: "flint_pickaxe", skill: "core:engineering", level: 1, xp: 4),
+        (pattern: [["flint", "flint"], ["stick", ""]], output: "flint_axe", skill: "core:engineering", level: 1, xp: 4),
         // Wooden tools (tier 1), Engineering 1.
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["", "stick", ""], ["", "stick", ""]], output: "wooden_pickaxe", skill: "core:engineering", level: 1, xp: 4),
         (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "stick"], ["", "stick"]], output: "wooden_axe", skill: "core:engineering", level: 1, xp: 4),

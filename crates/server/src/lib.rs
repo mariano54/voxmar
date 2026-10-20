@@ -7,7 +7,9 @@ mod barks;
 mod commands;
 mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
+pub use barks::BARK_COMMAND_REACH;
 pub use commands::{weather_name, weather_numbers};
+pub use creatures::NEAR_THINK_LONGEST;
 mod cooking;
 mod creatures;
 mod fight;
@@ -23,6 +25,7 @@ mod lairs;
 mod machines;
 mod quests;
 mod blaze;
+mod coat;
 mod regrow;
 mod farm;
 mod husbandry;
@@ -40,6 +43,7 @@ mod stores;
 mod treasure;
 mod troughs;
 pub mod save;
+mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
@@ -306,6 +310,20 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
 
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
+/// How each block (by id) shelters as a wall of a home's room, as `Server::room_walls`
+/// judges it (survival.ron's furniture looked past), for the client to hear a home's walls
+/// as the server judges them.
+pub fn wall_shelters(content: &Content) -> Vec<Option<voxmar_engine::effect::Shelter>> {
+    let Ok(rules) = rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()) else { return vec![None; content.blocks.len()] };
+    (0..content.blocks.len())
+        .map(|id| {
+            let id = voxmar_engine::block::BlockId(id as u16);
+            let tags = &content.blocks.def(id).tags;
+            voxmar_engine::effect::Shelter::of_wall(tags, content.blocks.info(id).solid, rules.furniture(tags))
+        })
+        .collect()
+}
+
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
     let mut content = Content::load(&assets.join("content"))?;
     if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {
@@ -313,6 +331,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     }
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
+    spawn_kit::SpawnKit::load(&content.files, &content.blocks)?;
     let mut notes = Vec::new();
     let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
     heal_most_below_food(&content, survival.heal_most)?;
@@ -855,10 +874,48 @@ impl Server {
             spawn,
         };
         server.show_grown_crops(spawn_column);
+        server.lay_spawn_kit();
         server.restore_creatures(state.creatures);
         server.restore_companions(state.companions);
         server.restore_machines(state.machines);
         server
+    }
+
+    /// Lays the spawn kit by the spawn, once per world (`WorldMeta::spawn_kit`): its column is
+    /// loaded by now. Not marked placed, so it is wild.
+    fn lay_spawn_kit(&mut self) {
+        if self.meta.spawn_kit {
+            return;
+        }
+        let kit = spawn_kit::SpawnKit::load(&self.content.files, &self.content.blocks).expect("checked by load_content");
+        // A spawn by a column's edge has the kit's ground in its neighbours too.
+        let today = wear::day(self.day);
+        for pos in kit.columns(self.spawn) {
+            if self.world.contains(pos) {
+                continue;
+            }
+            let loaded = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, &self.wear_rules, today, pos);
+            self.insert_column(pos, loaded);
+        }
+        // An older save's columns are as players left them: a cell that differs from the
+        // land made fresh was touched, even where `placed` does not know it (dug ground,
+        // dirt set down).
+        let mut fresh = VoxelWorld::default();
+        for pos in kit.columns(self.spawn) {
+            if self.save.as_ref().is_some_and(|save| save.has_column(pos)) {
+                fresh.insert(pos, Arc::new(self.generator.generate(pos)));
+            }
+        }
+        let touched = |p: IVec3| self.placed.contains(&p) || fresh.contains(ColumnPos::of_block(p)) && fresh.block(p) != self.world.block(p);
+        let laid = kit.plan(&self.world, &self.content.blocks, self.spawn, self.meta.seed, touched);
+        for (name, laid, least) in kit.short(&self.content.blocks, &laid) {
+            let older = if self.meta.generator_version != Overworld::VERSION { " (the save is from an older world generator, so its land rarely matches what is generated now)" } else { "" };
+            tracing::warn!("the spawn kit laid {laid} {name} by the spawn, short of its {least}: no more untouched ground in reach{older}");
+        }
+        for (at, block) in laid {
+            self.set_block(at, block);
+        }
+        self.meta.spawn_kit = true;
     }
 
     /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are

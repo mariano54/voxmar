@@ -28,6 +28,15 @@ pub(super) static GIVEN_UP: [std::sync::atomic::AtomicU32; 12] = [const { std::s
 #[cfg(test)]
 pub(super) static PLACE_FAILS: [std::sync::atomic::AtomicU32; 8] = [const { std::sync::atomic::AtomicU32::new(0) }; 8];
 
+/// Roof pieces laid in shingles because a flame reached them, and flames put out.
+#[cfg(test)]
+pub(super) static ROOFS_RELAID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+#[cfg(test)]
+pub(super) static FLAMES_PUT_OUT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Wall blocks left out where the ring runs against a lot, in every plan made (none should be).
+#[cfg(test)]
+pub(super) static WALL_ON_LOTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 #[cfg(test)]
 thread_local! {
     static PROFILE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -359,7 +368,7 @@ impl Rect {
         if d.max_element() > 0.0 { d.max(Vec2::ZERO).length() } else { d.max_element() }
     }
 
-    fn grow(&self, by: i32) -> Rect {
+    pub(super) fn grow(&self, by: i32) -> Rect {
         Rect { min: self.min - by, max: self.max + by }
     }
 
@@ -377,6 +386,11 @@ impl Rect {
         self.holds(other.min) && self.holds(other.max)
     }
 }
+
+/// How far past a wall the lanes leading out of a walled place run, so the trails that
+/// join them meet them clear of it: a trail may cross anything built in the cells of its
+/// 8-block grid next to its end's, up to 15 blocks off.
+const GATE_ROAD: f32 = 17.0;
 
 /// A lane: its centre line and half its width.
 #[derive(Clone, Debug)]
@@ -675,13 +689,18 @@ fn site_with_water(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>, water: &mut cra
         // above `taper`.
         let climate = site.climate(ground_site.temperature) * site.level(ctx.world.biomes().get(ground_site.home).level);
         if spawn.is_none() {
-            #[cfg(test)]
-            report_close_scratch(water);
-            if unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
+            if found.is_empty() && unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
+                #[cfg(test)]
+                report_close_scratch(water);
                 give_up::<()>(2);
                 return Vec::new();
             }
-            return vec![(at, fresh)];
+            // The best, then `others` more in turn should it not lay out.
+            found.push((at, fresh));
+            if found.len() > site.others {
+                break;
+            }
+            continue;
         }
         found.push((at, fresh));
         if found.len() >= spawn_tries {
@@ -741,6 +760,9 @@ struct Kit {
     fruit: Palette,
     roofs: Vec<(Roof, f32)>,
     window: Option<BlockId>,
+    roof_pieces: Vec<(super::roofs::RoofPieces, f32)>,
+    pieced: f32,
+    jetty: Option<([BlockId; 4], f32)>,
 }
 
 fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, culture: &Culture, crop_level: u32, rng: &mut Rng) -> Kit {
@@ -803,6 +825,22 @@ fn kit(ctx: &Ctx, style: &StyleDef, levers: &Levers, culture: &Culture, crop_lev
             .map(|&(shape, w)| (shape, w * culture.mult(Listing::Roof, &format!("{shape:?}")) * ctx.def.roofs.iter().find(|r| r.shape == shape).map_or(1.0, |r| r.lean.weigh(r.weight, levers))))
             .collect(),
         window: style.window.as_deref().and_then(|w| ctx.resolved.get(w)),
+        roof_pieces: style
+            .roof_pieces
+            .iter()
+            .filter(|p| p.weight > 0.0)
+            .filter_map(|p| Some((super::roofs::RoofPieces::resolve(p, &wood, &trim, |n| ctx.resolved.get(n))?, p.weight)))
+            .collect(),
+        pieced: style.pieced,
+        // More jettied where the place is crowded, its street narrow.
+        jetty: style.jetty.as_ref().and_then(|j| {
+            let name = fill(&j.beam, &wood, &trim);
+            let mut ids = [BlockId::AIR; 4];
+            for (i, suffix) in super::roofs::SUFFIXES.iter().enumerate() {
+                ids[i] = ctx.resolved.get(&format!("{name}{suffix}"))?;
+            }
+            Some((ids, (j.chance * (0.5 + levers.get(Lever::Crowding))).min(1.0)))
+        }),
         log: style.log.clone(),
         wood,
     }
@@ -830,6 +868,9 @@ impl Kit {
             chimney,
             crops: self.crops.clone(),
             fruit: self.fruit.clone(),
+            roof_pieces: self.roof_pieces.clone(),
+            pieced: self.pieced,
+            jetty: self.jetty,
         }
     }
 }
@@ -844,6 +885,27 @@ impl Lot {
 }
 
 /// What planning a lot needs to know about it.
+/// A block column of a place's wall, and what part of it.
+#[derive(Clone, Copy, Debug)]
+struct Walling {
+    at: IVec2,
+    part: WallPart,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WallPart {
+    Wall,
+    /// A block higher, every other block along a stone wall.
+    Merlon,
+    /// Either side of a gate, a block higher.
+    Post,
+    /// Over a gate, three blocks clear above the lane.
+    Lintel,
+    Tower,
+    /// A tower's corner, a block higher.
+    TowerCorner,
+}
+
 struct Lot {
     spec: Spec,
     rect: Rect,
@@ -907,6 +969,10 @@ pub fn plan(ctx: &Ctx, cell: IVec2) -> Option<Plan> {
 /// The stream names are drawn from, apart from the rest of the plan so a square's
 /// neighbours can draw the names it may take without planning it.
 const NAMING: u64 = 0x4a3e_5eed;
+
+/// The stream a place's wall draws from, apart from the rest so an unwalled place is laid
+/// out as it would be anyway.
+const WALLS: u64 = 0x3a11_5eed;
 
 /// How many names each square offers to take; its neighbours keep off all of them.
 pub(super) const NAME_OFFERS: u32 = 3;
@@ -1122,7 +1188,15 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
     let before = (ground.queries, ground.misses, ground.clears, ground.levels, LANE_COUNTS.with(|c| c.get()), ground.prefetched);
     #[cfg(test)]
     let failures = time.map(|_| (PLACE_FAILS.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed)), GIVEN_UP.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))));
-    let result = layout(ctx, cell, centre, fresh, rng, smallest, ground);
+    // A size too big for the ground lays out as its `smaller` (a town as a village), with
+    // the same draws.
+    let mut drawn = None;
+    let result = layout(ctx, cell, centre, fresh, rng.clone(), smallest, None, &mut drawn, ground);
+    let smaller = drawn.and_then(|i| ctx.def.sizes[i].smaller.as_ref()).and_then(|name| ctx.def.sizes.iter().position(|s| s.name == *name));
+    let result = match smaller {
+        Some(smaller) if result.is_none() && !smallest => layout(ctx, cell, centre, fresh, rng, false, Some(smaller), &mut drawn, ground),
+        _ => result,
+    };
     #[cfg(test)]
     if time.is_some() {
         let lane = LANE_COUNTS.with(|c| c.get());
@@ -1145,7 +1219,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
 }
 
 #[allow(clippy::too_many_arguments)]
-fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, mut ground: &mut Ground) -> Option<Plan> {
+fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, instead: Option<usize>, drawn: &mut Option<usize>, mut ground: &mut Ground) -> Option<Plan> {
     #[cfg(test)]
     let time = phase_start();
     let def = ctx.def;
@@ -1172,6 +1246,8 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let sizes: Vec<(usize, f32)> = def.sizes.iter().enumerate().map(|(i, s)| (i, s.lean.weigh(s.weight, &levers))).collect();
     let size_index = pick(&mut rng, &sizes)?;
     let size_index = if smallest { (0..def.sizes.len()).min_by_key(|&i| def.sizes[i].houses).unwrap_or(size_index) } else { size_index };
+    *drawn = Some(size_index);
+    let size_index = instead.unwrap_or(size_index);
     let size = &def.sizes[size_index];
     def.cultures.finish(&mut culture, &site, &size.name);
     levers.axes = culture.axes;
@@ -1715,6 +1791,112 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     #[cfg(test)]
     let props_time = phase_start();
 
+    // A wall round the heart of a walled place (its size's `walls`, `rules.walls`): its
+    // square and buildings, but not the fields, pens, orchards, woodyards and shrines out
+    // at the ends, nor a centrepiece out there. A gate where a lane passes; none where it
+    // would cut a building or stand in water; towers at its corners and along it.
+    let mut walls_rng = Rng::new(ctx.seed, WALLS, cell.x, cell.y);
+    let walled = size.walls.0 > 0.0 && walls_rng.chance(size.walls.1.weigh(size.walls.0, &levers).min(1.0));
+    let wall_rules = &rules.walls;
+    let mut wall: Vec<Walling> = Vec::new();
+    if walled {
+        // Round the heart, and round any field, pen or shrine out at the ends the ring would
+        // cut through, so it is never left open beside one.
+        let mut inner: Vec<bool> = lots.iter().map(|l| !matches!(l.spec.kind, Kind::Field | Kind::Pen | Kind::Orchard | Kind::Woodyard | Kind::Shrine | Kind::Centrepiece)).collect();
+        let (corners, cells) = loop {
+            let heart: Vec<Rect> = lots.iter().zip(&inner).filter(|(_, inner)| **inner).map(|(l, _)| l.rect).chain([square_rect]).collect();
+            let corners = super::walls::ring(&heart, wall_rules.margin);
+            let cells = super::walls::trace(&corners);
+            let mut grew = false;
+            for (l, inner) in lots.iter().zip(inner.iter_mut()) {
+                if !*inner && cells.iter().any(|&p| l.rect.grow(1).holds(p)) {
+                    *inner = true;
+                    grew = true;
+                }
+            }
+            if !grew {
+                break (corners, cells);
+            }
+        };
+        let on_lot = |p: IVec2| lots.iter().any(|l| l.rect.grow(1).holds(p));
+        #[cfg(test)]
+        WALL_ON_LOTS.fetch_add(cells.iter().filter(|&&p| on_lot(p)).count() as u32, std::sync::atomic::Ordering::Relaxed);
+        let blocked = |ground: &mut Ground, p: IVec2| !bounds.holds(p) || on_lot(p) || !standing(&ground.at(p));
+        // A lane leading out that ends within the ring (or just past it) runs on out, to
+        // `GATE_ROAD` blocks past the wall, so the trail joining its end comes in at a gate
+        // and not over the wall: never over a lot, nor out of the place's bounds.
+        let cross = |o: Vec2, a: Vec2, b: Vec2| (a - o).perp_dot(b - o);
+        let inside = |p: Vec2| corners.len() >= 3 && {
+            let sides: Vec<f32> = (0..corners.len()).map(|i| cross(corners[i].as_vec2(), corners[(i + 1) % corners.len()].as_vec2(), p)).collect();
+            sides.iter().all(|&c| c >= 0.0) || sides.iter().all(|&c| c <= 0.0)
+        };
+        // Straight on if it can, else turning a little at a time; a lane that cannot get
+        // out no longer leads out (no trail joins it), so long as another does.
+        let mut shut = Vec::new();
+        for (i, lane) in lanes.iter_mut().enumerate().filter(|(_, l)| l.main) {
+            let n = lane.points.len();
+            let near = |p: Vec2| inside(p) || cells.iter().any(|c| c.as_vec2().distance(p) < GATE_ROAD);
+            if n < 2 || !near(lane.points[n - 1]) {
+                continue;
+            }
+            let (end, ahead) = (lane.points[n - 1], (lane.points[n - 1] - lane.points[n - 2]).normalize_or_zero());
+            let half = lane.half;
+            let out = [0.0f32, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0].into_iter().filter(|_| ahead != Vec2::ZERO).find_map(|turn| {
+                let dir = Vec2::from_angle(turn.to_radians()).rotate(ahead);
+                let out = (1..=96).map(|t| end + dir * t as f32).find(|&p| !inside(p) && cells.iter().all(|c| c.as_vec2().distance(p) >= GATE_ROAD))?;
+                let steps = end.distance(out).ceil() as i32;
+                (0..=steps)
+                    .map(|k| end.lerp(out, k as f32 / steps.max(1) as f32))
+                    .all(|q| bounds.holds(q.round().as_ivec2()) && lots.iter().all(|l| l.rect.distance(q) > half + 0.5))
+                    .then_some(out)
+            });
+            match out {
+                Some(out) => {
+                    let mut points = lane.points.clone();
+                    points.push(out);
+                    *lane = Lane::new(points, lane.half, lane.paved, lane.main);
+                }
+                None => shut.push(i),
+            }
+        }
+        if lanes.iter().filter(|l| l.main).count() > shut.len() {
+            for i in shut {
+                lanes[i].main = false;
+            }
+        }
+        let crossed = |p: IVec2, by: f32| lanes.iter().any(|l| l.distance(p.as_vec2()) <= l.half + by);
+        let gates: Vec<bool> = cells.iter().map(|&p| crossed(p, 1.0)).collect();
+        for (i, &p) in cells.iter().enumerate() {
+            if gates[i] || blocked(&mut ground, p) {
+                continue;
+            }
+            let n = cells.len();
+            let post = gates[(i + 1) % n] || gates[(i + n - 1) % n];
+            wall.push(Walling { at: p, part: if post { WallPart::Post } else if i % 2 == 0 { WallPart::Merlon } else { WallPart::Wall } });
+        }
+        // Lintels over the gates where the wall is high enough to walk under one.
+        for (i, &p) in cells.iter().enumerate() {
+            if gates[i] && !blocked(&mut ground, p) {
+                wall.push(Walling { at: p, part: WallPart::Lintel });
+            }
+        }
+        for i in super::walls::towers(&cells, &corners, wall_rules.towers.0 as usize) {
+            for dz in -1..=1 {
+                for dx in -1..=1 {
+                    let p = cells[i] + IVec2::new(dx, dz);
+                    // Never on a gate (its lintel), so as wide a berth of a lane as a gate's.
+                    if crossed(p, 1.0) || blocked(&mut ground, p) {
+                        continue;
+                    }
+                    let part = if dx != 0 && dz != 0 { WallPart::TowerCorner } else { WallPart::Tower };
+                    wall.retain(|w| w.at != p);
+                    wall.push(Walling { at: p, part });
+                }
+            }
+        }
+    }
+    let walled_at: rustc_hash::FxHashSet<IVec2> = wall.iter().filter(|w| w.part != WallPart::Lintel).map(|w| w.at).collect();
+
     // Props by the lanes and in the yards, and by the water.
     let mut canvas = Canvas::default();
     let mut props: Vec<(Rect, usize, Facing)> = Vec::new();
@@ -1731,6 +1913,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         let free = bounds.covers(&rect)
             && occupied.iter().all(|o| o.gap(&rect) >= 0)
             && lanes.iter().all(|l| !l.rect_any(&rect, |d| d <= l.half + clearance))
+            && (walled_at.is_empty() || !(rect.min.y - 1..=rect.max.y + 1).any(|z| (rect.min.x - 1..=rect.max.x + 1).any(|x| walled_at.contains(&IVec2::new(x, z)))))
             && [rect.min, rect.max, IVec2::new(rect.min.x, rect.max.y), IVec2::new(rect.max.x, rect.min.y)].iter().all(|&c| walkable(&ground.at(c)));
         free.then_some(rect)
     };
@@ -1831,6 +2014,36 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
             _ => house::draw(&lot.spec, &lot.frame, &lot.mats, ctx.fixed, &mut canvas),
         }
     }
+    // The wall: stone where the place is rich, else a palisade of its logs; merlons on
+    // every other block, posts either side of each gate, a lintel over it.
+    let stone = wealth > wall_rules.stone;
+    let wall_height = if stone { wall_rules.height.1 } else { wall_rules.height.0 } as i32;
+    let wall_block = (!wall.is_empty()).then(|| {
+        let mats = kit.mats(ctx, &mut walls_rng);
+        if stone { mats.stone() } else { mats.log }
+    });
+    let mut walls_out: Vec<(IVec2, i32)> = Vec::with_capacity(wall.len());
+    if let Some(block) = wall_block {
+        let tower = wall_height + wall_rules.towers.1 as i32;
+        for w in &wall {
+            let (from, to) = match w.part {
+                WallPart::Wall => (1, wall_height),
+                WallPart::Merlon => (1, wall_height + i32::from(stone)),
+                WallPart::Post => (1, wall_height + 1),
+                // Three blocks clear under it, and only where there is wall above that.
+                WallPart::Lintel if wall_height > 3 => (4, wall_height),
+                WallPart::Lintel => continue,
+                WallPart::Tower => (1, tower),
+                WallPart::TowerCorner => (1, tower + 1),
+            };
+            for up in from..=to {
+                canvas.on_ground(w.at.x, w.at.y, up, Put::Set(block));
+            }
+            if w.part != WallPart::Lintel {
+                walls_out.push((w.at, to));
+            }
+        }
+    }
     let prop_mats = kit.mats(ctx, &mut rng);
     for &(rect, prop, facing) in &props {
         match &def.props[prop].kind {
@@ -1895,6 +2108,10 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         min = min.min(rect.min - 2);
         max = max.max(rect.max + 2);
     }
+    for &(p, _) in &walls_out {
+        min = min.min(p - 2);
+        max = max.max(p + 2);
+    }
     let mut raster = Raster::new(min, max);
     // The square: flat in the middle, easing out.
     raster.pad(&Rect { min: centre - square, max: centre + square }, square_height, FALLOFF + 1, 0, true, |p| p.as_vec2().distance(centre.as_vec2()) <= square as f32 + 0.5);
@@ -1928,6 +2145,8 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
                 _ => lot.spec.kind.name().to_string(),
             },
             work: lot.house.and_then(|i| def.houses[i].work.clone()),
+            beds: Vec::new(),
+            seats: Vec::new(),
         });
     }
     // Ground held level round props that hold water.
@@ -1952,6 +2171,10 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     }
     for (rect, ..) in &props {
         raster.clear_rect(rect);
+    }
+    // No tree stands in the wall or against it.
+    for &(p, _) in &walls_out {
+        raster.clear_rect(&Rect { min: p - 1, max: p + 1 });
     }
     // A clearing in the woods, leafier where the place is green.
     let rects: Vec<Rect> = lots.iter().map(|l| l.rect).collect();
@@ -1983,6 +2206,31 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     #[cfg(test)]
     let detail_time = phase_start();
     let gates: Vec<IVec2> = lanes.iter().filter(|l| l.main).map(|l| l.points.last().unwrap().round().as_ivec2()).collect();
+    // Its people, and their homes furnished for them (`interiors`): drawn last, over the
+    // houses as they stand.
+    let size_name = &def.sizes[size_index].name;
+    let people = super::people::residents(&def.people, &def.houses, size_name, &levers, &buildings, &gates, hash3(ctx.seed, cell.x, 7, cell.y));
+    if let Some(interiors) = &ctx.fixed.interiors {
+        for (i, lot) in lots.iter().enumerate() {
+            if lot.spec.kind != Kind::House || !lot.spec.inside.is_empty() {
+                continue;
+            }
+            let work = |w: Option<usize>| w.map(|w| buildings[w].work.clone().unwrap_or_else(|| buildings[w].kind.name().to_owned()));
+            let home = super::interior::Household { people: people.iter().filter(|r| r.home == i).map(|r| (r.species.clone(), work(r.work))).collect() };
+            let hearth = lot.spec.chimney().is_some();
+            let furnished = super::interior::furnish(interiors, &lot.spec, &lot.frame, &kit.wood, &levers, &home, hearth, &mut canvas);
+            buildings[i].beds = furnished.beds;
+            buildings[i].seats = furnished.seats;
+        }
+    }
+    // No flame of its own stands within reach of what catches (thatch): such a roof is
+    // laid in shingles instead, and a flame that still reaches is put out.
+    let (_relaid, _put_out) = ctx.fixed.fire.keep_from_flames(&mut canvas, |x, z| raster.ground(x, z, &ground.at(IVec2::new(x, z))));
+    #[cfg(test)]
+    {
+        ROOFS_RELAID.fetch_add(_relaid as u32, std::sync::atomic::Ordering::Relaxed);
+        FLAMES_PUT_OUT.fetch_add(_put_out as u32, std::sync::atomic::Ordering::Relaxed);
+    }
     let voxels = canvas.into_columns();
     #[cfg(test)]
     phase_end("voxel columns", detail_time);
@@ -2001,8 +2249,6 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     };
     #[cfg(test)]
     phase_end("name", name_time);
-    let size_name = &def.sizes[size_index].name;
-    let people = super::people::residents(&def.people, &def.houses, size_name, &levers, &buildings, &gates, hash3(ctx.seed, cell.x, 7, cell.y));
     Some(Plan {
         id: hash3(ctx.seed, cell.x, 0, cell.y),
         size: def.sizes[size_index].name.clone(),
@@ -2018,6 +2264,8 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         lanes: lanes.iter().map(|l| l.points.clone()).collect(),
         people,
         lane_halves: lanes.iter().map(|l| l.half).collect(),
+        walls: walls_out,
+        wall_block,
         min: raster.min,
         max: raster.max,
         raster,
@@ -2602,6 +2850,17 @@ fn place(
             return town.reject(spec, 6);
         }
     }
+    // Its pad is cut level a block round it, but the ground is never cut below the water
+    // beside it (`Settlements::apply`): where that water stands over the floor, the ground
+    // would stay up against its walls and in its door.
+    let pad = rect.grow(1);
+    for z in pad.min.y..=pad.max.y {
+        for x in pad.min.x..=pad.max.x {
+            if ground.at(IVec2::new(x, z)).water > floor {
+                return town.reject(spec, 4);
+            }
+        }
+    }
     // Adapt only a placed house. Chimney removal and wall/storey reductions do not
     // change its envelope, stilts, door or any of the placement checks above.
     if let Some(index) = house {
@@ -3179,7 +3438,7 @@ mod level_tests {
         let mut style_excluded = 0;
         for all_zero in [false, true] {
             let weights: Vec<_> = (0..def.houses.len()).map(|i| if all_zero || i % 3 == 0 || i + 1 == def.houses.len() { 0.0 } else { 0.25 + i as f32 * 0.125 }).collect();
-            for size in ["hamlet", "village"] {
+            for size in ["hamlet", "village", "town"] {
                 for style in ["timber_frame", "log_cabin", "turf_house"] {
                     assert!(def.styles.iter().any(|s| s.name == style));
                     for count in 0..=3 {
@@ -3233,7 +3492,7 @@ mod level_tests {
         let kit = Kit { wood: String::new(), log: String::new(), foundation: Palette(Vec::new()),
             floor: Vec::new(), walls: Vec::new(), frame: Vec::new(), roof: Vec::new(), trims: Vec::new(),
             paving: Palette(Vec::new()), hedge: Palette(Vec::new()), weathered: Palette(Vec::new()),
-            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None };
+            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None, roof_pieces: Vec::new(), pieced: 0.0, jetty: None };
         let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
         let new = || Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
             extra_chances: vec![0.5; def.extras.len()], style, size: "village", built: FxHashMap::default(),
@@ -3294,7 +3553,7 @@ mod level_tests {
         let kit = Kit { wood: String::new(), log: String::new(), foundation: Palette(Vec::new()),
             floor: Vec::new(), walls: Vec::new(), frame: Vec::new(), roof: Vec::new(), trims: Vec::new(),
             paving: Palette(Vec::new()), hedge: Palette(Vec::new()), weathered: Palette(Vec::new()),
-            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None };
+            chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None, roof_pieces: Vec::new(), pieced: 0.0, jetty: None };
         let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
         let mut town = Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
             extra_chances: vec![0.0; def.extras.len()], style, size: "village", built: FxHashMap::default(), choices: Vec::new(), spare_extras: Vec::new(), bounds: rect, square: rect, gap: 1 };
