@@ -209,8 +209,8 @@ pub struct ContentFile {
 pub const READ_ELSEWHERE: &[&str] = &[
     "action_fx.ron", "ambience.ron", "ambient.ron", "biomes.ron", "cave_biomes.ron", "celebrations.ron", "climate.ron", "combat_fx.ron",
     "combat_hud.ron", "creature_motion.ron", "creature_sounds.ron", "cultures.ron", "decorations.ron", "hoards.ron",
-    "interface.ron", "lairs.ron", "land.ron", "look.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron", "player_look.ron",
-    "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
+    "interface.ron", "lairs.ron", "land.ron", "look.ron", "menu_bar.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron",
+    "player_look.ron", "quest_book.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
     "survival.ron", "terrain.ron", "trails.ron", "trees.ron", "wear.ron",
 ];
 
