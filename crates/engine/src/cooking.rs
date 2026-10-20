@@ -202,17 +202,15 @@ impl CookingRegistry {
             for (k, &a) in found.iter().enumerate() {
                 for &b in &found[k + 1..] {
                     let (one, two) = (&registry.recipes[a].def, &registry.recipes[b].def);
-                    let both = one.station == two.station || blocks.ids().any(|id| blocks.def(id).has_tag(&one.station) && blocks.def(id).has_tag(&two.station));
-                    if both {
-                        return Err(RegistryError(format!(
-                            "cooking recipes for `{}`: `{}` (at `{}`) and `{}` (at `{}`) both cook it where one station block could, and only the first would ever be cooked; give one another input or station",
-                            blocks.def(*input).name,
-                            one.output,
-                            one.station,
-                            two.output,
-                            two.station
-                        )));
-                    }
+                    let shared = blocks.ids().find(|&id| blocks.def(id).has_tag(&one.station) && blocks.def(id).has_tag(&two.station));
+                    let fault = if one.station == two.station {
+                        format!("both cook it at `{}`, and only the first would ever be cooked", one.station)
+                    } else if let Some(block) = shared {
+                        format!("are at `{}` and `{}`, which `{}` both carries: there only the first would be cooked", one.station, two.station, blocks.def(block).name)
+                    } else {
+                        continue;
+                    };
+                    return Err(RegistryError(format!("cooking recipes for `{}`: `{}` and `{}` {fault}; give one another input or station", blocks.def(*input).name, one.output, two.output)));
                 }
             }
         }
@@ -343,11 +341,12 @@ mod tests {
         };
         assert!(build(r#"(input: "raw_rabbit", output: "smoked_rabbit", station: "smoker", xp: 1.0)"#).is_ok(), "another station");
         let refused = build(r#"(input: "raw_rabbit", output: "smoked_rabbit", xp: 1.0)"#).unwrap_err();
-        assert!(refused.0.contains("`base:smoked_rabbit`") && refused.0.contains("only the first"), "{}", refused.0);
+        assert!(refused.0.contains("`base:smoked_rabbit`") && refused.0.contains("only the first would ever"), "{}", refused.0);
         assert!(build(r#"(input: "tag:meat", output: "smoked_rabbit", xp: 1.0)"#).is_err(), "by its tag, at the same station");
         let shared = r#"(input: "raw_rabbit", output: "cooked_rabbit", station: "stove", xp: 1.0), (input: "raw_rabbit", output: "smoked_rabbit", station: "oven", xp: 1.0)"#;
         let source = format!(r#"(recipes: [{shared}])"#);
-        assert!(CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default()).is_err(), "two tags one block carries");
+        let refused = CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default()).unwrap_err();
+        assert!(refused.0.contains("`base:stove` both carries"), "two tags one block carries: {}", refused.0);
     }
 
     /// A station is a tag some block carries, or one a party cooks at; any other is refused.

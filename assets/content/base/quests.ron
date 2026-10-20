@@ -393,7 +393,7 @@
         ),
         (
             name: "kiln_plans", age: "farm", branch: "fuel", title: "Plans for the Kiln",
-            why: "With charcoal made, plan the kiln it burns in: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up kiln bricks to see what they take.",
+            why: "With fuel in hand, charcoal or coal, plan the kiln it burns in: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up kiln bricks to see what they take.",
             tasks: [[LookUp("crucible"), LookUp("kiln_bricks")]],
             after: ["charcoal"],
             rewards: [Xp("engineering", 30.0)],

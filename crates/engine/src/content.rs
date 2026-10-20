@@ -735,6 +735,34 @@ mod tests {
     /// and Alchemy wait for their systems (Combat's slices, brewing).
     const UNTRAINED: [&str; 6] = ["core:attack", "core:defence", "core:hitpoints", "core:ranged", "core:magic", "core:alchemy"];
 
+    /// Loading checks every cooking station (`CookingRegistry::check_stations`): the game's
+    /// content with one recipe at a misspelt station is refused, naming it.
+    #[test]
+    fn content_with_a_station_nothing_has_is_refused() {
+        fn copy(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if path.is_dir() {
+                    copy(&path, &to.join(entry.file_name()));
+                } else {
+                    std::fs::copy(&path, to.join(entry.file_name())).unwrap();
+                }
+            }
+        }
+        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let at = std::env::temp_dir().join(format!("voxmar-stations-{}", std::process::id()));
+        copy(&assets, &at);
+        let cooking = at.join("base/cooking.ron");
+        let source = std::fs::read_to_string(&cooking).unwrap();
+        let source = source.replacen("    recipes: [\n", "    recipes: [\n        (input: \"clay\", output: \"fired_clay\", station: \"pit_klin\", xp: 1.0),\n", 1);
+        std::fs::write(&cooking, source).unwrap();
+        let refused = Content::load(&at).err().map(|e| e.0);
+        std::fs::remove_dir_all(&at).unwrap();
+        assert!(refused.as_deref().is_some_and(|e| e.contains("`pit_klin`")), "{refused:?}");
+    }
+
     /// The game's flues, hood and pot carry `CHIMNEY_PIECE_TAG`, so a renamed tag can't
     /// quietly leave every chimney smoking from under its roof.
     #[test]
