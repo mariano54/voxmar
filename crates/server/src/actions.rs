@@ -47,8 +47,8 @@ struct Timed {
     due: Instant,
     /// The player's client shows it done: nothing cancels it now.
     finished: bool,
-    /// The hotbar slot in hand and what was in it: what the work wears. When it began, or
-    /// for a break, when the client showed it done, as `held` is.
+    /// The hotbar slot in hand, what was in it and how worn: what the work wears. When it
+    /// began, or for a break shown done with the same kind of tool in hand, then.
     tool: Tool,
     /// For a break, what the player held when their client showed it done: what it is
     /// judged by at its time, and draws its tool's bonus with, whatever they take in hand
@@ -57,8 +57,8 @@ struct Timed {
     held: Option<Option<BlockId>>,
 }
 
-/// A hotbar slot and what was in it when an action began.
-pub(crate) type Tool = (usize, Option<voxmar_engine::block::BlockId>);
+/// A hotbar slot, what was in it and its wear, when an action began.
+pub(crate) type Tool = (usize, Option<voxmar_engine::block::BlockId>, u16);
 
 impl Timed {
     fn mostly_done(&self, at: Instant) -> bool {
@@ -270,7 +270,9 @@ impl Server {
             let tool = self.tool_in_hand(agent);
             let timed = &mut self.executor.timed[i];
             (timed.finished, timed.held) = (true, held);
-            if mining {
+            // The same kind of tool as set its time, in hand now (perhaps another copy of
+            // it): that one wears. Anything else keeps the one that set the time.
+            if mining && tool.1 == timed.tool.1 {
                 timed.tool = tool;
             }
         }
@@ -329,7 +331,7 @@ impl Server {
 
     /// The hotbar slot `agent` has in hand and what is in it.
     pub(crate) fn tool_in_hand(&self, agent: PlayerId) -> Tool {
-        self.players.get(&agent).map_or((0, None), |p| (p.selected, p.held()))
+        self.players.get(&agent).map_or((0, None, 0), |p| (p.selected, p.held(), p.inventory.get(p.selected).map_or(0, |s| s.wear)))
     }
 
     /// Applies an action's effects, as `agent`'s doing (`fire_origin`, `changed_by`) whenever
@@ -989,21 +991,25 @@ mod finished_tests {
         assert_eq!(server.players[&1].health.current, 1, "a bite swapped for stone healed");
     }
 
-    /// A break shown done early wears what it was judged by, the pickaxe in hand then: not
-    /// the shovel switched to before its time, nor the other pickaxe it was begun with.
+    /// A break shown done early wears the pickaxe in hand then, not the shovel switched to
+    /// before its time, nor another copy of it the break was begun with. Shown done with
+    /// something else (another pickaxe, the bare hand) the tool that set its time wears, so
+    /// a switch at the last moment never dodges the wear.
     #[test]
     fn a_break_shown_done_early_wears_the_tool_it_was_shown_done_with() {
         let mut server = fixture();
         let (pick, shovel) = (server.content.blocks.expect("base:stone_pickaxe"), server.content.blocks.expect("base:stone_shovel"));
+        let flint = server.content.blocks.expect("base:flint_pickaxe");
         let player = server.players.get_mut(&1).unwrap();
         player.inventory.slots[1] = Some(ItemStack::new(shovel, 1));
         player.inventory.slots[2] = Some(ItemStack::new(pick, 1));
+        player.inventory.slots[3] = Some(ItemStack::new(flint, 1));
         let mine = server.content.actions.expect("core:mine");
-        let wear = |server: &crate::Server| server.players[&1].inventory.slots[..3].iter().map(|s| s.map(|s| s.wear)).collect::<Vec<_>>();
+        let wear = |server: &crate::Server| server.players[&1].inventory.slots[..4].iter().map(|s| s.map(|s| s.wear)).collect::<Vec<_>>();
         // Five breaks begun with `began` in hand, shown done at three tenths of their time
-        // with the first slot's pickaxe, and the shovel in hand from there to their time. Five
-        // stones: skill cannot save every use.
-        let breaks = |server: &mut crate::Server, began: usize, row: i32| {
+        // with `shown`, and the shovel in hand from there to their time. Five blocks: skill
+        // cannot save every use.
+        let breaks = |server: &mut crate::Server, began: usize, shown: usize, row: i32| {
             for x in 0..5 {
                 let cell = IVec3::new(5 + x, FLOOR, row);
                 let target = ActionTarget::Block { block: cell, face: Face::PosY };
@@ -1011,19 +1017,29 @@ mod finished_tests {
                 let at = Instant::now();
                 server.propose(1, mine, target, at);
                 let due = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break").due;
-                server.players.get_mut(&1).unwrap().selected = 0;
+                server.players.get_mut(&1).unwrap().selected = shown;
                 server.finished_action(1, target, at + (due - at).mul_f32(0.3));
                 server.players.get_mut(&1).unwrap().selected = 1;
                 server.complete_actions(due);
                 let now = server.block(cell).map(|b| server.content.blocks.def(b).name.clone());
-                assert_eq!(now.as_deref(), Some("core:air"), "the stone at {cell} came back");
+                assert_eq!(now.as_deref(), Some("core:air"), "the block at {cell} came back");
             }
         };
-        breaks(&mut server, 0, 10);
+        breaks(&mut server, 0, 0, 10);
         let after = wear(&server);
-        assert!(after[0].is_some_and(|w| w > 0) && after[1..] == [Some(0), Some(0)], "the pickaxe wore, not the shovel switched to: {after:?}");
-        breaks(&mut server, 2, 6);
+        assert!(after[0].is_some_and(|w| w > 0) && after[1..] == [Some(0), Some(0), Some(0)], "the pickaxe wore, not the shovel switched to: {after:?}");
+        breaks(&mut server, 2, 0, 6);
         let last = wear(&server);
-        assert!(last[0] > after[0] && last[1..] == [Some(0), Some(0)], "begun with the other pickaxe, the one shown done with wore: {after:?} to {last:?}");
+        assert!(last[0] > after[0] && last[1..] == [Some(0), Some(0), Some(0)], "begun with the other pickaxe, the one shown done with wore: {after:?} to {last:?}");
+        breaks(&mut server, 0, 3, 11);
+        let flinted = wear(&server);
+        assert!(flinted[0] > last[0] && flinted[1..] == [Some(0), Some(0), Some(0)], "shown done with the flint pickaxe, the stone one that set the time wore: {last:?} to {flinted:?}");
+        let dirt = server.content.blocks.expect("base:dirt");
+        for x in 0..5 {
+            server.set_block(IVec3::new(5 + x, FLOOR, 5), dirt);
+        }
+        breaks(&mut server, 0, 4, 5);
+        let bare = wear(&server);
+        assert!(bare[0] > flinted[0] && bare[1..] == [Some(0), Some(0), Some(0)], "shown done with a bare hand, the pickaxe wore: {flinted:?} to {bare:?}");
     }
 }

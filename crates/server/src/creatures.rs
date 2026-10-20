@@ -47,6 +47,10 @@ use crate::Server;
 /// Creatures think every this many ticks within `NEAR` blocks of a player, every
 /// `FAR_THINK` beyond.
 const NEAR_THINK: u64 = 4;
+/// The longest a creature near a player goes between thoughts, in ticks: `NEAR_THINK` and
+/// the most its seed adds (`seed % 3`). It acts on what it sees only at a thought: it starts
+/// a chase, and strikes once in reach, each up to this late.
+pub const NEAR_THINK_LONGEST: u64 = NEAR_THINK + 2;
 /// What tells a creature's own rolls apart (`Live::rolls`): a thought's, a product's timing.
 pub(crate) const THOUGHT: u64 = 0x7409;
 pub(crate) const PRODUCT: u64 = 0x9d0c;
@@ -2965,6 +2969,66 @@ mod way_tests {
         let id = put(&mut server, name, from, to - from);
         server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
         comes(&mut server, id, to, seconds)
+    }
+
+    /// The gate's Climb step, here without a client: a wolf below a step a block high bites
+    /// the player on its edge, is struck as it bites (sooner or later in its recovery), and
+    /// with the player three blocks back along the top it comes up and strikes (a blow told
+    /// the player, a miss as a hit, as the gate counts them) within the rest of its recovery
+    /// from the edge bite, a thought to start the chase and one to strike once in reach
+    /// (`NEAR_THINK_LONGEST` each), its run over the way and its wind-up: what the gate
+    /// allows it before its spare for the client's frames.
+    #[test]
+    fn a_wolf_bitten_from_a_step_comes_up_and_strikes_within_the_climb_allowance() {
+        for salt in 0..12u64 {
+            let mut server = crate::test_server();
+            server.meta.seed ^= salt * 7919;
+            let c = pen(&mut server, 14);
+            let stone = server.content.blocks.expect("base:stone");
+            for z in 0..=6 {
+                for x in -6..=6 {
+                    server.world.set_block(c + IVec3::new(x, 0, z), stone);
+                }
+            }
+            let edge = c.as_vec3() + Vec3::new(0.5, 1.0, 0.5);
+            let back = edge + Vec3::Z * 3.0;
+            // Joined as `join` does, keeping the client's end: every blow at the player is told
+            // it, a miss as a hit, and the gate counts each.
+            let (client, connection) = voxmar_protocol::local_pair();
+            let mut joined = crate::player::Player::new(1, connection, edge, 2, server.tick, server.survival.max_health, &server.config.limits);
+            joined.joined = true;
+            server.players.insert(1, joined);
+            let player = 1;
+            server.players.get_mut(&player).unwrap().health = traits::Health::full(60);
+            let id = put(&mut server, "base:wolf", c.as_vec3() + Vec3::new(0.7, 0.0, -1.5), Vec3::Z);
+            let blow = |server: &mut Server| {
+                server.tick();
+                std::iter::from_fn(|| client.try_recv().ok().flatten()).filter(|m| matches!(m, ServerMessage::Hurt { creature, .. } if *creature == id)).count() > 0
+            };
+            let bitten = (0..10 * TICKS_PER_SECOND as u64).any(|_| blow(&mut server));
+            assert!(bitten, "salt {salt}: the wolf never struck at the player on the step's edge");
+            // Struck at once, a third or two thirds into its recovery.
+            for _ in 0..(salt % 3) * 6 {
+                blow(&mut server);
+            }
+            server.hurt_creature(player, id, 2, None, voxmar_engine::combat::Blow::Plain);
+            server.players.get_mut(&player).unwrap().position = back;
+            let live = &server.creatures.live[&id];
+            let species = server.content.creatures.get(live.species);
+            let attack = species.attack_at(live.attack).expect("a wolf strikes");
+            let feel = server.content.combat.feel;
+            let half = species.def.body.size.0 * live.scale / 2.0;
+            let way = (live.body.position.with_y(0.0).distance(back.with_y(0.0)) - half - attack.reach).max(0.0);
+            let second = TICKS_PER_SECOND as f32;
+            let recovery = live.held_until.saturating_sub(server.tick) as f32 / second;
+            let thoughts = 2.0 * NEAR_THINK_LONGEST as f32 / second;
+            let run = way / species.def.movement.run;
+            let allowed = recovery + thoughts + run + attack.windup.unwrap_or(feel.creature_windup);
+            let struck = (0..(allowed * second).round() as u64).any(|_| blow(&mut server));
+            assert!(struck, "salt {salt}: no blow in the {allowed:.2} s allowed ({recovery:.2} s of recovery left, {thoughts:.2} s for two thoughts, {way:.2} blocks)");
+            let up = server.creatures.live[&id].body.position.y - c.y as f32;
+            assert!(up > 0.9, "salt {salt}: the wolf struck from below the step ({up:.2} up)");
+        }
     }
 
     #[test]
