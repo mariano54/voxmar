@@ -2796,7 +2796,8 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.chat.clear();
     client.pump_until(|c| has(c, "base:snug") && told(c, "Snug:"));
     client.pump_until(|c| quest_status(c, "snug_for_winter").1);
-    // Another night, now in a snug home, rests them better.
+    // A night, now in a snug home, rests them better (the better rests are a night's).
+    client.ok("/time set midnight");
     client.ok("/effect clear");
     client.pump_until(|c| !has(c, "base:rested"));
     client.chat.clear();
@@ -2826,13 +2827,67 @@ fn a_proper_bed_rests_well_and_mends_longer_than_a_bag() {
     client.pump_until(|c| effect(c, "base:rested").is_some() && effect(c, "base:healing_sleep").is_some());
     assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s <= 60));
     assert!(effect(&client, "base:well_rested").is_none(), "a bag on the ground is a plain rest");
-    // The bed, another night: well rested, and two minutes' mend.
+    // The bed, at night: well rested, and two minutes' mend.
+    client.ok("/time set midnight");
     client.ok("/effect clear");
     client.pump_until(|c| effect(c, "base:rested").is_none() && effect(c, "base:healing_sleep").is_none());
     client.chat.clear();
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
     client.pump_until(|c| effect(c, "base:well_rested").is_some() && effect(c, "base:healing_sleep").is_some() && told(c, "Well rested"));
     assert!(effect(&client, "base:healing_sleep").and_then(|a| a.seconds_left).is_some_and(|s| s > 60), "a bed mends longer");
+}
+
+/// Nights told apart (docs/home.md "Nights"): a nap by day rests and mends but is no night's
+/// rest, says so, and does not keep a night's better rest away; and after dark, indoors at
+/// home by its fire, is an evening in, gone with the morning.
+#[test]
+fn a_nap_by_day_is_no_nights_rest_and_an_evening_in_is_by_the_fire_after_dark() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let (bed, fire) = (feet + IVec3::new(2, 0, 0), feet + IVec3::new(-2, 0, 0));
+    client.ok("/time set noon");
+    for line in [
+        format!("/setblock {} {} {} oak_bed", bed.x, bed.y, bed.z),
+        format!("/setblock {} {} {} campfire", fire.x, fire.y, fire.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 3, feet.z - 3, feet.x + 6, feet.y + 3, feet.z + 3),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bed) == c.content.blocks.id("base:oak_bed") && c.world.block(fire) == c.content.blocks.id("base:campfire"));
+    // By day: a plain rest and a mend, and word of the better rest a night here gives.
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested") && has(c, "base:healing_sleep") && told(c, "A night's sleep here would rest you better: Well rested"));
+    assert!(!has(&client, "base:well_rested"), "a nap is no night's rest");
+    assert!(!has(&client, "base:evening_in"), "home by the fire at noon is no evening");
+    // A second nap rests no more.
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| told(c, "rested already"));
+    // After dark: an evening in by the fire (the bed slept in is home). The night's rest
+    // waits while the nap's mend runs, then comes though the nap's Rested is still on.
+    client.ok("/time set midnight");
+    client.chat.clear();
+    client.pump_until(|c| has(c, "base:evening_in") && told(c, "Evening in:"));
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| told(c, "rested already"));
+    assert!(!has(&client, "base:well_rested"), "no rest while the nap's mend runs");
+    client.ok("/effect clear");
+    client.ok("/effect rested 500");
+    client.pump_until(|c| has(c, "base:rested") && !has(c, "base:healing_sleep"));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:well_rested") && told(c, "Well rested"));
+    assert!(!told(&client, "would rest you better"), "a night's sleep says no better one");
+    // Out from under the roof it is no evening in; the morning ends it too.
+    client.tp(feet.as_vec3() + Vec3::new(8.5, 0.0, 0.5));
+    client.pump_until(|c| !has(c, "base:evening_in"));
+    client.tp(feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+    client.pump_until(|c| has(c, "base:evening_in"));
+    client.ok("/time set day");
+    client.pump_until(|c| !has(c, "base:evening_in"));
 }
 
 /// Rest is no way to heal in a fight (survival.ron): a bed refuses sleep with a creature that
