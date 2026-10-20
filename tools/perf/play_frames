@@ -10,7 +10,8 @@
 #
 # A binary given as off:PATH runs with VOXMAR_THREAD_PRIORITY=off (the thread classes from
 # before the frame threads had one, see crates/client/src/priority.rs), to time one build
-# both ways.
+# both ways; as wN:PATH, with N streaming workers (VOXMAR_WORKERS) instead of the cores less
+# two. Both may be given, as off:w8:PATH.
 #
 #   spawn   standing at the spawn of seed 1, looking over the land, once it has loaded
 #   town    over Ashhurst, the village of seed 1 nearest its spawn (21 houses, 14
@@ -94,9 +95,14 @@ echo "play_frames: load $(sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg)
 for scene in spawn town flight; do
   for ((round = 1; round <= repeats; round++)); do
     for given in "$@"; do
-      binary=${given#off:}
-      priority=on
-      [[ $given == off:* ]] && priority=off
+      binary=$given priority=on workers=
+      while :; do
+        case $binary in
+          off:*) priority=off binary=${binary#off:} ;;
+          w[0-9]*:*) workers=${binary%%:*} workers=${workers#w} binary=${binary#*:} ;;
+          *) break ;;
+        esac
+      done
       if playing; then
         echo "play_frames: Mariano started playing; stopped, and the numbers so far are suspect" >&2
         exit 1
@@ -110,11 +116,11 @@ for scene in spawn town flight; do
       rm -rf "$config" && mkdir -p "$config"
       [[ -e $settings ]] && cp "$settings" "$config/settings.ron"
       scene_args "$scene"
-      log=$(cd "$(dirname "$binary")/../.." && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority \
+      log=$(cd "$(dirname "$binary")/../.." && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority VOXMAR_WORKERS=$workers \
         "$binary" --capture "$out/$scene.png" --size 2268x1473 "${args[@]}" 2>&1 </dev/null | sed 's/\x1b\[[0-9;]*m//g')
       stats=$(grep -oE '(steady|flight): [0-9]+ frames.*' <<<"$log" | tail -1)
       gpu=$(grep -m1 -oE 'AdapterInfo \{ name: "[^"]*"' <<<"$log" | sed 's/.*name: //')
-      echo "$scene round $round, $binary$([[ $priority == off ]] && echo ' (priorities off)'): ${stats:-no frame statistics (see a run by hand)} [gpu $gpu, load $(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')]"
+      echo "$scene round $round, $binary$([[ $priority == off ]] && echo ' (priorities off)')${workers:+ ($workers workers)}: ${stats:-no frame statistics (see a run by hand)} [gpu $gpu, load $(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')]"
     done
   done
 done

@@ -318,12 +318,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let headless = options.capture.is_some() || options.gate.is_some();
     // Leave two cores for the main and render threads; worldgen, lighting and meshing share
     // the rest, at background priority so bursts of streaming never delay a frame
-    // (priority.rs). Cores, not
-    // hardware threads: on a machine with two threads a core (the Linux box's 16-core EPYC),
-    // workers on every thread slowed every frame system about threefold while the world
-    // streamed in, whatever their priority, and took flightfast's p99 frame from 11 to 25 ms.
+    // (priority.rs). Cores, not hardware threads: on a machine with two threads a core (the
+    // Linux box's 16-core EPYC), workers on every thread slowed every frame system about
+    // threefold while the world streamed in, whatever their priority, and took flightfast's
+    // p99 frame from 11 to 25 ms. `VOXMAR_WORKERS=n` sets their number instead, for timing how
+    // many a busy machine's frames can take (tools/perf/play_frames).
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
+    let workers = std::env::var("VOXMAR_WORKERS")
+        .ok()
+        .and_then(|n| n.parse::<usize>().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or_else(|| physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2));
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .thread_name(|i| format!("worker-{i}"))
