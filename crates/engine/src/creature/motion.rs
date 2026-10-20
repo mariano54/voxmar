@@ -254,17 +254,17 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // against what it stands on now: the drop between them, and water there, judged the
     // same on the ground or in the air. A wall along the way is ground to no one.
     let reach = SAFE_DROP + 4;
-    // A railing's top, or the wall over it, is no landing: what comes down there is off
-    // the way, as over a drop too deep.
-    let landing = |from: IVec3| {
-        (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.solid(c - IVec3::Y)).filter(|&c| world.water(c) || world.footing(c - IVec3::Y))
-    };
-    // What it stands on is the highest ground under any part of its box: at an edge, its
-    // middle may already be over the drop.
+    let ground = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.solid(c - IVec3::Y));
+    // Ahead, a railing's top, or the wall over it, is no landing: what comes down there is
+    // off the way, as over a drop too deep.
+    let landing = |from: IVec3| ground(from).filter(|&c| world.water(c) || world.footing(c - IVec3::Y));
+    // What it stands on is the highest ground under any part of its box (at an edge, its
+    // middle may already be over the drop), whatever it is: one already up on a railing,
+    // or on the wall over it, still judges the drop beyond from there.
     let half = body.size.0 * 0.5 - 0.05;
     let Some(now) = [(0.0, 0.0), (half, half), (half, -half), (-half, half), (-half, -half)]
         .into_iter()
-        .filter_map(|(x, z)| landing((body.position + Vec3::new(x, 0.01, z)).floor().as_ivec3()))
+        .filter_map(|(x, z)| ground((body.position + Vec3::new(x, 0.01, z)).floor().as_ivec3()))
         .map(|c| c.y)
         .max()
     else {

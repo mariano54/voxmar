@@ -9573,7 +9573,8 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // middle, turning to each in reach rather than sent before every one.
     let spot = |i: usize| cells[((i / PIECE_BATCH) * PIECE_BATCH + PIECE_BATCH / 2).min(cells.len() - 1)];
     let under = canopy - IVec3::Y;
-    // The balcony door, on the ledge two along from where the player judges the shutters.
+    // The balcony door, on the ledge two along from where the player judges the shutters,
+    // turned west to face them.
     let balcony = IVec3::new(spot(shutters_at).x + 2, row.y - 1, row.z - 2);
     // Where the player stands to judge a piece: on the ledge, two blocks before it, eyes
     // level with the row.
@@ -9713,8 +9714,8 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             gate.check("pieces: shutters open", result);
             let net = world.resource::<Net>();
-            net.command(&format!("setblock {} {} {} balcony_door", balcony.x, balcony.y, balcony.z));
-            net.command(&format!("setblock {} {} {} balcony_door_top", balcony.x, balcony.y + 1, balcony.z));
+            net.command(&format!("setblock {} {} {} balcony_door_west", balcony.x, balcony.y, balcony.z));
+            net.command(&format!("setblock {} {} {} balcony_door_top_west", balcony.x, balcony.y + 1, balcony.z));
             gate.advance(now);
         }
         // The balcony door shut on client and server, both halves stopping movement with
@@ -9723,7 +9724,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let halves = [balcony, balcony + IVec3::Y].map(|cell| client.block(cell).map(|b| client.registry.collision(b).to_vec()).unwrap_or_default());
             let shapes = halves.iter().all(|boxes| !boxes.is_empty() && boxes.iter().map(|b| (b.max - b.min).element_product()).sum::<f32>() < 0.999);
-            let arrived = here(world, gate, balcony, "balcony_door") && here(world, gate, balcony + IVec3::Y, "balcony_door_top");
+            let arrived = here(world, gate, balcony, "balcony_door_west") && here(world, gate, balcony + IVec3::Y, "balcony_door_top_west");
             if !(arrived && shapes) && gate.server_in_phase() < STEP_LIMIT / 4.0 {
                 aim_at(world, balcony.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
                 return;
@@ -9740,7 +9741,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("pieces: balcony door shut", result);
             if shut {
                 let actions = world.resource::<crate::Actions>().0.clone();
-                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: balcony, face: voxmar_engine::coords::Face::NegZ });
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: balcony, face: voxmar_engine::coords::Face::NegX });
                 gate.advance(now);
             } else {
                 leave(world, gate);
@@ -9751,7 +9752,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         p if p == first_piece + names.len() as u32 + 3 => {
             let client = world.resource::<ClientWorld>();
             let stops = [balcony, balcony + IVec3::Y].iter().any(|&cell| client.block(cell).is_none_or(|b| !client.registry.collision(b).is_empty()));
-            let open = here(world, gate, balcony, "balcony_door_open") && here(world, gate, balcony + IVec3::Y, "balcony_door_open_top");
+            let open = here(world, gate, balcony, "balcony_door_open_west") && here(world, gate, balcony + IVec3::Y, "balcony_door_open_top_west");
             if !(open && !stops) && gate.server_in_phase() < STEP_LIMIT / 4.0 {
                 return;
             }
