@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Tint};
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
-use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3, Vec3Swizzles};
 use voxmar_engine::world::Column;
 
 use crate::{Generator, Overworld};
@@ -571,7 +571,7 @@ fn house_catalogue() {
         log: id("oak_log"),
         chimney: id("cobblestone"),
         crops: Vec::new(),
-        fruit: palette("apple_leaves_2"),
+        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: None,
     };
     // Each house with the roof and extras it is shown with.
     use Extra::*;
@@ -691,7 +691,7 @@ fn house_catalogue() {
             log: registry.id(&super::def::fill(&style.log, wood, wood)).unwrap(),
             chimney: block(&style.chimney),
             crops: Vec::new(),
-            fruit: palette("apple_leaves_2"),
+            fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: None,
         };
         let row: [(&str, Vec<Extra>); 6] = [
             ("cottage", vec![Chimney, Shutters]),
@@ -1120,7 +1120,7 @@ fn chimneys_stand_inside_and_just_clear_the_roof() {
         log: id("oak_log"),
         chimney: stack,
         crops: Vec::new(),
-        fruit: palette("apple_leaves_2"),
+        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: None,
     };
     let mut drawn = 0;
     for (n, h) in def.houses.iter().enumerate() {
@@ -1548,7 +1548,7 @@ fn every_storey_can_be_walked_to() {
     let mats = Mats {
         foundation: palette("cobblestone"), floor: id("spruce_planks"), wall: id("polished_calcite"), frame: id("dark_oak_log"),
         roof: id("dark_oak_planks"), trim: id("spruce_planks"), window: Some(id("old_glass")), weathered: palette("mossy_cobblestone"),
-        hedge: palette("oak_leaves"), log: id("oak_log"), chimney: id("cobblestone"), crops: Vec::new(), fruit: palette("apple_leaves_2"),
+        hedge: palette("oak_leaves"), log: id("oak_log"), chimney: id("cobblestone"), crops: Vec::new(), fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: None,
     };
     let solid = |b: BlockId| registry.def(b).solid;
     let mut walked = 0;
@@ -3273,6 +3273,123 @@ fn interiors_load_checks_refuse_strangers_and_unclaimed_beds() {
     assert!(bag.check(&content.blocks).is_err(), "a bed that is no furnishing was let through");
 }
 
+/// Every village as the world makes it, in full content: no flame of its own stands within
+/// reach of its thatch (rules.fire, as a home's fire catches), and its gables are laid in
+/// slope pieces whose low edge faces the eave, under a ridge cap.
+#[test]
+fn village_flames_never_reach_its_thatch() {
+    use super::roofs::{Fire, SIDES, SUFFIXES};
+    use voxmar_engine::coords::ColumnPos;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let def = &world_content.settlements;
+    let fire = Fire::new(&def.rules.fire, &registry, []);
+    let tagged = |b: BlockId, tag: &str| registry.def(b).has_tag(tag);
+    let facing = |b: BlockId| -> usize {
+        let name = &registry.def(b).name;
+        (1..4).find(|&i| name.ends_with(SUFFIXES[i])).unwrap_or(0)
+    };
+    let before = super::plan::ROOFS_RELAID.load(std::sync::atomic::Ordering::Relaxed);
+    let (mut places, mut thatch, mut shingles, mut slopes, mut ridges, mut flames, mut rising) = (0, 0, 0, 0, 0, 0, 0);
+    for seed in [42u64, 1] {
+        let world = Overworld::with_content(seed, registry.clone(), &world_content);
+        let spawn = world.spawn_point();
+        for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
+            let Some(plan) = slot.0.as_ref() else { continue };
+            places += 1;
+            let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
+            let mut at = |p: IVec3| -> BlockId {
+                let pos = ColumnPos::of_block(p);
+                let column = columns.entry(pos).or_insert_with(|| world.generate(pos));
+                let o = pos.origin();
+                column.block(IVec3::new(p.x - o.x, p.y, p.z - o.z))
+            };
+            let low = plan.buildings.iter().map(|b| b.floor).min().unwrap_or(crate::SEA_LEVEL) - 6;
+            let high = plan.buildings.iter().map(|b| b.floor).max().unwrap_or(crate::SEA_LEVEL) + 28;
+            let mut blocks: rustc_hash::FxHashMap<IVec3, BlockId> = Default::default();
+            for z in plan.min.y..=plan.max.y {
+                for x in plan.min.x..=plan.max.x {
+                    for y in low..=high {
+                        let p = IVec3::new(x, y, z);
+                        let b = at(p);
+                        if !b.is_air() {
+                            blocks.insert(p, b);
+                        }
+                    }
+                }
+            }
+            let exposed = fire.exposed(&blocks);
+            assert!(exposed.is_empty(), "{}: a flame reaches what catches: {:?}", plan.name.0,
+                exposed.iter().take(4).map(|(f, c)| format!("{} at {f} -> {} at {c}", registry.def(blocks[f]).name, registry.def(blocks[c]).name)).collect::<Vec<_>>());
+            flames += blocks.values().filter(|&&b| fire.flame(b)).count();
+            for (&p, &b) in &blocks {
+                if !tagged(b, "roof") || registry.info(b).render != voxmar_engine::block::RenderKind::Model {
+                    continue;
+                }
+                if tagged(b, "thatch") { thatch += 1 } else if tagged(b, "shingle") { shingles += 1 }
+                let d = SIDES[facing(b)];
+                if tagged(b, "ridge") {
+                    ridges += 1;
+                    continue;
+                }
+                if !tagged(b, "shingle") && !tagged(b, "thatch") {
+                    continue;
+                }
+                slopes += 1;
+                // Behind its high edge the roof goes on up (or meets the other slope at
+                // the peak): a slope turned the wrong way has the roof going down there.
+                let back = p - IVec3::new(d.x, 0, d.y);
+                let up = blocks.get(&(back + IVec3::Y)).is_some_and(|&n| tagged(n, "roof"));
+                let peak = blocks.get(&back).is_some_and(|&n| tagged(n, "roof") && !tagged(n, "ridge") && facing(n) == (facing(b) + 2) % 4);
+                let ridge = blocks.get(&back).is_some_and(|&n| tagged(n, "ridge"));
+                if up || peak || ridge {
+                    rising += 1;
+                }
+            }
+        }
+    }
+    let relaid = super::plan::ROOFS_RELAID.load(std::sync::atomic::Ordering::Relaxed) - before;
+    eprintln!("{places} places: {thatch} thatch and {shingles} shingle pieces ({slopes} slopes, {rising} rising behind, {ridges} ridges), {flames} flames; {relaid} pieces relaid in shingles");
+    assert!(places >= 4 && thatch > 100 && shingles > 100 && ridges > 10, "too few shaped roofs to judge");
+    // Chimneys and dormers break through a few.
+    assert!(rising * 100 >= slopes * 95, "only {rising} of {slopes} slopes have the roof rising behind them");
+}
+
+/// Loading refuses roof pieces that are not whole: a piece missing a facing or in some
+/// wood of its style, a slope or ridge not tagged so, a fire `instead` that catches, and a
+/// share or reach out of range.
+#[test]
+fn roof_pieces_and_fire_are_load_checked() {
+    use super::def::RoofPiecesDef;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let base = crate::content::WorldContent::load(&content).unwrap().settlements;
+    let refused = |change: &dyn Fn(&mut super::SettlementsDef)| {
+        let mut def = base.clone();
+        change(&mut def);
+        def.check(&content.blocks).is_err() || def.check_furnishings(&content.blocks).is_err()
+    };
+    let piece = |slope: &str, ridge: &str| RoofPiecesDef { slope: format!("base:{slope}"), ridge: format!("base:{ridge}"), weight: 1.0 };
+    let timber = |d: &mut super::SettlementsDef| d.styles.iter().position(|s| s.name == "timber_frame").unwrap();
+    assert!(!refused(&|_| {}));
+    assert!(base.styles.iter().any(|s| !s.roof_pieces.is_empty()) && base.rules.fire.instead.is_some());
+    // Spruce makes no shingles, and timber-frame villages may be built of spruce.
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].roof_pieces.push(piece("{wood}_shingles", "{wood}_shingle_ridge")) }));
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].roof_pieces.push(piece("oak_planks", "thatch_ridge")) }), "a whole block faces no way");
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].roof_pieces.push(piece("thatch_ridge", "thatch_roof")) }), "the slope and ridge swapped");
+    assert!(refused(&|d| d.rules.fire.instead = Some(piece("thatch_roof", "thatch_ridge"))), "the fire's roof catches itself");
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].pieced = 1.5 }));
+    assert!(refused(&|d| d.rules.fire.reach = 5));
+    use super::def::JettyDef;
+    let jetty = |beam: &str, chance: f32| Some(JettyDef { beam: format!("base:{beam}"), chance });
+    assert!(base.styles.iter().any(|s| s.jetty.is_some()));
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].jetty = jetty("dark_oak_jetty_beam", 1.5) }));
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].jetty = jetty("dark_oak_beam", 0.5) }), "a beam not tagged jetty");
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].jetty = jetty("no_such_jetty_beam", 0.5) }));
+}
+
 /// Trails come into a walled place through its gates: none runs over a column of its wall.
 #[test]
 fn trails_never_cross_a_wall() {
@@ -3298,4 +3415,183 @@ fn trails_never_cross_a_wall() {
     }
     assert!(places >= 6 && trails >= 20, "only {places} walled places and {trails} trails by them to judge");
     assert!(over.is_empty(), "{} trail points on a wall: {:?}", over.len(), &over);
+}
+
+/// Jettied houses in full content: each jetty beam stands out from the wall below it (its
+/// brace against that wall), under the overhanging floor, with that storey's wall a block
+/// further over the street than the one below.
+#[test]
+fn jettied_storeys_stand_out_on_their_beams() {
+    use super::roofs::{SIDES, SUFFIXES};
+    use voxmar_engine::coords::ColumnPos;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let solid = |b: BlockId| registry.info(b).solid;
+    let (mut places, mut beams, mut wrong) = (0, 0, Vec::new());
+    for seed in [42u64, 7] {
+        let world = Overworld::with_content(seed, registry.clone(), &world_content);
+        let spawn = world.spawn_point();
+        for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
+            let Some(plan) = slot.0.as_ref() else { continue };
+            places += 1;
+            let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
+            let mut at = |p: IVec3| -> BlockId {
+                let pos = ColumnPos::of_block(p);
+                let column = columns.entry(pos).or_insert_with(|| world.generate(pos));
+                let o = pos.origin();
+                column.block(IVec3::new(p.x - o.x, p.y, p.z - o.z))
+            };
+            let low = plan.buildings.iter().map(|b| b.floor).min().unwrap_or(crate::SEA_LEVEL) + 1;
+            let high = plan.buildings.iter().map(|b| b.floor).max().unwrap_or(crate::SEA_LEVEL) + 12;
+            for z in plan.min.y..=plan.max.y {
+                for x in plan.min.x..=plan.max.x {
+                    for y in low..=high {
+                        let p = IVec3::new(x, y, z);
+                        let b = at(p);
+                        if !registry.def(b).has_tag("jetty") {
+                            continue;
+                        }
+                        beams += 1;
+                        let name = &registry.def(b).name;
+                        let d = SIDES[(1..4).find(|&i| name.ends_with(SUFFIXES[i])).unwrap_or(0)];
+                        let out = IVec3::new(d.x, 0, d.y);
+                        // Behind it the wall below; over it the floor, and over that the
+                        // storey's wall, standing over the street where the floor below ends.
+                        let ok = solid(at(p - out)) && solid(at(p + IVec3::Y)) && solid(at(p - out + IVec3::Y)) && !solid(at(p + out));
+                        if !ok && wrong.len() < 6 {
+                            wrong.push(format!("{} at {p} ({name})", plan.name.0));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{places} places, {beams} jetty beams");
+    assert!(beams >= 10, "only {beams} jetty beams in {places} places");
+    assert!(wrong.is_empty(), "jetty beams not under a jetty: {wrong:?}");
+}
+
+/// `/locate settlement` finds what a look at every square in reach would find nearest,
+/// planning only the squares nearer than the answer: every square within thousands of
+/// blocks planned at once held a frame (and the server's tick) for seconds.
+#[test]
+fn the_nearest_settlement_is_found_nearest_first() {
+    let radius = 4000;
+    let every = shared_world(0x5eed);
+    let spawn = every.spawn_point();
+    for (from, size) in [(IVec2::new(spawn.x, spawn.z), None), (IVec2::new(spawn.x, spawn.z), Some("town")), (IVec2::new(spawn.x + 2500, spawn.z - 1800), Some("village"))] {
+        let away = |s: &crate::SettlementInfo| (s.centre.xz() - from).as_i64vec2().length_squared();
+        let wanted = every
+            .settlements_near(from, radius)
+            .iter()
+            .filter(|s| away(s) <= i64::from(radius).pow(2) && size.is_none_or(|size| s.size == size))
+            .min_by_key(|s| (away(s), s.centre.x, s.centre.z))
+            .map(|s| s.id);
+        let fresh = base_world(0x5eed);
+        let found = fresh.nearest_settlement(from, radius, |s| size.is_none_or(|size| s.size == size));
+        assert_eq!(found.as_ref().map(|s| s.id), wanted, "from {from} for {size:?}: {:?}", found.map(|s| (s.name.0, s.centre)));
+        // Planned: the squares whose nearest point is no farther than the answer (all in
+        // reach where there is none), besides those any world plans first for its spawn,
+        // and the rest of the last few planned side by side.
+        let spacing = fresh.settlements.def.grid.spacing;
+        let answer = found.as_ref().map_or(i64::from(radius).pow(2), away);
+        let (lo, hi) = (fresh.settlements.cell_of(from.x - radius, from.y - radius), fresh.settlements.cell_of(from.x + radius, from.y + radius));
+        let squares: Vec<IVec2> = (lo.y..=hi.y).flat_map(|z| (lo.x..=hi.x).map(move |x| IVec2::new(x, z))).collect();
+        let nearer = squares.iter().filter(|&&c| (from.clamp(c * spacing, (c + 1) * spacing - 1) - from).as_i64vec2().length_squared() <= answer).count();
+        let promised = fresh.settlements.promised(&fresh).iter().filter(|c| !squares.contains(c)).count();
+        let planned = fresh.settlements.made();
+        let side_by_side = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8) - 1;
+        assert!(planned <= nearer + promised + side_by_side, "from {from} for {size:?}: {planned} squares planned, only {nearer} as near as the answer (+{promised} for the spawn, +{side_by_side} side by side)");
+        eprintln!("from {from} for {size:?}: {planned} of {} squares in reach planned", squares.len());
+    }
+}
+
+/// A block belongs to the settlement of its own square or none (a settlement never
+/// reaches past its square), so a bed's settlement is found by planning that square
+/// alone, however far the bed stands from the settlement's middle.
+#[test]
+fn a_bed_belongs_to_the_settlement_of_its_square() {
+    let world = shared_world(0x5eed);
+    let spawn = world.spawn_point();
+    let town = world
+        .settlements_near(IVec2::new(spawn.x, spawn.z), 6000)
+        .into_iter()
+        .filter(|s| s.size == "town")
+        .max_by_key(|s| s.buildings.len())
+        .expect("a town");
+    let (far, bed) = town
+        .buildings
+        .iter()
+        .flat_map(|b| b.beds.iter().map(|&p| ((p.xz() - town.centre.xz()).as_vec2().length(), p)))
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .expect("a bed in the town");
+    assert!(far > 64.0, "{}'s farthest bed is only {far:.0} blocks from its middle", town.name.0);
+    let fresh = base_world(0x5eed);
+    let holding = fresh.settlement_holding(bed.xz()).expect("the bed's square settled");
+    assert_eq!(holding.id, town.id, "the bed at {bed} ({far:.0} blocks out) is {}'s, not {}'s", town.name.0, holding.name.0);
+    assert!(holding.buildings.iter().any(|b| b.beds.contains(&bed)));
+}
+
+/// A jettied house of three storeys keeps a floor along its old front line on every storey
+/// over the ground, and a sign board at the top of walls of three is not laid over by the
+/// row of beams under the overhang.
+#[test]
+fn jettied_houses_keep_their_floors_and_their_sign() {
+    use super::def::{Extra, Form, Roof};
+    use super::house::{self, Kind, Mats, Spec};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let def = &world_content.settlements;
+    let fixed = super::fixed(&registry, def).unwrap();
+    let id = |n: &str| registry.id(&format!("base:{n}")).unwrap();
+    let palette = |n: &str| super::canvas::Palette(vec![(id(n), 1.0)]);
+    let (floor, beam) = (id("spruce_planks"), id("stone_bricks"));
+    let mats = Mats {
+        foundation: palette("cobblestone"),
+        floor,
+        wall: id("polished_calcite"),
+        frame: id("dark_oak_log"),
+        roof: id("dark_oak_planks"),
+        trim: id("spruce_planks"),
+        window: Some(id("old_glass")),
+        weathered: palette("mossy_cobblestone"),
+        hedge: palette("oak_leaves"),
+        log: id("oak_log"),
+        chimney: id("cobbled_granite"),
+        crops: Vec::new(),
+        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: Some(([beam; 4], 1.0)),
+    };
+    let (w, d, wall, storeys) = (7, 7, 3, 3);
+    let mut drawn = 0;
+    for seed in 0..12u64 {
+        let spec = Spec {
+            kind: Kind::House, w, d, wall, storeys, roof: Roof::Gable, pitch: 1, ridge_x: true, door: w / 2, shed: 0, wing: None, stilts: 0,
+            extras: vec![Extra::SignBoard], regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: None, seed,
+        };
+        let (low, high) = spec.envelope();
+        let frame = super::canvas::Frame::fit(low, high, super::canvas::Facing::North, low, 0);
+        let mut canvas = super::canvas::Canvas::default();
+        house::draw(&spec, &frame, &mats, &fixed, &mut canvas);
+        let set = |x: i32, y: i32, z: i32| match canvas.absolute.get(&frame.at(x, y, z)) {
+            Some(super::canvas::Put::Set(b)) => Some(*b),
+            _ => None,
+        };
+        // Jettied: the beams under the first storey's front.
+        if !(0..w).any(|x| set(x, wall, -1) == Some(beam)) {
+            continue;
+        }
+        drawn += 1;
+        for storey in 1..storeys {
+            for x in 1..w - 1 {
+                assert!(set(x, storey * (wall + 1), 0).is_some_and(|b| registry.info(b).solid), "seed {seed}: no floor at {x} on storey {storey} where the front wall stood");
+            }
+        }
+        let sign = if w / 2 + 1 < w - 1 { w / 2 + 1 } else { w / 2 - 1 };
+        assert!(set(sign, 3, -1).is_some_and(|b| b != beam), "seed {seed}: the sign board by the door was laid over by a beam");
+    }
+    assert!(drawn > 0, "no house of the twelve was jettied");
 }

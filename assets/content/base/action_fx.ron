@@ -1,0 +1,81 @@
+// What the player's actions look like as they do them (crates/client/src/fx.rs), the
+// visual twin of sounds.ron's `actions`. Every action says how it shows, or the game does
+// not start: an `effect` by name (below), `shown` by another part of the game (Breaking:
+// the block's own pieces as it is mined and breaks; Combat: the fight's own marks), or
+// `none: true`. A later package that names an action replaces how it shows, and one that
+// names an effect replaces it.
+(
+    actions: {
+        // The block's own pieces chip off as it is mined and burst as it breaks.
+        "core:mine": (shown: Some(Breaking)),
+        // A small puff of the block's own dust round its foot as it settles.
+        "core:place": (effect: Some("settle")),
+        // Clay pressed onto a wall or the ground: the same puff as it takes.
+        "base:coat": (effect: Some("settle")),
+        // Food bitten: crumbs of it falling from the mouth, a bite at a time.
+        "core:eat": (effect: Some("crumbs")),
+        // Something made at the grid: a glint over what it made.
+        "core:craft": (effect: Some("made")),
+        // Gathering: a crop picked springs a few of its leaves; the soil turned or sown
+        // kicks up a little of itself; fertiliser falls as dust.
+        "base:pick": (effect: Some("picked")),
+        "base:till": (effect: Some("soil")),
+        "base:plant": (effect: Some("soil")),
+        "base:fertilise": (effect: Some("scatter")),
+        // Working at something: chips off the table, the machine or the station.
+        "base:use_table": (effect: Some("work")),
+        "base:use_machine": (effect: Some("work")),
+        "base:use_station": (effect: Some("work")),
+        // Food on the fire: steam rising off it.
+        "base:cook": (effect: Some("steam")),
+        // Flint struck: sparks off the tinder (the fire then shows itself).
+        "base:light": (effect: Some("sparks")),
+        // A soft glow rising at the altar.
+        "base:pray": (effect: Some("motes")),
+        "core:attack": (shown: Some(Combat)),
+        "core:dodge": (shown: Some(Combat)),
+        // Nothing to see on purpose: items moving on a screen, an item thrown (it flies
+        // itself), coming back to life (the screen says it), and things that show
+        // themselves (a door swinging, a lid lifting, a line cast, an animal fed or let go,
+        // a bed lain in, a seat sat on, a catch taken from a trap, a lock giving, a pouch emptied, bees tended).
+        "core:transfer": (none: true),
+        "core:quick_move": (none: true),
+        "core:lay": (none: true),
+        "core:stow": (none: true),
+        "core:drop": (none: true),
+        "core:respawn": (none: true),
+        "base:open": (none: true),
+        "base:open_store": (none: true),
+        "base:fish": (none: true),
+        "base:tend": (none: true),
+        "base:inspect": (none: true),
+        "base:release": (none: true),
+        "base:sleep": (none: true),
+        "base:sit": (none: true),
+        "base:take_from_trap": (none: true),
+        "base:pick_lock": (none: true),
+        "base:empty_pouch": (none: true),
+        "base:tend_bees": (none: true),
+    },
+    // Each effect: where it shows (`at`: Placed, the block just set; Target, the block
+    // aimed at; Top, the top of it; Mouth, just before the eyes; Made, over what the grid
+    // made), what its particles look like (`look`: Block, pieces of that block's texture;
+    // Held, specks the colour of the item in hand; Color, specks of one colour), how many
+    // (`count`, in `bursts` that many `every` seconds apart), how fast they fly out
+    // (`speed`) and up (`lift`, blocks a second), how they fall (`gravity`, `drag`) or rise
+    // (`rise`: carried up, as smoke is), how big (`size`, blocks) and long they live
+    // (`life`, seconds), and whether they shine by their own light (`glow`). The particle
+    // setting scales every count.
+    effects: {
+        "settle": (at: Placed, look: Block, count: 12, ring: true, speed: 1.6, lift: 0.8, gravity: 6.0, drag: 3.0, size: (0.05, 0.09), life: (0.35, 0.7)),
+        "crumbs": (at: Mouth, look: Held, count: 4, bursts: 3, every: 0.18, speed: 0.6, lift: 0.4, gravity: 14.0, drag: 0.6, size: (0.03, 0.05), life: (0.5, 0.8)),
+        "made": (at: Made, look: Color((255, 236, 170)), count: 1, size: (0.0, 0.0), life: (0.35, 0.35), glow: true),
+        "picked": (at: Target, look: Block, count: 6, speed: 1.4, lift: 2.6, gravity: 12.0, drag: 0.8, size: (0.06, 0.1), life: (0.5, 0.9)),
+        "soil": (at: Top, look: Block, count: 8, speed: 1.2, lift: 2.2, gravity: 14.0, drag: 0.8, size: (0.05, 0.08), life: (0.4, 0.7)),
+        "scatter": (at: Top, look: Held, count: 10, speed: 0.5, lift: 0.6, gravity: 5.0, drag: 1.5, size: (0.03, 0.05), life: (0.5, 0.9), drop: 0.6),
+        "work": (at: Target, look: Block, count: 6, speed: 1.6, lift: 1.8, gravity: 14.0, drag: 0.8, size: (0.05, 0.08), life: (0.35, 0.6)),
+        "steam": (at: Top, look: Color((235, 235, 235)), alpha: 110, count: 6, bursts: 3, every: 0.5, speed: 0.15, lift: 0.9, rise: true, drag: 0.8, size: (0.18, 0.28), life: (1.0, 1.6)),
+        "sparks": (at: Target, look: Color((255, 200, 90)), count: 9, speed: 2.4, lift: 1.6, gravity: 9.0, drag: 1.2, size: (0.025, 0.04), life: (0.25, 0.5), glow: true),
+        "motes": (at: Top, look: Color((255, 230, 160)), count: 8, speed: 0.25, lift: 0.7, rise: true, drag: 0.5, size: (0.04, 0.07), life: (1.2, 2.0), glow: true),
+    },
+)
