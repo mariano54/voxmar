@@ -1394,7 +1394,7 @@ impl Server {
                     && !self.generating.contains(&pos)
                     // Generating on fewer workers than there are, when a game playing on this
                     // machine asks it to (voxmar_engine::jobs).
-                    && let Some(slot) = voxmar_engine::jobs::start()
+                    && let Some(slot) = voxmar_engine::jobs::start(voxmar_engine::jobs::Kind::Columns)
                 {
                     self.generating.insert(pos);
                     let (generator, save, registry) = (self.generator.clone(), self.save.clone(), self.content.blocks.clone());

@@ -229,6 +229,22 @@ impl ClientWorld {
         self.in_flight.is_empty() && self.dirty.iter().all(|&pos| !self.voxels.contains(pos) || !self.meshable(pos))
     }
 
+    /// Whether every column within `radius` of `center` has come.
+    pub fn all_in(&self, center: ColumnPos, radius: i32) -> bool {
+        (-radius..=radius).all(|dz| (-radius..=radius).all(|dx| self.voxels.contains(center.offset(dx, dz))))
+    }
+
+    /// Whether the land in view of `center` is all built: every column within the view
+    /// distance come, and every one inside its edge (whose neighbours have come too) meshed
+    /// and up to date. An edge waiting for neighbours is no hole; one inside it is.
+    pub fn built_in_view(&self, center: ColumnPos) -> bool {
+        let inner = self.view_distance - 1;
+        let built = |pos: ColumnPos| self.details.contains_key(&pos) && !self.dirty.contains(&pos);
+        self.in_flight.is_empty()
+            && self.all_in(center, self.view_distance)
+            && (-inner..=inner).all(|dz| (-inner..=inner).all(|dx| built(center.offset(dx, dz))))
+    }
+
     /// How many columns straight ahead of `eye` along `forward` (on the ground plane) are
     /// meshed before the first that is not, a strip three columns wide, up to the view
     /// distance: the land a flight has in front of it, which falls short when streaming
@@ -431,7 +447,7 @@ fn dispatch_jobs(
     for pos in ready {
         let Some(columns) = world.neighborhood(pos) else { continue };
         // Streaming on fewer workers than there are, once playing (workers.rs).
-        let Some(slot) = voxmar_engine::jobs::start() else { break };
+        let Some(slot) = voxmar_engine::jobs::start(voxmar_engine::jobs::Kind::Meshes) else { break };
         dispatched += 1;
         world.dirty.remove(&pos);
         start_job(world, pos, center, columns, None, Some(slot));
@@ -707,6 +723,13 @@ mod tests {
         assert!(world.caught_up(), "the rest wait for neighbours");
         world.in_flight.insert(ColumnPos::new(0, 0), 1);
         assert!(!world.caught_up(), "one being meshed");
+        world.in_flight.clear();
+        world.view_distance = 1;
+        assert!(world.all_in(ColumnPos::new(0, 0), 1));
+        assert!(!world.all_in(ColumnPos::new(1, 0), 1), "the next ring not come");
+        assert!(!world.built_in_view(ColumnPos::new(0, 0)), "the middle not meshed: a hole");
+        world.details.insert(ColumnPos::new(0, 0), 1);
+        assert!(world.built_in_view(ColumnPos::new(0, 0)), "the edge waits for neighbours");
     }
 
     #[test]
