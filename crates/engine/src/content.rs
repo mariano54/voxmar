@@ -200,6 +200,35 @@ pub struct ContentFile {
     pub source: String,
 }
 
+/// The files of a package another crate reads from `Content::files`, by name: worldgen's
+/// (the land, its biomes, settlements and ores), the server's (survival, the spawn kit,
+/// wear) and the client's (sounds, music, the look of the HUD). With the engine's own, these
+/// are every name a package's `.ron` may have; any other is read by nothing, which the load
+/// notes (a misspelt `quest.ron` would otherwise be dropped without a word).
+pub const READ_ELSEWHERE: &[&str] = &[
+    "ambience.ron", "ambient.ron", "biomes.ron", "cave_biomes.ron", "celebrations.ron", "climate.ron", "combat_fx.ron",
+    "combat_hud.ron", "creature_motion.ron", "creature_sounds.ron", "cultures.ron", "decorations.ron", "hoards.ron",
+    "interface.ron", "lairs.ron", "land.ron", "look.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron",
+    "quest_paths.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
+    "survival.ron", "terrain.ron", "trails.ron", "trees.ron", "wear.ron",
+];
+
+/// How many single letters `a` and `b` differ by (added, dropped or changed).
+fn letters_apart(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, x) in a.chars().enumerate() {
+        let mut last = row[0];
+        row[0] = i + 1;
+        for (j, &y) in b.iter().enumerate() {
+            let next = (last + usize::from(x != y)).min(row[j] + 1).min(row[j + 1] + 1);
+            last = row[j + 1];
+            row[j + 1] = next;
+        }
+    }
+    row[b.len()]
+}
+
 impl Content {
     /// The least tool that is a `kind` of at least `tier`, by property: the lowest tier, then
     /// the lowest worth (value.rs), then the first in registry order. What a refusal names
@@ -260,6 +289,9 @@ impl Content {
         let mut shapes = Vec::new();
         let mut shape_limits = Setting::<crate::shape::ShapeLimits>::default();
         let mut files = Vec::new();
+        // The files nothing reads, and the names of those something did, to name the
+        // likeliest meant.
+        let (mut unread, mut read) = (Vec::new(), std::collections::BTreeSet::new());
         for package in &packages {
             let path = dir.join(package);
             let mut names: Vec<String> = std::fs::read_dir(&path)
@@ -272,6 +304,7 @@ impl Content {
             for name in names {
                 let file = path.join(&name);
                 let source = std::fs::read_to_string(&file).map_err(|e| read_error(&file, e))?;
+                let (named, unread_before) = (name.clone(), unread.len());
                 match name.as_str() {
                     // `blocks.ron`, and `blocks_<topic>.ron` for families of blocks a system
                     // owns (what creatures drop), each read the same way.
@@ -419,9 +452,25 @@ impl Content {
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    _ => files.push(ContentFile { package: package.clone(), name, source }),
+                    _ => {
+                        if !READ_ELSEWHERE.contains(&name.as_str()) {
+                            unread.push(format!("{package}/{name}"));
+                        }
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                }
+                if unread.len() == unread_before {
+                    read.insert(named);
                 }
             }
+        }
+        for file in unread {
+            let name = file.rsplit('/').next().unwrap_or_default();
+            let meant = read.iter().map(|known| (letters_apart(name, known), known)).filter(|&(apart, _)| apart <= 2).min();
+            notes.push(match meant {
+                Some((_, known)) => format!("{file} is read by nothing (meant {known}?)"),
+                None => format!("{file} is read by nothing: no part of the game reads a file of that name"),
+            });
         }
         let renames = BlockRegistry::renames(&blocks);
         let blocks = BlockRegistry::expand(blocks)?;
