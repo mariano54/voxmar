@@ -1009,7 +1009,7 @@ fn answer_tended(waiting: &mut Vec<Tended>, now: f32, meanwhile: impl Fn(&Tended
 
 /// A sound a creature makes now.
 fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
-    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young, answering: false }
+    CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young, answering: false, chatter: false }
 }
 
 /// Applies what the server sent, then moves and animates every creature, and handles
@@ -1427,12 +1427,12 @@ fn show(
         if (shown.stride * 2.0).floor() != before_step && speed > 0.3 && shown.dying.is_none() && def.movement.style != Style::Drifter {
             sounds.push(sound(Sound::Step, id, &shown.view, shown.position, speed));
         }
-        // Now and then, at its own pace, a contented noise, or a call to its kind.
+        // Now and then, at its own pace, a contented noise, or a call to its kind (by the
+        // hour, as its voice says).
         shown.quiet -= dt;
         if shown.quiet <= 0.0 && shown.dying.is_none() {
             let roll = creature::unit_from(creature::mix(shown.view.seed as u64, (now * 10.0) as u64));
-            let kind = if roll < 0.25 { Sound::Call } else { Sound::Idle };
-            sounds.push(sound(kind, id, &shown.view, shown.position, speed));
+            sounds.push(CreatureSound { chatter: true, ..sound(Sound::Idle, id, &shown.view, shown.position, speed) });
             shown.quiet = 6.0 + roll * 18.0;
         }
         shown.flash = (shown.flash - dt).max(0.0);
