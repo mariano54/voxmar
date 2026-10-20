@@ -1199,7 +1199,7 @@ impl WanderRegistry {
                 if guard.near < 3.0 || guard.warn < 0.5 || guard.calm <= guard.near {
                     return Err(error(format!("`guard` needs near of at least 3, a warning of half a second and calm further than near, not {guard:?}")));
                 }
-                if !groups.iter().any(|(species, _)| creatures.get(*species).fights()) {
+                if !groups.iter().any(|(species, group)| creatures.get(*species).fights_as(group.young)) {
                     return Err(error("guards, but nobody in the cast fights".into()));
                 }
             }

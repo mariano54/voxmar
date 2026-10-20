@@ -174,15 +174,18 @@ fn local_connection(accepted: crossbeam_channel::Sender<voxmar_protocol::ServerC
 
 impl Client {
     /// Joins a new server in-process, as singleplayer does.
+    #[track_caller]
     fn join() -> Self {
         Self::join_with(ServerConfig { view_distance: 2, ..Default::default() })
     }
 
+    #[track_caller]
     fn join_with(config: ServerConfig) -> Self {
         Self::join_named(config, "test")
     }
 
     /// Joins a new server on `config` as `name`.
+    #[track_caller]
     fn join_named(config: ServerConfig, name: &str) -> Self {
         let content = content();
         let server = spawn(config, content.clone()).unwrap();
@@ -221,6 +224,7 @@ impl Client {
     /// Prepares the content and Hello before opening a connection. Loading and hashing
     /// the fixture must not spend the server's pending-login deadline, especially when
     /// other tests keep this process off its cores. `prepare` can model that delay in ticks.
+    #[track_caller]
     fn greet_content(open: impl FnOnce() -> ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>, prepare: impl FnOnce() -> Content) -> Self {
         let content = prepare();
         let hello = ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: admin_token.map(str::to_owned) };
@@ -294,6 +298,7 @@ impl Client {
     /// is opening the world and generating where the player stands, never idle, so until
     /// then the time in all is the CPU time its thread had: at load 120 a server starting
     /// with a share of a core sent no welcome for 60 s while it worked all along.
+    #[track_caller]
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
         const AWAY: Duration = Duration::from_millis(500);
         let began = Instant::now();
@@ -470,6 +475,7 @@ impl Client {
     /// do about the messages sent before it is done, for checking that something did not
     /// happen without waiting a fixed time. Sound only for in-process clients, whose
     /// messages reach the server at once; over TCP a message may still be in flight.
+    #[track_caller]
     fn after_server_ticks(&mut self, ticks: u64) {
         let ran = |c: &Self| c._server.as_ref().expect("the first player holds the server").ticks();
         let until = ran(self) + ticks + 1;
@@ -488,6 +494,7 @@ impl Client {
     /// Applies what the server sends until it tells of a tick at least `ticks` past the
     /// last it told of, or `done`: a wait by the server's clock, which a busy machine
     /// slows with it.
+    #[track_caller]
     fn pump_ticks(&mut self, ticks: u64, done: impl Fn(&Self) -> bool) {
         let until = self.server_tick + ticks;
         self.pump_until(|c| c.server_tick >= until || done(c));
@@ -521,11 +528,13 @@ impl Client {
 
     /// Waits until the server's clock has run at least `seconds` on (it tells the time every
     /// second, so a little more).
+    #[track_caller]
     fn wait_server(&mut self, seconds: u64) {
         self.after_ticks(seconds * TICKS_PER_SECOND as u64);
     }
 
     /// Runs a command and returns the console lines it answers with.
+    #[track_caller]
     fn command(&mut self, line: &str) -> Vec<(ChatKind, String)> {
         self.chat.clear();
         self.connection.send(ClientMessage::Command { line: line.into() });
@@ -535,12 +544,29 @@ impl Client {
 
     /// Waits until the server has handled everything sent before (refused or instant
     /// actions included), by a command's answer coming back after them.
+    #[track_caller]
     fn settle(&mut self) {
         self.ok("/time");
     }
 
+    /// Waits until the land of the columns all round the player's is in, its own too. Tests
+    /// build within a few blocks of where the player stands, and the server judges a
+    /// structure (a kiln's cook, a machine's survey) only on land it holds; on a busy machine
+    /// a column beside the player's took many seconds more to load than the player's own, and
+    /// a check timed in the server's seconds ran out on land not yet there (a kiln across two
+    /// columns refused its cook; a turbine hall stayed incomplete for 17 server seconds). The
+    /// server sends only land it holds, so once the client has it, so has the server.
+    #[track_caller]
+    fn land_round(&mut self) {
+        self.pump_until(|c| {
+            let at = ColumnPos::of_block(c.position.floor().as_ivec3());
+            (-1..=1).all(|dx| (-1..=1).all(|dz| c.world.contains(at.offset(dx, dz))))
+        });
+    }
+
     /// Waits until at least `ticks` server ticks have passed from now, by the server's own
     /// clock (it tells it once a second).
+    #[track_caller]
     fn after_ticks(&mut self, ticks: u64) {
         let told = self.server_tick;
         self.pump_until(|c| c.server_tick > told);
@@ -550,6 +576,7 @@ impl Client {
 
     /// Waits until `count` holds still across 20 server ticks after everything sent was
     /// handled (drops still landing, pick-ups on the way), and returns it.
+    #[track_caller]
     fn quiet(&mut self, count: impl Fn(&Self) -> usize) -> usize {
         for _ in 0..30 {
             self.settle();
@@ -574,6 +601,7 @@ impl Client {
     }
 
     /// Runs a command that should succeed, returning its answer.
+    #[track_caller]
     fn ok(&mut self, line: &str) -> String {
         let lines = self.command(line);
         assert!(lines.iter().all(|(kind, _)| *kind == ChatKind::Info), "{line}: {lines:?}");
@@ -2236,6 +2264,7 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
 /// paid fire survive reload; taking out a brick and putting it back leaves it cold.
 #[test]
 fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
+    lockstep("a kiln's charge burns down by the server's ticks, so the cook after the reload finds it lit however long a busy machine takes by the clock");
     let dir = world_dir("kiln-fire");
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
@@ -2243,6 +2272,23 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     // The kiln lit, the quest's last part.
     let lit = |c: &Client| c.quests.iter().find(|q| q.name == "base:crucible_kiln").unwrap().tasks[0].last().unwrap().0;
     let light = |c: &Client| c.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    // A cook takes its seconds of the clock, judged by when messages arrive: proposed as if
+    // clicked now, with a command stamped just past its time, it is done at once, so no
+    // clock time passes in lockstep while the charge burns by ticks. The command's answer is
+    // read here, not taken for the next one's.
+    let cook = |c: &mut Client| {
+        let action = c.content.actions.expect("base:cook");
+        let seconds = match c.content.actions.get(action).expect("base:cook is defined").duration {
+            voxmar_engine::action::Duration::Seconds(s) => s,
+            other => panic!("a cook is timed in seconds, not {other:?}"),
+        };
+        let at = Instant::now();
+        c.propose_at("base:cook", ActionTarget::Block { block: core, face: Face::PosY }, at);
+        c.chat.clear();
+        c.connection.send_at(ClientMessage::Command { line: "/time".into() }, at + Duration::from_secs_f32(seconds + 0.1));
+        c.pump_until(|c| c.chat.iter().any(|(_, text)| text.contains("(tick ")));
+        c.chat.clear();
+    };
     let count = |c: &Client, name: &str| {
         let item = c.content.blocks.expect(name);
         c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
@@ -2277,13 +2323,15 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     let meta = voxmar_server::save::WorldSave::new(&dir).read_meta().unwrap();
     let fire = meta.lit.iter().find(|fire| fire.position == core.to_array()).expect("saved paid fire").clone();
     let mut client = Client::join_with(config());
+    // This kiln stands across two columns: a cook asked before the other is in is turned down.
+    client.land_round();
     client.pump_until(|c| !c.quests.is_empty() && c.world.block(core) == c.content.blocks.id("base:crucible"));
     assert_eq!(lit(&client), 1);
     light(&client);
     client.settle();
     client.ok("/give copper_ore 1");
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
-    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    cook(&mut client);
     client.pump_until(|c| count(c, "base:copper_ingot") == 1);
     // Two consecutive edits must quench it even before any cooking or quest check.
     for line in ["/setblock ~3 ~1 ~-1 air", "/setblock ~3 ~1 ~-1 kiln_bricks"] { client.ok(line); }
@@ -2291,7 +2339,7 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     client.ok("/give copper_ore 1");
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
     client.chat.clear();
-    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    cook(&mut client);
     client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, "base:copper_ore"), 1);
     assert_eq!(count(&client, "base:copper_ingot"), 0);
@@ -3550,6 +3598,334 @@ fn long_steps_off_ledges_down_terraces_and_up_steps_are_not_snapped() {
     // And back up one: up first, then across.
     client.send_position(at_ledge + Vec3::new(2.0, -2.0, 0.0), false);
     assert!(client.all_accepted(), "snapped back to {:?}", client.teleported);
+}
+
+#[test]
+fn walkers_stand_on_shaped_blocks_where_they_stop_them() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Southwards: a slab, a stair whose step faces north (the way it comes), a plank.
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_slab");
+    client.fill(at, IVec3::new(0, 0, 2), IVec3::new(0, 0, 2), "oak_stairs");
+    client.fill(at, IVec3::new(0, 0, 3), IVec3::new(0, 0, 3), "oak_planks");
+    // On the slab's top, half a block up in its cell, then the stair's upper step and the
+    // plank: where the client stepped up to, none of it inside a block.
+    client.send_position(start + Vec3::new(0.0, 0.5, 1.0), false);
+    client.send_position(start + Vec3::new(0.0, 1.0, 2.25), false);
+    client.send_position(start + Vec3::new(0.0, 1.0, 3.0), false);
+    assert!(client.all_accepted(), "a walker on shaped blocks was put back to {:?}", client.teleported);
+    // But not sunk into the slab: its lower half stops movement.
+    client.send_position(start + Vec3::new(0.0, 0.25, 1.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::new(0.0, 1.0, 3.0)), "stood inside the slab");
+}
+
+/// Ground is what the feet rest on as drawn. Pressed into the corner of a shaft walled with
+/// columns and barrels, a player's box reaches into both walls' cells but touches neither,
+/// so it is no ground: a dodge there is refused, and the fall down it hurts. On a slab's top
+/// it is ground.
+#[test]
+fn a_shaft_lined_with_shaped_blocks_is_no_ground_to_dodge_or_break_a_fall_on() {
+    real_time("movement and combat are judged on the clock: how far a player may get between messages, a dodge's grace in seconds");
+    let mut client = on_a_test_floor();
+    client.ok("/gamemode survival");
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Columns on the west, barrels on the south, five high from the floor.
+    client.fill(at, IVec3::new(-1, 0, 0), IVec3::new(-1, 4, 0), "stone_column");
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 4, 1), "barrel");
+    // Clear of the columns' bases and capitals (2/16 in) and the barrels' hoops (1.5/16 in).
+    let corner = at.as_vec3() + Vec3::new(0.2, 0.0, 0.75);
+    let top = corner + Vec3::Y * 5.0;
+    client.tp(top);
+    // Past the dodge's grace since the floor.
+    client.wait_server(1);
+    assert!(!dodge_taken(&mut client), "a dodge in mid-air beside columns and barrels was taken");
+    client.teleported = None;
+    for y in (0..5).rev() {
+        client.send_position(corner + Vec3::Y * y as f32, false);
+        // A server tick on each step, so the fall is seen block by block.
+        client.after_server_ticks(1);
+    }
+    client.after_server_ticks(4);
+    assert_eq!(client.health, 18, "a five block fall down the shaft costs two health: the shaft's walls broke the fall");
+    assert!(client.teleported.is_none(), "the fall was put back to {:?}", client.teleported);
+    // A slab's top is ground to dodge from.
+    client.fill(at, IVec3::new(3, 0, 0), IVec3::new(3, 0, 0), "oak_slab");
+    client.tp(start + Vec3::new(3.0, 0.5, 0.0));
+    client.after_server_ticks(2);
+    assert!(dodge_taken(&mut client), "a dodge on a slab's top was refused");
+}
+
+/// A sprint at a low frame rate climbs a slab and then a whole block in one input, under a
+/// ceiling too low over its start to rise there first: neither the straight line, nor
+/// across then up, nor up then across clears, but walking up each step in turn does.
+#[test]
+fn two_half_steps_in_one_input_are_climbed_under_a_low_ceiling() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_slab");
+    client.fill(at, IVec3::new(0, 0, 2), IVec3::new(0, 0, 2), "oak_planks");
+    // 2.5 over the start, 3 over the slab: room to stand on the slab and step up from it.
+    client.fill(at, IVec3::new(0, 2, 0), IVec3::new(0, 2, 0), "oak_slab_top");
+    client.fill(at, IVec3::new(0, 3, 1), IVec3::new(0, 3, 1), "oak_planks");
+    client.send_position(start + Vec3::new(0.0, 1.0, 2.0), false);
+    assert!(client.all_accepted(), "two half-steps in one input were put back to {:?}", client.teleported);
+    // A whole block is still a jump, not two steps: none of it on a stair of whole blocks.
+    client.tp(start);
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_planks");
+    client.fill(at, IVec3::new(0, 1, 2), IVec3::new(0, 1, 2), "oak_planks");
+    client.send_position(start + Vec3::new(0.0, 2.0, 2.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start), "climbed two whole blocks in one input");
+}
+
+/// A walk up a stair of slabs and planks onto the roof of a sealed room, in one input, ends
+/// on the roof, not in the room: the way down from the top of the climb to where the input
+/// says is through the roof.
+#[test]
+fn a_climb_in_one_input_ends_on_a_roof_not_in_the_room_under_it() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Eastwards, each top half a block above the last: slab, plank, then the same a level
+    // up and another, the last beside the room's roof.
+    for (x, y, block) in [(1, 0, "oak_slab"), (2, 0, "oak_planks"), (3, 1, "oak_slab"), (4, 1, "oak_planks"), (5, 2, "oak_slab"), (6, 2, "oak_planks")] {
+        client.fill(at, IVec3::new(x, 0, 0), IVec3::new(x, y - 1, 0), "oak_planks");
+        client.fill(at, IVec3::new(x, y, 0), IVec3::new(x, y, 0), block);
+    }
+    // The room: one cell two high at x+7, walled and roofed in planks.
+    client.fill(at, IVec3::new(6, 0, -1), IVec3::new(8, 2, 1), "oak_planks");
+    client.fill(at, IVec3::new(7, 0, 0), IVec3::new(7, 1, 0), "air");
+    client.tp(start);
+    client.send_position(start + Vec3::new(7.0, 0.0, 0.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start), "got into a sealed room through its roof");
+}
+
+/// A spot the server took as clear stays clear when a shape comes or goes beside it: which
+/// of its two boxes judges the spot (the margin box near shapes, the share box among whole
+/// blocks) never flips it into a wall, where only the end of the next move would be
+/// checked and a player could step through any wall into a sealed room. Pressed a fortieth
+/// into a plank wall (the share box allows it) with a slab then set in the cell their box
+/// only touches; or a two-hundredth into the floor beside a headstone that is then mined.
+#[test]
+fn a_shape_placed_or_mined_beside_a_player_never_lets_them_through_a_wall() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // The room: one cell two high at x+4, walled and roofed in planks.
+    let room = |client: &mut Client| {
+        client.fill(at, IVec3::new(3, 0, -1), IVec3::new(5, 2, 1), "oak_planks");
+        client.fill(at, IVec3::new(4, 0, 0), IVec3::new(4, 1, 0), "air");
+    };
+    let into = at.as_vec3() + Vec3::new(4.5, 0.0, 0.5);
+    // A plank wall at x+1, the player against it with their box's south side on a cell's edge.
+    room(&mut client);
+    client.fill(at, IVec3::new(1, 0, -2), IVec3::new(1, 1, 2), "oak_planks");
+    let pressed = at.as_vec3() + Vec3::new(1.0 - 0.3 + 0.025, 0.0, 0.7);
+    client.tp(pressed);
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_slab");
+    client.send_position(into, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(pressed), "into a sealed room through a wall, after a slab was set beside a player pressed against it");
+    // A headstone at x+1, the player sunk a little into the floor beside it; then it is mined.
+    client.fill(at, IVec3::new(0, 0, -2), IVec3::new(2, 2, 2), "air");
+    room(&mut client);
+    client.fill(at, IVec3::new(1, 0, 0), IVec3::new(1, 0, 0), "stone_headstone");
+    let sunk = at.as_vec3() + Vec3::new(0.75, -0.005, 0.5);
+    client.tp(sunk);
+    client.fill(at, IVec3::new(1, 0, 0), IVec3::new(1, 0, 0), "air");
+    client.send_position(into, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(sunk), "into a sealed room through a wall, after a headstone beside a player was mined");
+}
+
+/// The test client's world as the engine's movement takes it, as the game's client moves
+/// its player: blocks by their boxes, no water.
+struct Seen<'a>(&'a Client);
+
+impl voxmar_engine::movement::Surroundings for Seen<'_> {
+    fn solid(&self, cell: IVec3) -> bool {
+        !self.boxes(cell).is_empty()
+    }
+
+    fn boxes(&self, cell: IVec3) -> &[voxmar_engine::physics::Aabb] {
+        self.0.world.block(cell).map_or(&[], |b| self.0.content.blocks.collision(b))
+    }
+
+    fn water(&self, _: &voxmar_engine::physics::Aabb) -> (f32, voxmar_engine::glam::Vec2) {
+        (0.0, voxmar_engine::glam::Vec2::ZERO)
+    }
+}
+
+/// An honest client among shapes: the engine's own movement at 30, 60 and 144 frames a
+/// second, sending where it is twenty times a second, sprinting along each course straight
+/// or drifting into its side (sliding along a wall, past the corners of shapes), jumping
+/// or not, is never put back. The courses: a slab floor along a plank wall under a plank
+/// ceiling the jumps hit; a row of barrels, pot shelves, columns, a plank block and
+/// headstones beside the way; a slab, a stair and plank blocks climbed in half steps; and
+/// a plank wall stepping back a block every four, run into at a slant round its outside
+/// corners, on a slab floor (judged by the margin box) and on the plain floor (the share box).
+/// Each input is stamped with the client's own clock (as `going_silent_does_not_buy_more_time_hovering`),
+/// so the server's ticks may run quick.
+#[test]
+fn honest_movement_among_shapes_is_never_put_back() {
+    use voxmar_engine::movement::{Body, Controls, advance};
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    let tuning = client.content.movement.clone();
+    let wall_row = ["barrel", "oak_pot_shelf", "stone_column", "oak_planks", "stone_headstone"];
+    // Each course: boxes of blocks to fill, corners from `at`.
+    type Fills = Vec<(IVec3, IVec3, &'static str)>;
+    // A plank wall two high north of the way, a block further back every four blocks along.
+    let stepped = |floor: Option<&'static str>| -> Fills {
+        let mut fills: Fills = floor.map(|slab| (IVec3::new(1, 0, -6), IVec3::new(20, 0, 1), slab)).into_iter().collect();
+        fills.extend((0..5).map(|k| (IVec3::new(1 + 4 * k, 0, -2 - k), IVec3::new(4 + 4 * k, 1, -2 - k), "oak_planks")));
+        fills
+    };
+    let (straight, slanting) = (&[0.0, 0.3][..], &[0.3, 0.6, 1.0][..]);
+    let courses: [(&str, Fills, &[f32]); 5] = [
+        ("slab floor along a wall under a ceiling", vec![
+            (IVec3::new(1, 0, -1), IVec3::new(20, 0, 1), "oak_slab"),
+            (IVec3::new(1, 0, -2), IVec3::new(20, 3, -2), "oak_planks"),
+            (IVec3::new(1, 3, -1), IVec3::new(20, 3, 1), "oak_planks"),
+        ], straight),
+        ("shapes beside the way", (0..20).map(|i| {
+            let cell = IVec3::new(1 + i, 0, -1);
+            (cell, cell, wall_row[i as usize % wall_row.len()])
+        }).collect(), straight),
+        ("slab, stair and planks in half steps", vec![
+            (IVec3::new(2, 0, -1), IVec3::new(2, 0, 1), "oak_slab"),
+            (IVec3::new(3, 0, -1), IVec3::new(3, 0, 1), "oak_stairs_west"),
+            (IVec3::new(4, 0, -1), IVec3::new(5, 0, 1), "oak_planks"),
+            (IVec3::new(5, 1, -1), IVec3::new(5, 1, 1), "oak_slab"),
+            (IVec3::new(6, 0, -1), IVec3::new(20, 1, 1), "oak_planks"),
+        ], straight),
+        ("a wall stepping back, on slabs", stepped(Some("oak_slab")), slanting),
+        ("a wall stepping back, on the floor", stepped(None), slanting),
+    ];
+    // Ground under the stepping wall, which reaches past the test floor's north edge.
+    client.fill(at, IVec3::new(1, -1, -6), IVec3::new(20, -1, -4), "stone");
+    client.fill(at, IVec3::new(1, 0, -6), IVec3::new(20, 3, -4), "air");
+    // The client's clock, on past every run's inputs.
+    let mut clock = Instant::now();
+    let mut put_back = Vec::new();
+    for (course, blocks, drifts) in &courses {
+        for &(from, to, block) in blocks {
+            client.fill(at, from, to, block);
+        }
+        // The client's world has the course: its last block arrived.
+        let (last, name) = blocks.last().map(|&(_, to, block)| (at + to, block)).unwrap();
+        let id = client.content.blocks.expect(&format!("base:{name}"));
+        client.pump_until(|c| c.world.block(last) == Some(id));
+        for fps in [30.0, 60.0, 144.0] {
+            for (&drift, jump) in drifts.iter().flat_map(|d| [(d, false), (d, true)]) {
+                client.tp(start);
+                let mut body = Body { position: start, on_ground: true, ..Default::default() };
+                let controls = Controls { wish: Vec3::new(1.0, 0.0, -drift).normalize(), forward: true, sprint: true, jump, descend: false };
+                let (dt, mut t, mut sent) = (1.0 / fps, 0.0f32, 0u32);
+                while t < 2.5 {
+                    advance(&mut body, &Seen(&client), &tuning, controls, dt);
+                    t += dt;
+                    if t >= (sent + 1) as f32 * 0.05 {
+                        sent += 1;
+                        client.send_position_at(body.position, false, clock + Duration::from_secs_f32(t));
+                    }
+                }
+                let case = format!("{course} at {fps} fps, drift {drift}, jump {jump}");
+                if !client.all_accepted() {
+                    put_back.push(format!("{case}: at {} put back to {:?}", body.position - start, client.teleported.map(|to| to - start)));
+                } else {
+                    // Where the server has them (a teleport to where they are says): where the
+                    // client got to, along the course, every input taken.
+                    client.connection.send(ClientMessage::Command { line: "/tp ~ ~ ~".into() });
+                    client.pump_until(|c| c.teleported.is_some());
+                    let there = client.teleported.take().unwrap();
+                    assert!(there.distance(body.position) < 1e-3 && body.position.x - start.x > 1.0, "{case}: the client got to {}, the server has {}", body.position - start, there - start);
+                }
+                clock += Duration::from_secs(4);
+            }
+        }
+        client.fill(at, IVec3::new(1, 0, -6), IVec3::new(20, 3, 1), "air");
+    }
+    assert!(put_back.is_empty(), "honest moves put back:\n{}", put_back.join("\n"));
+}
+
+/// A gap between shaped blocks narrower or lower than the player is no way through, though
+/// a share of their box would fit: between two pot shelves in a row (9/16 of a block, the
+/// player is 0.6 wide), and on a headstone under an upside-down slab (1.75 high, the
+/// player is 1.8 tall).
+#[test]
+fn gaps_between_shapes_smaller_than_the_player_are_no_way_through() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Two shelves facing the same way, south of each other: the second's free front is 9/16 deep.
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 2), "oak_pot_shelf");
+    let beside = at.as_vec3() + Vec3::new(-0.5, 0.0, 2.0 + 9.0 / 32.0);
+    client.tp(beside);
+    client.send_position(beside + Vec3::X, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(beside), "squeezed between two pot shelves 9/16 apart");
+    // As narrow between a whole block and a shelf, and off the gap's middle.
+    client.fill(at, IVec3::new(5, 0, 1), IVec3::new(5, 0, 1), "oak_planks");
+    client.fill(at, IVec3::new(5, 0, 2), IVec3::new(5, 0, 2), "oak_pot_shelf");
+    let beside = at.as_vec3() + Vec3::new(4.5, 0.0, 2.271);
+    client.tp(beside);
+    client.send_position(beside + Vec3::X, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(beside), "squeezed between planks and a pot shelf 9/16 apart");
+    // Onto a headstone (three quarters of a block high, a jump): open above, the player
+    // stands on it...
+    client.tp(start);
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 0, 0), "stone_headstone");
+    let on = start + Vec3::new(2.0, 0.75, 0.0);
+    client.send_position(start + Vec3::X, false);
+    client.send_position(on, false);
+    assert!(client.all_accepted(), "a jump onto a headstone was put back to {:?}", client.teleported);
+    // ...but not under a slab in the upper half of the cell above the next, 1.75 over its top
+    // (set once they are off it: no fill shuts a player in).
+    client.tp(start + Vec3::X);
+    client.fill(at, IVec3::new(2, 2, 0), IVec3::new(2, 2, 0), "oak_slab_top");
+    client.send_position(on, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::X), "stood on a headstone with 1.75 blocks of headroom");
+}
+
+/// A player walks through a doorway in a plank wall with its door open (the leaf swung
+/// against the frame, no box), but a shut door is a wall like the planks beside it.
+#[test]
+fn a_player_walks_through_an_open_door_but_not_a_shut_one() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    client.fill(at, IVec3::new(2, 0, -2), IVec3::new(2, 1, -1), "oak_planks");
+    client.fill(at, IVec3::new(2, 0, 1), IVec3::new(2, 1, 2), "oak_planks");
+    let walk = |client: &mut Client| {
+        client.tp(start);
+        for x in 1..=4 {
+            client.send_position(start + Vec3::X * x as f32, false);
+        }
+    };
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 0, 0), "wooden_door_open_east");
+    client.fill(at, IVec3::new(2, 1, 0), IVec3::new(2, 1, 0), "wooden_door_open_top_east");
+    walk(&mut client);
+    assert!(client.all_accepted(), "walking through an open door was put back to {:?}", client.teleported);
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 0, 0), "wooden_door_east");
+    client.fill(at, IVec3::new(2, 1, 0), IVec3::new(2, 1, 0), "wooden_door_top_east");
+    walk(&mut client);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::X), "walked through a shut door");
 }
 
 #[test]
@@ -5232,8 +5608,11 @@ fn wait_server(client: &mut Client, seconds: u64) {
 }
 
 /// Asks `/machine` about a block until its answer contains `want`, or panics after `seconds`
-/// of the server's clock.
+/// of the server's clock, counted once the land round the player is in (a machine's survey
+/// looks only at land the server holds).
+#[track_caller]
 fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> String {
+    client.land_round();
     let started = client.server_tick;
     loop {
         let said = client.ok(&format!("/machine {at}"));
@@ -5721,9 +6100,18 @@ fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
     let saved = format!(r#"[(position:({},{},{}),block:"base:chest",inputs:[],outputs:[],fuel:None,burning:0.0,energy:0.0,condition:0.0,made:0,bin:[{stacks}])]"#, chest.x, chest.y, chest.z);
     std::fs::write(dir.join("machines.ron"), saved).unwrap();
     let mut client = Client::join_with(config());
-    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
     let cobblestone = client.content.blocks.expect("base:cobblestone");
-    client.pump_until(|c| c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>() == 3 * 64);
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == cobblestone).map(|s| s.count as u32).sum::<u32>();
+    // What the player held as they came in (a starting kit) is no stack of the chest's.
+    let held_at_join = held(&client);
+    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
+    // Out on the ground, or already picked up by the player standing beside it: the wait
+    // for the land round the player (`machine_says`) can outlast the pick-up delay.
+    let spilled = |c: &Client| {
+        let lying = c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>();
+        lying + held(c).saturating_sub(held_at_join)
+    };
+    client.pump_until(|c| spilled(c) == 3 * 64);
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -6922,7 +7310,9 @@ impl Fresh {
         let ring = |r: f32, at: Vec3| (0..24).map(|i| (i as f32 * 15.0).to_radians()).map(move |a| Vec3::new(goal.x + r * a.cos(), at.y, goal.z + r * a.sin()));
         let nearest = |spots: Vec<Vec3>, at: Vec3| spots.into_iter().min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
         let roomy = nearest(ring(r, self.at).filter(|&p| room(self, p)).collect(), self.at);
-        let tight = || nearest([0.05, 0.15, 0.25, 0.35, 0.45].into_iter().filter(|&r| r < stop).flat_map(|r| ring(r, self.at)).filter(|&p| self.has_room(p)).collect(), self.at);
+        // Where it is tight, the nearest spot the body just fits, the goal itself among them:
+        // a stop too short for any ring (0.05, beside a drop) still has the goal.
+        let tight = || nearest([0.0, 0.05, 0.15, 0.25, 0.35, 0.45].into_iter().filter(|&r| r == 0.0 || r < stop).flat_map(|r| ring(r, self.at)).filter(|&p| self.has_room(p)).collect(), self.at);
         let Some(to) = roomy.or_else(tight) else { return false };
         self.c.tp(to);
         self.at = to;
@@ -7515,6 +7905,28 @@ fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
     assert_eq!(f.have("base:cobblestone"), 1);
 }
 
+/// A spot the body just fits, off the middle of a one-wide nook, is somewhere to hop to: the
+/// walk's way round, caught, ends there rather than finding no room (the Nomad bot, going
+/// to a drop beside a trunk: "no way round ... and no room near it").
+#[test]
+fn the_bot_hops_to_a_spot_it_just_fits_in_a_one_wide_nook() {
+    lockstep("a bot hopping into a one-wide nook");
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    // Walls either side of a row of cells four to five blocks off, shut at its far end.
+    f.c.fill(origin, IVec3::new(3, 0, -1), IVec3::new(6, 1, -1), "stone");
+    f.c.fill(origin, IVec3::new(3, 0, 1), IVec3::new(6, 1, 1), "stone");
+    f.c.fill(origin, IVec3::new(6, 0, 0), IVec3::new(6, 1, 0), "stone");
+    let shut = origin + IVec3::new(6, 1, 0);
+    f.c.pump_until(|c| c.world.block(shut) == c.content.blocks.id("base:stone"));
+    let goal = Vec3::new(origin.x as f32 + 5.4, feet.y, origin.z as f32 + 0.45);
+    assert!(f.has_room(goal), "the body fits at {goal:?}");
+    assert!(f.hop_near(goal, 0.05), "no room near {goal:?}, where the body fits");
+    assert!(across(f.at, goal) <= 0.05, "hopped to {:?}, not within 0.05 of {goal:?}", f.at);
+}
+
 /// A drop with no room for a body anywhere in reach of it (a slot one block high under the
 /// ground) is left lying, as a player leaves it: the bot takes the others, and the gather
 /// it was for digs another block for the one lost rather than waiting it out.
@@ -8018,7 +8430,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
     f.mark("red_metal");
 
-    // Brick by Brick: nineteen kiln bricks in hand, four fired clay each in the grid
+    // Brick by Brick: nineteen kiln bricks in hand, two from four fired clay in the grid
     // (Crafting 5). A Kiln Load falls on the way, done at forty clay fired in all, and pays
     // the first four.
     while !quest_status(&f.c, "a_kiln_load").0 {
@@ -8026,10 +8438,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         f.fire_clay(&site, more);
     }
     f.mark("a_kiln_load");
-    let short = 19u32.saturating_sub(f.have(bricks));
-    f.fire_clay(&site, short * 4);
-    let k = short as u8;
-    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, short);
+    let crafts = 19u32.saturating_sub(f.have(bricks)).div_ceil(2);
+    f.fire_clay(&site, crafts * 4);
+    let k = crafts as u8;
+    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
     f.mark("brick_by_brick");
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).
