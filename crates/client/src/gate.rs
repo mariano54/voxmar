@@ -10800,8 +10800,9 @@ const FEEL_LAG_SETTLE: u32 = 9;
 const FEEL_BEARS: u32 = 3;
 
 /// Where the fight-feel step stands: when the bear's wind-up was first seen (by the wall's
-/// clock, as the server times blows), how long after that the answer comes, and what has
-/// been tried.
+/// clock, the players' clock the server judges blows by: a blow lands on its due tick, and
+/// is judged a wind-up after it began on that clock, or sooner), how long after that the
+/// answer comes, and what has been tried.
 #[derive(Default)]
 struct FeelRun {
     seen: Option<Instant>,
@@ -12111,7 +12112,8 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
     match gate.phase {
         0 => {
             // In creative while it is built: level ground, the step across it a block high
-            // from the edge on, and the wolf summoned below it, two blocks out.
+            // from the edge on, the wild creatures about it sent away, and the wolf summoned
+            // below it, two blocks out.
             gate.climb = ClimbRun { before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(), highest: f32::MIN, ..default() };
             let net = world.resource::<Net>();
             net.command("gamemode creative");
@@ -12119,6 +12121,9 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 6, at.y - 1, at.z - 6, at.x + 6, at.y - 1, at.z + 6));
             net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 6, at.y, at.z, at.x + 6, at.y, at.z + 6));
             net.command(&format!("tp {:.2} {:.2} {:.2}", edge.x, edge.y, edge.z));
+            // No wild creature about the course but the wolf summoned next: any other near
+            // could strike the player or stand in the wolf's way.
+            net.command("creatures disperse");
             // /summon sets the first one 1.8 blocks west of the cell's middle (`summon`):
             // asked two east, it lands about on the edge's line.
             net.command(&format!("summon {} 1 {} {} {}", WOLF.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
