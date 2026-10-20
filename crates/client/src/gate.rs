@@ -791,6 +791,9 @@ struct Gate {
     readout_seen: bool,
     /// The Blaze step saw its panel smoulder (smoke rising) before it caught.
     smoulder_seen: bool,
+    /// How far the Blaze step's daubing has got: 0 clay on its way, 1 held, 2 held to the
+    /// panel, 3 seen daubed.
+    daub_stage: u8,
     /// The tap the Blaze step last asked to set its torch down on.
     torch_taps: u32,
     /// Whether the creatures step could release its butterfly.
@@ -1047,6 +1050,7 @@ impl Gate {
             boss_id: None,
             readout_seen: false,
             smoulder_seen: false,
+            daub_stage: 0,
             torch_taps: 0,
             butterfly: false,
             fall_judged: false,
@@ -1649,7 +1653,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // Two answers waited on, each up to `WALLS_WAIT` server seconds.
         Step::HomeWalls => STEP_LIMIT + 10.0,
         // A smoulder and its catch, waited on up to fire.ron's catching time and 4 s, then
-        // the burning out, up to its burning time and 4 s.
+        // the burning out, up to its burning time and 4 s (a panel daubed in those waits).
         Step::Blaze => STEP_LIMIT + 10.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
@@ -6187,6 +6191,22 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 };
                 let distinct = icons.iter().all(Option::is_some) && icons.iter().enumerate().all(|(i, a)| icons[i + 1..].iter().all(|b| a != b));
                 gate.check("home: icons", if distinct { Ok("the Camp, Rested and Healing Sleep chips each show an icon of their own".into()) } else { Err(format!("the Camp, Rested and Healing Sleep chips share an icon: {icons:?}")) });
+                // And every effect's chip, as the HUD loaded them: none shares another's
+                // picture (the plain buff or debuff, as an effect without its own would).
+                let shared = {
+                    let (images, effects) = (world.resource::<crate::hud::HudImages>(), &world.resource::<Launch>().content.effects);
+                    let mut seen: Vec<(Handle<Image>, &str)> = Vec::new();
+                    let mut shared = Vec::new();
+                    for id in effects.ids() {
+                        let (image, name) = (images.effect(id), effects.get(id).name.as_str());
+                        match seen.iter().find(|(other, _)| *other == image) {
+                            Some((_, other)) => shared.push(format!("{name} and {other}")),
+                            None => seen.push((image, name)),
+                        }
+                    }
+                    (shared, seen.len())
+                };
+                gate.check("effects: icons", if shared.0.is_empty() { Ok(format!("all {} effects' chips show an icon of their own", shared.1)) } else { Err(format!("chips share an icon: {}", shared.0.join(", "))) });
                 // Shown however near and at any hour, for the mark's own checks.
                 let mut style = world.resource_mut::<crate::hud::inventory::InterfaceStyle>();
                 gate.home_style = Some(style.clone());
@@ -6448,37 +6468,90 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
 /// torch set beside it: first it smoulders (told by the server, and smoke counted rising
 /// from it), and once the catching time has passed (fire.ron) the panel is a blaze,
 /// and once the burning time has, it is gone. Each answer waited on in the server's seconds,
-/// with frames paced as taps; the torch goes after.
+/// with frames paced as taps. In the same waits, a second panel over the torch, smouldering
+/// too, has clay held to its side at the daub recipe's level: it is daub, and smoulders no
+/// more. The torch goes after.
 fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
     let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
     let (panel, torch) = (stand + IVec3::new(0, 0, 5), stand + IVec3::new(1, 0, 5));
+    let daubed = torch + IVec3::Y;
     let waited = gate.server_in_phase();
     let rules = world.resource::<Launch>().content.fire.rules.clone();
     let leave = |world: &mut World, gate: &mut Gate| {
+        if gate.daub_stage < 3 {
+            gate.check("daub: coats", Err(format!("the Blaze step ended with the panel at {daubed} not seen daubed (stage {} of 3)", gate.daub_stage)));
+        }
         let net = world.resource::<Net>();
-        for at in [panel, torch] {
+        for at in [panel, torch, daubed] {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         gate.next(Step::WayHome, now);
     };
-    let here = {
+    let name_at = |world: &World, at: IVec3| {
         let client = world.resource::<ClientWorld>();
-        client.block(panel).map(|b| client.registry.def(b).name.clone()).unwrap_or_default()
+        client.block(at).map(|b| client.registry.def(b).name.clone()).unwrap_or_default()
     };
+    let here = name_at(world, panel);
     if now - gate.tap_at >= TAP_EVERY {
         gate.tap_at = now;
         gate.taps += 1;
+    }
+    // The daubing, a frame at a time inside the fire's own waits once the torch is down: the
+    // clay to hand once the panel stands and the clay is in the pack, held to the panel's side a tap later, then
+    // seen as daub that no longer smoulders.
+    if gate.phase >= 2 && gate.daub_stage < 3 {
+        let clay = world.resource::<ClientWorld>().registry.id("base:clay");
+        let there = name_at(world, daubed);
+        match gate.daub_stage {
+            0 => {
+                let packed = clay.is_some_and(|clay| world.resource::<LocalPlayer>().inventory.count(clay) > 0);
+                if there == "base:wattle_panel" && packed && let Some(clay) = clay {
+                    hold(world, Holder::Tool(clay));
+                    gate.daub_stage = 1;
+                }
+            }
+            1 => {
+                let in_hand = {
+                    let player = world.resource::<LocalPlayer>();
+                    clay.is_some() && player.inventory.get(player.selected).map(|stack| stack.item) == clay
+                };
+                if in_hand && gate.taps > 0 {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:coat"), voxmar_engine::action::ActionTarget::Block { block: daubed, face: voxmar_engine::coords::Face::NegZ });
+                    gate.daub_stage = 2;
+                }
+            }
+            _ => {
+                let smouldering = world.resource::<ClientWorld>().smoulders.contains(&daubed);
+                if there == "base:daub" && !smouldering {
+                    gate.check("daub: coats", Ok(format!("clay held to the side of a wattle panel over a torch daubed it {waited:.1} server s into the fire's phase {}, and it no longer smoulders", gate.phase)));
+                    gate.daub_stage = 3;
+                }
+            }
+        }
     }
     match gate.phase {
         // The panel by command; the torch set down by hand, so the fire is the player's own
         // and burns in their own home (a command's fire is no one's: it never takes a home).
         0 => {
+            let level = {
+                let content = &world.resource::<Launch>().content;
+                let daub = content.blocks.id("base:daub");
+                content.recipes.iter().filter(|r| Some(r.output) == daub).map(|r| r.level).min().unwrap_or(1)
+            };
+            let below = skill_level(world, "core:construction").0 < level;
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} wattle_panel", panel.x, panel.y, panel.z));
             net.command(&format!("setblock {} {} {} air", torch.x, torch.y, torch.z));
+            net.command(&format!("setblock {} {} {} wattle_panel", daubed.x, daubed.y, daubed.z));
+            if below {
+                net.command(&format!("skill construction {level}"));
+            }
             net.command("give torch 1");
+            net.command("give clay 1");
             world.resource_mut::<crate::emitters::Emitters>().watch(panel);
             gate.smoulder_seen = false;
+            gate.daub_stage = 0;
             gate.advance(now);
             gate.torch_taps = 0;
         }
@@ -15680,14 +15753,25 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         // reach the client and draw. Then the player goes back to the test ground.
         3 => {
             let content = world.resource::<Launch>().content.clone();
-            let people = world.resource::<crate::creatures::Creatures>().views().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager).count();
+            let feet = world.resource::<LocalPlayer>().position;
+            let villagers: Vec<f32> = world
+                .resource::<crate::creatures::Creatures>()
+                .views()
+                .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager)
+                .map(|v| v.position.distance(feet))
+                .collect();
+            let people = villagers.len();
+            // The greeting asked below is of the nearest within the command's reach (less a
+            // little, as the client sees them a moment behind): someone drawn farther off
+            // has to walk in first.
+            let near = villagers.iter().filter(|&&d| d <= voxmar_server::BARK_COMMAND_REACH - 2.0).count();
             // The ambience surveys the place about once a second, so it may not yet have
             // heard the settlement the player was just sent to: waited on with the people.
             let heard = settlement_heard(world, gate.settlement);
-            if (people == 0 || heard.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
+            if (near == 0 || heard.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
                 return;
             }
-            gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
+            gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn, {near} within a greeting's reach")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
             gate.check("settlement sounds", heard);
             // The nearest of them greets the player (`Server::bark`, by its command).
             world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();

@@ -434,6 +434,7 @@ impl Server {
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
                     self.set_blocks(&changes);
                 }
+                (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
                         self.set_block(block, farmland);
