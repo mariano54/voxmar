@@ -286,7 +286,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // (`now`) while its edge still stands on it.
     let feet = (body.position.y + 0.01).floor() as i32;
     let held = |middle: Vec3, then: IVec3| {
-        if then.y >= feet || world.water(then) {
+        if then.y >= feet {
             return false;
         }
         let at = |k: i32| Vec3::new(middle.x, then.y as f32, middle.z) + heading * (0.1 * k as f32);
@@ -298,7 +298,8 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         }
         // Deeper than it could climb back, unless in a chase (`Body::bold`), only onto open
         // ground: never into a pit it would not get out of (a hole a player dug two or three
-        // deep), at any pace.
+        // deep), at any pace; a pit with water in its floor too, as a pool it would swim up
+        // out of only if its top is in reach.
         let climb = (movement.jump > 0.0) as i32;
         if !body.bold && feet - then.y > climb {
             let walker = Walker {
@@ -312,7 +313,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
                 return true;
             }
         }
-        if pace > movement.walk {
+        if pace > movement.walk || world.water(then) {
             return false;
         }
         let landed = |k: i32| Body { position: at(k), yaw: yaw_of(heading), ..*body };

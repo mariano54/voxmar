@@ -4479,14 +4479,18 @@ mod fight_tests {
     }
 
     /// A hole two or three deep that a player digs is a trap no kind gets out of: out of a
-    /// chase, at any pace, none goes down into it. Before: 73 of 73 walked in, villagers
-    /// too, and stayed there; and then any wander quicker than a walk did.
+    /// chase, at any pace, none goes down into it, nor into one with a block of water in its
+    /// floor. Before: 73 of 73 walked in, villagers too, and stayed there; and then any
+    /// wander quicker than a walk did, and any walk into a wet one.
     #[test]
     fn wanderers_never_walk_into_a_pit_they_cannot_climb_out_of() {
-        for deep in 2..=3 {
+        for (deep, wet) in (2..=3).flat_map(|deep| [(deep, false), (deep, true)]) {
             let mut server = crate::test_server();
             let c = pen(&mut server, 9);
             closed_pit(&mut server, c, deep);
+            if wet {
+                set(&mut server, "base:water", (1..=4).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, -deep, z))));
+            }
             let kinds = walkers(&server);
             assert!(kinds.len() > 10, "too few kinds walk");
             for species in kinds {
@@ -4495,7 +4499,7 @@ mod fight_tests {
                 let movement = species.def.movement;
                 for pace in [1.0, 1.2, 1.44, movement.run.max(movement.walk) / movement.walk] {
                     let (lowest, _) = walk_east(&server, c, species, movement.walk * pace, false, |_| false);
-                    assert!(lowest > c.y as f32 - 0.5, "{} walked into a pit {deep} deep at {pace} its walk: down to {:.2}", species.def.name, lowest - c.y as f32);
+                    assert!(lowest > c.y as f32 - 0.5, "{} walked into a pit {deep} deep (wet {wet}) at {pace} its walk: down to {:.2}", species.def.name, lowest - c.y as f32);
                 }
             }
         }
