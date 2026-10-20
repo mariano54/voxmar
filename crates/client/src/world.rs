@@ -535,6 +535,8 @@ impl Culler {
                 }
             }
         };
+        // At the default class, not lowered with the streaming threads (priority.rs): chunks
+        // that arrive show only once a walk has taken them in.
         std::thread::Builder::new().name("cave-culling".into()).spawn(walk).expect("the cave culling thread starts");
         Self { jobs, results, busy: false }
     }

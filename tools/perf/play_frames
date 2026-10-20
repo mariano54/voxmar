@@ -8,6 +8,9 @@
 #
 # e.g. tools/perf/play_frames ~/Projects/voxmar-wt/play/target/release/voxmar OLD/voxmar
 #
+# A binary given as off:PATH runs with VOXMAR_THREAD_PRIORITY=off (every thread at the
+# system's default class, see crates/client/src/priority.rs), to time one build both ways.
+#
 #   spawn   standing at the spawn of seed 1, looking over the land, once it has loaded
 #   town    over Ashhurst, the village of seed 1 nearest its spawn (21 houses, 14
 #           people), looking over its roofs, creative and noon
@@ -56,10 +59,20 @@ out=$(mktemp -d "${TMPDIR:-/tmp}/play-frames.XXXXXX") || { echo "play_frames: no
 # claimed only if no one else's appeared meanwhile (noclobber), so two runs never share it.
 mkdir -p ~/Projects/voxmar-wt
 claim() { (set -o noclobber; echo "play_frames $$ $(date -u +%FT%TZ)" >"$quiet") 2>/dev/null; }
-until claim; do
-  if [[ -z $(find "$quiet" -mmin -20 2>/dev/null) ]]; then
-    rm -f "$quiet"
-  else
+while ! claim; do
+  if [[ ! -e $quiet ]]; then
+    # Gone between the two looks (its run ended): one more try; failing with no one else's
+    # there, QUIET cannot be written at all.
+    claim && break
+    [[ -e $quiet ]] && continue
+    echo "play_frames: cannot write $quiet" >&2
+    exit 1
+  fi
+  # Stale (a run that died holding it): looked at and removed by one command, which leaves
+  # a far smaller window than a look and a later rm for removing a claim made in between;
+  # claimed on the next turn.
+  find "$quiet" -mmin +20 -delete 2>/dev/null
+  if [[ -e $quiet ]]; then
     echo "play_frames: another timing run holds QUIET ($(cat "$quiet" 2>/dev/null)), waiting"
     sleep 10
   fi
@@ -79,7 +92,10 @@ scene_args() {
 echo "play_frames: load $(sysctl -n vm.loadavg 2>/dev/null || cat /proc/loadavg), $repeats runs a scene"
 for scene in spawn town flight; do
   for ((round = 1; round <= repeats; round++)); do
-    for binary in "$@"; do
+    for given in "$@"; do
+      binary=${given#off:}
+      priority=on
+      [[ $given == off:* ]] && priority=off
       if playing; then
         echo "play_frames: Mariano started playing; stopped, and the numbers so far are suspect" >&2
         exit 1
@@ -93,11 +109,11 @@ for scene in spawn town flight; do
       rm -rf "$config" && mkdir -p "$config"
       [[ -e $settings ]] && cp "$settings" "$config/settings.ron"
       scene_args "$scene"
-      log=$(cd "$(dirname "$binary")/../.." && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config \
+      log=$(cd "$(dirname "$binary")/../.." && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority \
         "$binary" --capture "$out/$scene.png" --size 2268x1473 "${args[@]}" 2>&1 </dev/null | sed 's/\x1b\[[0-9;]*m//g')
       stats=$(grep -oE '(steady|flight): [0-9]+ frames.*' <<<"$log" | tail -1)
       gpu=$(grep -m1 -oE 'AdapterInfo \{ name: "[^"]*"' <<<"$log" | sed 's/.*name: //')
-      echo "$scene round $round, $binary: ${stats:-no frame statistics (see a run by hand)} [gpu $gpu, load $(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')]"
+      echo "$scene round $round, $binary$([[ $priority == off ]] && echo ' (priorities off)'): ${stats:-no frame statistics (see a run by hand)} [gpu $gpu, load $(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')]"
     done
   done
 done
