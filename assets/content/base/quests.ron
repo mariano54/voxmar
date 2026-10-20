@@ -121,7 +121,7 @@
         ),
         (
             name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",
-            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
+            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks toward the seven plain ones of the crucible. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
             tasks: [[Cook("fired_clay", 40)]],
             after: ["the_potter"],
             rewards: [Xp("crafting", 120.0), Item("kiln_bricks", 4)],
@@ -156,7 +156,7 @@
         ),
         (
             name: "brick_by_brick", age: "farm", branch: "main", title: "Brick by Brick",
-            why: "The Crucible Kiln is built of kiln bricks: twelve tempered for the ring, seven plain for the crucible. Four fired clay make two plain bricks in the crafting grid (Crafting 5); add a straw to the four and they make two tempered bricks, which keep whole in the kiln's heat. Nineteen bricks are forty fired clay and six straw. Keep the pit kiln and the clamp going while you dig the next load, and shape seven plain, counting your first, and twelve tempered.",
+            why: "The Crucible Kiln is built of kiln bricks: twelve tempered for the ring, seven plain for the crucible. Four fired clay make two plain bricks in the crafting grid (Crafting 5); add a straw to the four at the crafting table and they make two tempered bricks, which keep whole in the kiln's heat. Nineteen bricks are forty fired clay and six straw. Keep the pit kiln and the clamp going while you dig the next load, and shape seven plain, counting your first, and twelve tempered.",
             tasks: [[Craft("kiln_bricks", 7), Craft("tempered_kiln_bricks", 12)]],
             after: ["first_bricks", "a_kiln_load", "straw_for_the_kiln"],
             // Its Engineering pays for The Crucible's level 10 until Hammer and Anvil (the kiln-age
@@ -187,7 +187,7 @@
         ),
         (
             name: "straw_for_the_kiln", age: "farm", branch: "main", title: "Straw for the Kiln",
-            why: "Straw in the clay keeps a kiln brick whole in the Crucible Kiln's heat. A ripe wheat plant you break gives one or two straw, and a wild wheat tuft one. Keep six straw in your pack: four fired clay and a straw make two tempered kiln bricks (Crafting 5).",
+            why: "Straw in the clay keeps a kiln brick whole in the Crucible Kiln's heat. A ripe wheat plant you break gives one or two straw, and a wild wheat tuft one. Keep six straw in your pack: four fired clay and a straw make two tempered kiln bricks at the crafting table (Crafting 5).",
             tasks: [[Have("straw", 6)]],
             after: ["the_farm_age"],
             rewards: [Xp("farming", 60.0)],

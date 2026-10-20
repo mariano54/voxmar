@@ -9304,6 +9304,7 @@ const QUEST_BOOK_ORDER: &[&str] = &[
     "homestead_hearth",
     "a_pit_kiln",
     "fire_the_clay",
+    "straw_for_the_kiln",
     "the_potter",
     "fuel_to_hand",
     "charcoal",

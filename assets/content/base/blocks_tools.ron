@@ -130,9 +130,9 @@
         (template: "drop", name: "bronze_ingot", tags: ["ingot", "metal:bronze"], all: (color: (200, 140, 70))),
         (template: "drop", name: "charcoal", tags: ["charcoal", "coal", "fuel"], all: (color: (40, 36, 34))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
-        // Straw: the stalks a ripe grain crop leaves when it is cut (crops.ron), never a wild
-        // plant's. It tempers kiln bricks for the Crucible Kiln, thatches (fibre) and twists
-        // into twine, and nine bind into a hay bale.
+        // Straw: the stalks a ripe grain crop leaves when it is cut, one or two a sown plant and
+        // one a wild tuft (crops.ron). It tempers kiln bricks for the Crucible Kiln, thatches
+        // (fibre) and twists into twine, and nine bind into a hay bale.
         (template: "drop", name: "straw", tags: ["straw", "fibre"], all: (color: (220, 196, 110))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),
         (template: "drop", name: "iron_ingot", tags: ["ingot", "metal:iron"], all: (color: (200, 205, 215))),
