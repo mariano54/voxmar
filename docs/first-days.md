@@ -403,12 +403,17 @@ Charcoal comes only from the charcoal clamp now: the earth clamp is retired (its
 as oak logs) and the campfire no longer chars logs. The quest-book bot builds the clamp as
 Charcoal says: eight logs, a flint dug from the gravel bank for the chopping block, ten
 firewood split on it (nine laid), kindling, twenty-four dirt for the walls and roof, lit
-from a torch. While it smoulders its eight game hours (400 s) the bot fires clay at the pit
-kiln, then digs the heaps out for 36 charcoal, enough for the Crucible Kiln's 32. One run:
-Fire the Clay 193 s, The Potter 204, Charcoal 862 (658 s for the quest, 444 of it waiting
-on the smoulder, which a player spends on other work), Red Metal 871, Crucible Kiln lit
-877. The smoulder is a wait, not a grind: the bot has nothing else to do while it burns, and
-a player has the farm and home quests open.
+from a torch. The bot's clock runs about 75 s a game hour.
+
+At eight game hours the clamp failed the pacing check above: about 600 s of the bot's time
+with nothing new and the bot idle (0 new things in three windows, one stretch of 440 s). It
+smoulders two game hours now (`smoulder.hours` in multiblocks.ron), and while it does the
+bot works on Brick by Brick, open since The Potter: clay fired to A Kiln Load's forty, then
+kiln bricks crafted between firings. Once the clamp is spent it digs out the charcoal and
+does Red Metal, then finishes the bricks. Seven runs: the lit Crucible Kiln at 465 to 520 s;
+the window from 360 s brings 7 new things (kiln bricks, charcoal, copper ore, ingot and
+pickaxe, the crucible and its station); the longest wait with nothing new is about 150 s
+(firing clay); the longest single-action stretch is 39 to 40 s (17 firings in a row).
 
 ## Measured pacing
 

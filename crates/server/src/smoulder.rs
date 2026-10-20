@@ -273,6 +273,12 @@ mod tests {
         found
     }
 
+    /// The clamp's burn, in day ticks, as multiblocks.ron gives it.
+    fn burn_ticks(server: &Server) -> f64 {
+        let clamp = server.content.multiblocks.get("base:charcoal_clamp").expect("the base clamp");
+        clamp.smoulder.as_ref().expect("it smoulders").hours as f64 * TICKS_PER_DAY as f64 / 24.0
+    }
+
     /// Clear skies held over the clamp, so rain falls only when a test brings it.
     fn sky(server: &mut Server, preset: &str) {
         let here = Vec2::new(FLUE.x as f32, FLUE.z as f32);
@@ -286,9 +292,9 @@ mod tests {
     }
 
     /// A clamp is lit only from a flame in hand, used up never; lit, its flue glows, and
-    /// eight game hours on, nobody by it, its firewood is charcoal, four a heap.
+    /// its game hours on, nobody by it, its firewood is charcoal, four a heap.
     #[test]
-    fn a_clamp_lit_from_a_torch_chars_its_firewood_in_eight_hours() {
+    fn a_clamp_lit_from_a_torch_chars_its_firewood_in_its_hours() {
         let mut server = fixture("base:stick");
         sky(&mut server, "clear");
         build(&mut server);
@@ -298,8 +304,7 @@ mod tests {
         light(&mut server);
         assert_eq!(server.block(FLUE), Some(id(&server, "base:clamp_flue")), "lit");
         assert_eq!(server.players[&1].inventory.slots[0].map(|s| s.count), Some(1), "the torch kept");
-        let hours = TICKS_PER_DAY as f64 / 24.0;
-        server.day += 8.0 * hours - 1.0;
+        server.day += burn_ticks(&server) - 1.0;
         server.tend_smoulders();
         assert_eq!(charred(&server), [("base:firewood".to_owned(), 9)], "a tick short");
         server.day += 1.0;
@@ -318,7 +323,7 @@ mod tests {
         sky(&mut server, "clear");
         build(&mut server);
         light(&mut server);
-        server.day += 3.0 * TICKS_PER_DAY as f64 / 24.0;
+        server.day += burn_ticks(&server) * 3.0 / 8.0;
         server.tend_smoulders();
         server.set_block(CORNER, BlockId::AIR);
         assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 9)]);
@@ -329,7 +334,6 @@ mod tests {
     /// a roof over the flue keeps it dry.
     #[test]
     fn rain_on_the_open_flue_spoils_its_share_to_ash() {
-        let hours = TICKS_PER_DAY as f64 / 24.0;
         let burn = |roofed: bool| {
             let mut server = fixture("base:torch");
             sky(&mut server, "clear");
@@ -338,10 +342,10 @@ mod tests {
                 server.set_block(FLUE + IVec3::new(0, 3, 0), id(&server, "base:stone"));
             }
             light(&mut server);
-            server.day += 4.0 * hours;
+            server.day += burn_ticks(&server) / 2.0;
             server.tend_smoulders();
             sky(&mut server, "rain");
-            server.day += 4.0 * hours;
+            server.day += burn_ticks(&server) / 2.0;
             server.tend_smoulders();
             charred(&server)
         };
@@ -354,7 +358,6 @@ mod tests {
     /// roofed one stays dry. Done while not loaded, it waits to char until all of it is.
     #[test]
     fn rain_while_the_clamp_is_not_loaded_counts_as_it_fell() {
-        let hours = TICKS_PER_DAY as f64 / 24.0;
         let burn = |roofed: bool| {
             let mut server = fixture("base:torch");
             sky(&mut server, "clear");
@@ -363,11 +366,11 @@ mod tests {
                 server.set_block(FLUE + IVec3::new(0, 3, 0), id(&server, "base:stone"));
             }
             light(&mut server);
-            server.day += 4.0 * hours;
+            server.day += burn_ticks(&server) / 2.0;
             server.tend_smoulders();
             let column = server.world.remove(ColumnPos::new(0, 0)).unwrap();
             sky(&mut server, "rain");
-            server.day += 4.0 * hours;
+            server.day += burn_ticks(&server) / 2.0;
             server.tend_smoulders();
             assert_eq!(server.smoulders.len(), 1, "done, but waiting to be loaded");
             sky(&mut server, "clear");

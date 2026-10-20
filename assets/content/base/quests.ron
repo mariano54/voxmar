@@ -396,7 +396,7 @@
         ),
         (
             name: "an_earth_clamp", age: "farm", branch: "pottery", title: "A Second Clamp",
-            why: "The Crucible Kiln burns thirty-two charcoal at a lighting, and every melt after wants more. A clamp takes eight hours, so build the next while the last one smoulders, and roof each flue against rain. While it smoulders the flue is a fire: a drying rack beside it dries twice as fast. Light two clamps.",
+            why: "The Crucible Kiln burns thirty-two charcoal at a lighting, and every melt after wants more. A clamp takes two hours, so build the next while the last one smoulders, and roof each flue against rain. While it smoulders the flue is a fire: a drying rack beside it dries twice as fast. Light two clamps.",
             tasks: [[Lit("charcoal_clamp", 2)]],
             after: ["charcoal"],
             rewards: [Xp("construction", 60.0), Xp("crafting", 40.0)],

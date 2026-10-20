@@ -1214,7 +1214,7 @@
     "quest.base.a_kiln_load": "A Kiln Load",
     "quest.base.a_kiln_load.why": "Brick by Brick takes a lot of fired clay, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road (Fired Whole).",
     "quest.base.an_earth_clamp": "A Second Clamp",
-    "quest.base.an_earth_clamp.why": "The Crucible Kiln burns thirty-two charcoal at a lighting, and every melt after wants more. A clamp takes eight hours, so build the next while the last one smoulders, and roof each flue against rain. While it smoulders the flue is a fire: a drying rack beside it dries twice as fast. Light two clamps.",
+    "quest.base.an_earth_clamp.why": "The Crucible Kiln burns thirty-two charcoal at a lighting, and every melt after wants more. A clamp takes two hours, so build the next while the last one smoulders, and roof each flue against rain. While it smoulders the flue is a fire: a drying rack beside it dries twice as fast. Light two clamps.",
     "quest.base.the_crucible": "The Crucible",
     "quest.base.the_crucible.why": "The heart of the kiln: seven kiln bricks round a clay pot, shaped at the crafting table (Engineering 10). Engineering grows with every tool, ingot and torch you make, and the copper quests pay it well. Make it, then build the kiln round it; its reward is sixteen charcoal, half the kiln's charge.",
     "quest.base.first_harvest": "First Harvest",

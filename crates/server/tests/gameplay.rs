@@ -8886,20 +8886,30 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
             }
         }
     }
-    // Lit from a torch in hand at the kindling: it smoulders eight game hours, nobody by it,
-    // while clay is fired by hand toward what Brick by Brick will want (thirty-two).
+    // Lit from a torch in hand at the kindling: it smoulders two game hours, nobody by it,
+    // while the book's Brick by Brick, open since The Potter, is worked on by it: clay fired
+    // by hand to A Kiln Load's forty, then nineteen kiln bricks, two from four fired clay in
+    // the grid (Crafting 5), a craft between firings. What is left of it waits for Red Metal.
     let flue = cell(2, 1, 2);
     f.hold("base:torch");
     f.propose("base:light", ActionTarget::Block { block: flue, face: Face::PosY });
     let flue_is = |c: &Client, name: &str| c.world.block(flue) == c.content.blocks.id(name);
     f.wait(5.0, "lighting the clamp", |c| flue_is(c, "base:clamp_flue"));
     let spent = move |c: &Client| c.world.block(flue) == Some(BlockId::AIR);
-    while !spent(&f.c) {
-        if f.have(fired) < 32 {
+    let brick_work = |f: &mut Fresh| {
+        if !quest_status(&f.c, "a_kiln_load").0 || (f.have(bricks) < 19 && f.have(fired) < 4) {
             let more = f.have(fired) + 1;
             f.fire_clay(&site, more);
         } else {
+            f.craft(&[(0, fired, 1), (1, fired, 1), (3, fired, 1), (4, fired, 1)], bricks, 2);
+        }
+    };
+    let bricks_done = |f: &Fresh| quest_status(&f.c, "a_kiln_load").0 && f.have(bricks) >= 19;
+    while !spent(&f.c) {
+        if bricks_done(&f) {
             f.wait(500.0, "the clamp charring", spent);
+        } else {
+            brick_work(&mut f);
         }
     }
     // Opened (roof and walls dug away), its charcoal heaps broken: four charcoal a heap.
@@ -8929,18 +8939,11 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
     f.mark("red_metal");
 
-    // Brick by Brick: nineteen kiln bricks in hand, two from four fired clay in the grid
-    // (Crafting 5). A Kiln Load falls on the way, done at forty clay fired in all, and pays
-    // the first four.
-    while !quest_status(&f.c, "a_kiln_load").0 {
-        let more = f.have(fired) + 1;
-        f.fire_clay(&site, more);
+    // Brick by Brick finished, if the clamp was spent first.
+    while !bricks_done(&f) {
+        brick_work(&mut f);
     }
     f.mark("a_kiln_load");
-    let crafts = 19u32.saturating_sub(f.have(bricks)).div_ceil(2);
-    f.fire_clay(&site, crafts * 4);
-    let k = crafts as u8;
-    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
     f.mark("brick_by_brick");
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).
