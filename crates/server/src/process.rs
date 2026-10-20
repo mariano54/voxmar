@@ -347,16 +347,19 @@ impl Server {
         }
         let blocks = &self.content.blocks;
         let reach = rules.home_reach;
+        // Tags counted only under the open sky (`outdoors`: things set out in the yard).
+        let outdoor: Vec<bool> = counts.iter().map(|(tag, _)| self.content.effects.outdoor(tag)).collect();
         for dy in -down..=up {
             for dz in -reach..=reach {
                 for dx in -reach..=reach {
-                    let Some(block) = self.block(anchor + IVec3::new(dx, dy, dz)) else { continue };
+                    let at = anchor + IVec3::new(dx, dy, dz);
+                    let Some(block) = self.block(at) else { continue };
                     let tags = &blocks.def(block).tags;
                     if tags.is_empty() {
                         continue;
                     }
-                    for (tag, n) in &mut counts {
-                        if tags.contains(tag) {
+                    for ((tag, n), &outdoor) in counts.iter_mut().zip(&outdoor) {
+                        if tags.contains(tag) && (!outdoor || self.open_sky(at + IVec3::Y)) {
                             *n += 1;
                         }
                     }

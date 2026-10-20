@@ -1336,6 +1336,7 @@
     "home.step_last": "{step}に到達：これ以上足すものはない。",
     "home.step_first": "次は{next}：{needs}が必要。",
     "home.lack.roof": "頭上の屋根",
+    "home.lack.sky": "屋根のない外にいること",
     "home.lack.away": "家にいること",
     "home.lack.tag": "{tag} {have}/{need}",
     "home.lack.either": "{options}のどれか",

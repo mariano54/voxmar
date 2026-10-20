@@ -2835,6 +2835,46 @@ fn windows_at_home_make_a_bright_room() {
     client.pump_until(|c| !has(c, "base:bright_room"));
 }
 
+/// Things set out in the yard count at home (docs/home.md Rooms): an awning, and a bench and
+/// a hay bale out in the open by a slept-in bag under the sky, make a Dooryard, announced.
+/// The same pieces under a roof of their own count for nothing; the player under a roof, it
+/// goes; the bale taken away, it goes again.
+#[test]
+fn an_awning_a_bench_and_a_bale_make_a_dooryard() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let bag = feet + IVec3::new(2, 0, 0);
+    let (awning, bench, bale) = (feet + IVec3::new(0, 2, 2), feet + IVec3::new(-2, 0, 2), feet + IVec3::new(4, 0, 2));
+    // A shed roof over the bench and the bale: kept indoors.
+    let shed = |block: &str| format!("/fill {} {} {} {} {} {} {block}", bench.x, bench.y + 3, bench.z - 1, bale.x, bale.y + 3, bale.z + 1);
+    for line in [
+        format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z),
+        format!("/setblock {} {} {} red_awning", awning.x, awning.y, awning.z),
+        format!("/setblock {} {} {} oak_bench", bench.x, bench.y, bench.z),
+        format!("/setblock {} {} {} hay_bale", bale.x, bale.y, bale.z),
+        shed("stone"),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(bale) == c.content.blocks.id("base:hay_bale"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested"));
+    assert!(!has(&client, "base:dooryard"), "a bench and a bale under a roof made a dooryard");
+    client.chat.clear();
+    client.ok(&shed("air"));
+    client.pump_until(|c| has(c, "base:dooryard") && told(c, "Dooryard:"));
+    // A roof over the player: indoors, not the yard.
+    let roof = feet + IVec3::new(0, 2, 0);
+    client.ok(&format!("/setblock {} {} {} stone", roof.x, roof.y, roof.z));
+    client.pump_until(|c| !has(c, "base:dooryard"));
+    client.ok(&format!("/setblock {} {} {} air", roof.x, roof.y, roof.z));
+    client.pump_until(|c| has(c, "base:dooryard"));
+    client.ok(&format!("/setblock {} {} {} air", bale.x, bale.y, bale.z));
+    client.pump_until(|c| !has(c, "base:dooryard"));
+}
+
 /// A proper bed rests better than a bag (A Proper Bed: "something better than the ground"),
 /// out under the sky with nothing around it: well rested, and a longer mend.
 #[test]
