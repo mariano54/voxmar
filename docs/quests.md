@@ -24,7 +24,9 @@ reward, shown first), tasks, after, rewards. A book of its own can go in a
 the topics follow in byte order (uppercase before lowercase), and the quests are held in that
 order. A quest may come `after` one in any file. A quest name written twice, in one file or
 two, fails the load naming both files, across packages too: a mod cannot replace a quest by
-writing its name. A file no part of the game reads (a misspelt `quest.ron`) still loads, and
+writing its name. Quests that come after each other (one after itself, or a loop of them
+with no choice out) would never open, so the load refuses them, naming the loop.
+A file no part of the game reads (a misspelt `quest.ron`) still loads, and
 the load notes it with the likeliest name meant (`zz_mod/quest.ron is read by nothing (meant
 quests.ron?)`); the names other crates read are `content::READ_ELSEWHERE`.
 Goals:
@@ -265,7 +267,7 @@ Twine and Thong and the rest beside the first three), so a newcomer met a wall b
 their first tool. Now four quests open at the start, the three pinned ones (Look It Up,
 Timber, First Night) and the Crafting Table, and every other path starts from a step the
 main line reaches: the crafting table, the stone tools, the first night or the bed. Each path runs as a chain:
-mining runs A Pile of Stone, Dig In, Coal and Cinders, First Ore, Stockpile; fighting runs
+mining runs A Pile of Stone and Dig In, and Black Flecks (a coal sample lifted with flint, or one coal ore, from the Crafting Table), Coal and Cinders (twelve coal, after it and Stone in Hand; Torchlight waits on it), First Ore, Stockpile; fighting runs
 Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw; the camp runs Make
 Camp, Company at Camp, Pantry Shelves, From the Shelves, with A Lit Corner and A Bench to
 Work At beside it; grain runs A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore.
@@ -333,7 +335,7 @@ and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever
 the snare gets the credit and the catch, as with a shared lit fire, until traps have
 owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` tag no
 recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
-full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 64 quests, Farm 99, each counting its rite.
+full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 68 quests, Farm 99, each counting its rite.
 
 ## An age's rite (Oct 15)
 
@@ -365,6 +367,10 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
 - **Capstones are marked.** A quest with `capstone: true` has a gold corner on its cell in the
   book and a line in its detail ("A path's capstone, gold at its corner"); the rites' texts
   point to the mark. The gate's `quests: capstones` checks each one drawn carries it.
+- **A capstone closes its whole path.** It waits, through its `after` chain, on every quest
+  of its age and branch but the age's rite and the side quests (`side: true`: chance meetings,
+  conveniences such as pouches); loading refuses one that does not, naming the quests left
+  out. The Farm book's side marks are placeholders until its own pass (piece 13) chains it.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
 
@@ -531,3 +537,29 @@ Quests that teach it:
 - **A Stone's Throw** (Nomad, combat, after Twine and Thong): craft a sling, reach Ranged 2.
 - **Bow and Arrow** (Farm, combat, after Homestead Hearth): craft a short bow and eight
   arrows, reach Ranged 5.
+
+## The Nomad book in eight paths (Oct 20)
+
+The Nomad chapter is `base/quests_nomad.ron` (read after `quests.ron`, docs above), drawn
+as eight paths, each four to seven quests deep and ending in one capstone. Four of the old
+twelve paths folded into others: Crafting into First Steps, Comforts into Home, Farming into
+Food (was Cooking) and Fishing into Hunting and Fishing. Quest names, and so saves and
+language keys, are unchanged.
+
+| Path | Quests | Capstone |
+|---|---|---|
+| First Steps | Timber, Crafting Table, An Axe to It, A Chopping Block, A Sharp Edge, Twine and Thong | A Full Stone Kit |
+| The Hearth | Look It Up, First Night, Stone in Hand, A Bed of Your Own, Torchlight | Homestead Hearth (then the rite, The Farm Age) |
+| Home | Make Camp, A Lit Corner, A Bench to Work At, Pockets, Company at Camp, Pantry Shelves | From the Shelves |
+| Food | Meat on the Fire, A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore, Break Ground, Tools for Animals, Hung to Dry, Trail Rations | A Varied Table |
+| Hunting and Fishing | A Tempting Bite, A Friend in the Wild, Small Game, Hide and Seek, Set a Snare, Rod and Line, First Catch, A Fish Supper | Old Tusk |
+| Combat | Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw, Hide Wraps, Raise Your Guard | Hard to Put Down |
+| Mining | A Pile of Stone, Dig In, Black Flecks, Reading the Ground, Coal and Cinders, Following the Seam, Red Metal Underfoot, Stockpile | The First Mine |
+| The Wilds | Where to Settle, Wild Neighbours, Lay of the Land, Folk of the Road, A Kind Turn, Found and Thanked, Something for Something, The Market Road, Caught in the Rain, Under Lock and Key, Light Sleepers | Coal by Road |
+
+The Mining path gains three quests on the coal ladder (piece 7's second half): Reading the
+Ground (three ore samples of any kind, after Black Flecks: the first over each vein teaches
+prospecting), Following the Seam (32 coal ore and Mining 8, after Coal and Cinders) and The
+First Mine (48 coal ore, 12 copper ore and Mining 12, after Following the Seam and
+Stockpile). Stockpile moved from First Steps to Mining, where it already followed Red Metal
+Underfoot. Red Metal Underfoot now says copper wants a stone pickaxe.

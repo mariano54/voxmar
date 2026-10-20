@@ -3375,6 +3375,34 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     assert!(flints > 0, "sixty gravel broke without a flint");
 }
 
+/// The draw key `gravel_sometimes_breaks_to_flint_instead` pins.
+const GRAVEL_DRAWS: u64 = 0x9a5e;
+
+/// A standing log refuses a bare hand: the client's break it claims finished is undone, the
+/// log put back. Held, a flint axe fells it, and the log comes to hand.
+#[test]
+fn a_bare_hand_fells_no_tree_and_a_flint_axe_does() {
+    let mut client = Client::join();
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    client.ok("/clear");
+    client.ok("/setblock ~ ~-1 ~ oak_log");
+    let (log, axe) = (client.content.blocks.expect("base:oak_log"), client.content.blocks.expect("base:flint_axe"));
+    client.pump_until(|c| c.world.block(below) == Some(log));
+    let target = ActionTarget::Block { block: below, face: Face::PosY };
+    client.propose("core:mine", target);
+    client.settle();
+    client.world.set_block(below, BlockId::AIR);
+    client.connection.send(ClientMessage::Finished { target });
+    client.pump_until(|c| c.world.block(below) == Some(log));
+    assert!(client.inventory.slots.iter().flatten().all(|s| s.item != log), "a bare hand took a log");
+    client.ok("/give flint_axe 1");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == axe));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("core:mine", target);
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == log));
+}
+
 /// Tall grass gives twine one time in five to a knife (a stone one, a quarter), and never
 /// by hand: the first upgrade on twine, which otherwise waits on wild wheat.
 #[test]
@@ -3412,7 +3440,7 @@ fn a_knife_cuts_twine_from_tall_grass() {
 }
 
 /// A stone hoe cutting a ripe wheat in a patch of nine reaps all nine, each giving its
-/// harvest; a knife cuts only the one.
+/// harvest; a bare hand or a knife cuts only the one.
 #[test]
 fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
     let mut client = Client::join();
@@ -3423,11 +3451,14 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         let lying: u32 = c.items.values().filter(|i| i.stack.item == wheat || i.stack.item == seeds).map(|i| i.stack.count as u32).sum();
         lying + c.inventory.slots.iter().flatten().filter(|s| s.item == wheat || s.item == seeds).map(|s| s.count as u32).sum::<u32>()
     };
-    for (hoe, reaped) in [("flint_knife", 1), ("stone_hoe", 9)] {
+    for (hoe, reaped) in [("bare hand", 1), ("flint_knife", 1), ("stone_hoe", 9)] {
         client.ok("/clear");
-        client.ok(&format!("/give {hoe} 1"));
-        let item = client.content.blocks.expect(&format!("base:{hoe}"));
-        client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == item));
+        client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
+        if hoe != "bare hand" {
+            client.ok(&format!("/give {hoe} 1"));
+            let item = client.content.blocks.expect(&format!("base:{hoe}"));
+            client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == item));
+        }
         client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
         client.ok(&format!("/fill {} {} {} {} {} {} farmland", centre.x - 1, centre.y - 1, centre.z - 1, centre.x + 1, centre.y - 1, centre.z + 1));
         client.ok(&format!("/fill {} {} {} {} {} {} wheat_crop", centre.x - 1, centre.y, centre.z - 1, centre.x + 1, centre.y, centre.z + 1));
@@ -3451,34 +3482,6 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
     client.after_server_ticks(2);
     let left = cells.iter().filter(|&&cell| client.world.block(cell) == Some(apple)).count();
     assert_eq!(left, 8, "a stone hoe on one ripe apple leaf took {} of the leaves about it", 8 - left);
-}
-
-/// The draw key `gravel_sometimes_breaks_to_flint_instead` pins.
-const GRAVEL_DRAWS: u64 = 0x9a5e;
-
-/// A standing log refuses a bare hand: the client's break it claims finished is undone, the
-/// log put back. Held, a flint axe fells it, and the log comes to hand.
-#[test]
-fn a_bare_hand_fells_no_tree_and_a_flint_axe_does() {
-    let mut client = Client::join();
-    let below = client.position.floor().as_ivec3() - IVec3::Y;
-    client.ok("/clear");
-    client.ok("/setblock ~ ~-1 ~ oak_log");
-    let (log, axe) = (client.content.blocks.expect("base:oak_log"), client.content.blocks.expect("base:flint_axe"));
-    client.pump_until(|c| c.world.block(below) == Some(log));
-    let target = ActionTarget::Block { block: below, face: Face::PosY };
-    client.propose("core:mine", target);
-    client.settle();
-    client.world.set_block(below, BlockId::AIR);
-    client.connection.send(ClientMessage::Finished { target });
-    client.pump_until(|c| c.world.block(below) == Some(log));
-    assert!(client.inventory.slots.iter().flatten().all(|s| s.item != log), "a bare hand took a log");
-    client.ok("/give flint_axe 1");
-    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == axe));
-    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
-    client.propose("core:mine", target);
-    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
-    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == log));
 }
 
 /// Plain stone breaks under a flint pickaxe at Mining 1 into two loose stones and no
@@ -8712,9 +8715,15 @@ impl Fresh {
         for z in [14, 17] {
             c.fill(origin, v(10, 0, z), v(24, 3, z), "gravel");
         }
-        // A patch of natural stone one block high, with two coal ores on its near edge.
+        // A patch of natural stone one block high, with two coal ores on its near edge; beyond
+        // it nine more standing apart in two rows, with room to walk between, and a sample of
+        // coal lying on the grass.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
         c.fill(origin, v(9, 0, 3), v(9, 0, 4), "coal_ore");
+        for (x, z) in FRESH_COAL {
+            c.fill(origin, v(x, 0, z), v(x, 0, z), "coal_ore");
+        }
+        c.fill(origin, v(14, 0, 8), v(14, 0, 8), "coal_ore_sample");
         // Granite, the hard rock stone heads are ground from, in a far corner: nine blocks
         // one high, so what is left over stands out of the way. And a block of sand, for the
         // grindstone's dressing.
@@ -9004,6 +9013,16 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.gather("base:flint_axe", trunks, log, 12);
     f.mark("an_axe_to_it");
 
+    // Black Flecks: the sample of coal on the grass, lifted with the flint pickaxe (the seam
+    // it marks wants a stone one).
+    let sample = f.rel(14, 0, 8);
+    f.walk_toward(Fresh::middle(f.rel(14, 0, 9)), 0.3);
+    f.hold("base:flint_pickaxe");
+    f.propose("core:mine", ActionTarget::Block { block: sample, face: Face::PosY });
+    f.spend(Act::Mine, |me| me.wait(30.0, "lifting the sample of coal", |c| c.world.block(sample) == Some(BlockId::AIR)));
+    f.collect("base:coal_ore", 1);
+    f.mark("black_flecks");
+
     // Stone in Hand: cobblestone with the flint pickaxe (loose stones knocked together); sand by hand, and a grindstone (a
     // wheel of cobble dressed with sand, on two sticks) set down by the table; granite, the
     // hard rock, ground on it to seven stone heads: a stone pickaxe and axe hafted from six,
@@ -9105,9 +9124,10 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.craft(&[(0, feather, 1), (1, feather, 1), (3, hide, 1), (4, hide, 1)], "base:sleeping_bag", 1);
     f.mark("a_bed_of_your_own");
 
-    // Torchlight: two coal ores, each with a stick making four torches.
-    let coal = rel(f, vec![v(9, 0, 3), v(9, 0, 4)]);
-    f.gather_from("base:stone_pickaxe", &[Fresh::middle(f.rel(7, 0, 3))], coal, "base:coal_ore", 2);
+    // Coal and Cinders: eleven coal ores with the stone pickaxe, twelve with the sample. Torchlight: two of them, each with a stick making four torches.
+    let coal = rel(f, [v(9, 0, 3), v(9, 0, 4)].into_iter().chain(FRESH_COAL.map(|(x, z)| v(x, 0, z))).collect());
+    f.gather("base:stone_pickaxe", coal, "base:coal_ore", 12);
+    f.mark("coal_and_cinders");
     f.at_table(table);
     f.craft(&[(0, "base:coal_ore", 2), (3, stick, 2)], "base:torch", 8);
     f.mark("torchlight");
@@ -9184,6 +9204,9 @@ fn the_first_days(f: &mut Fresh) -> Site {
     Site { table, fire, kiln, bed, banks, clamp: Some(clamp) }
 }
 
+/// The coal ores standing apart on the fresh plot, beyond the stone patch (x, z).
+const FRESH_COAL: [(i32, i32); 9] = [(9, 6), (11, 6), (13, 6), (15, 6), (17, 6), (10, 10), (12, 10), (14, 10), (16, 10)];
+
 /// The quests a new player follows from nothing to the lit Crucible Kiln, in the order the
 /// book opens them: the Nomad main line to the lit Homestead Hearth, then the Farm main line.
 const QUEST_BOOK_ORDER: &[&str] = &[
@@ -9193,6 +9216,8 @@ const QUEST_BOOK_ORDER: &[&str] = &[
     "stone_in_hand",
     "first_night",
     "a_bed_of_your_own",
+    "black_flecks",
+    "coal_and_cinders",
     "torchlight",
     "homestead_hearth",
     "a_pit_kiln",
@@ -9595,6 +9620,8 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("first_night", "first_night"),
     ("a_tempting_bite", "a_tempting_bite"),
     ("a_bed_of_your_own", "a_bed_of_your_own"),
+    ("black_flecks", "black_flecks"),
+    ("coal_and_cinders", "coal_and_cinders"),
     ("torchlight", "torchlight"),
     ("hearth_lit", "homestead_hearth"),
     ("pit_kiln", "a_pit_kiln"),
