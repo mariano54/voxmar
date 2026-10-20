@@ -706,8 +706,9 @@ impl QuestRegistry {
             None => want == item,
         };
         // The goals that have the player pick, mine, make (at a station too) or catch the item,
-        // which teach it as a stack in hand does not; a block picked or mined teaches what it drops too, and one
-        // picked what its harvest gives (a ripe crop's grain, a wild plant's forage).
+        // which teach it as a stack in hand does not; a block picked or mined teaches what it
+        // drops too, and one picked what its harvest gives (a ripe crop's grain, a wild plant's
+        // forage).
         fn teaches(goal: &Goal) -> Option<&str> {
             match goal {
                 Goal::Pick(w, _) | Goal::Mine(w, _) | Goal::Craft(w, _) | Goal::CraftNear(w, _, _) | Goal::Cook(w, _) | Goal::CookAt(w, _, _) | Goal::Catch(w, _) => Some(w),
@@ -743,14 +744,24 @@ impl QuestRegistry {
                         if paid.iter().map(|(_, n)| n).sum::<u32>() < *need {
                             continue;
                         }
-                        // Taught when another goal of the task has the player make or gather any
-                        // item the stack takes, not only the one given.
+                        // Taught when another goal of the task has the player make or gather
+                        // items the stack takes, not only the one given: a goal on a tag teaches
+                        // only when every item it names is taken (or drops one that is), so one
+                        // plate made never teaches a stack of storage.
                         let takes: Vec<&str> = match want.strip_prefix("tag:") {
                             Some(tag) => blocks.tagged(tag).map(|id| blocks.def(id).name.as_str()).collect(),
                             None => vec![want.as_str()],
                         };
                         let taught = task.iter().any(|g| {
-                            teaches(g).is_some_and(|w| w == want || holds(want, w) || paid.iter().map(|(item, _)| *item).chain(takes.iter().copied()).any(|item| holds(w, item) || dropped(g, w, item)))
+                            teaches(g).is_some_and(|w| {
+                                let names: Vec<&str> = match w.strip_prefix("tag:") {
+                                    Some(tag) => blocks.tagged(tag).map(|id| blocks.def(id).name.as_str()).collect(),
+                                    None => vec![w],
+                                };
+                                w == want
+                                    || (!names.is_empty()
+                                        && names.iter().all(|n| holds(want, n) || paid.iter().map(|(item, _)| *item).chain(takes.iter().copied()).any(|item| dropped(g, n, item))))
+                            })
                         });
                         if !taught {
                             let gifts = paid.iter().map(|(item, n)| format!("{n} {item}")).collect::<Vec<_>>().join(" and ");
@@ -1374,6 +1385,13 @@ mod tests {
         let felled = quest("felled", "nomad", "", r#"Craft("oak_log", 1), Have("tag:log", 4)"#, r#"Xp("mining", 1.0)"#);
         let birch = quest("gift", "nomad", "", "Home", r#"Item("birch_log", 4)"#);
         assert!(resolved_with("base", &format!("{felled}, {birch}"), &[("base:birch_log", &["log"])]).is_ok(), "making one log the stack takes teaches it, whatever log is given");
+        let crockery: &[(&str, &[&str])] = &[("base:plate", &["crockery", "storage"]), ("base:cup", &["crockery"]), ("base:chest", &["storage"])];
+        let shelf = quest("shelf", "nomad", "", r#"Craft("tag:crockery", 1), Have("tag:storage", 2)"#, r#"Xp("mining", 1.0)"#);
+        let chests = quest("gift", "nomad", "", "Home", r#"Item("chest", 2)"#);
+        assert!(resolved_with("base", &format!("{shelf}, {chests}"), crockery).is_err(), "a cup meets the crockery goal, so it teaches no storage stack");
+        let plates = quest("plates", "nomad", "", r#"Craft("tag:crockery", 1), Have("tag:crockery", 2)"#, r#"Xp("mining", 1.0)"#);
+        let cups = quest("gift", "nomad", "", "Home", r#"Item("cup", 2)"#);
+        assert!(resolved_with("base", &format!("{plates}, {cups}"), crockery).is_ok(), "a goal on the stack's own tag teaches it");
         let near = quest("near", "nomad", "", r#"CraftNear("torch", "chopping_block", 4), Have("torch", 4)"#, r#"Xp("mining", 1.0)"#);
         assert!(resolved("base", &format!("{near}, {}", quest("gift", "nomad", "", "Home", r#"Item("torch", 4)"#))).is_ok(), "making the item at a station teaches it");
         let looked = quest("looked", "nomad", "", r#"LookUp("poppy"), Have("poppy", 4)"#, r#"Xp("mining", 1.0)"#);
