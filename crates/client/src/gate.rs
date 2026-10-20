@@ -652,7 +652,7 @@ struct Gate {
     /// Where a stage last walked the player to pick something up (`walk_to_lying`), so the
     /// step is asked once.
     walked_to: Option<Vec3>,
-    /// Where the observer floated before a step moved it over its own ground (`reap`), to
+    /// Where the observer floated before a step moved it (`settlements`, `reap`), to
     /// be put back when the step ends.
     observer_home: Option<Vec3>,
     /// Frames in this stage that what a shot is about has been on screen: it shows a frame
@@ -6256,9 +6256,9 @@ fn reap(world: &mut World, gate: &mut Gate, now: f32) {
             ] {
                 net.command(&line);
             }
-            // The observer over the patch, high up: floating over its own spawn, the patch's
-            // column may be beyond what is streamed to it (on the Mac's world it saw none of
-            // the nine the client did). Put back when the step ends.
+            // The observer over the patch, high up, wherever an earlier step left it (the
+            // settlement search once left it at the town, and it saw none of the nine the
+            // client did). Put back when the step ends.
             if let Some(observer) = gate.observer.as_mut() {
                 gate.observer_home = observer.position;
                 observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", centre.x as f32 + 0.5, centre.y + 40, centre.z as f32 + 0.5) });
@@ -17584,6 +17584,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             if let Some(observer) = gate.observer.as_mut() {
                 observer.replies.clear();
                 observer.connection.send(ClientMessage::Command { line: format!("locate settlement {SETTLEMENT_RADIUS}") });
+                // Where it floats over the test ground, for the last stage to bring it back to.
+                gate.observer_home = observer.position;
             }
             gate.advance(now);
         }
@@ -17630,7 +17632,10 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 if gate.server_in_phase() > SETTLEMENT_LOAD {
                     let n = columns.len();
                     gate.check("settlements", Err(format!("the world around the settlement at {at} did not load: the server sent {held} of its {n} columns in {SETTLEMENT_LOAD} server seconds")));
-                    gate.next(Step::Recipes, now);
+                    // Home from here too, both peers (the last stage).
+                    world.resource::<Net>().command(&format!("tp {} {} {}", gate.feet.x as f32 + 0.5, gate.feet.y, gate.feet.z as f32 + 0.5));
+                    gate.phase = 6;
+                    gate.advance(now);
                 }
                 return;
             }
@@ -17764,13 +17769,29 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.check("settlement jetties", jetties);
             gate.advance(now);
         }
-        // Back on the test ground.
+        // Back on the test ground, both peers: the steps after read the observer's world
+        // there (`reap`), which it holds only floating over it.
         _ => {
+            let home_at = gate.observer_home;
+            if gate.settled == 0 {
+                if let (Some(at), Some(observer)) = (home_at, gate.observer.as_mut()) {
+                    observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y, at.z) });
+                }
+                gate.settled = 1;
+            }
             let home = world.resource::<LocalPlayer>().position.xz().distance(gate.feet.xz().as_vec2() + 0.5) < 2.0;
-            if home || gate.server_in_phase() > 20.0 {
+            let observer_home = match (home_at, gate.observer.as_ref()) {
+                (Some(at), Some(observer)) => observer.position.is_some_and(|p| p.distance(at) < 3.0),
+                _ => true,
+            };
+            if (home && observer_home) || gate.server_in_phase() > 20.0 {
                 if !home {
                     gate.check("settlements: back", Err("the player never came back to the test ground".into()));
                 }
+                if !observer_home {
+                    gate.check("settlements: back", Err("the observer never came back over the test ground".into()));
+                }
+                gate.observer_home = None;
                 gate.next(Step::Recipes, now);
             }
         }
