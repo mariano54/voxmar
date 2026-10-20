@@ -618,6 +618,8 @@ struct Gate {
     /// for the distant land, and how many of its tiles were in when placing began.
     arrive_ready: Option<f32>,
     land_at_place: (usize, usize),
+    /// Whether the distant land was told in (`LAND_IN`).
+    land_told: bool,
     /// Progress through a step's own stages, and when the current one began.
     phase: u32,
     phase_since: f32,
@@ -987,6 +989,7 @@ impl Gate {
             load_parts: [None; LOAD_PARTS.len()],
             arrive_ready: None,
             land_at_place: (0, 0),
+            land_told: false,
             phase: 0,
             phase_since: 0.0,
             settled: 0,
@@ -1740,6 +1743,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
 }
 
 fn step(world: &mut World, gate: &mut Gate, now: f32) {
+    tell_land_in(world, gate, now);
     music_fades(world, gate, now);
     watch_fire(world, gate);
     if !gate.evening_told {
@@ -17506,6 +17510,27 @@ fn land(world: &World, gate: &mut Gate) {
             Ok(format!("{:.0}% of {grass} grass blocks carry a plant, {:.0}% of them tall grass", 100.0 * cover, 100.0 * tall_share))
         },
     );
+}
+
+/// The file in the gate's directory written once the distant land is first in: `tools/gate`
+/// holds the test binaries until it is there (or the game has ended). The land is the slowest
+/// part of loading, built on this game's own low-priority workers, and the tests beside it
+/// took the Mac's cores from it: with 20 of its 568 tiles in when placing began, breaking
+/// waited 42 s for it (`Step::Collect`), where alone it is in within a few seconds.
+const LAND_IN: &str = "land-in";
+
+/// Writes `LAND_IN` the first frame the distant land is all in.
+fn tell_land_in(world: &World, gate: &mut Gate, now: f32) {
+    if gate.land_told {
+        return;
+    }
+    let (tiles, wanted) = world.resource::<Lod>().progress();
+    if wanted > 0 && tiles >= wanted {
+        gate.land_told = true;
+        if let Err(e) = std::fs::write(gate.dir.join(LAND_IN), format!("{now:.1}\n")) {
+            error!("gate: could not write {LAND_IN}: {e}");
+        }
+    }
 }
 
 /// What being loaded takes, in `load_parts`'s order, as the load line names them.
