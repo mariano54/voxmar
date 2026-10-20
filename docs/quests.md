@@ -155,7 +155,7 @@ so that what the game already does is something the book points to:
   wandering kind with what the player does next anyway, so meeting them is a side step,
   never a wait. Nomad: Coal by Road (the coal carters or the benighted miners, and sixteen
   torches; pays four coal). Farm: Fired Whole (the clay diggers fire your clay, and
-  twenty-four fired in all; pays twelve clay), The Last Sheaf (the harvest home procession,
+  twenty-four fired in all; pays six gold coins), The Last Sheaf (the harvest home procession,
   and twelve wheat brought in; pays eight wheat seed) and Mice in the Stores (follow the
   piper to the end of his tune, and a pantry or larder at home; pays four seed mix).
 - **Wanderers that come back** (the Nomad thread's hooks, Oct 13): quests that ask for a

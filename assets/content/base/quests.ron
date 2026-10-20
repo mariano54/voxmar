@@ -26,7 +26,7 @@
             why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["the_farm_age", "fire_the_clay"],
-            rewards: [Xp("crafting", 305.0), Item("fired_clay", 4)],
+            rewards: [Xp("crafting", 305.0), Item("earthen_jar", 2)],
         ),
         (
             name: "a_pot_on_the_fire", age: "farm", branch: "cooking", title: "A Pot on the Fire",
@@ -117,14 +117,14 @@
             why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest, a barrel or a crate and leave it there. Clay keeps for ever, and the next load is a step away.",
             tasks: [[Stocked("clay", "chest", 32)], [Stocked("clay", "barrel", 32)], [Stocked("clay", "crate", 32)]],
             after: ["clay_banks", "fire_the_clay"],
-            rewards: [Xp("crafting", 80.0), Item("fired_clay", 4)],
+            rewards: [Xp("crafting", 80.0), Item("chest", 1)],
         ),
         (
             name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",
-            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and a dozen clay comes back for the next load. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
+            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
             tasks: [[Cook("fired_clay", 40)]],
             after: ["the_potter"],
-            rewards: [Xp("crafting", 120.0), Item("clay", 12)],
+            rewards: [Xp("crafting", 120.0), Item("kiln_bricks", 4)],
         ),
         (
             name: "a_pit_kiln", age: "farm", branch: "main", title: "A Pit Kiln",
@@ -724,10 +724,10 @@
         (
             name: "fired_whole", age: "farm", branch: "pottery", title: "Fired Whole",
             capstone: true,
-            why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is a dozen clay for the next kiln load.",
+            why: "A potter and an apprentice dig clay at river banks and wet ground near folk's homes. Hand them clay and it comes back fired in their kiln, none cracked, one kept, up to eight; a beginner who shows a fired piece learns to throw a pot. Have clay fired by them, and fire twenty-four clay in all. The reward is six gold coins from the potters.",
             tasks: [[Met("clay_diggers", 1), Cook("fired_clay", 24)]],
             after: ["a_kiln_load", "clay_banks", "earthenware", "an_earth_clamp"],
-            rewards: [Xp("crafting", 150.0), Item("clay", 12)],
+            rewards: [Xp("crafting", 150.0), Item("gold_coin", 6)],
         ),
         (
             name: "the_last_sheaf", age: "farm", branch: "farming", title: "The Last Sheaf",
