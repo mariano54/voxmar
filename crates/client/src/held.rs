@@ -821,6 +821,7 @@ fn show(
             tint: [255; 3],
             light,
             held: Some(Held { at, turn: turned }),
+            posed: None,
         });
         models.0.splice(0..0, arm);
         motion.drawn = handling.bare_layers.len().min(bare.pieces.len());
@@ -838,6 +839,7 @@ fn show(
         tint: look.tint,
         light,
         held: Some(Held { at, turn: turn_vector(turn) }),
+        posed: None,
     });
 }
 
