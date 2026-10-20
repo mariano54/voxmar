@@ -5269,6 +5269,61 @@ mod fight_tests {
         }
     }
 
+    /// A wolf fighting a player who stands and strikes back circles between bites
+    /// (`Attack::circle`): once it has recovered it gets clear of its reach and swings
+    /// round them, facing them, then comes in and bites again; never nose to nose for the
+    /// whole fight, and its body and head never in a block.
+    #[test]
+    fn a_wolf_circles_between_bites() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        let player = join(&mut server, stand);
+        let id = put(&mut server, "base:wolf", stand - Vec3::X * 3.0, Vec3::X);
+        let def = &server.content.creatures.get(server.creatures.live[&id].species).def;
+        let attack = def.attack.expect("a wolf bites");
+        let circle = attack.circle.expect("a wolf circles");
+        let clear = def.body.size.0 * server.creatures.live[&id].scale * 0.5 + attack.reach + circle.away * 0.5;
+        server.tick = 1000;
+        server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+        let bearing = |at: Vec3| (at - stand).z.atan2((at - stand).x);
+        let (mut bites, mut was) = (0u32, false);
+        // Each circle: the furthest it got from the player, and how far round it went.
+        let (mut circles, mut now): (Vec<(f32, f32)>, Option<(f32, f32, f32)>) = (Vec::new(), None);
+        for t in 0..20 * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            let d = server.players[&player].position.distance(server.creatures.live[&id].body.position);
+            if t % TICKS_PER_SECOND as u64 == 0 && d < 3.5 {
+                server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+            }
+            // As `Server::tick` runs them: the creatures think and move, then the fights.
+            server.think_and_move();
+            server.tick_fights();
+            server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+            let ground = Ground::of(&server);
+            let wolf = &server.creatures.live[&id];
+            assert!(!wolf.body.aabb().intersects(|p| motion::Surroundings::solid(&ground, p)), "the wolf went into a block at {} (tick {t})", wolf.body.position);
+            assert!(!wolf.body.head_blocked(&ground), "the wolf's head went into a block at {} (tick {t})", wolf.body.position);
+            let biting = wolf.decision.attack.is_some();
+            bites += (biting && !was) as u32;
+            was = biting;
+            let at = wolf.body.position;
+            if wolf.mind.circling > 0.0 && server.tick >= wolf.held_until {
+                let (far, last, round) = now.unwrap_or((0.0, bearing(at), 0.0));
+                let step = (bearing(at) - last + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+                now = Some((far.max(at.with_y(0.0).distance(stand.with_y(0.0))), bearing(at), round + step));
+            } else if let Some((far, _, round)) = now.take() {
+                circles.push((far, round.abs().to_degrees()));
+            }
+        }
+        assert!(bites >= 6, "the wolf bit only {bites} times in 20 s");
+        assert!(circles.len() >= 5, "the wolf circled only {} times in 20 s: {circles:?}", circles.len());
+        for (i, &(far, round)) in circles.iter().enumerate() {
+            assert!(far >= clear, "circle {i}: the wolf got only {far:.2} blocks from the player, {clear:.2} wanted: {circles:?}");
+            assert!(round >= 15.0, "circle {i}: the wolf went only {round:.0} degrees round the player: {circles:?}");
+        }
+    }
+
     /// A mouflon led by wheat toward a player beyond a railing seven long, open at its ends,
     /// goes round it to them: to it the railing is a wall two high, in its search and as it
     /// steers as in its step. Before: its search and its steering took the railing for a

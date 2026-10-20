@@ -383,6 +383,7 @@ impl Server {
                     }
                     self.placed_plant(item, cell);
                     self.placed_machine(agent, cell);
+                    self.placed_trap(agent, cell);
                     self.placed_by_field(agent, item, cell);
                     self.placed_for_quests(agent, item, cell);
                 }
