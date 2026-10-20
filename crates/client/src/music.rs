@@ -16,6 +16,11 @@
 //! that is on, passing over the ones played lately. A borrowed track is checked to decode
 //! before it plays; one that does not (empty, cut short, another codec) leaves the
 //! rotation.
+//!
+//! The home motif (`home` in `music.ron`) is a short cue apart from the rotation: the first
+//! time each night the player steps inside their own lit home, a `Home` track plays, the
+//! track playing fading for it, and the quiet gap follows it as it follows any track. A
+//! boss fight holds it back, and one starting fades it.
 
 use std::collections::VecDeque;
 use std::io::Cursor;
@@ -58,7 +63,7 @@ impl Plugin for MusicPlugin {
                 Update,
                 (
                     toggle_music,
-                    (receive_found, schedule_music, start_loaded).chain().run_if(sound_on.or_else(resource_exists::<Rehearse>)),
+                    (receive_found, home_motif, schedule_music, start_loaded).chain().run_if(sound_on.or_else(resource_exists::<Rehearse>)),
                     show_now_playing,
                     fade_out,
                     set_volume,
@@ -140,6 +145,17 @@ struct Music {
     /// tags.
     fighting: bool,
     fight_music: Vec<String>,
+    home: AtHome,
+}
+
+/// What the home motif knows: whether the player was inside their lit home when last
+/// looked (none before the first look in a world), the night it last played, and how many
+/// times it has started.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct AtHome {
+    pub inside: Option<bool>,
+    pub night: Option<u64>,
+    pub starts: u32,
 }
 
 impl Music {
@@ -290,6 +306,7 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         room: (None, None),
         fighting: false,
         fight_music: Vec::new(),
+        home: AtHome::default(),
     });
 }
 
@@ -573,6 +590,70 @@ fn schedule_music(
     }
 }
 
+/// Whether a player standing at `feet` is inside their lit home: `home` (`Vitals::home`) is a
+/// burning hearth (`fires`), within `reach` blocks each way, with a roof block within
+/// `roof` blocks over the head.
+fn inside_home(rules: &rules::HomeMotif, feet: Vec3, home: Option<IVec3>, fires: &rustc_hash::FxHashSet<IVec3>, block: impl Fn(IVec3) -> Option<BlockId>, is_roof: impl Fn(BlockId) -> bool) -> bool {
+    let Some(home) = home.filter(|home| fires.contains(home)) else { return false };
+    let off = (feet.floor().as_ivec3() - home).abs();
+    off.max_element() <= rules.reach && crate::ambience::roof_over(block, feet, feet, rules.roof, is_roof).is_some()
+}
+
+/// The home motif: on stepping inside the lit home at night, the first time that night and
+/// outside a boss fight, a `Home` track starts, the one playing fading for it.
+#[allow(clippy::too_many_arguments)]
+fn home_motif(
+    mut commands: Commands,
+    time: Res<Time>,
+    player: Res<LocalPlayer>,
+    menu: Option<Res<State<InMenu>>>,
+    settings: Res<Settings>,
+    cycle: Option<Res<crate::render::DayCycle>>,
+    world: Option<Res<ClientWorld>>,
+    mut music: ResMut<Music>,
+) {
+    let (Some(world), Some(cycle)) = (world, cycle) else { return };
+    if menu.is_some() || !player.joined || player.dead {
+        music.home.inside = None;
+        return;
+    }
+    let inside = inside_home(&music.rules.home, player.position, player.vitals.home, &world.fires, |p| world.voxels.block(p), |b| crate::ambience::defs::is_roof(&world.registry, b));
+    // Only a step in: the first look in a world, or after dying, finds the player where
+    // they are.
+    if music.home.inside.replace(inside) != Some(false) || !inside {
+        return;
+    }
+    let Some(night) = music.rules.home.night(cycle.ticks.max(0.0) as u64) else { return };
+    if music.home.night == Some(night) || music.fighting || !music.enabled || settings.music_volume == 0 {
+        return;
+    }
+    let rolls = [random_in(&time, 3, (0.0, 1.0)), random_in(&time, 4, (0.0, 1.0))];
+    // Picked as others are, but kept out of the rotation's memory of tracks played lately.
+    let Some(index) = pick(&music.tracks, Context::Home, &[], &settings, &VecDeque::new(), music.rules.own_share, rolls) else { return };
+    // Only own tracks are `Home`'s (`MusicRules::load`).
+    let Source::Own(ref handle) = music.tracks[index].source else { return };
+    let handle = handle.clone();
+    music.home.night = Some(night);
+    music.home.starts += 1;
+    music.fade_out(&mut commands);
+    music.start(&mut commands, &time, &settings, index, handle);
+}
+
+/// What the gate sees of the home motif: what it knows, the night it is now by its rules
+/// (none by day), and the track playing if it is the motif's.
+pub(crate) struct HomeHeard {
+    pub at: AtHome,
+    pub tonight: Option<u64>,
+    pub playing: Option<String>,
+}
+
+pub(crate) fn home_heard(world: &World) -> Option<HomeHeard> {
+    let music = world.get_resource::<Music>()?;
+    let ticks = world.get_resource::<crate::render::DayCycle>()?.ticks.max(0.0) as u64;
+    let track = music.current.map(|index| &music.tracks[index]).filter(|track| track.contexts.contains(&Context::Home));
+    Some(HomeHeard { at: music.home, tonight: music.rules.home.night(ticks), playing: track.map(|track| track.name.clone()) })
+}
+
 /// Plays a borrowed track once it has been read.
 fn start_loaded(
     mut commands: Commands,
@@ -612,6 +693,7 @@ fn start_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Musi
     music.fade_out(&mut commands);
     music.next_at = Some(time.elapsed() + music.gap(&time, false));
     music.fighting = false;
+    music.home.inside = None;
 }
 
 /// Back in the menus, the game's music fades out and the menu's starts again soon.
@@ -752,6 +834,27 @@ mod tests {
         let source = if own { Source::Own(Handle::default()) } else { Source::Borrowed(TrackFile::Loose("x.ogg".into())) };
         let category = if own { "ours" } else { "borrowed" }.to_owned();
         Track { source, contexts: contexts.to_vec(), weight, name: String::new(), category, biomes: Vec::new() }
+    }
+
+    /// Inside a home is by its burning hearth, within reach and under a roof: not by a cold
+    /// one, nor out in the yard, nor in the open beside it.
+    #[test]
+    fn inside_a_home_is_by_its_lit_hearth_under_a_roof() {
+        let rules = rules::HomeMotif { reach: 7, roof: 12, dusk: 16500, dawn: 23500 };
+        let (hearth, roof) = (IVec3::new(0, 10, 0), BlockId(5));
+        // A roof four blocks over the floor, over the room's nine by nine.
+        let block = |p: IVec3| Some(if p.y == 14 && p.x.abs() <= 4 && p.z.abs() <= 4 { roof } else { BlockId::AIR });
+        let is_roof = |b: BlockId| b == roof;
+        let lit: rustc_hash::FxHashSet<IVec3> = [hearth].into_iter().collect();
+        let cold = rustc_hash::FxHashSet::default();
+        let at = |x: f32, z: f32| Vec3::new(x + 0.5, 10.0, z + 0.5);
+        assert!(inside_home(&rules, at(2.0, 0.0), Some(hearth), &lit, block, is_roof));
+        assert!(!inside_home(&rules, at(2.0, 0.0), Some(hearth), &cold, block, is_roof), "a cold hearth is no lit home");
+        assert!(!inside_home(&rules, at(2.0, 0.0), None, &lit, block, is_roof), "no home");
+        assert!(!inside_home(&rules, at(6.0, 0.0), Some(hearth), &lit, block, is_roof), "in the open beside it");
+        let wide = |p: IVec3| Some(if p.y == 14 { roof } else { BlockId::AIR });
+        assert!(inside_home(&rules, at(7.0, -7.0), Some(hearth), &lit, wide, is_roof));
+        assert!(!inside_home(&rules, at(8.0, 0.0), Some(hearth), &lit, wide, is_roof), "past its reach, under another roof");
     }
 
     #[test]

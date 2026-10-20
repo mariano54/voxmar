@@ -409,6 +409,11 @@ steps! {
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
+    /// The home motif (`music.ron`'s `home`): the Cook step's Homestead Hearth, lit and so
+    /// home, roofed over; at midnight the player steps from the open under the roof and a
+    /// `Home` track starts (rehearsed silently, `music::Rehearse`); out and in again that
+    /// night, it does not start again.
+    HomeMotif,
     /// A drying rack stood by the campfire, raw rabbit in hand: a right click hangs it, the
     /// rack the server sends back is the hung one, and chat says where it stands makes it quicker.
     /// Then an earth clamp in its place, clay in hand: a right click sets it smouldering.
@@ -611,6 +616,10 @@ struct Gate {
     count_before: u32,
     /// The time of day before the way home step set dusk, set back after it.
     way_time: u64,
+    /// The time of day before the home motif step set midnight, set back after it, and how
+    /// many times the motif had started before its step in.
+    motif_time: u64,
+    motif_starts: u32,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     /// The door step's ground lit by a campfire, kept to judge against it put out.
@@ -786,6 +795,10 @@ struct Gate {
     /// The campfire the weather step dries the player by, while it stands, and what the
     /// storm left the player wet with before it was lit.
     dry_fire: Option<IVec3>,
+    /// The roof the weather step sets over the player in the storm, and what the ambience
+    /// heard of the roof overhead out in the open just before.
+    rain_roof: Option<(IVec3, voxmar_engine::block::BlockId)>,
+    rain_open: Option<crate::ambience::RoofHeard>,
     /// The bag the Nest step keeps its hen at: home, until the step breaks it.
     nest_bag: Option<IVec3>,
     storm_wet: Vec<String>,
@@ -921,6 +934,8 @@ impl Gate {
             dug: Vec::new(),
             count_before: 0,
             way_time: 0,
+            motif_time: 0,
+            motif_starts: 0,
             window_lit: None,
             fire_lit: None,
             natural_before: Vec::new(),
@@ -1007,6 +1022,8 @@ impl Gate {
             food_moved: false,
             cook_started: false,
             dry_fire: None,
+            rain_roof: None,
+            rain_open: None,
             nest_bag: None,
             storm_wet: Vec::new(),
             light_frames: 0,
@@ -1568,6 +1585,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Home => 75.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
+        // The roof and the night, then three steps in or out, each waited on.
+        Step::HomeMotif => STEP_LIMIT + 3.0 * QUEST_WAIT,
         // The barrel opened, then a server pass for the egg and a second for the chat; then
         // a rug and a stool set down, broken by hand and picked up.
         Step::Nest => 60.0,
@@ -1581,7 +1600,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // server's seconds.
         Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
-        Step::Weather => STEP_LIMIT + 10.0,
+        Step::Weather => STEP_LIMIT + 10.0 + ROOF_RAIN,
         _ => STEP_LIMIT,
     };
     // A step in the world is too long only by both the server's clock, as its own waits
@@ -1874,6 +1893,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::FirstFights => first_fights(world, gate),
         Step::ShotCancel => shot_cancel(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
+        Step::HomeMotif => home_motif(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Snare => snare(world, gate, now),
         Step::Tame => tame(world, gate, now, in_phase),
@@ -8536,21 +8556,50 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("it barely shows: the view changed by {change:.1} levels"))
             };
             gate.check(&format!("weather: {kind}"), result);
-            match kinds.get(phase as usize) {
-                Some((kind, ..)) => {
-                    world.resource::<Net>().command(&format!("weather {kind} 120"));
-                    // Wet through from the storm, and the rain gone with the snow coming
-                    // (snow is not rain): a campfire two blocks behind the player, out of
-                    // the snow's shot, dries them off while the snow comes. Snowblown is
-                    // the snow's own, whatever fire is near.
-                    gate.storm_wet = wet_through(world);
-                    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 0, 2);
-                    world.resource::<Net>().command(&format!("setblock {} {} {} campfire", at.x, at.y, at.z));
-                    gate.dry_fire = Some(at);
-                    gate.advance(now);
-                }
-                None => gate.advance(now),
+            if phase == 2 {
+                gate.advance(now);
+                return;
             }
+            // In the storm's rain, a thatch roof over the player before the snow.
+            {
+                let content = world.resource::<Launch>().content.clone();
+                let registry = &world.resource::<ClientWorld>().registry;
+                let thatch = (0..registry.len()).map(|id| voxmar_engine::block::BlockId(id as u16)).find(|&id| {
+                    let def = registry.def(id);
+                    def.has_tag("thatch") && def.has_tag("roof") && crate::ambience::defs::is_roof(registry, id) && !def.flipped && def.faces.is_none_or(|f| f == voxmar_engine::block::Facing::North)
+                });
+                let Some(thatch) = thatch else {
+                    gate.check("weather: rain on a roof", Err("no thatch roof block (tags thatch and roof) to stand under".into()));
+                    weather_snow(world, gate, now);
+                    return;
+                };
+                gate.rain_open = crate::ambience::roof_heard(world);
+                let feet = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+                let at = feet + IVec3::new(0, 2, 0);
+                world.resource::<Net>().command(&format!("setblock {} {} {} {}", at.x, at.y, at.z, content.blocks.def(thatch).name));
+                gate.rain_roof = Some((at, thatch));
+                gate.phase = 5;
+                gate.phase_since = now;
+                gate.phase_server = gate.server_now;
+                gate.settled = 0;
+            }
+        }
+        // Under the thatch roof in the same rain: the ambience hears the roof overhead and
+        // picks its patter by the roof's material, and muffles the open rain more than out
+        // in the open just before.
+        5 => {
+            let Some((at, roof)) = gate.rain_roof else { return };
+            let heard = crate::ambience::roof_heard(world);
+            let expected = crate::ambience::patter_of(world, roof);
+            let ready = heard.as_ref().is_some_and(|h| h.under == Some(roof) && h.patter == expected);
+            if !ready && gate.server_in_phase() < ROOF_RAIN {
+                return;
+            }
+            let open = gate.rain_open.take();
+            gate.check("weather: rain on a roof", rain_on_roof(world, open, heard, expected, roof));
+            world.resource::<Net>().command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+            gate.rain_roof = None;
+            weather_snow(world, gate, now);
         }
         3 => {
             let wet = wet_through(world);
@@ -8596,6 +8645,67 @@ fn weather(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.next(Step::Depths, now);
         }
         _ => {}
+    }
+}
+
+/// Seconds of the server's clock the roof over the player in the storm has for the
+/// ambience to hear it (it looks for a roof four times a second, `ambience::ROOF_LOOK`).
+const ROOF_RAIN: f32 = 2.0;
+
+/// The storm over, the snow: wet through from the storm, and the rain gone with the snow
+/// coming (snow is not rain), a campfire two blocks behind the player, out of the snow's
+/// shot, dries them off while the snow comes. Snowblown is the snow's own, whatever fire is
+/// near.
+fn weather_snow(world: &mut World, gate: &mut Gate, now: f32) {
+    world.resource::<Net>().command("weather snow 120");
+    gate.storm_wet = wet_through(world);
+    let at = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::new(0, 0, 2);
+    world.resource::<Net>().command(&format!("setblock {} {} {} campfire", at.x, at.y, at.z));
+    gate.dry_fire = Some(at);
+    gate.phase = 2;
+    gate.phase_since = now;
+    gate.phase_server = gate.server_now;
+    gate.settled = 0;
+}
+
+/// Judges the ambience under a roof of `roof` against out in the open just before, in the
+/// same rain: in the open no roof and no patter, with every roof bed silent; under it the
+/// roof heard, the patter its material names in `ambience.ron`, a bed playing on it, and
+/// the open rain muffled more than before.
+fn rain_on_roof(world: &World, open: Option<crate::ambience::RoofHeard>, under: Option<crate::ambience::RoofHeard>, expected: Option<String>, roof: voxmar_engine::block::BlockId) -> Result<String, String> {
+    let name = &world.resource::<ClientWorld>().registry.def(roof).name;
+    let (Some(open), Some(under)) = (open, under) else { return Err("the ambience never started".into()) };
+    let Some(expected) = expected else { return Err(format!("{name} makes no patter in ambience.ron's roofs")) };
+    let mut wrong = Vec::new();
+    let playing = |heard: &crate::ambience::RoofHeard| heard.beds.iter().filter(|(_, w)| *w > 0.0).map(|(bed, w)| format!("{bed} {w:.2}")).collect::<Vec<_>>();
+    if open.under.is_some() || open.patter.is_some() || !playing(&open).is_empty() {
+        wrong.push(format!("in the open, a roof {:?}, patter {:?} and roof beds {:?}", open.under, open.patter, playing(&open)));
+    }
+    if under.under != Some(roof) {
+        wrong.push(format!("under {name}, the roof heard is {:?}", under.under.map(|b| world.resource::<ClientWorld>().registry.def(b).name.clone())));
+    }
+    if under.patter.as_ref() != Some(&expected) {
+        wrong.push(format!("under {name}, the patter is {:?}, not its material's {expected}", under.patter));
+    }
+    let beds = playing(&under);
+    if beds.is_empty() {
+        wrong.push(format!("under {name}, no bed plays on the {expected} patter: {:?}", under.beds));
+    }
+    if under.sheltered <= open.sheltered {
+        wrong.push(format!("the open rain is muffled {:.2} under {name}, no more than {:.2} in the open", under.sheltered, open.sheltered));
+    }
+    // The weather outside (rain, wind, storms) is turned down under the roof, and not in
+    // the open.
+    let loud: Vec<&str> = under.muffled.iter().filter(|(_, left)| *left >= 1.0).map(|(bed, _)| bed.as_str()).collect();
+    let quieted: Vec<&str> = open.muffled.iter().filter(|(_, left)| *left < 1.0).map(|(bed, _)| bed.as_str()).collect();
+    if under.muffled.is_empty() || !loud.is_empty() || !quieted.is_empty() {
+        wrong.push(format!("beds outside not muffled under {name}: {loud:?} (of {}); muffled in the open: {quieted:?}", under.muffled.len()));
+    }
+    if wrong.is_empty() {
+        let outside = under.muffled.iter().map(|(bed, left)| format!("{bed} {left:.2}")).collect::<Vec<_>>().join(", ");
+        Ok(format!("in the open no roof bed plays; under {name} the {expected} patter plays ({}), the open rain is muffled {:.2}, and outside is turned down ({outside})", beds.join(", "), under.sheltered))
+    } else {
+        Err(wrong.join("; "))
     }
 }
 
@@ -13674,10 +13784,119 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         10 => {
             chimney_watch(world, gate, now, chimney[1]);
             if gate.chimney_since.is_none() {
-                hearth_done(world, gate, now, hearth, chimney, stove);
+                gate.next(Step::HomeMotif, now);
             }
         }
         _ => {}
+    }
+}
+
+/// The Cook step's hearth, its stove and chimney, from where that step stood.
+fn cook_hearth(gate: &Gate) -> (IVec3, [IVec3; 2], IVec3) {
+    let fire = gate.feet + IVec3::new(0, 0, 14);
+    let hearth = fire + IVec3::new(3, 0, 0);
+    (hearth, [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)], fire + IVec3::new(-2, 0, 0))
+}
+
+/// The home motif, at the Cook step's Homestead Hearth, lit and so home: a roof of planks
+/// four blocks over it, the night set to midnight, and two pads on the hearth's north side,
+/// one under the roof (`inside`) and one past its edge in the open (`outside`). From the
+/// open to under the roof the player steps (a teleport, which the motif, looking every
+/// frame, sees as a step) and a `Home` track starts; out and in again, the music sees each
+/// and starts nothing more that night. The roof and pads come down and the time goes back,
+/// then the hearth (`hearth_done`).
+fn home_motif(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    let (hearth, chimney, stove) = cook_hearth(gate);
+    let (inside, outside) = (hearth + IVec3::new(0, 0, -2), hearth + IVec3::new(0, 0, -5));
+    let roof = (hearth + IVec3::new(-2, 4, -3), hearth + IVec3::new(2, 4, 2));
+    let heard = crate::music::home_heard(world);
+    let (home, feet) = {
+        let player = world.resource::<LocalPlayer>();
+        (player.vitals.home, player.position)
+    };
+    let lit = world.resource::<ClientWorld>().fires.contains(&hearth);
+    let at = |cell: IVec3| (feet - cell.as_vec3() - Vec3::new(0.5, 0.0, 0.5)).with_y(0.0).length() < 1.0;
+    let tp = |world: &mut World, cell: IVec3| world.resource::<Net>().command(&format!("tp {} {} {}", cell.x as f32 + 0.5, cell.y, cell.z as f32 + 0.5));
+    let finish = |world: &mut World, gate: &mut Gate| {
+        let net = world.resource::<Net>();
+        net.command(&format!("fill {} {} {} {} {} {} air", roof.0.x, roof.0.y, roof.0.z, roof.1.x, roof.1.y, roof.1.z));
+        for pad in [inside, outside] {
+            net.command(&format!("setblock {} {} {} air", pad.x, pad.y - 1, pad.z));
+        }
+        net.command(&format!("time set {}", gate.motif_time));
+        hearth_done(world, gate, now, hearth, chimney, stove);
+    };
+    let Some(heard) = heard else {
+        gate.check("home motif: starts", Err("no music running to hear it (music::Rehearse)".into()));
+        return finish(world, gate);
+    };
+    let waited = gate.server_in_phase() > QUEST_WAIT && in_phase > QUEST_WAIT;
+    let said = |heard: &crate::music::HomeHeard| {
+        format!(
+            "home {home:?} (the hearth {hearth}, lit {lit}), inside by the music's last look {:?}, {} starts, the night now {:?} and last played {:?}, the motif's track playing {:?}",
+            heard.at.inside, heard.at.starts, heard.tonight, heard.at.night, heard.playing
+        )
+    };
+    match gate.phase {
+        0 => {
+            gate.motif_time = world.resource::<crate::render::DayCycle>().ticks.max(0.0) as u64 % voxmar_protocol::TICKS_PER_DAY;
+            let net = world.resource::<Net>();
+            net.command("time set midnight");
+            net.command(&format!("fill {} {} {} {} {} {} oak_planks", roof.0.x, roof.0.y, roof.0.z, roof.1.x, roof.1.y, roof.1.z));
+            for pad in [inside, outside] {
+                net.command(&format!("fill {} {} {} {} {} {} air", pad.x, pad.y, pad.z, pad.x, pad.y + 1, pad.z));
+                net.command(&format!("setblock {} {} {} stone", pad.x, pad.y - 1, pad.z));
+            }
+            tp(world, outside);
+            gate.advance(now);
+        }
+        // Out in the open at night by the motif's own clock, the hearth lit and home, and the
+        // music has looked and seen the player outside: then the step in.
+        1 => {
+            if at(outside) && lit && home == Some(hearth) && heard.tonight.is_some() && heard.at.inside == Some(false) {
+                gate.motif_starts = heard.at.starts;
+                tp(world, inside);
+                gate.advance(now);
+            } else if waited {
+                gate.check("home motif: starts", Err(format!("never out in the open at night by a lit home: on the pad {}, {}", at(outside), said(&heard))));
+                finish(world, gate);
+            }
+        }
+        // Stepped in: the motif starts, once, for this night.
+        2 => {
+            if heard.at.starts == gate.motif_starts + 1 && heard.playing.is_some() && heard.at.night == heard.tonight {
+                gate.check("home motif: starts", Ok(format!("stepping in under the roof by the lit hearth at midnight started {}", heard.playing.as_deref().unwrap_or_default())));
+                tp(world, outside);
+                gate.advance(now);
+            } else if waited {
+                gate.check("home motif: starts", Err(format!("stepping in started no home motif: in {}, {}", at(inside), said(&heard))));
+                finish(world, gate);
+            }
+        }
+        // Back out, seen by the music, then in again.
+        3 => {
+            if at(outside) && heard.at.inside == Some(false) {
+                tp(world, inside);
+                gate.advance(now);
+            } else if waited {
+                gate.check("home motif: once a night", Err(format!("never seen back outside: on the pad {}, {}", at(outside), said(&heard))));
+                finish(world, gate);
+            }
+        }
+        // In again, seen by the music: nothing more started (it starts as it sees the step).
+        _ => {
+            if at(inside) && heard.at.inside == Some(true) {
+                let again = heard.at.starts - gate.motif_starts - 1;
+                gate.check(
+                    "home motif: once a night",
+                    if again == 0 { Ok("out and in again the same night, the music saw both steps and started nothing more".into()) } else { Err(format!("stepping in again the same night started it {again} more times: {}", said(&heard))) },
+                );
+                finish(world, gate);
+            } else if waited {
+                gate.check("home motif: once a night", Err(format!("never seen back inside: in {}, {}", at(inside), said(&heard))));
+                finish(world, gate);
+            }
+        }
     }
 }
 
