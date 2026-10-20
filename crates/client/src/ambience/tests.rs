@@ -976,6 +976,7 @@ fn caves_drip_by_their_rock_and_depth() {
         assert!(levels[seep] > 0.5 * ambience.beds[seep].volume, "seep at moisture {moisture}: {:.3}", levels[seep]);
     }
     assert!(heard(&cave(1.4, 20.0, 0.5, 0.0)).0[seep] < 1e-3);
+}
 
 /// A survey still out when the player leaves a game is of the world left: its answer,
 /// coming back after, is dropped, not heard in the next world (a village's murmur where
@@ -1008,4 +1009,46 @@ fn recorded_beds_and_their_muffled_twins_start_together() {
     assert!(!super::beds_ready(&beds, |&clip| clip != 2), "a recording still loading");
     assert!(super::beds_ready(&beds, |_| true));
     assert!(super::beds_ready(&Vec::<Vec<u8>>::new(), |_| false), "no beds, nothing to wait on");
+}
+
+/// Leaving a game drops the surveys still out (the `leave` system, not only `Surveys`): an
+/// answer of the world left that comes back after is not taken in the next, and the next
+/// game's first survey goes out without waiting on it.
+#[test]
+fn leaving_drops_the_surveys_still_out() {
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::prelude::World;
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
+    let mut ambient = super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1);
+    ambient.surveys.out = true;
+    let mut world = World::new();
+    world.insert_resource(ambient);
+    world.insert_resource(super::Surroundings { started: 7, surveyed: 7, ..Default::default() });
+    world.run_system_once(super::leave).unwrap();
+    let mut ambient = world.resource_mut::<super::Ambient>();
+    assert!(!ambient.surveys.out, "the next game's first survey waits on one of the world left");
+    let old = super::Survey { number: 7, enclosure: Default::default(), place: Some(Default::default()) };
+    ambient.surveys.tx.send(old).unwrap();
+    assert!(ambient.surveys.answers().is_empty(), "survey 7, of the world left, is taken in the next");
+}
+
+/// The clips go to the mixer only once the recordings have loaded (`Ambient::take_clips`):
+/// with one still loading the beds wait, muffled twins and all.
+#[test]
+fn the_beds_wait_for_their_recordings() {
+    use bevy::asset::{Handle, uuid::Uuid};
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
+    let mut ambient = super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1);
+    let (made, recorded) = (Handle::<bevy::audio::AudioSource>::Uuid(Uuid::from_u128(1), Default::default()), Handle::Uuid(Uuid::from_u128(2), Default::default()));
+    ambient.loading = Some(super::Clips { beds: vec![vec![made.clone()], vec![recorded.clone()]], muffled: vec![vec![], vec![made.clone()]], sounds: Vec::new() });
+    ambient.take_clips(|clip| *clip == made);
+    assert!(ambient.clips.is_none(), "the beds play while a recording still loads");
+    ambient.take_clips(|_| true);
+    assert!(ambient.clips.is_some() && ambient.loading.is_none());
 }

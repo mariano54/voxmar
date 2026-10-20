@@ -344,28 +344,43 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
             .collect();
         let _ = tx.send(Synthesized { beds, muffled, sounds });
     });
-    let axes = ambience.axes();
-    commands.insert_resource(Ambient {
-        mixer: Mixer::new(&ambience, 0x616d_6269),
-        roof_patters,
-        roof: RoofLook::default(),
-        ambience: Arc::new(ambience),
-        kinds,
-        content: launch.content.clone(),
-        clips: None,
-        loading: None,
-        clips_rx,
-        surveys: Surveys::new(),
-        since_survey: SURVEY_INTERVAL,
-        generator: None,
-        enclosure: Enclosure::default(),
-        place: None,
-        place_survey: 0,
-        smooth: Enclosure::default(),
-        env: Environment::new(axes),
-        cues: Vec::new(),
-        logged: String::new(),
-    });
+    commands.insert_resource(Ambient::new(ambience, roof_patters, kinds, launch.content.clone(), clips_rx));
+}
+
+impl Ambient {
+    /// The ambience before anything is heard, its clips to come from `clips_rx`.
+    fn new(ambience: Ambience, roof_patters: Vec<Option<u8>>, kinds: Arc<Kinds>, content: Content, clips_rx: Receiver<Synthesized>) -> Self {
+        let axes = ambience.axes();
+        Self {
+            mixer: Mixer::new(&ambience, 0x616d_6269),
+            roof_patters,
+            roof: RoofLook::default(),
+            ambience: Arc::new(ambience),
+            kinds,
+            content,
+            clips: None,
+            loading: None,
+            clips_rx,
+            surveys: Surveys::new(),
+            since_survey: SURVEY_INTERVAL,
+            generator: None,
+            enclosure: Enclosure::default(),
+            place: None,
+            place_survey: 0,
+            smooth: Enclosure::default(),
+            env: Environment::new(axes),
+            cues: Vec::new(),
+            logged: String::new(),
+        }
+    }
+
+    /// Hands the clips made to the mixer once every recorded bed has loaded (`loaded`), and
+    /// not before (see [`beds_ready`]).
+    fn take_clips(&mut self, loaded: impl Fn(&Handle<AudioSource>) -> bool) {
+        if self.loading.as_ref().is_some_and(|clips| beds_ready(&clips.beds, loaded)) {
+            self.clips = self.loading.take();
+        }
+    }
 }
 
 /// What the enclosure scan needs of each block.
@@ -405,10 +420,7 @@ fn receive_clips(ambient: Option<ResMut<Ambient>>, mut sources: ResMut<Assets<Au
         let Ok(synthesized) = ambient.clips_rx.try_recv() else { return };
         ambient.loading = Some(made_clips(&ambient, synthesized, &mut sources, &assets));
     }
-    let loaded = |clip: &Handle<AudioSource>| sources.contains(clip) || assets.load_state(clip).is_failed();
-    if ambient.loading.as_ref().is_some_and(|clips| beds_ready(&clips.beds, loaded)) {
-        ambient.clips = ambient.loading.take();
-    }
+    ambient.take_clips(|clip| sources.contains(clip) || assets.load_state(clip).is_failed());
 }
 
 /// Whether every bed's clips are ready to play (`loaded`: there, or failed to load). A
