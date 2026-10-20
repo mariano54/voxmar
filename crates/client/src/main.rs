@@ -364,6 +364,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     recorded.check(&content.actions)?;
     recorded.covers(&content.actions)?;
     let creature_bank = creature_sounds::Bank::load(&content.files, &content.creatures)?;
+    creature_bank.check_files(&assets)?;
     let unbarked = creature_bank.unbarked(&content.creatures);
     if !unbarked.is_empty() {
         return Err(format!("{}: settlement people with no greet, alarm or content of their own: {}", creature_sounds::defs::FILE, unbarked.join(", ")).into());
@@ -381,6 +382,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ambience.check_shelter_tags(&content.blocks)?;
     recorded.check_ways(&content.blocks)?;
     recorded.check_files(&assets)?;
+    ambience.check_recordings(&assets)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     fx::ActionFx::load(&content.files)?.check(&content.actions)?;
     if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
