@@ -151,6 +151,7 @@
         "base:plant": (heard: Some(Block)),
         "base:pick": (heard: Some(Block)),
         "base:till": (heard: Some(Block)),
+        "base:coat": (heard: Some(Block)),
         // Heard by the interface: an item's tap as it moves, a screen closing.
         "core:transfer": (heard: Some(Interface)),
         "core:quick_move": (heard: Some(Interface)),

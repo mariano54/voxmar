@@ -8,7 +8,10 @@ weather; base's: what food does), read by `crates/engine/src/effect.rs`.
 
 - a **kind**, buff or debuff, and an **icon**: `ui/effect/<icon>` in the packs (ten texels
   across, `assets/packs/default/recipes/effects.ron` and the interface's `ui.ron`), the
-  effect's own name unless given, and the plain buff or debuff icon if the packs have none;
+  effect's own name unless given. Every effect has one of its own: the launch refuses an
+  effect no bundled pack (the default pack, or a mod's pack without a `pack.ron`) draws,
+  naming it (`Source::unpictured`; test `every_effect_has_an_icon_of_its_own`, which also
+  finds no two alike; gate "effects: icons");
 - its name and a line on what it does, as language keys `effect.<package>.<name>` and
   `effect.<package>.<name>.description` (English and Japanese, with a hiragana reading
   for a Japanese name with kanji);
