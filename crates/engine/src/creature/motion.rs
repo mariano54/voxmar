@@ -185,27 +185,29 @@ fn hop_height(jump: f32, dt: f32) -> f32 {
     up
 }
 
-/// The least jump that hops up a single block, stepped as `dt` steps it: anything that
-/// jumps at all gets up one, however low its own jump (its jump is for leaps and hops).
-fn climb_speed(dt: f32) -> f32 {
+/// The least jump that rises `rise` blocks, stepped as `dt` steps it.
+fn rise_speed(rise: f32, dt: f32) -> f32 {
     let (mut low, mut high) = (0.0, 30.0);
     for _ in 0..24 {
         let mid = (low + high) / 2.0;
-        if hop_height(mid, dt) >= 1.1 { high = mid } else { low = mid }
+        if hop_height(mid, dt) >= rise { high = mid } else { low = mid }
     }
     high
 }
 
-/// The fastest a hop up a step goes, in blocks per second: a rise of about a block and a
-/// half. A great leaper (a snow leopard, its jump 11, rising over two blocks) springing on at
-/// its pace from a block before a gap would come down on a fence two high beyond it.
-const STEP_HOP: f32 = 8.8;
+/// The least jump that hops up a single block, stepped as `dt` steps it: anything that
+/// jumps at all gets up one, however low its own jump (its jump is for leaps and hops).
+fn climb_speed(dt: f32) -> f32 {
+    rise_speed(1.1, dt)
+}
 
-/// How fast a hop up a step goes, stepped as `dt` steps it: its own jump, no faster than
-/// `STEP_HOP`, or the least that gets up a block (`climb_speed`). Steering (`open_way`) and
-/// the hop (`step`) judge a step by the same hop.
+/// How fast a hop up a step goes, stepped as `dt` steps it: its own jump, rising no higher
+/// than the world's `step_rise` (`creature::Climbing`, carried on its `Movement`), or the
+/// least that gets up a block (`climb_speed`). Solved for `dt` as the climb is, so the rise
+/// holds at any step. Steering (`open_way`) and the hop (`step`) judge a step by the same
+/// hop.
 pub fn hop_speed(movement: &Movement, dt: f32) -> f32 {
-    movement.jump.min(STEP_HOP).max(climb_speed(dt))
+    movement.jump.min(rise_speed(movement.step_rise, dt)).max(climb_speed(dt))
 }
 
 /// Whether the body can go a little way along `heading` (horizontal, unit length): sliding
@@ -643,6 +645,21 @@ mod tests {
         }
         assert!(body.position.z > 2.5, "it barely moved along the wall: {}", body.position);
         assert!(body.position.x + 0.3 <= 3.0 + 1e-3, "it went into the wall");
+    }
+
+    /// A great leaper's hop up a step rises the world's `step_rise` and no higher, at any
+    /// step length; a low jumper's still gets up a block.
+    #[test]
+    fn a_hop_up_a_step_rises_no_higher_than_the_step_rise_at_any_dt() {
+        for step_rise in [1.2, 1.45, 1.9] {
+            for dt in [0.005, 1.0 / 60.0, 0.05, 0.1] {
+                let leaper = Movement { jump: 11.0, step_rise, ..Movement::default() };
+                let rise = hop_height(hop_speed(&leaper, dt), dt);
+                assert!((step_rise..step_rise + 0.05).contains(&rise), "rise {rise} for {step_rise} at {dt}");
+                let low = Movement { jump: 3.0, step_rise, ..Movement::default() };
+                assert!(hop_height(hop_speed(&low, dt), dt) >= 1.1);
+            }
+        }
     }
 
     #[test]
