@@ -48,6 +48,8 @@
         "Bees": (say: "refusal.bees"),
         "Station": (say: "refusal.station"),
         "Swaps": (say: "refusal.doorway"),
+        // Daubing a panel someone leans on: the same words as placing a block on them.
+        "CoatClear": (say: "refusal.someone_there"),
     },
     sent: [
         // Sowing where a crop cannot grow (crop.rs `Unsuited`).

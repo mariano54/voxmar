@@ -647,6 +647,8 @@ fn meant(context: &ClientContext, block: IVec3, need: Requirement) -> bool {
     let Some(at) = context.world.block(block) else { return false };
     match need {
         Requirement::Swaps => !voxmar_engine::action::swapping(context, block).is_empty(),
+        // Clay held to a panel someone leans on: plainly meant as a coat.
+        Requirement::CoatClear => context.blocks().coating(at).is_some_and(|(with, _)| context.actor_held() == Some(with)),
         Requirement::Bees => context.bees().is_some_and(|bees| bees.takes.iter().any(|take| take.block == at)),
         Requirement::Station => context.stations().is_some_and(|stations| stations.of(at).is_some()),
         Requirement::Fertilisable => context.actor_held().zip(context.stations()).is_some_and(|(item, stations)| stations.fertiliser(item).is_some()),

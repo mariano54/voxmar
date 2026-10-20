@@ -543,6 +543,11 @@ one clay at a time. Clay coats only when aimed at a block's side, a wall's face:
 top of a dirt floor or a panel is laid there as a block as before (test
 `clay_to_the_side_of_an_earth_wall_daubs_it_and_to_the_top_does_not`).
 
+A panel never daubs shut on anyone. The thin panel turns into a whole daub block, so clay held
+to one a player or a creature leans into is refused with placing's words ("Someone is standing there":
+`CoatClear`, refusals.ron), as placing a block on them and shutting a door on them are; once
+they step off, the same clay daubs it (test `a_panel_someone_leans_on_is_not_daubed_around_them`).
+
 ## Curing hides
 
 A beast's hide comes off **raw**. The drying rack is the one place it dries (stations.ron,

@@ -128,4 +128,51 @@ mod tests {
         assert_eq!((info.drops, info.drop_count), (daub, 1), "daub breaks to itself");
         assert!(!server.content.recipes.iter().any(|r| r.output == clay), "something makes clay back");
     }
+
+    /// A panel never daubs shut on a player: clay held to a wattle panel another player
+    /// leans into is refused (the thin panel would turn a whole daub block around them), as
+    /// placing a block on them is; once they step off it, the same clay daubs it.
+    #[test]
+    fn a_panel_someone_leans_on_is_not_daubed_around_them() {
+        use voxmar_engine::action::ActionTarget;
+        use voxmar_engine::coords::Face;
+        let mut server = crate::test_server();
+        let mut keep = Vec::new();
+        for id in [1, 2] {
+            let (client, connection) = voxmar_protocol::local_pair();
+            keep.push(client);
+            let mut player = Player::new(id, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            player.joined = true;
+            server.players.insert(id, player);
+        }
+        let at = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &crate::Server, name: &str| server.content.blocks.expect(name);
+        let (stone, wattle, clay, daub) = (block(&server, "base:stone"), block(&server, "base:wattle_panel"), block(&server, "base:clay"), block(&server, "base:daub"));
+        for x in -1..=1 {
+            for z in -3..=2 {
+                server.set_block(at + IVec3::new(x, -1, z), stone);
+            }
+        }
+        server.set_block(at, wattle);
+        let construction = server.content.skills.id("core:construction").expect("construction");
+        let level = server.content.recipes.iter().filter(|r| r.output == daub).map(|r| r.level).min().expect("a daub recipe");
+        let xp = server.content.skills.xp_for(level);
+        let dauber = server.players.get_mut(&1).unwrap();
+        dauber.position = at.as_vec3() + Vec3::new(0.5, 0.0, -1.5);
+        dauber.inventory.slots[0] = Some(ItemStack { item: clay, count: 3 });
+        dauber.selected = 0;
+        dauber.skills.grant(construction, xp);
+        // The other leans into the panel's cell from its far side.
+        server.players.get_mut(&2).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, 1.1);
+        assert!(server.player_in(at), "the second player stands partly in the panel's cell");
+        let coat = server.content.actions.expect("base:coat");
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(wattle), "daubed shut around a player");
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 3, "the clay spent for nothing");
+        // Stepped back off it: the same clay daubs it.
+        server.players.get_mut(&2).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, 2.5);
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(daub), "not daubed once clear");
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 2);
+    }
 }
