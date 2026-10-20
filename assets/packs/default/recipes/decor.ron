@@ -20,6 +20,9 @@
         "block/furniture_grain": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
             Paint(palette: "wood", base: 0.58, shade: [Noise(cells: (8, 2), octaves: 2, amount: 0.32), Stripes(period: 4.0, width: 0.25, amount: -0.2, vertical: true, phase: 1.0), Grain(0.12)], clean: true),
         ]),
+        "block/lattice_grain": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
+            Paint(palette: "wood", base: 0.58, shade: [Noise(cells: (8, 2), octaves: 2, amount: 0.32), Stripes(period: 4.0, width: 0.25, amount: -0.2, vertical: true, phase: 1.0), Grain(0.12)], clean: true),
+        ]),
         "block/furniture_panel": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
             Paint(palette: "wood", base: 0.58, shade: [Noise(cells: (8, 2), amount: 0.25), Grain(0.1)], clean: true),
             Grid(legend: {'d': "wood:0", 'm': "wood:3", 'l': "wood:5"}, rows: ["dddddddddddddddd", "d......dd......d", "d.llld.dd.llld.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmdlddllmmd.d", "d.lmmdddddlmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lmmd.dd.lmmd.d", "d.lddd.dd.lddd.d", "d......dd......d", "dddddddddddddddd"]),

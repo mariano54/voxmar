@@ -611,9 +611,11 @@ again when its player joins.
 A home shows its lit rooms at night: a window glows warm by the light of the room behind it.
 Before glass there is the Hide Window (Farm, Construction 3: a hide in a frame of eight sticks,
 two windows), oiled hide in a stick frame. Every block tagged `window` (the hide window, glass,
-settlements' old glass) passes block light as air does (a `Cutout` cube), so a candle or the
-hearth behind it lights the ground outside, and is `lit_through` (a block field, any mod's
-window can say it): its bright texels glow by the block light reaching its face, which came
+settlements' old glass, and the lattice window and open shuttered window, which are shapes,
+not cubes) passes block light as air does (a `Cutout` cube, or light through a lattice's
+squares), so a candle or the hearth behind it lights the ground outside, and is
+`lit_through` (a block field, any mod's window can say it): its bright texels glow by the
+block light reaching its face, which came
 through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
 glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
 stands out after dark. A dark room's window stays dark; a wall keeps the light in
