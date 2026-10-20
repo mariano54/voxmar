@@ -357,15 +357,16 @@ impl Creatures {
     }
 
     /// Which blocks a body meets as a whole block, by id: what stands in its way and is
-    /// not walked up (stairs, a roof's courses, a lean-to: a piece with a floor across all
-    /// of its cell). A post, a panel or a railing is whole: a quail or a mouse fits the
-    /// gap beside a fence's post, or a hedgehog the corner where two panels meet, and a
-    /// pen keeps them in only as a whole wall.
+    /// not walked up (stairs and a roof's courses, pieces with a floor across all of their
+    /// cell), and every railing, whatever its shape (`RAILING_TAG`). A post, a panel, a
+    /// lattice window or a lean-to is whole: a quail or a mouse fits the gap beside a
+    /// fence's post, or a hedgehog the corner where two panels meet, and a pen keeps them
+    /// in only as a whole wall.
     fn whole_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
         self.whole.get_or_init(|| {
-            let in_way = self.in_way_blocks(blocks);
+            let (in_way, railings) = (self.in_way_blocks(blocks), self.railing_blocks(blocks));
             let floored = |a: &voxmar_engine::physics::Aabb| a.min.y <= 1e-3 && a.min.x <= 1e-3 && a.min.z <= 1e-3 && a.max.x >= 1.0 - 1e-3 && a.max.z >= 1.0 - 1e-3;
-            blocks.ids().map(|b| in_way[b.0 as usize] && !blocks.collision(b).iter().any(floored)).collect()
+            blocks.ids().map(|b| railings[b.0 as usize] || in_way[b.0 as usize] && !blocks.collision(b).iter().any(floored)).collect()
         })
     }
 
@@ -549,8 +550,11 @@ impl Server {
     /// its sides straight on to beside the player. A wall across both lanes bars it; a
     /// trunk on the line between them bars at most one, and the charge runs past it.
     pub(crate) fn charge_open(&self, body: &Body, to: Vec3) -> bool {
+        // What stands in a body's way (`Surroundings::solid`): a slab floor or a sill it
+        // runs over is no bar.
         let blocks = &self.content.blocks;
-        let solid = |c: IVec3| self.block(c).is_some_and(|b| blocks.info(b).solid);
+        let in_way = self.creatures.in_way_blocks(blocks);
+        let solid = |c: IVec3| self.block(c).is_some_and(|b| in_way[b.0 as usize]);
         let (width, height) = body.size;
         let flat = (to - body.position).with_y(0.0);
         let side = Vec3::new(-flat.z, 0.0, flat.x).normalize_or_zero() * (width * 0.5 - 0.05);
@@ -569,12 +573,20 @@ impl Server {
     /// beside a wall from striking through it.
     pub(crate) fn blow_open(&self, body: &Body, reach: f32, to: Vec3) -> bool {
         const PLAYER_HALF: f32 = 0.3;
-        // Land not loaded is no wall to a blow, as it is to walking (`Ground`). A block stops
-        // it by its shape: a blow at a player on a ladder, or in an open hatch, passes the
-        // rungs and the hatch hung at the back of the cell.
+        // Land not loaded is no wall to a blow, as it is to walking (`Ground`). What is a
+        // whole block to a body (`Creatures::whole_blocks`: a lattice window, an arrow slit,
+        // a railing's balusters) is one to a blow, but for what is climbed (a ladder, an
+        // open hatch): a blow at a player on one passes the rungs or the hatch hung at the
+        // back of the cell. Anything else stops it by its shape.
         let blocks = &self.content.blocks;
+        let whole = self.creatures.whole_blocks(blocks);
         let clear = |a: Vec3, b: Vec3| {
-            let meets = |c: IVec3| self.block(c).is_some_and(|block| blocks.collision(block).iter().any(|aabb| segment_meets(a - c.as_vec3(), b - c.as_vec3(), aabb)));
+            let meets = |c: IVec3| {
+                self.block(c).is_some_and(|block| {
+                    let boxes = if whole[block.0 as usize] && !blocks.info(block).climbable { &voxmar_engine::physics::CUBE[..] } else { blocks.collision(block) };
+                    boxes.iter().any(|aabb| segment_meets(a - c.as_vec3(), b - c.as_vec3(), aabb))
+                })
+            };
             voxmar_engine::physics::raycast(a, b - a, (b - a).length(), meets).is_none()
         };
         let (width, height) = body.size;
@@ -4385,8 +4397,10 @@ mod fight_tests {
             set(&mut server, name, [c + IVec3::new(-2, 0, 0), c + IVec3::new(-2, 1, 0)]);
             assert!(server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 0.5)), "no blow through {name} to the player in it");
         }
-        set(&mut server, "base:stone", [c + IVec3::new(-2, 0, 0), c + IVec3::new(-2, 1, 0)]);
-        assert!(!server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 1.5)), "a blow went through stone");
+        for name in ["base:stone", "base:oak_lattice_window", "base:stone_arrow_slit"] {
+            set(&mut server, name, [c + IVec3::new(-2, 0, 0), c + IVec3::new(-2, 1, 0)]);
+            assert!(!server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 1.5)), "a blow went through {name}");
+        }
     }
 
     /// Old Tusk struck by a player nine blocks off on open ground, with the server's own
@@ -5450,10 +5464,12 @@ mod fight_tests {
         let c = pen(&mut server, 9);
         set(&mut server, "base:oak_fence", [c + IVec3::new(2, 0, -1), c + IVec3::new(2, 0, 1)]);
         set(&mut server, "base:oak_post", [c + IVec3::new(2, 0, 0)]);
-        set(&mut server, "base:wattle_panel_east", [c + IVec3::new(-3, 0, 0)]);
-        set(&mut server, "base:wattle_panel", [c + IVec3::new(-3, 0, 1)]);
+        // A panel across x = -4, its end at x = -3, and one along z in the cell beyond it,
+        // down its middle: the corner between them, 0.4375 across, fits a hedgehog.
+        set(&mut server, "base:wattle_panel", [c + IVec3::new(-4, 0, 0)]);
+        set(&mut server, "base:wattle_panel_east", [c + IVec3::new(-3, 0, 0), c + IVec3::new(-3, 0, 1)]);
         let ground = Ground::of(&server);
-        for (name, at) in [("base:quail", Vec3::new(2.15, 0.0, 0.15)), ("base:quail", Vec3::new(2.5, 0.0, 0.85)), ("base:hedgehog", Vec3::new(-2.5, 0.0, 0.5)), ("base:hedgehog", Vec3::new(-2.5, 0.0, 1.5))] {
+        for (name, at) in [("base:quail", Vec3::new(2.15, 0.0, 0.15)), ("base:quail", Vec3::new(2.5, 0.0, 0.85)), ("base:hedgehog", Vec3::new(-2.78, 0.0, 0.5))] {
             let species = server.content.creatures.get(server.content.creatures.id(name).expect(name));
             let body = Body::new(c.as_vec3() + at, 0.0, species.def.body.size);
             assert!(body.aabb().overlaps(|p| motion::Surroundings::boxes(&ground, p)), "{name} fits at {at:.2}");
