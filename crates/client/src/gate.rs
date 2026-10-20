@@ -2795,6 +2795,24 @@ fn lay_and_craft(world: &mut World, cells: &[(usize, &str)]) -> bool {
     true
 }
 
+/// Walks the player onto the nearest `item` lying about, as a player goes to pick up what
+/// fell out of reach: whether one lies about at all.
+fn walk_to_lying(world: &mut World, item: BlockId) -> bool {
+    let at = world.resource::<LocalPlayer>().position;
+    let nearest = world
+        .resource::<crate::drops::Drops>()
+        .lying()
+        .filter(|(_, stack, _)| stack.item == item)
+        .map(|(_, _, lies)| lies)
+        .min_by(|a, b| a.distance_squared(at).total_cmp(&b.distance_squared(at)));
+    let Some(lies) = nearest else { return false };
+    // Once there, it is drawn in; until then, stepped onto (a step not yet taken is asked again).
+    if Vec2::new(lies.x - at.x, lies.z - at.z).length() > 0.5 {
+        world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", lies.x, lies.y.floor(), lies.z));
+    }
+    true
+}
+
 /// An item `select` moved into the hand, the player states the client had been sent then,
 /// and the server's tick: until a later state has it in the hotbar, it is not yet in hand
 /// as the server sees it. A state already on its way when the move went out (another
@@ -5539,6 +5557,8 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
                 // The rest of the four the recipe takes.
                 world.resource::<Net>().command(&format!("give {} {}", short(loose), 4u32.saturating_sub(got)));
                 gate.advance(now);
+            } else if !waited && gate.server_in_phase() > 2.0 && walk_to_lying(world, loose) {
+                // Popped out of reach: the player goes to them, as one would.
             } else if waited {
                 // Where each loose stone lies, and how far from the player's middle against
                 // how near it must be to be drawn in.
@@ -5563,6 +5583,8 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
                 if lay_and_craft(world, &laid) {
                     gate.advance(now);
                 }
+            } else if !waited && gate.server_in_phase() > 2.0 && walk_to_lying(world, loose) {
+                // Any still lying about out of reach: the player goes to them.
             } else if waited {
                 let free = world.resource::<LocalPlayer>().inventory.slots.iter().filter(|s| s.is_none()).count();
                 let lying: u32 = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, _)| stack.item == loose).map(|(_, stack, _)| u32::from(stack.count)).sum();
