@@ -13,6 +13,11 @@
 //! built (water runs downhill, tiles only read the trunk tier), so they cannot deadlock
 //! either. Builds nest (a trail grid needs a river region, which needs tiles), so the
 //! helpers alive at once are capped, past which a build runs on its caller alone.
+//!
+//! Helpers take their caller's scheduling class: on macOS a new thread starts at the default
+//! class whatever its creator's, so the game's background workers (utility) would otherwise
+//! start up to a worker count of helpers above themselves, level with the frame threads.
+//! On Linux a thread inherits its creator's nice value already.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -62,6 +67,7 @@ pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
         return;
     }
     let next = AtomicUsize::new(0);
+    let class = SchedulingClass::current();
     let work = || {
         while let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) {
             f(item);
@@ -69,11 +75,42 @@ pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
     };
     std::thread::scope(|scope| {
         for _ in 0..helpers {
-            scope.spawn(work);
+            scope.spawn(|| {
+                class.apply();
+                work();
+            });
         }
         work();
     });
     HELPERS.fetch_sub(helpers, Ordering::Relaxed);
+}
+
+/// A thread's scheduling class (its QoS class on macOS; elsewhere nothing to carry).
+#[derive(Clone, Copy)]
+struct SchedulingClass(#[cfg(target_os = "macos")] Option<libc::qos_class_t>);
+
+impl SchedulingClass {
+    fn current() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            let mut class = libc::qos_class_t::QOS_CLASS_UNSPECIFIED;
+            let mut relative = 0;
+            // SAFETY: writes the calling thread's class and relative priority into the two
+            // locals it is given.
+            let found = unsafe { libc::pthread_get_qos_class_np(libc::pthread_self(), &mut class, &mut relative) } == 0;
+            Self((found && !matches!(class, libc::qos_class_t::QOS_CLASS_UNSPECIFIED)).then_some(class))
+        }
+        #[cfg(not(target_os = "macos"))]
+        Self()
+    }
+
+    fn apply(self) {
+        #[cfg(target_os = "macos")]
+        if let Some(class) = self.0 {
+            // SAFETY: only changes the scheduling class of the current thread.
+            unsafe { libc::pthread_set_qos_class_self_np(class, 0) };
+        }
+    }
 }
 
 /// The threads the process was given with `RAYON_NUM_THREADS`, if any.
@@ -107,5 +144,26 @@ mod tests {
             });
         });
         assert!(calls.iter().all(|c| c.load(Ordering::Relaxed) == 1));
+    }
+
+    /// A build on one of the game's background workers keeps its helpers in the background.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn helpers_keep_their_callers_class() {
+        let classes = std::thread::spawn(|| {
+            // SAFETY: only changes the scheduling class of the current thread.
+            unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0) };
+            let items: Vec<usize> = (0..64).collect();
+            let classes = std::sync::Mutex::new(Vec::new());
+            for_each(&items, |_| {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                classes.lock().unwrap().push(SchedulingClass::current().0);
+            });
+            classes.into_inner().unwrap()
+        })
+        .join()
+        .unwrap();
+        assert_eq!(classes.len(), 64);
+        assert!(classes.iter().all(|c| matches!(c, Some(libc::qos_class_t::QOS_CLASS_UTILITY))));
     }
 }

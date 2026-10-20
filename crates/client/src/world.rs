@@ -352,17 +352,23 @@ fn dispatch_jobs(
     // Near edits first, at once, whatever the shared workers are busy with. Far ones (a
     // neighbour's, the server's) wait their turn with the rest of the dirty columns.
     // One whose last edit is still being meshed there waits for it, edited still, and
-    // goes as soon as it is shown.
+    // goes as soon as it is shown; so does one whose neighbours have not all arrived.
     let edited: Vec<ColumnPos> = world.edited.drain().filter(|&pos| pos.distance(center) <= NEAR_EDITS).collect();
     for pos in edited {
         if world.editing.contains(&pos) {
             world.edited.insert(pos);
-        } else if world.dirty.contains(&pos)
-            && let Some(columns) = world.neighborhood(pos)
-        {
-            world.dirty.remove(&pos);
-            world.editing.insert(pos);
-            start_job(world, pos, center, columns, Some(&*EDITS));
+        } else if world.dirty.contains(&pos) {
+            // One still waiting for a neighbour to arrive stays edited until it can go.
+            match world.neighborhood(pos) {
+                Some(columns) => {
+                    world.dirty.remove(&pos);
+                    world.editing.insert(pos);
+                    start_job(world, pos, center, columns, Some(&*EDITS));
+                }
+                None => {
+                    world.edited.insert(pos);
+                }
+            }
         }
     }
     world.stats.jobs_in_flight = world.in_flight.len();
@@ -529,6 +535,8 @@ impl Culler {
                 }
             }
         };
+        // At the default class, not lowered with the streaming threads (priority.rs): chunks
+        // that arrive show only once a walk has taken them in.
         std::thread::Builder::new().name("cave-culling".into()).spawn(walk).expect("the cave culling thread starts");
         Self { jobs, results, busy: false }
     }
@@ -718,6 +726,47 @@ mod tests {
         app.update();
         let world = app.world().resource::<ClientWorld>();
         assert_eq!(world.check_meshed(centre), Ok(()), "the job begun before the break showed the block again");
+    }
+
+    /// A block broken where a neighbouring column has not arrived yet (early in a new
+    /// world) waits for it, and is then meshed at once all the same, the shared workers
+    /// still full.
+    #[test]
+    fn a_block_broken_before_its_neighbours_arrive_shows_once_they_do() {
+        let mut world = test_world();
+        let stone = world.registry.id("base:stone").expect("stone");
+        let mut column = Column::default();
+        for x in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                column.set_block(IVec3::new(x, 60, z), stone);
+            }
+        }
+        let column = Arc::new(column);
+        let late = ColumnPos::new(1, 1);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                if ColumnPos::new(dx, dz) != late {
+                    world.insert_column(ColumnPos::new(dx, dz), column.clone());
+                }
+            }
+        }
+        let max = rayon::current_num_threads() * 2;
+        world.in_flight.extend((0..max).map(|x| (ColumnPos::new(100 + x as i32, 0), 0)));
+        let centre = ColumnPos::new(0, 0);
+        world.set_block(IVec3::new(5, 60, 5), BlockId::AIR);
+        let mut app = App::new();
+        app.insert_resource(world).add_systems(Update, (dispatch_jobs, apply_meshes).chain());
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(app.world().resource::<ClientWorld>().meshing(centre), "meshed without all its neighbours");
+        app.world_mut().resource_mut::<ClientWorld>().insert_column(late, column);
+        let start = std::time::Instant::now();
+        while app.world().resource::<ClientWorld>().meshing(centre) {
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "the broken block waited behind the full workers once its neighbour came");
+            app.update();
+        }
+        assert_eq!(app.world().resource::<ClientWorld>().check_meshed(centre), Ok(()));
     }
 
     /// A column edited every frame (water flowing past, fire spreading) is still shown as

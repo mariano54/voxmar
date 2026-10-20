@@ -320,7 +320,7 @@ fn load_tracks(mut commands: Commands, assets: Res<AssetServer>, settings: Res<S
         let (tx, rx) = bounded(1);
         let place = Place { launcher: settings.prism_folder.clone(), instance: settings.prism_instance.clone() };
         let discovery = rules.prism.clone();
-        std::thread::spawn(move || {
+        crate::priority::spawn_background("music-search", move || {
             let _ = tx.send(prism::discover(&place, &discovery));
         });
         rx
@@ -622,7 +622,7 @@ fn schedule_music(
             // Read off the main thread: a track is several megabytes, perhaps out of a big zip.
             let (tx, rx) = bounded(1);
             let (file, max_bytes) = (file.clone(), music.rules.prism.max_bytes);
-            std::thread::spawn(move || {
+            crate::priority::spawn_background("music-read", move || {
                 let _ = tx.send(read_track(&file, max_bytes));
             });
             music.loading = Some((index, rx));
