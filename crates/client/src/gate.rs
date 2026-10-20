@@ -13687,6 +13687,10 @@ const TUSK_SWEEP: u32 = 7;
 const TUSK_BESIDE: f32 = 1.8;
 const TUSK_CLOSE: f32 = 2.0;
 const TUSK_FAR: f32 = 4.0;
+/// Blocks along each way from the pad's middle cell to the corner the charge step stands
+/// at: inside its open floor (five cells each way, the creatures step's pad), a charge's
+/// least (3 blocks) or more from him wherever on it he stands.
+const TUSK_CORNER: f32 = 4.0;
 
 /// Where the spear step stands: `TUSK_BESIDE` blocks from him toward the player, on his
 /// level.
@@ -13797,9 +13801,12 @@ fn tusk(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Left, false);
                 key(world, KeyCode::KeyW, false);
                 gate.check("tusk provoked", Ok(format!("struck, he fights back (health {} of {most}, tell {}, {} swings)", view.health, view.tell, gate.swings)));
-                // Eight blocks off, past his gore: he charges.
-                let away = me + (me - view.position).with_y(0.0).normalize_or_zero() * 8.0;
-                world.resource::<Net>().command(&format!("tp {} {} {}", away.x, me.y, away.z));
+                // Off past his gore, at the corner of the pad's open floor farthest from him
+                // (`TUSK_CORNER`): he charges. Not out over the pad's rim, a wall two high,
+                // where his run is shut off (`charge_open`) and no charge comes.
+                let corners = [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)].map(|(x, z)| pad.as_vec3() + Vec3::new(0.5 + x * TUSK_CORNER, 0.0, 0.5 + z * TUSK_CORNER));
+                let away = corners.into_iter().fold(corners[0], |best, c| if c.xz().distance(view.position.xz()) > best.xz().distance(view.position.xz()) { c } else { best });
+                world.resource::<Net>().command(&format!("tp {} {} {}", away.x, away.y, away.z));
                 gate.advance(now);
             } else if gate.unanswered(world.resource::<crate::fight::Fighting>().strikes) {
                 mouse(world, MouseButton::Left, false);
