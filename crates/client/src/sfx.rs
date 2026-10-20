@@ -1737,7 +1737,7 @@ mod tests {
         assert_eq!(way("base:light", &["crucible", "charcoal"]), Some("kindle_kiln".into()));
         assert_eq!(way("base:cook", &["pit_kiln", "clay"]), Some("fire_in_kiln".into()));
         assert_eq!(way("base:cook", &["crucible", "copper_ore"]), Some("smelt".into()));
-        assert_eq!(way("base:cook", &["campfire", "beef"]), None);
+        assert_eq!(way("base:cook", &["campfire", "raw_beef"]), None);
         // Each station loaded at its empty block sounds of its own; emptied, as before.
         for station in &content.stations.stations {
             let name = &blocks.def(station.empty).name;
