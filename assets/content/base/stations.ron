@@ -8,8 +8,8 @@
 // `sound` is what loading it sounds like (`Water`: stirred in), else its working block's
 // placing; taking what it made pops like a pickup. Loaded inside the loader's own home, a
 // station tops the load up with more of what is in hand, from the pack and then the home's
-// stores (nearest the hearth or bed first), unless `from_stores: false` or the loader
-// sneaks (docs/home.md, "Crafting from home's stores").
+// stores (nearest the hearth or bed first), unless `from_stores: false` (docs/home.md,
+// "Crafting from home's stores").
 //
 // `fertilisers`: an item held to a growing crop grows the crops within `reach` a stage.
 (
