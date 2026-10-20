@@ -113,6 +113,9 @@ pub enum Requirement {
     /// The target is a seat (tagged `seat`: a stool, chair, bench or cushion) with room to
     /// sit on it, and the actor holds no block to place against it.
     Seat,
+    /// The target is coated in place by what the actor holds (`coat` on its block), aimed
+    /// at one of its sides: clay on a wattle panel or an earth wall.
+    Coats,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
     /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
@@ -148,7 +151,7 @@ pub enum Requirement {
 
 impl Requirement {
     /// Every requirement, in [`Requirement::index`] order (`refusal` says why each failed).
-    pub const ALL: [Requirement; 38] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat];
+    pub const ALL: [Requirement; 39] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Coats];
 
     /// Where it stands in [`Requirement::ALL`]. A new requirement must be added to both:
     /// this match does not compile without it.
@@ -192,6 +195,7 @@ impl Requirement {
             Requirement::Swaps => 35,
             Requirement::SprungTrap => 36,
             Requirement::Seat => 37,
+            Requirement::Coats => 38,
         }
     }
 
@@ -258,6 +262,8 @@ pub enum Effect {
     LayRecipe,
     /// Till the target soil into farmland.
     Till,
+    /// Coat the target in place with what is held (see `Requirement::Coats`).
+    Coat,
     /// Turn the target into what it swaps for, its upper or lower half with it: open or
     /// shut a door (see [`swapping`]).
     Swap,
@@ -676,6 +682,14 @@ impl ActionDef {
             Requirement::Bed => {
                 let (block, _) = block_target()?;
                 ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag("bed"))
+            }
+            Requirement::Coats => {
+                // On a wall's face only: clay to the top of a dirt floor or a panel is still
+                // laid there as a block.
+                let (block, face) = block_target()?;
+                let side = !matches!(face, Face::PosY | Face::NegY);
+                let coating = ctx.block(block).and_then(|b| ctx.blocks().coating(b));
+                side && coating.is_some_and(|(with, _)| ctx.actor_held() == Some(with))
             }
             Requirement::Seat => {
                 let (block, _) = block_target()?;
