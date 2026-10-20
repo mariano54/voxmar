@@ -1092,7 +1092,7 @@ fn draw(
                         cell.spawn((Node { width: Val::Px(icon), height: Val::Px(icon), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
                         // A capstone (an age's rite counts them), marked gold at its corner.
                         if quest.capstone {
-                            let mark = Node { position_type: PositionType::Absolute, right: Val::Px(PX), top: Val::Px(PX), width: Val::Px(CAPSTONE), height: Val::Px(CAPSTONE), ..default() };
+                            let mark = Node { position_type: PositionType::Absolute, right: Val::ZERO, top: Val::ZERO, width: Val::Px(CAPSTONE), height: Val::Px(CAPSTONE), ..default() };
                             cell.spawn((mark, CapstoneMark, BackgroundColor(GOLD)));
                         }
                         let mark = match tone {

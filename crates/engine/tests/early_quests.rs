@@ -153,12 +153,26 @@ fn reachable(content: &Content) -> rustc_hash::FxHashMap<voxmar_engine::block::B
     };
     // A home station's loaded blocks come only from loading the station, never from the land.
     let loaded = |block: BlockId| content.stations.of(block).is_some_and(|(_, phase)| phase != voxmar_engine::station::Phase::Empty);
+    // Blocks the land gives though something also makes them, by their `natural` tag alone.
+    let mut natural_and_made = Vec::new();
     for block in blocks.ids() {
         let def = blocks.def(block);
-        if !def.item && !made.contains(&blocks.item_of(block)) && blocks.info(block).drops != BlockId(0) && !loaded(block) {
+        // Natural ground is the land's even where something also makes it (stone, which a
+        // kiln fires from cobblestone): breaking it is a way to what it drops.
+        let made_too = made.contains(&blocks.item_of(block));
+        if !def.item && (!made_too || def.has_tag("natural")) && blocks.info(block).drops != BlockId(0) && !loaded(block) {
+            if made_too {
+                natural_and_made.push(def.name.clone());
+            }
             give(&mut ways, blocks.info(block).drops, free);
         }
     }
+    natural_and_made.sort();
+    assert_eq!(
+        natural_and_made,
+        ["base:red_sandstone", "base:sandstone", "base:stone"],
+        "a block a recipe makes counts as the land's by its `natural` tag: add one here only if worldgen places it"
+    );
     for (_, crop) in content.crops.iter() {
         for (item, _) in crop.harvest.iter().chain(&crop.forage) {
             give(&mut ways, *item, free);
