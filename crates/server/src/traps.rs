@@ -150,7 +150,12 @@ impl Server {
     pub(crate) fn spring_traps(&mut self) {
         let (traps, creatures) = (self.content.traps.clone(), self.content.creatures.clone());
         let seen = std::mem::take(&mut self.catches.seen);
-        let wild = self.creatures.live.iter().filter(|(_, c)| c.owner.is_none() && c.health > 0);
+        // Wild as `despawn_far` has it: no owner, no companion, no villager, and none a
+        // village or a wanderer keeps (a herd, a hound, a flock).
+        let (villagers, wandering) = (&self.villagers, &self.wandering);
+        let wild = self.creatures.live.iter().filter(|&(id, c)| {
+            c.owner.is_none() && !c.companion && c.health > 0 && creatures.get(c.species).def.kind != voxmar_engine::creature::Kind::Villager && !villagers.manages(*id) && !wandering.manages(*id)
+        });
         // Every set trap each crossed that it would step into, in the order it crossed them.
         let crossings: Vec<(u32, Vec<IVec3>)> = wild
             .clone()
@@ -162,9 +167,6 @@ impl Server {
             .filter(|(_, set): &(u32, Vec<_>)| !set.is_empty())
             .collect();
         self.catches.seen = wild.map(|(&id, c)| (id, c.body.position)).collect();
-        // One that stepped into a trap is rolled for again only once it has left that cell.
-        let live = &self.creatures.live;
-        self.catches.stepped.retain(|id, cell| live.get(id).is_some_and(|c| c.body.position.floor().as_ivec3() == *cell));
         for (id, set) in crossings {
             for cell in set {
                 // Sprung or torn by one before it this look: on to the next it crossed.
@@ -199,6 +201,10 @@ impl Server {
                 break;
             }
         }
+        // One that stepped into a trap is rolled for again only once it has left that cell,
+        // and not on its way out of it: forgotten only after the look that saw it leave.
+        let live = &self.creatures.live;
+        self.catches.stepped.retain(|id, cell| live.get(id).is_some_and(|c| c.body.position.floor().as_ivec3() == *cell));
     }
 
     /// The trap at `cell` is torn or worn out: gone, leaving what it leaves.
@@ -592,6 +598,9 @@ mod tests {
             let rolls = server.catches.saved_rolls();
             server.spring_traps();
             assert_eq!(server.catches.saved_rolls(), rolls, "a rabbit still in the snare was rolled for again");
+            server.creatures.live.get_mut(&rabbit).unwrap().body.position = snare.as_vec3() + Vec3::new(2.5, 0.0, 0.5);
+            server.spring_traps();
+            assert_eq!(server.catches.saved_rolls(), rolls, "a rabbit walking out of the snare it slipped was rolled for again");
             assert!(server.catches.get(snare).is_none());
             server.creature_felled(rabbit, None);
         }
@@ -636,6 +645,28 @@ mod tests {
         }
         assert!(sticks_lying(&server) <= 20, "a kept deer or a rabbit tore the snare");
         assert!(server.catches.saved_rolls().iter().all(|(_, n)| *n <= 3 * 20), "the kept deer was rolled for");
+    }
+
+    /// Only wild game steps into a snare: a companion, a villager or anything kept never
+    /// springs or tears one, beside a hearth or not.
+    #[test]
+    fn a_companion_or_a_villager_never_springs_or_tears_a_snare() {
+        let (mut server, snare) = snare_as_it_is(1);
+        let deer = put(&mut server, "base:red_deer", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        server.creatures.live.get_mut(&deer).unwrap().companion = true;
+        let villager = put(&mut server, "base:villager", snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        for _ in 0..20 {
+            server.spring_traps();
+            for id in [deer, villager] {
+                server.creatures.live.get_mut(&id).unwrap().body.position = snare.as_vec3() + Vec3::new(-1.5, 0.0, 0.5);
+            }
+            server.spring_traps();
+            for id in [deer, villager] {
+                server.creatures.live.get_mut(&id).unwrap().body.position = snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+            }
+        }
+        assert_eq!(named(&server, snare), "base:snare", "a companion or a villager sprang or tore the snare");
+        assert!(server.catches.saved_rolls().is_empty(), "a companion or a villager was rolled for");
     }
 
     /// Taking a catch wears the snare out by its `wear`: over many snares, it lasts about
