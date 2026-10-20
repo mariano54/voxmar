@@ -861,7 +861,7 @@
         (
             name: "five_colours", age: "farm", branch: "crafting", title: "Five Colours",
             why: "Every flower dyes a cloth its own colour: look a cloth up in the recipe book to see which. Wind flags take five, indigo, white, red, green and amber, tied on one twine (Crafting 9). Dye all five and make the flags.",
-            tasks: [[Craft("indigo_cloth", 1), Craft("white_cloth", 1), Craft("red_cloth", 1), Craft("green_cloth", 1), Craft("amber_cloth", 1), Craft("wind_flags", 1)]],
+            tasks: [[Craft("indigo_cloth", 1), Craft("white_cloth", 1), Craft("red_cloth", 1), Craft("green_cloth", 1), Craft("amber_cloth", 1), Craft("wind_flags", 1)], [Cook("indigo_cloth", 1), Cook("white_cloth", 1), Cook("red_cloth", 1), Cook("green_cloth", 1), Cook("amber_cloth", 1), Craft("wind_flags", 1)]],
             after: ["a_rug_underfoot"],
             side: true,
             rewards: [Xp("crafting", 120.0), Item("bread", 4)],
