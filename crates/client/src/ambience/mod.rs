@@ -139,7 +139,7 @@ impl OneShotClip {
 
 /// A one-shot placed and encoded off the main thread, ready to play.
 struct Placed {
-    wav: Vec<u8>,
+    wav: Arc<[u8]>,
     playback: PlaybackSettings,
     at: Option<Vec3>,
 }
@@ -825,7 +825,7 @@ fn play(
         * global.volume.to_linear();
     let ears = camera.translation();
     for Placed { wav, playback, at } in ambient.placed.1.try_iter() {
-        let source = sources.add(AudioSource { bytes: Arc::from(wav) });
+        let source = sources.add(AudioSource { bytes: wav });
         // One-shots are voices of the ambience, capped with the rest of it (`mix`);
         // beds are the mixer's own, crossfading, never cut off.
         let voice = at.map_or(Voice::of(Category::Ambience), |at| Voice::at(Category::Ambience, at));
@@ -835,7 +835,7 @@ fn play(
     let length = |sound: usize, variant: usize| clips.sounds[sound].get(variant).map_or(1.0, |c| c.dry.len() as f32 / sfx::RATE as f32);
     let variants = (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS);
     let buildings = ambient.place.as_ref().map_or(&[][..], |place| &place.buildings[..]);
-    ambient.mixer.update(&ambient.ambience, &ambient.env, &ambient.enclosure.samples, buildings, ears, time.delta_secs(), length, variants, &mut cues);
+    ambient.mixer.update(&ambient.ambience, &ambient.env, &ambient.enclosure.samples, &ambient.enclosure.open_to_sky, buildings, ears, time.delta_secs(), length, variants, &mut cues);
     let audible = master > 0.0;
     for cue in cues.drain(..) {
         if let Cue::Sound { sound, .. } = cue {
@@ -873,7 +873,7 @@ fn play(
                     let mut placed = mixer::place(&clip.dry, &clip.wet, at, ears, right, forward, reverb);
                     mixer::muffle(&mut placed, muffle, cutoff);
                     let [left, right] = placed;
-                    let _ = tx.send(Placed { wav: sfx::wav_stereo(&left, &right), playback, at });
+                    let _ = tx.send(Placed { wav: Arc::from(sfx::wav_stereo(&left, &right)), playback, at });
                 });
             }
         }
@@ -954,8 +954,9 @@ fn leave(
     // the music, or here: `Surveys::leave`).
     *surroundings = Surroundings { started: surroundings.started, ..default() };
     let Some(mut ambient) = ambient else { return };
-    // One-shots placed for the world left are not played in the next.
-    ambient.placed.1.try_iter().for_each(drop);
+    // One-shots placed for the world left are not played in the next: a new channel, so a
+    // worker still placing one sends it where nobody reads.
+    ambient.placed = unbounded();
     let axes = ambient.ambience.axes();
     ambient.mixer = Mixer::new(&ambient.ambience, 0x616d_6269);
     ambient.roof = RoofLook::default();

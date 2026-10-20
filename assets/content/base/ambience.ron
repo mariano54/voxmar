@@ -28,6 +28,7 @@
 //   tag a block has must be in `roofs.shelter` or here, or the game does not start.
 // sounds: one-shots, played `per_minute` times a minute while their conditions fully hold,
 //   then not again for `cooldown` seconds. `at` is Block(group) (a block the scan found),
+//   OpenBlock(group) (one of those with nothing over it but the sky; none, not heard),
 //   Around(distance, height) or Listener. `reach` is the distance (blocks) at which they
 //   are half as loud; `pitch` the range of playback speed.
 //
@@ -496,11 +497,12 @@
             pitch: (0.85, 1.2), reach: 5,
             when: {"fire": (min: 0.25, fade: 0.2)},
         ),
-        // Rain falling into a fire out in the open: drops hissing on the embers.
+        // Rain falling into a fire with the sky over it: drops hissing on the embers, from
+        // that fire, wherever the player stands; a hearth under its roof never.
         (
-            name: "fire_sizzle", sound: Sizzle, volume: 0.24, at: Block("fire"), per_minute: 6, cooldown: 4,
+            name: "fire_sizzle", sound: Sizzle, volume: 0.24, at: OpenBlock("fire"), per_minute: 6, cooldown: 4,
             pitch: (0.9, 1.15), reach: 6,
-            when: {"fire": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2), "roof": (max: 0.4, fade: 0.3)},
+            when: {"fire": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2)},
         ),
         // A log settling in a fire now and then: a soft fall, sparks and a hiss, so a hearth
         // sat by for a while is never one loop.

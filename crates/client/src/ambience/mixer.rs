@@ -109,6 +109,7 @@ impl Mixer {
         ambience: &Ambience,
         env: &Environment,
         samples: &[Vec<IVec3>],
+        sky: &[Vec<bool>],
         buildings: &[Vec<Vec3>],
         listener: Vec3,
         dt: f32,
@@ -154,6 +155,13 @@ impl Mixer {
                     let Some(blocks) = samples.get(group).filter(|b| !b.is_empty()) else { continue };
                     let block = blocks[self.pick(blocks.len(), None)];
                     Some(block.as_vec3() + 0.5)
+                }
+                Placement::OpenBlock(group) => {
+                    let open: Vec<IVec3> = samples.get(group).into_iter().flatten().zip(sky.get(group).into_iter().flatten()).filter(|(_, sky)| **sky).map(|(b, _)| *b).collect();
+                    if open.is_empty() {
+                        continue;
+                    }
+                    Some(open[self.pick(open.len(), None)].as_vec3() + 0.5)
                 }
                 Placement::Around { distance, height } => {
                     let angle = self.unit() * std::f32::consts::TAU;
@@ -281,7 +289,7 @@ mod tests {
     fn run(mixer: &mut Mixer, ambience: &Ambience, env: &Environment, samples: &[Vec<IVec3>], seconds: f32) -> Vec<Cue> {
         let mut cues = Vec::new();
         for _ in 0..(seconds * 60.0) as usize {
-            mixer.update(ambience, env, samples, &[], Vec3::ZERO, 1.0 / 60.0, |_, _| 1.0, (3, 5), &mut cues);
+            mixer.update(ambience, env, samples, &[], &[], Vec3::ZERO, 1.0 / 60.0, |_, _| 1.0, (3, 5), &mut cues);
         }
         cues
     }

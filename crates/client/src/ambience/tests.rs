@@ -32,6 +32,8 @@ struct Scene {
     name: &'static str,
     env: Environment,
     samples: Vec<Vec<IVec3>>,
+    /// Whether each sample is open to the sky: all of them, unless a test covers them.
+    sky: Vec<Vec<bool>>,
     /// Each set of buildings one-shots sound from: one, a dozen blocks off.
     buildings: Vec<Vec<Vec3>>,
 }
@@ -57,7 +59,7 @@ fn scene(ambience: &Ambience, name: &'static str, tags: &[&str], set: &[(&str, f
     }
     env.home_tags = tags.iter().map(|t| t.to_string()).collect();
     let mut random = name.len() as u64;
-    let samples = (0..ambience.groups.len())
+    let samples: Vec<Vec<IVec3>> = (0..ambience.groups.len())
         .map(|group| {
             (0..8)
                 .map(|_| {
@@ -73,7 +75,8 @@ fn scene(ambience: &Ambience, name: &'static str, tags: &[&str], set: &[(&str, f
         })
         .collect();
     let buildings = vec![vec![Vec3::new(12.0, 0.0, 0.0)]; ambience.buildings.len()];
-    Scene { name, env, samples, buildings }
+    let sky = samples.iter().map(|group| vec![true; group.len()]).collect();
+    Scene { name, env, samples, sky, buildings }
 }
 
 /// A thunderstorm in the woods, heard out in it.
@@ -126,7 +129,7 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
     let mut cues = Vec::new();
     let steps = (seconds * 100.0) as usize;
     for step in 0..steps {
-        mixer.update(ambience, &scene.env, &scene.samples, &scene.buildings, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+        mixer.update(ambience, &scene.env, &scene.samples, &scene.sky, &scene.buildings, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
         timeline.extend(cues.drain(..).map(|c| (step as f32 * 0.01, c)));
     }
     let levels = (0..ambience.beds.len()).map(|b| mixer.level(b)).collect();
@@ -373,7 +376,7 @@ fn render(ambience: &Ambience, scenes: Vec<Scene>, extra: &[(usize, f32, f32, &[
         // Skip the warm-up and the beds' fade-in, as if the player had been there a while.
         let mut cues = Vec::new();
         for _ in 0..1000 {
-            mixer.update(ambience, &scene.env, &scene.samples, &scene.buildings, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+            mixer.update(ambience, &scene.env, &scene.samples, &scene.sky, &scene.buildings, Vec3::ZERO, 0.01, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
         }
         cues.clear();
         let mut playing: Vec<(usize, usize, usize)> = (0..ambience.beds.len())
@@ -382,7 +385,7 @@ fn render(ambience: &Ambience, scenes: Vec<Scene>, extra: &[(usize, f32, f32, &[
             .collect();
         for step in 0..total / block {
             let at = start + step * block;
-            mixer.update(ambience, &scene.env, &scene.samples, &scene.buildings, Vec3::ZERO, 0.01, |s, v| sounds[s][v].0.len() as f32 / RATE as f32, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+            mixer.update(ambience, &scene.env, &scene.samples, &scene.sky, &scene.buildings, Vec3::ZERO, 0.01, |s, v| sounds[s][v].0.len() as f32 / RATE as f32, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
             for cue in cues.drain(..) {
                 match cue {
                     Cue::Segment { bed, variant } => playing.push((bed, variant, 0)),
@@ -561,7 +564,7 @@ fn the_ambience_is_heard_within_its_band() {
         let distance = match sound.at {
             Placement::Around { distance, .. } => distance.0,
             // A building may be close by.
-            Placement::Block(_) | Placement::Listener | Placement::Building(_) => 0.0,
+            Placement::Block(_) | Placement::OpenBlock(_) | Placement::Listener | Placement::Building(_) => 0.0,
         };
         for variant in 0..synth::ONE_SHOT_VARIANTS {
             let (dry, _) = synth::one_shot(sound.synth, variant);
@@ -1011,18 +1014,30 @@ fn a_fire_hears_the_weather() {
     let ambience = base();
     let flue = ambience.beds.iter().position(|b| b.name == "base:flue").unwrap();
     let sizzle = ambience.sounds.iter().position(|s| s.name == "base:fire_sizzle").unwrap();
-    let heard = |set: &[(&str, f32)]| {
-        let (timeline, levels) = run(&ambience, &scene(&ambience, "hearth", &["plains"], set), 120.0);
+    let heard_by = |set: &[(&str, f32)], fire_in_the_open: bool| {
+        let mut scene = scene(&ambience, "hearth", &["plains"], set);
+        scene.sky.iter_mut().flatten().for_each(|sky| *sky = fire_in_the_open);
+        let (timeline, levels) = run(&ambience, &scene, 120.0);
         (levels[flue], timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sizzle)).count())
     };
+    let heard = |set: &[(&str, f32)]| heard_by(set, true);
     let hearth = [&INDOORS[..], &[("fire", 1.0), ("sun", -0.5)]].concat();
     let full = ambience.beds[flue].volume;
     assert!(heard(&[&hearth[..], &[("wind", 16.0)]].concat()).0 > 0.6 * full, "a stormy night by the hearth");
     assert!(heard(&[&hearth[..], &[("wind", 2.0)]].concat()).0 < 1e-3, "a still night");
     assert!(heard(&[("fire", 1.0), ("sun", -0.5), ("wind", 16.0)]).0 < 1e-3, "a campfire out in the gale");
-    let campfire = [("fire", 1.0), ("rain", 1.0), ("raining", 1.0)];
-    assert!(heard(&campfire).1 > 0, "rain into a campfire");
-    assert_eq!(heard(&[&campfire[..], &[("roof", 1.0)]].concat()).1, 0, "a fire under a roof");
+    // Not at night or out of the wind, nor by a campfire; a stormy night in the house
+    // with the fire out is quiet too.
+    assert!(heard(&[&hearth[..], &[("wind", 16.0), ("sun", 0.8)]].concat()).0 < 1e-3, "a stormy day by the hearth");
+    let cold = [&INDOORS[..], &[("sun", -0.5), ("wind", 16.0)]].concat();
+    assert!(heard(&cold).0 < 1e-3, "a stormy night with the fire out");
+    // Rain hisses on a fire's embers by the fire's own sky, wherever the player stands: a
+    // campfire seen from under the eaves sizzles, a hearth under its roof never does.
+    let rain = [("fire", 1.0), ("rain", 1.0), ("raining", 1.0)];
+    assert!(heard(&rain).1 > 0, "rain into a campfire");
+    assert!(heard(&[&rain[..], &[("roof", 1.0), ("shelter", 0.6)]].concat()).1 > 0, "a campfire seen from the porch");
+    assert_eq!(heard_by(&rain, false).1, 0, "a hearth under its roof, the player out in the rain");
+    assert_eq!(heard_by(&[&rain[..], &INDOORS[..]].concat(), false).1, 0, "a hearth under its roof");
     assert_eq!(heard(&[("fire", 1.0)]).1, 0, "a dry night");
 }
 
@@ -1149,22 +1164,41 @@ fn recorded_beds_and_their_muffled_twins_start_together() {
 #[test]
 fn leaving_drops_the_surveys_still_out() {
     use bevy::ecs::system::RunSystemOnce;
-    use bevy::prelude::World;
-    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
-    let content = voxmar_server::load_content(&assets).unwrap();
-    let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
-    let mut ambient = super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1);
-    ambient.surveys.out = true;
-    let mut world = World::new();
-    world.insert_resource(ambient);
-    world.insert_resource(super::Surroundings { started: 7, surveyed: 7, ..Default::default() });
+    let mut world = left_world();
+    world.resource_mut::<super::Ambient>().surveys.out = true;
     world.run_system_once(super::leave).unwrap();
     let mut ambient = world.resource_mut::<super::Ambient>();
     assert!(!ambient.surveys.out, "the next game's first survey waits on one of the world left");
     let old = super::Survey { number: 7, enclosure: Default::default(), place: Some(Default::default()) };
     ambient.surveys.tx.send(old).unwrap();
     assert!(ambient.surveys.answers().is_empty(), "survey 7, of the world left, is taken in the next");
+}
+
+/// A world with the ambience playing in a game, about to be left.
+fn left_world() -> bevy::prelude::World {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
+    let mut world = bevy::prelude::World::new();
+    world.insert_resource(super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1));
+    world.insert_resource(super::Surroundings { started: 7, surveyed: 7, ..Default::default() });
+    world
+}
+
+/// A one-shot still being placed on a worker when the player leaves is never played in the
+/// next world, nor one already back.
+#[test]
+fn leaving_drops_the_one_shots_still_placing() {
+    use bevy::ecs::system::RunSystemOnce;
+    let mut world = left_world();
+    let late = world.resource::<super::Ambient>().placed.0.clone();
+    let placed = || super::Placed { wav: std::sync::Arc::from(Vec::new()), playback: Default::default(), at: None };
+    world.resource::<super::Ambient>().placed.0.send(placed()).unwrap();
+    world.run_system_once(super::leave).unwrap();
+    // The worker finishes after the leave.
+    let _ = late.send(placed());
+    assert!(world.resource::<super::Ambient>().placed.1.try_recv().is_err(), "a one-shot of the world left plays in the next");
 }
 
 /// The clips go to the mixer only once the recordings have loaded (`receive_clips`): with
