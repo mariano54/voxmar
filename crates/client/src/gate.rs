@@ -5257,6 +5257,22 @@ impl WearPlan {
 /// Server seconds the tool wear step waits on each answer.
 const WEAR_WAIT: f32 = 10.0;
 
+/// Empty hotbar slots a light ladder or clamp step wants before it starts: what it holds,
+/// gives and is given back lands there, whatever the steps before left in the pack.
+const HOTBAR_ROOM: usize = 3;
+
+/// Whether the hotbar has [`HOTBAR_ROOM`] empty slots; without them the inventory is cleared
+/// once in the phase (each of these steps gives all it uses) and the step waits for it.
+fn hotbar_room(world: &mut World, gate: &mut Gate) -> bool {
+    let player = world.resource::<LocalPlayer>();
+    let empty = (0..voxmar_engine::inventory::HOTBAR_SLOTS).filter(|&s| player.inventory.get(s).is_none()).count();
+    if empty < HOTBAR_ROOM && gate.taps == 0 {
+        world.resource::<Net>().command("clear");
+        gate.taps = 1;
+    }
+    empty >= HOTBAR_ROOM
+}
+
 /// A tool worn nearly out, breaking a block it is made for: it warns (a creak, its icon red
 /// and its wear bar short), then worn to its last use it breaks at the next block (a snap and
 /// chips), leaving only a head it names; then another, worn, mended by the block it is mended
@@ -5292,6 +5308,12 @@ fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
     let held = |world: &World, plan: &WearPlan| world.resource::<LocalPlayer>().inventory.get(plan.slot);
     match gate.phase {
         0 => {
+            if !hotbar_room(world, gate) {
+                if waited {
+                    fail(world, gate, "tool wear", format!("no room in the hotbar ({HOTBAR_ROOM} slots) after clearing the inventory"));
+                }
+                return;
+            }
             let (tool, block, station, mend, head) = match WearPlan::of(&content) {
                 Ok(found) => found,
                 Err(why) => return fail(world, gate, "tool wear", why),
@@ -5563,6 +5585,12 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     };
     match gate.phase {
         0 => {
+            if !hotbar_room(world, gate) {
+                if waited {
+                    fail(world, gate, "firebrand: lit", format!("no room in the hotbar ({HOTBAR_ROOM} slots) after clearing the inventory"));
+                }
+                return;
+            }
             let plan = match BrandPlan::of(&content) {
                 Ok(plan) => plan,
                 Err(why) => return fail(world, gate, "firebrand", why),
@@ -5759,6 +5787,12 @@ fn torch(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let here = |world: &World| world.resource::<ClientWorld>().block(light_at);
     match gate.phase {
         0 => {
+            if !hotbar_room(world, gate) {
+                if waited {
+                    fail(world, gate, "torch: lit", format!("no room in the hotbar ({HOTBAR_ROOM} slots) after clearing the inventory"));
+                }
+                return;
+            }
             let plan = match TorchPlan::of(&content).and_then(|plan| Ok(TorchPlan { room: untended_room(world, at)?, ..plan })) {
                 Ok(plan) => plan,
                 Err(why) => return fail(world, gate, "torch: burns out", why),
@@ -5964,6 +5998,12 @@ fn lamp(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let named = |b: Option<BlockId>| b.map(|b| content.blocks.def(b).name.clone());
     match gate.phase {
         0 => {
+            if !hotbar_room(world, gate) {
+                if waited {
+                    fail(world, gate, "lamp: filled and lit", format!("no room in the hotbar ({HOTBAR_ROOM} slots) after clearing the inventory"));
+                }
+                return;
+            }
             let plan = match LampPlan::of(&content).and_then(|plan| Ok(LampPlan { room: untended_room(world, at)?, ..plan })) {
                 Ok(plan) => plan,
                 Err(why) => return fail(world, gate, "lamp: filled and lit", why),
@@ -6154,6 +6194,12 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
     let in_hotbar = |world: &World, item: BlockId| world.resource::<LocalPlayer>().inventory.slots[..voxmar_engine::inventory::HOTBAR_SLOTS].iter().position(|s| s.is_some_and(|s| s.item == item));
     match gate.phase {
         0 => {
+            if !hotbar_room(world, gate) {
+                if waited {
+                    fail(world, gate, "clamp: split", format!("no room in the hotbar ({HOTBAR_ROOM} slots) after clearing the inventory"));
+                }
+                return;
+            }
             let net = world.resource::<Net>();
             net.command("gamemode survival");
             // Clear skies held over it: rain on its flue would spoil the burn.
@@ -6186,6 +6232,11 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
         }
         2 => {
             aim_at(world, station_at.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
+            // Let go once the split is under way: it goes on by itself, and a button still held
+            // would set the firewood it gives down on the block, a block at a time.
+            if world.resource::<crate::interact::Target>().cooking_until > world.resource::<Time>().elapsed_secs() {
+                mouse(world, MouseButton::Right, false);
+            }
             let (split, log, tool) = (carried(world, plan.split), carried(world, plan.log), carried(world, plan.tool));
             if split == 2 && log == 0 {
                 mouse(world, MouseButton::Right, false);

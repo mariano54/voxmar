@@ -436,6 +436,17 @@ mod tests {
         assert_eq!(refused(&server), Ok(()), "an axe in the pack, not in hand");
         split(&mut server);
         assert_eq!((count(&server, "base:oak_log"), count(&server, "base:firewood"), count(&server, "base:stone_axe")), (0, 2, 1), "split, the axe kept");
+        // A full pack loses nothing: the split comes back into the emptied hand.
+        let (dirt, log) = (id(&server, "base:dirt"), id(&server, "base:oak_log"));
+        let player = server.players.get_mut(&1).unwrap();
+        for slot in player.inventory.slots.iter_mut().filter(|s| s.is_none()) {
+            *slot = Some(stack(dirt, 64));
+        }
+        let selected = player.selected;
+        player.inventory.slots[selected] = Some(stack(log, 1));
+        let wood_before = count(&server, "base:firewood");
+        split(&mut server);
+        assert_eq!((count(&server, "base:oak_log"), count(&server, "base:firewood") - wood_before), (0, 2), "a full pack: split into the hand");
         let machines = &server.content.machines;
         let (log, wood, coal) = (id(&server, "base:oak_log"), id(&server, "base:firewood"), id(&server, "base:charcoal"));
         assert_eq!([log, wood, coal].map(|item| machines.fuel_heat(item)), [Some(1), Some(2), Some(3)], "each burns hotter");

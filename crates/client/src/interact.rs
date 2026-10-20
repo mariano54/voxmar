@@ -64,7 +64,7 @@ pub struct Target {
     /// When (seconds of game time) the line cast last comes up, and another may be cast.
     fishing_until: f32,
     /// When (seconds of game time) what is cooking comes off the fire, and more may go on.
-    cooking_until: f32,
+    pub(crate) cooking_until: f32,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
