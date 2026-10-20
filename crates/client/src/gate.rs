@@ -15069,8 +15069,14 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
     let before = |gate: &Gate, name: &str| gate.feel_asked.get(name).copied().unwrap_or(0);
     aim_at(world, at + Vec3::Y * 0.4);
     match gate.phase {
-        // The wolf stands in reach, each frame a fixed step of its time.
+        // The wolf stands in reach, each frame a fixed step of its time. No real creature
+        // is left about (as `look_clear`): one under the crosshair takes the step's swings
+        // and fights back, and this step and ShotCancel after it aim only at stand-ins. A
+        // train once had a wild aurochs, struck, butting the player through the whiff.
         0 => {
+            let net = world.resource::<Net>();
+            net.command("creatures disperse");
+            net.command("creatures remove");
             let mut creatures = world.resource_mut::<Creatures>();
             creatures.receive(vec![view(FIGHTER, wolf, Pose::Idle, wolf_health)], vec![]);
             (creatures.watch, creatures.watch_step) = (Some(FIGHTER), Some(PUPPET_STEP));
