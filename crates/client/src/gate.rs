@@ -5186,8 +5186,10 @@ fn grind(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("clear {}", short(stone)));
             net.command(&format!("clear {}", short(recipe.output)));
             net.command(&format!("give {} 1", short(stone)));
-            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(workshop)));
+            // Stood off the cell first: the flint step ends with the player on it, and no block
+            // is set where a player stands.
             net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
+            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(workshop)));
             gate.advance(now);
         }
         1 => {
@@ -5199,7 +5201,8 @@ fn grind(world: &mut World, gate: &mut Gate, now: f32) {
                 world.resource_mut::<UiState>().inventory_open = true;
                 gate.advance(now);
             } else if outwaited {
-                gate.check("grind", Err(format!("the {} ({stood}), the spot ({there}) or one {} (carried {carried}) never came, or it never drew, in {GRIND_WAIT} seconds", name(workshop), name(stone))));
+                let told: Vec<&str> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).collect();
+                gate.check("grind", Err(format!("the {} ({stood}), the spot ({there}) or one {} (carried {carried}) never came, or it never drew, in {GRIND_WAIT} seconds; the server said {told:?}", name(workshop), name(stone))));
                 end(world, gate);
             }
         }
@@ -5279,8 +5282,8 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
             }
             net.command(&format!("give {} 1", short(pickaxe)));
             net.command("skill mining 1");
-            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(stone)));
             net.command(&format!("tp {} {} {}", stand.x, stand.y, stand.z));
+            net.command(&format!("setblock {} {} {} {}", block.x, block.y, block.z, short(stone)));
             gate.advance(now);
         }
         // Struck until it breaks. Each drop pops out a block or so whichever way the server's
@@ -5340,7 +5343,10 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
                     gate.advance(now);
                 }
             } else if waited {
-                gate.check("rubble: knocked together", Err(format!("four {} never came to hand: carried {}", name(loose), holding(world, &name(loose)).0)));
+                let free = world.resource::<LocalPlayer>().inventory.slots.iter().filter(|s| s.is_none()).count();
+                let lying: u32 = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, _)| stack.item == loose).map(|(_, stack, _)| u32::from(stack.count)).sum();
+                let told: Vec<&str> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).collect();
+                gate.check("rubble: knocked together", Err(format!("four {} never came to hand: carried {}, {lying} lying about, {free} slots free; the server said {told:?}", name(loose), holding(world, &name(loose)).0)));
                 end(world, gate);
             }
         }
