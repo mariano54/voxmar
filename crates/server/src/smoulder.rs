@@ -230,18 +230,20 @@ mod tests {
     const CORNER: IVec3 = IVec3::new(8, FLOOR + 1, 8);
     const FLUE: IVec3 = IVec3::new(10, FLOOR + 2, 10);
 
-    /// A stone floor under open sky, and player 1 on it holding `item`.
+    /// A stone floor under open sky, two columns wide, and player 1 on it holding `item`.
     fn fixture(item: &str) -> Server {
         let mut server = crate::test_server();
         server.world = Default::default();
         let stone = id(&server, "base:stone");
-        let mut column = Column::default();
-        for x in 0..32 {
-            for z in 0..32 {
-                column.set_block(IVec3::new(x, FLOOR, z), stone);
+        for cx in 0..2 {
+            let mut column = Column::default();
+            for x in 0..32 {
+                for z in 0..32 {
+                    column.set_block(IVec3::new(x, FLOOR, z), stone);
+                }
             }
+            server.world.insert(ColumnPos::new(cx, 0), Arc::new(column));
         }
-        server.world.insert(ColumnPos::new(0, 0), Arc::new(column));
         let (client, connection) = voxmar_protocol::local_pair();
         std::mem::forget(client);
         let at = Vec3::new(10.5, (FLOOR + 1) as f32, 6.5);
@@ -263,29 +265,42 @@ mod tests {
 
     /// Nine firewood under earth, kindling on the roof: the clamp as multiblocks.ron draws it.
     fn build(server: &mut Server) {
+        build_at(server, CORNER);
+    }
+
+    /// The clamp with its north-west corner at `corner`.
+    fn build_at(server: &mut Server, corner: IVec3) {
         let (wood, earth, kindling) = (id(server, "base:firewood"), id(server, "base:dirt"), id(server, "base:kindling"));
         for x in 0..5 {
             for z in 0..5 {
                 let inner = (1..4).contains(&x) && (1..4).contains(&z);
-                server.set_block(CORNER + IVec3::new(x, 0, z), if inner { wood } else { earth });
+                server.set_block(corner + IVec3::new(x, 0, z), if inner { wood } else { earth });
                 if inner {
-                    server.set_block(CORNER + IVec3::new(x, 1, z), if (x, z) == (2, 2) { kindling } else { earth });
+                    server.set_block(corner + IVec3::new(x, 1, z), if (x, z) == (2, 2) { kindling } else { earth });
                 }
             }
         }
     }
 
     fn light(server: &mut Server) {
+        light_at(server, FLUE);
+    }
+
+    fn light_at(server: &mut Server, flue: IVec3) {
         let action = server.content.actions.expect("base:light");
-        server.propose(1, action, ActionTarget::Block { block: FLUE, face: Face::PosY }, Instant::now());
+        server.propose(1, action, ActionTarget::Block { block: flue, face: Face::PosY }, Instant::now());
     }
 
     /// What lies where the firewood was, by name and how many of each.
     fn charred(server: &Server) -> Vec<(String, usize)> {
+        charred_at(server, CORNER)
+    }
+
+    fn charred_at(server: &Server, corner: IVec3) -> Vec<(String, usize)> {
         let mut found: Vec<(String, usize)> = Vec::new();
         for x in 1..4 {
             for z in 1..4 {
-                let name = server.block(CORNER + IVec3::new(x, 0, z)).map_or_else(String::new, |b| server.content.blocks.def(b).name.clone());
+                let name = server.block(corner + IVec3::new(x, 0, z)).map_or_else(String::new, |b| server.content.blocks.def(b).name.clone());
                 match found.iter_mut().find(|(n, _)| *n == name) {
                     Some((_, count)) => *count += 1,
                     None => found.push((name, 1)),
@@ -391,25 +406,33 @@ mod tests {
     }
 
     /// A piece broken while its land is not loaded opens it once all of it is loaded again,
-    /// never waiting out its time to char well.
+    /// never waiting out its time to char well: a clamp across two columns, its flue and
+    /// wood loaded, its east earth broken in the column that is not, is not done when its
+    /// time is up.
     #[test]
     fn a_clamp_broken_while_unloaded_is_opened_once_loaded() {
         let mut server = fixture("base:torch");
+        // Its east earth ring (x 32) alone in the next column.
+        let (corner, flue) = (IVec3::new(28, FLOOR + 1, 8), IVec3::new(30, FLOOR + 2, 10));
+        server.players.get_mut(&1).unwrap().position = Vec3::new(30.5, (FLOOR + 1) as f32, 6.5);
         sky(&mut server, "clear");
-        build(&mut server);
-        light(&mut server);
+        build_at(&mut server, corner);
+        light_at(&mut server, flue);
+        assert_eq!(server.smoulders.len(), 1, "lit");
         server.day += burn_ticks(&server) * 3.0 / 8.0;
         server.tend_smoulders();
-        let mut column = server.world.remove(ColumnPos::new(0, 0)).unwrap();
-        std::sync::Arc::make_mut(&mut column).set_block(CORNER, BlockId::AIR);
-        server.smoulder_changed(CORNER);
+        let east = corner + IVec3::new(4, 0, 2);
+        let mut column = server.world.remove(ColumnPos::new(1, 0)).unwrap();
+        assert!(server.block(flue).is_some() && server.block(corner + IVec3::new(3, 0, 3)).is_some(), "only the east earth is unloaded");
+        std::sync::Arc::make_mut(&mut column).set_block(east, BlockId::AIR);
+        server.smoulder_changed(east);
         server.day += burn_ticks(&server);
         server.tend_smoulders();
-        assert_eq!(server.smoulders.len(), 1, "not judged with its land unloaded, its time up or not");
-        server.world.insert(ColumnPos::new(0, 0), column);
+        assert_eq!(server.smoulders.len(), 1, "not judged with part of it unloaded, its time up");
+        server.world.insert(ColumnPos::new(1, 0), column);
         server.tend_smoulders();
         assert!(server.smoulders.is_empty(), "opened once loaded");
-        assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 9)]);
+        assert_eq!(charred_at(&server, corner), [("base:charred_wood_heap".to_owned(), 9)]);
     }
 
     /// Rain on the open flue for half the burn spoils half the heaps to ash, from the top;

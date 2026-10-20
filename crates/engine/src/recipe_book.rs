@@ -374,13 +374,15 @@ impl RecipeBook {
                 book.add(blocks, Entry { method: Method::Burn { from, relit, fuel: fuel.map(str::to_owned) }, output, count: (1, 1) }, takes);
             }
         }
-        // A smouldering structure: what its wood, charred through or opened early, breaks to.
+        // A smouldering structure: what each of its wood cells, charred through or opened
+        // early, breaks to, as many as the heap drops.
         for structure in content.multiblocks.iter() {
             let Some(smoulder) = &structure.smoulder else { continue };
             let Some(&from) = smoulder.wood.first().and_then(|&at| structure.takes(at).first()) else { continue };
             for (left, early) in [(smoulder.done, false), (smoulder.early, true)] {
                 if let Some(output) = held(left) {
-                    book.add(blocks, Entry { method: Method::Smoulder { structure: structure.name.clone(), from, early }, output, count: (1, 1) }, vec![from]);
+                    let n = blocks.info(left).drop_count;
+                    book.add(blocks, Entry { method: Method::Smoulder { structure: structure.name.clone(), from, early }, output, count: (n, n) }, vec![from]);
                 }
             }
         }
@@ -694,6 +696,9 @@ mod tests {
         let charred = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Smoulder { structure, from, early } = m { Some((structure, from, early)) } else { None }).collect::<Vec<_>>();
         assert_eq!(charred("base:charcoal"), [("base:charcoal_clamp".to_owned(), id("base:firewood"), false)]);
         assert_eq!(charred("base:charred_wood"), [("base:charcoal_clamp".to_owned(), id("base:firewood"), true)]);
+        // As many as a heap breaks to: four charcoal, two charred wood.
+        let heap = |item: &str| book.making(id(item)).iter().find(|e| matches!(e.method, Method::Smoulder { .. })).map(|e| e.count);
+        assert_eq!((heap("base:charcoal"), heap("base:charred_wood")), (Some((4, 4)), Some((2, 2))));
         let fat = content.blocks.tagged("fat").next().expect("something is fat");
         assert!(book.using(fat).iter().any(|e| matches!(&e.method, Method::Burn { relit: true, fuel: Some(tag), .. } if tag == "fat") && e.output == id("base:clay_oil_lamp")));
         // Food left too long: the cooking entries it burns in make it.

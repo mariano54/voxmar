@@ -9501,10 +9501,11 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     while !bricks_done(&f) {
         brick_work(&mut f);
     }
-    // A quest the server counted only after the work's own look, and no later mark claimed
-    // on the way, is marked (and claimed) now, before the crucible needs its Engineering.
+    // A quest the server counted only after the work's own look, and has not yet claimed
+    // (a claim on the way can be refused, a full pack turning A Kiln Load's bricks away),
+    // is marked and claimed now, before the crucible needs its Engineering.
     for quest in ["a_kiln_load", "brick_by_brick"] {
-        if !f.marks.iter().any(|m| m.name == quest || m.side.iter().any(|q| q == quest)) {
+        if !f.c.claimed(&format!("base:{quest}")) {
             f.mark(quest);
         }
     }
