@@ -614,9 +614,11 @@ particles keep) and `over: Some(("hearth", 3))` (given off only with a `hearth` 
 stove pipe or a forge's flue can do the same. The client searches farther only for chunks
 whose palette holds such a block, and counts nearness as a share of each emission's range,
 so a far chimney takes its place among the nearest torches
-(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step builds a hearth beside
-its campfire, checks its chimney gives nothing off cold, lights it and counts the puffs
-("chimney smoke").
+(`a_chimney_smokes_over_a_hearth_from_afar`). Chimney pieces (`chimney_piece`) stacked
+straight over the chimney carry its smoke up and out of their top, so a chimney carried up
+through a roof smokes from its pot (docs/building.md). The gate's Cook step builds a hearth
+beside its campfire, its chimney carried up a brick flue to a pot, checks nothing smokes
+cold, lights it and counts the pot's puffs ("chimney smoke").
 
 A cold hearth is quiet. Lighting a hearth keeps its fire until a piece of it is taken away
 (server/src/hearth.rs; a kiln's burns for its fuel charge), and the server tells every
