@@ -17,7 +17,8 @@
 //! Helpers take their caller's scheduling class: on macOS a new thread starts at the default
 //! class whatever its creator's, so the game's background workers (utility) would otherwise
 //! start up to a worker count of helpers above themselves, level with the frame threads.
-//! On Linux a thread inherits its creator's nice value already.
+//! On Linux a thread inherits its creator's nice value already. `VOXMAR_THREAD_PRIORITY=off`
+//! (the game's timing switch, see the client's `priority.rs`) leaves helpers as they start.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -66,6 +67,13 @@ pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
         items.iter().for_each(f);
         return;
     }
+    with_helpers(items, f, helpers);
+    HELPERS.fetch_sub(helpers, Ordering::Relaxed);
+}
+
+/// Calls `f` on every item, on the calling thread and `helpers` fresh threads of the
+/// caller's scheduling class, each taking the next item in order.
+fn with_helpers<T: Sync>(items: &[T], f: impl Fn(&T) + Sync, helpers: usize) {
     let next = AtomicUsize::new(0);
     let class = SchedulingClass::current();
     let work = || {
@@ -82,7 +90,6 @@ pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
         }
         work();
     });
-    HELPERS.fetch_sub(helpers, Ordering::Relaxed);
 }
 
 /// A thread's scheduling class (its QoS class on macOS; elsewhere nothing to carry).
@@ -93,6 +100,10 @@ impl SchedulingClass {
     fn current() -> Self {
         #[cfg(target_os = "macos")]
         {
+            static CARRIED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+            if !*CARRIED.get_or_init(|| std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off")) {
+                return Self(None);
+            }
             let mut class = libc::qos_class_t::QOS_CLASS_UNSPECIFIED;
             let mut relative = 0;
             // SAFETY: writes the calling thread's class and relative priority into the two
@@ -147,23 +158,25 @@ mod tests {
     }
 
     /// A build on one of the game's background workers keeps its helpers in the background.
+    /// Three items, two helpers and a barrier each item waits at: every thread takes one.
     #[cfg(target_os = "macos")]
     #[test]
     fn helpers_keep_their_callers_class() {
         let classes = std::thread::spawn(|| {
             // SAFETY: only changes the scheduling class of the current thread.
             unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0) };
-            let items: Vec<usize> = (0..64).collect();
-            let classes = std::sync::Mutex::new(Vec::new());
-            for_each(&items, |_| {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-                classes.lock().unwrap().push(SchedulingClass::current().0);
-            });
-            classes.into_inner().unwrap()
+            let barrier = std::sync::Barrier::new(3);
+            let seen = std::sync::Mutex::new(Vec::new());
+            with_helpers(&[0, 1, 2], |_| {
+                seen.lock().unwrap().push((std::thread::current().id(), SchedulingClass::current().0));
+                barrier.wait();
+            }, 2);
+            (std::thread::current().id(), seen.into_inner().unwrap())
         })
         .join()
         .unwrap();
-        assert_eq!(classes.len(), 64);
-        assert!(classes.iter().all(|c| matches!(c, Some(libc::qos_class_t::QOS_CLASS_UTILITY))));
+        let (caller, seen) = classes;
+        assert_eq!(seen.iter().filter(|(thread, _)| *thread != caller).count(), 2, "two helpers took an item each");
+        assert!(seen.iter().all(|(_, class)| matches!(class, Some(libc::qos_class_t::QOS_CLASS_UTILITY))));
     }
 }

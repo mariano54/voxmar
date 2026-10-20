@@ -339,7 +339,9 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
     let rock = {
         let _stage = stage::enter(Stage::Fill);
         let low = if underground.any_rocky() { 0 } else { DEEPSLATE };
-        Lattice::noise(&terrain.rock, origin, low, top, lattice::STEP, 1.0)
+        // Read in the ground only, under the highest of it.
+        let ground = geology.samples().iter().map(|g| g.height).max().unwrap_or(0);
+        Lattice::noise(&terrain.rock, origin, low, ground.max(low), lattice::STEP, 1.0)
     };
     let mut rock_profile = Profile::default();
     // The density's noise over the band of the column's crags, below their tops, which
@@ -387,7 +389,7 @@ pub fn generate(world: &Overworld, pos: ColumnPos) -> Column {
                 let _stage = stage::enter(Stage::Caves);
                 caves.carve(x, z, &mut cave);
             }
-            rock.profile(x, z, &mut rock_profile);
+            rock.profile_to(x, z, height, &mut rock_profile);
             let rocky = underground.rocky(x, z);
             if rocky {
                 underground.settled(x, z, &mut settled);

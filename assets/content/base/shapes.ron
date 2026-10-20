@@ -325,6 +325,13 @@
             (from: (2, 0, 2), to: (14, 10, 14)),
             (from: (7.5, 10, 4), to: (8.5, 13, 11), turn: 30, textures: All("chopping_block_wedge")),
         ]),
+        // A grindstone (blocks_workshop.ron): a stone wheel on an axle between two posts.
+        "grindstone": (boxes: [
+            (from: (1, 0, 5), to: (3, 10, 11)),
+            (from: (13, 0, 5), to: (15, 10, 11)),
+            (from: (3, 6.5, 7.5), to: (13, 7.5, 8.5)),
+            (from: (5, 1, 2), to: (11, 13, 14), textures: All("grindstone_wheel")),
+        ]),
 
         // Singles: lights, a hearth's pieces, a loom and its kin, graves and columns.
         "candle": (boxes: [
