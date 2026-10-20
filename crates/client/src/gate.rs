@@ -3694,8 +3694,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let (hopper, boiler, chest) = (k, k + IVec3::new(2, 0, -1), k + IVec3::new(2, 2, 0));
             let teardown = move |world: &mut World| {
                 let (a, b) = (k + IVec3::new(-1, -1, -1), k + IVec3::new(4, 2, 3));
+                remove_wheel_aurochs(world, k);
                 let net = world.resource::<Net>();
-                for line in ["creatures remove aurochs".to_owned(), format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                for line in [format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
                     net.command(&line);
                 }
                 for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
@@ -3880,8 +3881,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             let teardown = move |world: &mut World| {
                 let (a, b) = (k + IVec3::new(-4, -1, -1), k + IVec3::new(4, 3, 3));
+                remove_wheel_aurochs(world, k);
                 let net = world.resource::<Net>();
-                for line in ["creatures remove aurochs".to_owned(), format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                for line in [format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
                     net.command(&line);
                 }
                 for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
@@ -6188,6 +6190,19 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// `look-creature` show the label at the top left.
 /// How near the pad's middle no creature may be for the look step's first look.
 const LOOK_CLEAR: f32 = 12.0;
+
+/// Takes the tamed aurochs off the treadwheel's floor (beside `k + (3, 0, 2)`): `/creatures
+/// remove` reaches 8 blocks, and the iron age's shot is taken from about 10 off, so the
+/// player is put by the wheel for it and back where they were. One left grazed round the
+/// test ground and, struck by the first fights' swings, fought the player through the whiff.
+fn remove_wheel_aurochs(world: &World, k: IVec3) {
+    let back = world.resource::<LocalPlayer>().position;
+    let by = k.as_vec3() + Vec3::new(3.5, 0.0, 2.5);
+    let net = world.resource::<Net>();
+    net.command(&format!("tp {} {} {}", by.x, by.y, by.z));
+    net.command("creatures remove aurochs");
+    net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
+}
 
 /// Takes every creature within [`LOOK_CLEAR`] of the look step's pad away, whatever its
 /// species: the wild sent away, and the kept taken away from the pad's middle and from a
@@ -15070,9 +15085,10 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
     aim_at(world, at + Vec3::Y * 0.4);
     match gate.phase {
         // The wolf stands in reach, each frame a fixed step of its time. No real creature
-        // is left about (as `look_clear`): one under the crosshair takes the step's swings
-        // and fights back, and this step and ShotCancel after it aim only at stand-ins. A
-        // train once had a wild aurochs, struck, butting the player through the whiff.
+        // near is left (wild ones within 64 blocks dispersed, the player's own within 8
+        // removed): one under the crosshair takes the step's swings and fights back, and this
+        // step and ShotCancel after it aim only at stand-ins. Trains had the Workshop's
+        // tamed aurochs, struck, butting the player through the whiff.
         0 => {
             let net = world.resource::<Net>();
             net.command("creatures disperse");
