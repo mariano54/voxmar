@@ -561,9 +561,9 @@ steps! {
     /// Every journal page, in English and Japanese: no text reaches past the element it
     /// sits in. Each page has the time a step has, to be drawn and read.
     FitJournal,
-    /// The screens with keys under them in a window of `SMALL` (the interface at 75%), in
-    /// English and Japanese: no text reaches past the element it sits in, and the keys under
-    /// each screen are clear of it and of the HUD along the bottom.
+    /// The screens under the bar of keys in a window of `SMALL` (the interface at 75%), in
+    /// English and Japanese: no text reaches past the element it sits in, and the bar of
+    /// keys is clear of each screen and of the HUD along the bottom.
     FitSmall,
     /// Leaving the world for the title screen.
     Leave,
@@ -837,7 +837,7 @@ struct Gate {
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
-    /// What the keys under a screen ran into on the views of a text-fit step, each once.
+    /// What the bar of the screens' keys ran into on the views of a text-fit step, each once.
     keys_blocked: Vec<String>,
     /// Views of the text-fit tour on which a tool's tooltip showed, whole, on screen.
     fit_tips: usize,
@@ -9089,9 +9089,9 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         if !menus {
             let blocked = std::mem::take(&mut gate.keys_blocked);
             let result = if blocked.is_empty() {
-                Ok(format!("the keys under every screen are clear of it and of the HUD on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+                Ok(format!("the bar of keys is clear of every screen and of the HUD on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
             } else {
-                Err(format!("{} times the keys under a screen run into something: {}", blocked.len(), blocked.join("; ")))
+                Err(format!("{} times the bar of keys runs into something: {}", blocked.len(), blocked.join("; ")))
             };
             gate.check(if journal { "keys clear: journal" } else if small { "keys clear: 1280x720" } else { "keys clear" }, result);
         }
@@ -9246,14 +9246,14 @@ fn keys_blocked(world: &mut World) -> Vec<String> {
             let (Some(node), Some(at)) = (world.get::<ComputedNode>(panel), world.get::<bevy::ui::UiGlobalTransform>(panel)) else { continue };
             let shown = world.get::<InheritedVisibility>(panel).is_some_and(|v| v.get());
             if shown && node.size().min_element() > 0.0 && meets(keys, rect(node, at)) {
-                found.push("the keys run into the screen's panel".to_owned());
+                found.push("the bar of keys runs into the screen's panel".to_owned());
             }
         }
         for (entity, at, words) in &hud {
             if under(world, *entity, bottom) && meets(keys, *at) {
                 found.push(match words {
-                    Some(words) => format!("the keys run into {words:?} along the bottom"),
-                    None => "the keys run into a picture along the bottom".to_owned(),
+                    Some(words) => format!("the bar of keys runs into {words:?} along the bottom"),
+                    None => "the bar of keys runs into a picture along the bottom".to_owned(),
                 });
             }
         }
@@ -9264,7 +9264,7 @@ fn keys_blocked(world: &mut World) -> Vec<String> {
 }
 
 /// What is wrong with the tooltip [`fit_tool`] shows: not showing or past the screen's edge,
-/// then over the keys under the screen.
+/// then over the bar of the screens' keys.
 fn tip_wrong(world: &mut World) -> (Vec<String>, Vec<String>) {
     use crate::hud::screens::HotkeyBar;
     let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());

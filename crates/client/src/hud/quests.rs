@@ -1580,8 +1580,10 @@ fn lay_ground(mut commands: Commands, look: Res<QuestLook>, mut assets: ResMut<A
     }
 }
 
-/// A lane's header pressed brings the canvas to its path's head quest, and picks it.
-fn go_to_path(heads: Query<(&LaneHead, &Interaction), Changed<Interaction>>, mut web: Query<&mut ScrollPosition, With<Web>>, mut view: ResMut<QuestView>) {
+/// A lane's header pressed brings the canvas to its path's head quest, and picks it. The
+/// pick asks `draw` to centre it (as Current Quest does), where `at` already stands, so a
+/// newly picked quest's least scroll into view does not undo the move.
+fn go_to_path(heads: Query<(&LaneHead, &Interaction), Changed<Interaction>>, mut web: Query<&mut ScrollPosition, With<Web>>, mut view: ResMut<QuestView>, mut recentre: ResMut<Recentre>) {
     for (head, interaction) in &heads {
         if *interaction != Interaction::Pressed {
             continue;
@@ -1589,8 +1591,9 @@ fn go_to_path(heads: Query<(&LaneHead, &Interaction), Changed<Interaction>>, mut
         if let Ok(mut scroll) = web.single_mut() {
             scroll.0 = head.at;
         }
-        if head.head.is_some() && view.picked != head.head {
+        if head.head.is_some() {
             view.picked.clone_from(&head.head);
+            recentre.0 = true;
         }
     }
 }

@@ -333,26 +333,30 @@ fn clear_of_hud(
     let scale = bottom.inverse_scale_factor();
     let top = at.translation.y - bottom.size().y / 2.0;
     let tall = band_size.size().y * band_size.inverse_scale_factor();
-    let set = |val: &mut Val, px: f32| {
-        if !matches!(*val, Val::Px(now) if (now - px).abs() < 0.5) {
-            *val = Val::Px(px);
-        }
-    };
+    // Written only when it moves, so a screen standing still is not laid out again.
+    let moved = |val: Val, px: f32| !matches!(val, Val::Px(now) if (now - px).abs() < 0.5);
     for (screen, mut node, root) in &mut roots {
         // From the HUD's top to the foot of the screen, in interface pixels, and a gap.
         let hud_room = if screen.0 == GameScreen::Menu { 0.0 } else { ((root.size().y - top) * scale).max(0.0) + space::GAP };
-        if menu_bar.edge == Edge::Bottom && screen.0 == open.unwrap_or(screen.0) {
-            set(&mut band.bottom, hud_room);
+        if menu_bar.edge == Edge::Bottom && open == Some(screen.0) && moved(band.bottom, hud_room) {
+            band.bottom = Val::Px(hud_room);
         }
         let (above, below) = match menu_bar.edge {
             Edge::Top => (tall + space::HAIR, hud_room),
             Edge::Bottom => (space::SECTION, hud_room + tall + space::HAIR),
         };
-        set(&mut node.padding.top, above);
-        set(&mut node.padding.bottom, below);
+        if moved(node.padding.top, above) {
+            node.padding.top = Val::Px(above);
+        }
+        if moved(node.padding.bottom, below) {
+            node.padding.bottom = Val::Px(below);
+        }
     }
     for (under, mut node) in &mut beside {
-        set(&mut node.top, under.0 + if menu_bar.edge == Edge::Top { tall } else { 0.0 });
+        let top = under.0 + if menu_bar.edge == Edge::Top { tall } else { 0.0 };
+        if moved(node.top, top) {
+            node.top = Val::Px(top);
+        }
     }
 }
 
@@ -404,6 +408,7 @@ mod tests {
             (r#"(screens: [])"#, "the bar shows no screen"),
             (r#"(look_keys: ["shop"])"#, "`shop`, which is no screen"),
             (r#"(edge: Left)"#, "Left"),
+            (r#"(edges: Top)"#, "edges"),
         ] {
             let error = MenuBar::load(&[shipped(), file("bad", bad)]).err().unwrap_or_else(|| panic!("{bad} loaded"));
             assert!(error.contains(why), "{bad}: {error}");
