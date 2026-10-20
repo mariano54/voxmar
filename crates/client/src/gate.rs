@@ -4989,8 +4989,8 @@ fn felled_by(content: &voxmar_engine::content::Content) -> Option<(BlockId, Bloc
 /// crafted in the hand's grid from what its recipe asks, fells it and the log comes to hand.
 fn flint(world: &mut World, gate: &mut Gate, now: f32) {
     let block = gate.feet + IVec3::new(0, 0, 14) + CHOP_FROM_FIRE;
-    // In the middle of a cell, one cell short of the log, so the felled log's drop comes
-    // to rest within `MAGNET`: a stand on a cell's edge was never judged reached.
+    // In the middle of a cell, one cell short of the log: a stand on a cell's edge was
+    // never judged reached.
     let stand = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 - 1.5);
     let waited = gate.server_in_phase() > FLINT_WAIT;
     let content = world.resource::<Launch>().content.clone();
@@ -5107,20 +5107,41 @@ fn flint(world: &mut World, gate: &mut Gate, now: f32) {
                 end(world, gate);
             }
         }
-        // Held, it fells the log, and the log comes to hand.
-        _ => {
-            let felled = world.resource::<ClientWorld>().block(block) != Some(log);
-            let got = holding(world, &name(log)).0;
-            if felled && got >= 1 {
+        // Held, it fells the log. Its drop pops out a block or so whichever way the server's
+        // tick throws it: the player steps onto where it stood, which every pop is in reach
+        // of (`dropped::pop_reach`).
+        4 => {
+            if world.resource::<ClientWorld>().block(block) != Some(log) {
                 mouse(world, MouseButton::Left, false);
-                gate.check("flint: felled", Ok(format!("held, the {} felled the {} and its log came to hand", name(tool), name(log))));
-                end(world, gate);
+                let onto = Vec3::new(block.x as f32 + 0.5, block.y as f32, block.z as f32 + 0.5);
+                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", onto.x, onto.y, onto.z));
+                gate.advance(now);
             } else if waited {
-                gate.check("flint: felled", Err(format!("holding {:?}, the {} at {block} felled {felled}, {got} logs carried; the crosshair was on {}, screens open {:?}", holding_any(world), name(log), crosshair_on(world), covering_screens(world))));
+                gate.check("flint: felled", Err(format!("holding {:?}, the {} at {block} still stands; the crosshair was on {}, screens open {:?}", holding_any(world), name(log), crosshair_on(world), covering_screens(world))));
                 end(world, gate);
             } else {
                 aim_at(world, block.as_vec3() + Vec3::splat(0.5));
                 mouse(world, MouseButton::Left, true);
+            }
+        }
+        // And the log comes to hand.
+        _ => {
+            let got = holding(world, &name(log)).0;
+            if got >= 1 {
+                gate.check("flint: felled", Ok(format!("held, the {} felled the {} and its log came to hand", name(tool), name(log))));
+                end(world, gate);
+            } else if waited {
+                let player = world.resource::<LocalPlayer>();
+                let middle = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
+                let lying: Vec<String> = world
+                    .resource::<crate::drops::Drops>()
+                    .lying()
+                    .filter(|(_, stack, _)| stack.item == log)
+                    .map(|(_, _, at)| format!("one lies at ({:.2}, {:.2}, {:.2}), {:.2} blocks from the player's middle (drawn in within {})", at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle), voxmar_engine::dropped::MAGNET))
+                    .collect();
+                let lying = if lying.is_empty() { "none lies about".to_owned() } else { lying.join(", ") };
+                gate.check("flint: felled", Err(format!("the {} at {block} felled, no log carried, the player at ({:.2}, {:.2}, {:.2}); {lying}", name(log), player.position.x, player.position.y, player.position.z)));
+                end(world, gate);
             }
         }
     }
