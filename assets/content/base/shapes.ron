@@ -615,6 +615,20 @@
             (from: (3, 10, 14.5), to: (13, 11.5, 15.5)),
             (from: (3, 14, 14.5), to: (13, 15.5, 15.5)),
         ]),
+        // A hatch in a loft's floor: boards across the top of the cell, level with the floor
+        // round it, and two battens under them. Open, it hangs from its back edge (south, away
+        // from whoever set it) against the back of the cell, no deeper than a ladder's rungs, so a
+        // ladder under it climbs on up through it.
+        "hatch": (boxes: [
+            (from: (0, 13, 0), to: (16, 16, 16), cull: true),
+            (from: (1, 11.5, 2), to: (15, 13, 4)),
+            (from: (1, 11.5, 12), to: (15, 13, 14)),
+        ]),
+        "hatch_open": (boxes: [
+            (from: (0, 0, 15), to: (16, 16, 16), cull: true),
+            (from: (2, 1, 14.5), to: (4, 15, 15)),
+            (from: (12, 1, 14.5), to: (14, 15, 15)),
+        ]),
         "railing_corner": (boxes: [
             (from: (0, 0, 13.5), to: (16, 2, 16), cull: true),
             (from: (0, 13, 13), to: (16, 16, 16), cull: true),

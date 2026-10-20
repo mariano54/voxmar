@@ -794,14 +794,10 @@ impl Server {
                 fall: checks.speed_margin * fly.max(tuning.terminal_velocity),
             }
         } else {
-            // Feet on a ladder, a jump climbs it no faster than `climb_speed` (the client's
-            // `movement::step`), so neither does anyone else.
-            let rise = if self.on_ladder(player.position) { tuning.climb_speed } else { tuning.jump_velocity };
-            Budgets {
-                across: checks.speed_margin * tuning.top_ground_speed(),
-                rise: checks.speed_margin * rise,
-                fall: checks.speed_margin * tuning.terminal_velocity,
-            }
+            // Feet on a ladder, nobody climbs it or slides down it faster than `climb_speed`
+            // (the client's `movement::step`, a jump on it included).
+            let (rise, fall) = if self.on_ladder(player.position) { (tuning.climb_speed, tuning.climb_speed) } else { (tuning.jump_velocity, tuning.terminal_velocity) };
+            Budgets { across: checks.speed_margin * tuning.top_ground_speed(), rise: checks.speed_margin * rise, fall: checks.speed_margin * fall }
         };
         let gap = player.budget_at.map_or(1.0 / TICKS_PER_SECOND as f32, |then| at.saturating_duration_since(then).as_secs_f32());
         let since = gap.min(checks.burst);
@@ -1210,6 +1206,54 @@ mod tests {
         }
         assert_eq!(server.players[&1].teleports, before, "standing still was refused");
         assert_eq!(server.players[&1].position, far);
+    }
+
+    /// Up a ladder thirty blocks high, or down it, a player sending where they are twenty
+    /// times a second is taken at the ladder's own pace (3 blocks a second), and put back
+    /// at more than twice that, though a jump goes faster and a fall faster still: on a
+    /// ladder nobody rises or sinks faster than `climb_speed` and the margin allow, once
+    /// the moves they have in hand run out.
+    #[test]
+    fn a_climb_or_slide_faster_than_a_ladder_allows_is_put_back() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        let _connection = join(&mut server, 1, "Ada");
+        let at = server.spawn.floor().as_ivec3() + IVec3::new(0, 20, 0);
+        server.load_area(at - IVec3::splat(4), at + IVec3::new(4, 36, 4));
+        let blocks = &server.content.blocks;
+        let (stone, planks, ladder) = (blocks.expect("base:stone"), blocks.expect("base:oak_planks"), blocks.expect("base:oak_ladder"));
+        for y in 0..=32 {
+            for x in -1..=1 {
+                for z in -1..=1 {
+                    server.set_block(at + IVec3::new(x, y, z), voxmar_engine::block::BlockId::AIR);
+                }
+                server.set_block(at + IVec3::new(x, y, 1), planks);
+            }
+            server.set_block(at + IVec3::Y * y, ladder);
+        }
+        server.set_block(at - IVec3::Y, stone);
+        let bottom = at.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        // From `from`, `steps` inputs a twentieth of a second apart, each `by` further up;
+        // whether any was put back.
+        let mut clock = Instant::now();
+        let mut go = |server: &mut Server, from: Vec3, by: f32, steps: usize| -> bool {
+            let player = server.players.get_mut(&1).unwrap();
+            (player.position, player.accepted, player.budget_at) = (from, from, None);
+            let before = player.teleports;
+            for k in 1..=steps {
+                clock += std::time::Duration::from_millis(50);
+                server.arrival = clock;
+                let teleport = server.players[&1].teleports;
+                server.input(1, PlayerInput { position: from + Vec3::Y * by * k as f32, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false, teleport });
+            }
+            clock += std::time::Duration::from_secs(5);
+            server.players[&1].teleports != before
+        };
+        let top = bottom + Vec3::Y * 30.0;
+        assert!(!go(&mut server, bottom, 0.15, 200), "an honest climb was put back");
+        assert!(!go(&mut server, top, -0.15, 200), "an honest slide was put back");
+        assert!(go(&mut server, bottom, 0.4, 75), "a climb at 8 blocks a second was let through");
+        assert!(go(&mut server, top, -0.4, 75), "a slide at 8 blocks a second was let through");
     }
 
     fn join(server: &mut Server, id: PlayerId, name: &str) -> ClientConnection {
