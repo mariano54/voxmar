@@ -644,16 +644,18 @@ mod tests {
                     let edge = x.abs() == 3 || z.abs() == 3;
                     server.set_block(at + IVec3::new(x, y, z), if edge { planks } else { BlockId::AIR });
                 }
-                // The roof's edge over the walls, eaves out: north, east, south, west.
+                // Planks over the walls, and the roof's edge over the room's outer cells,
+                // eaves out (north, east, south, west), so the room sees every corner.
                 let name = match (x, z) {
-                    (-3, -3) => "base:oak_shingles_corner",
-                    (3, -3) => "base:oak_shingles_corner_east",
-                    (3, 3) => "base:oak_shingles_corner_south",
-                    (-3, 3) => "base:oak_shingles_corner_west",
-                    (_, -3) => "base:oak_shingles",
-                    (3, _) => "base:oak_shingles_east",
-                    (_, 3) => "base:oak_shingles_south",
-                    (-3, _) => "base:oak_shingles_west",
+                    _ if x.abs() == 3 || z.abs() == 3 => "base:oak_planks",
+                    (-2, -2) => "base:oak_shingles_corner",
+                    (2, -2) => "base:oak_shingles_corner_east",
+                    (2, 2) => "base:oak_shingles_corner_south",
+                    (-2, 2) => "base:oak_shingles_corner_west",
+                    (_, -2) => "base:oak_shingles",
+                    (2, _) => "base:oak_shingles_east",
+                    (_, 2) => "base:oak_shingles_south",
+                    (-2, _) => "base:oak_shingles_west",
                     _ => "base:oak_planks",
                 };
                 server.set_block(at + IVec3::new(x, 4, z), block(&server, name));
@@ -662,11 +664,12 @@ mod tests {
         let home = at + IVec3::Y;
         let walls = server.room_walls(home);
         assert_eq!(walls.share(Shelter::Sound), 1.0, "a hipped roof let the weather in: {walls:?}");
-        for x in -2..=2 {
-            assert!(!server.open_sky(home + IVec3::X * x), "the sky shows through at {x}");
+        for (x, z) in [(-2, -2), (2, -2), (2, 2), (-2, 2), (0, -2), (2, 0), (0, 0)] {
+            assert!(!server.open_sky(at + IVec3::new(x, 1, z)), "the sky shows through at {x} {z}");
         }
-        server.set_block(at + IVec3::new(-3, 4, -3), block(&server, "base:oak_shingles_inner_corner"));
+        server.set_block(at + IVec3::new(-2, 4, -2), block(&server, "base:oak_shingles_inner_corner"));
         assert_eq!(server.room_walls(home).share(Shelter::Sound), 1.0, "a valley let the weather in");
+        assert!(!server.open_sky(at + IVec3::new(-2, 1, -2)), "the sky shows through the valley");
     }
 
     /// The home ladder's own furniture in a five by five stone-brick room under a plank roof
