@@ -248,7 +248,7 @@ impl Server {
                     let live = self.creatures.live.get_mut(&id).expect("checked above");
                     let health = live.health as f32 / species.def.health.max(1) as f32;
                     live.mind.hurt(species, None, health);
-                    live.mind.alarmed();
+                    live.mind.startled(cell.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
                     continue;
                 }
                 self.catches.stepped.remove(&id);

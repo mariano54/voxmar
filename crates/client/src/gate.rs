@@ -1033,6 +1033,7 @@ impl Gate {
             tapped: false,
             taps: 0,
             snare_tries: 0,
+            snare_sticks: 0,
             snare_at: 0.0,
             sling: SlingRun::default(),
             boss_before: Vec::new(),

@@ -311,7 +311,8 @@ impl Module for Flee {
                 let closeness = 1.0 - (ctx.distance(threat.position) / (self.radius * 1.5)).min(1.0);
                 Want::at(3.0 * ctx.mind.fear.max(closeness * ctx.mind.personality.fear()), threat)
             }
-            // Alarmed by kin, it runs from wherever it is toward home; but a player in
+            // Alarmed by kin, it runs from wherever it is toward home (or from where it was
+            // startled, as by a snare it slipped); but a player in
             // sight holding its favourite food (and who never hurt it) settles it, so kin
             // that were scared off come to the food rather than run into wherever home is.
             None if ctx.mind.fear > 0.3 && ctx.mind.recalls(Memory::Alarm) && !self.calmed(ctx) => Want::new(ctx.mind.fear),
@@ -321,7 +322,9 @@ impl Module for Flee {
 
     fn act(&self, ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, fresh: bool) -> Decision {
         let at = ctx.at;
-        let from = target.map_or(at.position * 2.0 - at.home, |p| p.position);
+        // With no one to run from, it runs from where it was startled, else toward home.
+        let startled = ctx.mind.startled_at.filter(|_| ctx.mind.recalls(Memory::Alarm));
+        let from = target.map_or(startled.unwrap_or(at.position * 2.0 - at.home), |p| p.position);
         let mut away = (at.position - from).with_y(0.0).normalize_or_zero();
         if away == Vec3::ZERO {
             away = Vec3::X;

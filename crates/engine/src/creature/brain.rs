@@ -256,6 +256,9 @@ pub struct Mind {
     pub cooldown: f32,
     /// Zigzag side when fleeing, and other modules' small counters.
     pub zig: f32,
+    /// Where it was startled with no one to blame (a snare it slipped): while it recalls
+    /// the alarm it runs from there, not toward home.
+    pub startled_at: Option<Vec3>,
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
     /// near, how far it likes to stray).
     pub seed: u64,
@@ -277,6 +280,7 @@ impl Mind {
             cooldown: 0.0,
             seed,
             zig: 1.0,
+            startled_at: None,
         }
     }
 
@@ -365,6 +369,14 @@ impl Mind {
     pub fn alarmed(&mut self) {
         self.fear = self.fear.max(0.5 + 0.5 * self.personality.nervousness);
         self.remember(Memory::Alarm, 8.0);
+        self.startled_at = None;
+    }
+
+    /// Something at `at` startled it with no one near to blame: alarmed (`alarmed`), it
+    /// runs from that spot.
+    pub fn startled(&mut self, at: Vec3) {
+        self.alarmed();
+        self.startled_at = Some(at);
     }
 }
 
