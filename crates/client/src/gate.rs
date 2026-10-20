@@ -18036,8 +18036,11 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             if let Some(observer) = gate.observer.as_mut() {
                 observer.replies.clear();
                 observer.connection.send(ClientMessage::Command { line: format!("locate settlement {SETTLEMENT_RADIUS}") });
-                // Where it floats over the test ground, for the last stage to bring it back to.
-                gate.observer_home = observer.position;
+                // Where it floats over the test ground, for the last stage to bring it back to
+                // (kept if a step before sent it home and its position has yet to follow).
+                if gate.observer_home.is_none() {
+                    gate.observer_home = observer.position;
+                }
             }
             gate.advance(now);
         }
@@ -18828,7 +18831,11 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("tarns", Err("no visible generated tarn in the sampled alpine highlands".into()));
-                observer_back(gate);
+                // Sent home, its way back kept: its position still lags the return, and the
+                // settlement step takes `observer_home` as home over that.
+                if let (Some(home), Some(observer)) = (gate.observer_home, gate.observer.as_mut()) {
+                    observer.connection.send(ClientMessage::Command { line: return_teleport(home) });
+                }
                 gate.next(Step::Settlements, now);
                 return;
             };
