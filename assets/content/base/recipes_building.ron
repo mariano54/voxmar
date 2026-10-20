@@ -25,6 +25,12 @@
         // Shingles split from slabs, two rows of them; a ridge caps two slabs with a third.
         (pattern: [["{name}_slab", "{name}_slab", "{name}_slab"], ["{name}_slab", "{name}_slab", "{name}_slab"]], output: "{name}_shingles", count: 4, skill: "core:construction", level: 5, xp: 4.0),
         (pattern: [["", "{name}_slab", ""], ["{name}_slab", "", "{name}_slab"]], output: "{name}_shingle_ridge", count: 2, skill: "core:construction", level: 5, xp: 3.0),
+        // Roof corners, two of a roof's pieces side by side for a hip, one over the other
+        // for a valley.
+        (pattern: [["{name}_shingles", "{name}_shingles"]], output: "{name}_shingles_corner", count: 2, skill: "core:construction", level: 5, xp: 1.0),
+        (pattern: [["{name}_shingles"], ["{name}_shingles"]], output: "{name}_shingles_inner_corner", count: 2, skill: "core:construction", level: 5, xp: 1.0),
+        (pattern: [["thatch_roof", "thatch_roof"]], output: "thatch_corner", count: 2, skill: "core:construction", level: 1, xp: 1.0),
+        (pattern: [["thatch_roof"], ["thatch_roof"]], output: "thatch_inner_corner", count: 2, skill: "core:construction", level: 1, xp: 1.0),
         // The home's ladder, from what has been worked first (sticks, twine, cured hide,
         // fired clay, bricks, beams), never straight from the ground.
         (pattern: [["hide", "hide", "hide"], ["stick", "", "stick"]], output: "hide_lean_to", count: 2, skill: "core:construction", level: 1, xp: 3.0),
@@ -59,7 +65,7 @@
         (pattern: [["{name}_slab", "{name}_slab", "{name}_slab"], ["{name}_beam", "", "{name}_beam"]], output: "{name}_landing", count: 3, skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_lattice_window"], ["wooden_door"]], output: "balcony_door", skill: "core:construction", level: 4, xp: 3.0),
         // An arrow slit: two stone bricks either side of a gap and a slab over it.
-        (pattern: [["", "stone_brick_slab", ""], ["stone_bricks", "", "stone_bricks"]], output: "stone_arrow_slit", count: 2, skill: "core:construction", level: 5, xp: 4.0),
+        (pattern: [["", "stone_brick_slab", ""], ["stone_bricks", "", "stone_bricks"]], output: "stone_arrow_slit", count: 2, skill: "core:construction", level: 6, xp: 4.0),
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "", "fired_clay"]], output: "chimney_pot", count: 2, skill: "core:construction", level: 3, xp: 3.0),
     ],
 )

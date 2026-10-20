@@ -211,6 +211,10 @@
     "block.base.balcony_door_top": "こうしど",
     "block.base.balcony_door_open": "こうしど",
     "block.base.balcony_door_open_top": "こうしど",
+    "block.base.{name}_shingles_corner": "{name}のいたぶきのすみむね",
+    "block.base.{name}_shingles_inner_corner": "{name}のいたぶきのたに",
+    "block.base.thatch_corner": "かやぶきのすみむね",
+    "block.base.thatch_inner_corner": "かやぶきのたに",
     "block.base.stone_flue": "いしのえんどう",
     "block.base.chimney_hood": "えんとつのフード",
     "family.base.stone_brick": "いしレンガ",
@@ -815,6 +819,7 @@
     "effect.base.stung": "はちさされ",
     "block.base.bee_skep": "みつばちのいるすばこ",
     "effect.base.bee_garden": "みつばちのにわ",
+    "effect.base.dooryard": "とぐちのにわ",
     "block.base.beeswax": "みつろう",
     "block.base.bee_nest": "やせいのみつばちのす",
 }
