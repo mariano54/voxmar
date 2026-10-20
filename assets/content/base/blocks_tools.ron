@@ -79,8 +79,8 @@
         // eight) hafted on sticks (leaves give them), in the hand's grid. Stone and trees need
         // a pickaxe and an axe (tools.ron), so these come first; the cheapest of tier 1, they
         // are the tools a refusal names (`Content::least_tool`).
-        (template: "drop", name: "flint_pickaxe", tags: ["pickaxe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
-        (template: "drop", name: "flint_axe", tags: ["axe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        (template: "drop", name: "flint_pickaxe", tags: ["uses:50", "mend:flint", "pickaxe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        (template: "drop", name: "flint_axe", tags: ["uses:50", "mend:flint", "axe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
         // Wooden: tier 1.
         (template: "drop", name: "wooden_pickaxe", tags: ["uses:50", "mend:#planks", "pickaxe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
         (template: "drop", name: "wooden_axe", tags: ["uses:50", "mend:#planks", "axe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
