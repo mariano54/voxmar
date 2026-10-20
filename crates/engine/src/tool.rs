@@ -335,6 +335,9 @@ impl ToolRegistry {
             if uses == 0 && tags.iter().any(|t| t == "tool") && burns == 0 && !tags.iter().any(|t| t == NEVER_WEARS) {
                 return Err(bad(format!("a tool with no `uses:N` to wear; give it one, or `{NEVER_WEARS}`")));
             }
+            if uses > 0 && mend.is_empty() && tags.iter().any(|t| t == "tool" || t == "weapon") {
+                return Err(bad("a tool that wears with nothing to mend it; give it `mend:` one of the materials it is made of".into()));
+            }
             heads.push(head);
             mends.push(mend);
             mended_near.push(near);
@@ -500,6 +503,9 @@ impl ToolRegistry {
                 return Err(RegistryError(format!("`{}`: a weapon with no `uses:N` to wear; give it one, or `{NEVER_WEARS}`", def.name)));
             }
             let mends = tools.mends(item);
+            if weapon && uses > 0 && mends.is_empty() {
+                return Err(RegistryError(format!("`{}`: a weapon that wears with nothing to mend it; give it `mend:` one of the materials it is made of", def.name)));
+            }
             if uses == 0 || mends.is_empty() {
                 continue;
             }
@@ -677,8 +683,9 @@ mod tests {
         assert_eq!(stone.wear, 0);
     }
 
-    /// Load refuses a second `uses:`, a tool that never wears without saying so, and names
-    /// a head or mend in the item's own package.
+    /// Load refuses a second `uses:`, a tool that never wears without saying so, and one
+    /// that wears with nothing to mend it, and names a head or mend in the item's own
+    /// package.
     #[test]
     fn wear_tags_are_checked_at_load() {
         let block = |name: &str, tags: &[&str]| BlockDef { name: name.into(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
@@ -691,6 +698,9 @@ mod tests {
         assert!(load(&["tool", "uses:9", "uses:8"]).is_err(), "two uses");
         assert!(load(&["tool"]).is_err(), "a tool that never wears without saying so");
         assert!(load(&["tool", NEVER_WEARS]).is_ok());
+        let no_mend = load(&["tool", "uses:9"]).unwrap_err().0;
+        assert!(no_mend.contains("nothing to mend it"), "a tool that wears needs a mend: {no_mend}");
+        assert!(load(&["weapon", "uses:9"]).is_err(), "and so does a weapon");
     }
 
     /// A mend puts back what a tool is made of: one whose recipe has no piece of what mends
