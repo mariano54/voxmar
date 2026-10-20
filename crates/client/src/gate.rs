@@ -666,9 +666,9 @@ struct Gate {
     /// Raw small game carried, slots and pouch, as the dry step hangs the rack, so its
     /// readout can count what hung.
     rack_rabbits: u32,
-    /// What the dry step carried when it last cleared the raw small game carried, until the
-    /// pack is seen cleared, and the first raw small game seen picked up once it gave its own.
-    dry_clearing: Option<u32>,
+    /// The server's seconds taken in when the dry step last cleared the raw small game
+    /// carried, and the first raw small game seen picked up once it gave its own.
+    dry_clearing: Option<f32>,
     dry_pickup: Option<String>,
     /// The creature the combat-marks step tells its blows at, when (game time) it last told
     /// them, and how many runs it has told.
@@ -15165,10 +15165,13 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
         0 => {
             let net = world.resource::<Net>();
             net.command(&format!("setblock {} {} {} drying_rack", rack.x, rack.y, rack.z));
-            // None of what earlier steps left: the step hangs only what it gives.
-            net.command("clear raw_small_game");
+            // To the rack first; what is carried is cleared once there (below). Cleared here,
+            // anything lying about the rack (a rabbit's loot from an earlier step's kill) is
+            // picked up in the tick that handles the clear and the move, so the pack is never
+            // seen empty and no clear follows (server items.rs,
+            // `a_clear_then_a_move_onto_loot_is_never_seen_empty`).
             net.command(&format!("tp {} {} {}", rack.x as f32 + 0.5, rack.y, rack.z as f32 - 2.5));
-            (gate.rack_rabbits, gate.dry_clearing, gate.dry_pickup) = (0, Some(carried_of(world, "base:raw_small_game")), None);
+            (gate.rack_rabbits, gate.dry_clearing, gate.dry_pickup) = (0, None, None);
             gate.advance(now);
         }
         1 => {
@@ -15178,7 +15181,9 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
             // Given once the player stands by the rack, the pack is seen cleared and no raw
             // small game lies near enough to be drawn in (what the cook step's hearth let
             // fall, say): any that does is let come and cleared again, so what is carried is
-            // what was given.
+            // what was given. Cleared only once there, and again for as long as any is seen
+            // carried in a server tick taken in after the last clear was sent: at most once a
+            // tick, and a clear the server has yet to handle does no harm sent twice.
             if gate.rack_rabbits == 0 {
                 let near = raw_lying_near(world, DRY_NEAR);
                 if there && carried == 0 && near.is_empty() {
@@ -15188,14 +15193,10 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                     let near = if near.is_empty() { String::new() } else { format!("; within {DRY_NEAR} blocks {}", near.join(", ")) };
                     gate.check("drying rack", Err(format!("the raw small game about the rack never cleared in {DRY_WAIT} server seconds: {carried} carried{near}")));
                     gate.next(Step::Snare, now);
-                } else if carried == 0 {
-                    gate.dry_clearing = None;
-                } else if gate.dry_clearing.is_none_or(|was| carried > was) {
-                    // More came in since the last clear was seen, or since it was sent: clear
-                    // again at once.
-                    info!("gate: Dry: {carried} raw small game carried before the give, cleared again at {:.1}s", gate.server_now);
+                } else if there && carried > 0 && gate.dry_clearing.is_none_or(|at| gate.server_now > at) {
+                    info!("gate: Dry: {carried} raw small game carried before the give, cleared at {:.2}s", gate.server_now);
                     world.resource::<Net>().command("clear raw_small_game");
-                    gate.dry_clearing = Some(carried);
+                    gate.dry_clearing = Some(gate.server_now);
                 }
                 return;
             }
