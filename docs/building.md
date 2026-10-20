@@ -61,7 +61,9 @@ Stairs and upper floors: the woods' and the cut stones' stairs climb in half-blo
 without a jump to a landing level with the top stair, and a railing along a balcony, a
 gallery or a landing keeps anyone from walking off it. A railing stands a block high, so
 nobody steps onto it, and to a creature it stands two high, as a fence does, so nothing
-hops over it. It walls no room: a home's survey looks past it (survival.ron's
+hops over it: no animal walks on its top or on air over it, even from a step beside it.
+A boss, or a fighter after a player, climbs it as the block-high step it is, so a ring of
+railings is no pen to fight from. It walls no room: a home's survey looks past it (survival.ron's
 `home_furniture` names `railing`), so a gallery round a hall leaves the hall as walled as it
 was. A shut balcony door is a sound lower half and a draughty lattice over it; open, it is
 a way through, as an empty frame is. At load a block tagged `railing` must be solid and a
