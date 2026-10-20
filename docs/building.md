@@ -53,8 +53,13 @@ comes through (which a draughty home's whistle can listen for). `draught` means 
 gap: an oiled-hide window or old glass is a draughty wall with no gap in it, so it
 carries no `draught`. A room with them is as
 closed as without, and as Snug, but each is a face short of sound: enough of them cost a
-room Cosy, which asks nine tenths sound. Shut, the shutters are a sound wall and keep the
-light out. Every window lets light in: a block tagged `window`, `lattice`, `window_frame`,
+room Cosy, which asks nine tenths sound. A lattice window, and a shuttered one while it
+stands open, is tagged `window` as glass and hide are: it glows by the light through it
+and a home counts it among its windows. It draws with its own `lattice_grain`, since a
+glow is a drawing's: on the grain posts and chairs share, every one would glow (refused at
+load). Shut, the shutters are a sound wall, keep the light out and are no window; a bare
+frame (an opening), plain shutters folded back over one, and an arrow slit are none either.
+Every window lets light in: a block tagged `window`, `lattice`, `window_frame`,
 `slit` or `draught`, or lit through, is refused at load if it is a whole cube or dims light
 by more than 2 (`light_filter`); a misspelt `shelter:` tag, or `draught` on anything but a
 draughty wall, is refused too.
