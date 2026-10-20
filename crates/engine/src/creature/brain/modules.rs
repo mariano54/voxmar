@@ -39,10 +39,10 @@ pub fn module(behaviour: Behaviour) -> Arc<dyn Module> {
     }
 }
 
-/// Every creature has these, whatever its data says: going home when it strays, and
-/// going to a mate when both are ready to breed.
+/// Every creature has these, whatever its data says: going home when it strays, going to
+/// a mate when both are ready to breed, and warning players off if its kind does (`warn`).
 pub fn always() -> Vec<Arc<dyn Module>> {
-    vec![Arc::new(ReturnHome), Arc::new(Court), Arc::new(Roam)]
+    vec![Arc::new(ReturnHome), Arc::new(Court), Arc::new(Roam), Arc::new(Warn)]
 }
 
 /// Now and then a curious, lively individual sets off alone across its range, so groups
@@ -568,6 +568,10 @@ impl Module for Hunt {
         if let Some(p) = ctx.attacker().filter(|_| ctx.mind.anger > 0.0) {
             return Want::at(2.5 * ctx.mind.anger.max(personality.aggression), *p);
         }
+        // One that warns first goes for a player only once it is provoked (`Warn`).
+        if def.warn.is_some() {
+            return None;
+        }
         let radius = self.radius * (0.6 + 0.4 * ctx.lively) * (0.7 + 0.6 * ctx.mind.hunger) * (0.7 + 0.6 * personality.aggression);
         // RuneScape's rules leave be a player who has settled long in one place, or one of
         // more than twice the creature's level; a boss always fights.
@@ -580,6 +584,56 @@ impl Module for Hunt {
 
     fn act(&self, ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, _: bool) -> Decision {
         strike(ctx, mind, target, true)
+    }
+}
+
+/// Warns a player who comes near before it attacks them (`creature::Warn`): it stands
+/// and faces them in its warning stance; if they stay its `seconds`, or come within its
+/// `near` blocks, it is provoked and goes for them as if struck (`Mind::provoked`), its
+/// hunt or defence taking over. One who backs off out of its `radius` first is let be.
+/// It leaves be those its hunt would (a player of more than twice its level, one settled
+/// long in one place), and warns no one while frightened, kept, sent on an errand, or
+/// having given up a chase.
+#[derive(Debug)]
+struct Warn;
+
+impl Module for Warn {
+    fn name(&self) -> &'static str {
+        "warn"
+    }
+
+    fn band(&self) -> Band {
+        Band::Danger
+    }
+
+    fn want(&self, ctx: &Ctx) -> Option<Want> {
+        let def = &ctx.creature.def;
+        let warn = def.warn?;
+        if def.boss || ctx.at.kept || ctx.at.errand.is_some() || ctx.mind.fear > 0.2 || ctx.mind.recalls(Memory::GaveUp) {
+            return None;
+        }
+        if ctx.attacker().is_some() && ctx.mind.anger > 0.0 {
+            return None;
+        }
+        let radius = warn.radius * (0.6 + 0.4 * ctx.lively);
+        let p = ctx.at.players.iter().find(|p| {
+            !p.creative && !p.friend && !p.tolerated && ctx.distance(p.position) < radius.min(ctx.sight) && p.combat_level as u16 <= def.level as u16 * 2 + 1
+        })?;
+        Want::at(2.0, *p)
+    }
+
+    fn act(&self, ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, _: bool) -> Decision {
+        let (Some(p), Some(warn)) = (target, ctx.creature.def.warn) else { return Decision::default() };
+        let seconds = match mind.warning {
+            Some((id, seconds)) if id == p.id => seconds + ctx.at.dt,
+            _ => 0.0,
+        };
+        if seconds >= warn.seconds || ctx.distance(p.position) <= warn.near {
+            mind.provoked(p.id);
+            return strike(ctx, mind, Some(p), false);
+        }
+        mind.warning = Some((p.id, seconds));
+        Decision { face: Some(p.position), pose: Pose::Warning, ..Default::default() }
     }
 }
 

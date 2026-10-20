@@ -5324,6 +5324,52 @@ mod fight_tests {
         }
     }
 
+    /// A wolf warns a player who comes near before it goes for them (`creature::Warn`): it
+    /// stands its ground, head low, shown to players as warning (`Pose::Warning`), for its
+    /// `seconds`; then it goes for one who stayed and bites. One who backs off out of its
+    /// radius in time is let be, and it holds no grudge.
+    #[test]
+    fn a_wolf_warns_before_it_goes_for_a_player() {
+        for stays in [true, false] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+            let player = join(&mut server, stand);
+            let from = stand - Vec3::X * 6.0;
+            let id = put(&mut server, "base:wolf", from, Vec3::X);
+            let warn = server.content.creatures.get(server.creatures.live[&id].species).def.warn.expect("a wolf warns");
+            server.tick = 1000;
+            let (mut warning, mut bites) = (0u64, 0u32);
+            for _ in 0..6 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+                server.tick_fights();
+                server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+                let wolf = &server.creatures.live[&id];
+                if wolf.view(id).pose == brain::Pose::Warning {
+                    warning += 1;
+                    let moved = wolf.body.position.with_y(0.0).distance(from.with_y(0.0));
+                    assert!(moved < 0.5, "warning, the wolf stands its ground, but went {moved:.2} blocks (stays {stays})");
+                    assert_eq!(bites, 0, "it warned again once it had bitten");
+                }
+                bites += (wolf.winding && wolf.decision.attack.is_some()) as u32;
+                if !stays && warning == TICKS_PER_SECOND as u64 / 2 {
+                    server.players.get_mut(&player).unwrap().position = stand + Vec3::X * 16.0;
+                }
+            }
+            let wolf = &server.creatures.live[&id];
+            let warned = warning as f32 / TICKS_PER_SECOND as f32;
+            if stays {
+                assert!((warned - warn.seconds).abs() < 0.3, "the wolf warned {warned:.2} s, not its {} s", warn.seconds);
+                assert!(bites > 0, "the player stayed, and the wolf never bit");
+                assert_eq!(wolf.mind.attacker(), Some(player));
+            } else {
+                assert!((0.4..0.7).contains(&warned), "the wolf warned {warned:.2} s of a player who backed off at half a second");
+                assert_eq!((bites, wolf.mind.attacker()), (0, None), "the player backed off, and the wolf went for them anyway");
+            }
+        }
+    }
+
     /// A mouflon led by wheat toward a player beyond a railing seven long, open at its ends,
     /// goes round it to them: to it the railing is a wall two high, in its search and as it
     /// steers as in its step. Before: its search and its steering took the railing for a

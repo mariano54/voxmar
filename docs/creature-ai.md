@@ -97,6 +97,7 @@ Built now (`engine::creature::brain::modules`):
 | hunt | danger | chases and strikes, by RuneScape's rules; strikes up to its height and 1.5 blocks over its feet and down at a head 1.5 under them, from a pit's rim (`strike: (above, below)` on the creature), and only along a way through the air from its body to the player's head or middle (`blow_open`: never through a roof or a wall, and standing at a target it has no such way to, it gives up at once); stalkers creep crouched, then pounce; gives up past its leash (unless struck there in the last 3 s: it fights back), or after balking twice running (a search finding no way to its target brings a balk on sooner; standing over or under its target out of that reach, a player down a hole too deep, it has no way at once), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
 | defend | danger | fights back when hurt (the boar, the bull, the bear); gives up as hunt does |
 | curious | social | comes to look from a distance, backs off if you come closer |
+| warn | danger | every creature whose kind has a `warn`: stands its ground and warns a player who comes within its radius (its stance and `warn` sound); goes for one who stays its seconds or comes within `near`, as if struck; lets be one who backs off first (see "Warnings" below) |
 | return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
 
 Planned (from the deep dive's library): cache food, drink, sleep, bask, seek shade, huddle,
@@ -127,8 +128,25 @@ curse spread, aura, molt rebirth, dream walk.
   both. Weak areas stay safe for strong players; camping one spot calms down.
 - **Provocation**: a blow angers a creature that can fight (if it is brave enough and not
   badly hurt; otherwise it flees) and is remembered. Kin within earshot are alarmed.
-- **Warnings** (planned): many creatures warn before attacking (an adder rattles at 5
-  blocks and strikes at 2; a bear stands up), so players can back away.
+- **Warnings** (Oct 20): a creature whose kind has a `warn` (creatures.ron) warns a
+  player who comes within its `radius` before it attacks them, so they can back away: it
+  stands its ground facing them in its warning stance (a pose, `Pose::Warning`, protocol
+  58: its `stance` of nod, crouch and rear, drawn as a tell is) and makes its `warn` sound
+  (its `alert` unless its voice has one). If they stay its `seconds`, or come within its
+  `near` blocks, it is provoked (`Mind::provoked`) and goes for them as if they had struck
+  it, its hunt or defence taking over; if they back off out of its radius first, they are
+  let be, with no grudge, and a later warning starts afresh. A hunter that warns goes for
+  no one unprovoked; one that only defends itself (a badger, a bear) now also defends its
+  ground. It warns only those its hunt would go for (not a player of more than twice its
+  level, nor one settled long in one place, nor in creative), and not while frightened,
+  kept, on an errand or having given up a chase; struck, it fights at once. The wolf
+  growls head low for 1.5 s from 12 blocks (at once within 4), the badger hunches and
+  hisses for 1.2 s from 5 (2), the brown bear stands up and roars for 2 s from 8 (3).
+  Load-checked: radius 2 to 16, near 0.5 to a block inside it, seconds 0.5 to 4, stance 0
+  to 1, and a creature with no `attack` cannot warn. Tests: the engine's
+  `a_warning_hunter_warns_then_goes_for_one_who_stays` and
+  `a_defender_that_warns_defends_its_ground`, the server's
+  `a_wolf_warns_before_it_goes_for_a_player`.
 
 ## Roaming
 

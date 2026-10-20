@@ -1331,6 +1331,7 @@
     "creature.doing.roam": "遠出中",
     "creature.doing.routine": "日々の務め中",
     "creature.doing.court": "求愛中",
+    "creature.doing.warn": "威嚇中",
     "command.core.summon.help": "指定した種類の生き物 (ウサギ、オオカミ、月ウサギなど) を目の前の地面か、指定したブロック (~ は今いる場所) に呼び出します。数の指定がなければ1体、最大16体。held を付けると1分間じっとしています。",
     "command.core.summon.help.summary": "生き物を呼び出します。",
     "command.core.wander.help": "近くにいる旅の一行 (それぞれの用事で通りかかる人・動物・怪物) を表示し、種類の一覧を出し、見ている方向40ブロック先に一行を呼び出し、あるいは一行を全員去らせます。",

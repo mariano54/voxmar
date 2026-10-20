@@ -1070,6 +1070,7 @@ fn show(
                     Pose::Alert => Some(Sound::Alert),
                     Pose::Resting => Some(Sound::Rest),
                     Pose::Attacking => Some(Sound::Attack),
+                    Pose::Warning => Some(Sound::Warn),
                     Pose::Idle | Pose::Crouched => None,
                 };
                 if let Some(kind) = kind {
@@ -1408,13 +1409,16 @@ fn show(
             Pose::Crouched => (0.1, 0.25),
             Pose::Attacking => (0.3, 0.05),
             Pose::Idle => (0.0, 0.0),
+            // Warning a player off: its kind's stance (`creature::Warn`), rearing included.
+            Pose::Warning => registry.get(shown.view.species).def.warn.map_or((0.0, 0.0), |w| (w.stance.nod, w.stance.crouch)),
         };
+        let warn_rear = (shown.view.pose == Pose::Warning).then(|| registry.get(shown.view.species).def.warn.map_or(0.0, |w| w.stance.rear)).unwrap_or(0.0);
         // A boss's move shows its own tell, so each reads apart; rearing into a new phase,
         // it rears right up. Staggered, its stagger stance (above) is what shows.
         let (nod, crouch, rear) = match shown.view.tell {
             voxmar_protocol::REARING => (-0.4, 0.0, 1.0),
             voxmar_protocol::STAGGERED => (nod, crouch, 0.0),
-            0 => (nod, crouch, 0.0),
+            0 => (nod, crouch, warn_rear),
             index => {
                 let tell = registry.get(shown.view.species).tell_at(index);
                 (tell.nod, tell.crouch * 0.3, tell.rear)
@@ -1855,7 +1859,7 @@ pub fn aim(
             (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
         });
         let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
-        let engaged = !view.kept && (view.pose == Pose::Attacking || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
+        let engaged = !view.kept && (matches!(view.pose, Pose::Attacking | Pose::Warning) || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
         let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
         let action = if shift && mine {
             Some("base:release")
