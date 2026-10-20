@@ -9,7 +9,8 @@
 //! over without reading its blocks, so away from fires the search costs next to nothing.
 //! An emission `over` a tag is given off only with such a block below and open air above
 //! (a chimney smokes over a hearth, from its top), and over a structure's core only while
-//! its fire burns (`ClientWorld::fires`): a cold hearth's chimney does not smoke. Every frame those emitters spawn
+//! its fire burns (`ClientWorld::fires`): a cold hearth's chimney does not smoke. Thatch
+//! smouldering by a flame (`ClientWorld::smoulders`) gives off fire.ron's smoke. Every frame those emitters spawn
 //! particles into the shared ring (`render::particles`), which moves, grows, cools and
 //! fades them on the GPU, so the CPU only writes each particle once. Nothing here allocates
 //! once its two lists have grown to their size.
@@ -242,6 +243,38 @@ fn emit(
                     let particle = particle(emission, &emitter, light, wind, &mut emitters);
                     particles.spawn(&particle);
                     if emitters.watch == Some(emitter.pos) {
+                        emitters.watched += 1;
+                    }
+                }
+            }
+        }
+    }
+    // Thatch and wattle smouldering by a flame (`ClientWorld::smoulders`, from the server)
+    // give off the fire's smoke (fire.ron), whatever block they are: few, and only near.
+    let smoke = &launch.content.fire.rules.smoke;
+    if smoke.is_empty() {
+        return;
+    }
+    for &pos in &world.smoulders {
+        let distance = (pos - eye).length_squared();
+        if distance > RANGE * RANGE {
+            continue;
+        }
+        let Some(block) = world.block(pos) else { continue };
+        let far = ((distance as f32).sqrt() - NEAR) / (RANGE as f32 - NEAR);
+        let share = 1.0 - (1.0 - FAR_SHARE) * far.clamp(0.0, 1.0);
+        let headroom = (1..=HEADROOM)
+            .find(|&dy| world.block(pos + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid))
+            .unwrap_or(HEADROOM + 1)
+            - 1;
+        let emitter = Emitter { pos, block, sky: sky_light(&world, pos + IVec3::Y), headroom: headroom as f32 + 0.5, share, giving: u8::MAX };
+        for emission in smoke {
+            let owed = emission.rate.max(0.0) * dt * amount * share + emitters.roll();
+            for _ in 0..owed as u32 {
+                for _ in 0..emission.count.max(1) {
+                    let particle = particle(emission, &emitter, 0, wind, &mut emitters);
+                    particles.spawn(&particle);
+                    if emitters.watch == Some(pos) {
                         emitters.watched += 1;
                     }
                 }

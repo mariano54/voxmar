@@ -3,6 +3,8 @@
 // template's reading fills `{name}` with its family's reading, or the family's name when
 // that has no kanji. A mod adds its own `lang/readings/ja.ron` beside its `lang/ja.ron`.
 {
+    "block.base.blaze": "ほのお",
+    "block.base.raw_hide": "なまかわ",
     "armour_set.hide_wraps": "かわのぼうぐ",
     "armour_set.copper": "どう",
     "armour_set.bronze_scale": "せいどうのうろこよろい",
@@ -14,6 +16,7 @@
     "effect.base.bedside": "まくらべ",
     "effect.base.healing_sleep": "いやしのねむり",
     "effect.base.door_shut": "とじまり",
+    "effect.base.evening_in": "よるのだんらん",
     "block.base.wooden_door": "きのとびら",
     "block.base.hide_window": "かわのまど",
     "block.base.wooden_door_top": "きのとびら",
@@ -188,6 +191,15 @@
     "block.base.wooden_shutters_open": "きのあまど",
     "block.base.chimney_stack": "えんどう",
     "block.base.chimney_pot": "えんとつのつぼ",
+    "block.base.{name}_jetty_beam": "{name}のはりだしばり",
+    "block.base.{name}_door_frame": "{name}のとわく",
+    "block.base.{name}_door_frame_top": "{name}のとわく",
+    "block.base.{name}_window_frame": "{name}のまどわく",
+    "block.base.{name}_shuttered_window": "{name}のあまどつきこうしまど",
+    "block.base.{name}_shuttered_window_shut": "{name}のあまどつきこうしまど",
+    "block.base.stone_arrow_slit": "いしのやざま",
+    "block.base.stone_flue": "いしのえんどう",
+    "block.base.chimney_hood": "えんとつのフード",
     "family.base.stone_brick": "いしレンガ",
     "family.base.cobblestone": "まるいし",
     "block.base.brazier": "ひばち",

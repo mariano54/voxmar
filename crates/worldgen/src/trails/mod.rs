@@ -126,8 +126,8 @@ pub trait Land: Sync {
         Vec::new()
     }
 
-    /// The ground settlements' buildings take (each from its least corner to its most)
-    /// within or touching the box from `min` to `max`, which trails keep off.
+    /// The ground settlements' buildings and walls take (each from its least corner to its
+    /// most) within or touching the box from `min` to `max`, which trails keep off.
     fn built(&self, _min: IVec2, _max: IVec2) -> Vec<(IVec2, IVec2)> {
         Vec::new()
     }
@@ -590,13 +590,25 @@ mod tests {
     /// first, and on whichever thread.
     #[test]
     fn trails_never_depend_on_order() {
-        let (a, b) = (world(7), world(7));
-        // Around a point on the trail nearest the origin, found in a third world.
-        let (lines, _) = world(7).trails_in(IVec2::splat(-400), IVec2::splat(400));
-        let near = lines.iter().flatten().map(|p| p.0).min_by(|p, q| p.length().total_cmp(&q.length())).expect("a trail near the origin");
-        let corner = near.as_ivec2() - 24;
-        let area: Vec<(i32, i32)> = (0..48 * 48).map(|i| (corner.x + i % 48, corner.y + i / 48)).collect();
-        let forward: Vec<GeoSample> = area.iter().map(|&(x, z)| a.geo(x, z)).collect();
+        let around = |near: IVec2| (0..48 * 48).map(|i| (near.x - 24 + i % 48, near.y - 24 + i / 48)).collect::<Vec<(i32, i32)>>();
+        // Each area is sampled first in a world of its own, cold.
+        let sampled = |area: &[(i32, i32)]| {
+            let a = world(7);
+            area.iter().map(|&(x, z)| a.geo(x, z)).collect::<Vec<GeoSample>>()
+        };
+        let trailed = |samples: &[GeoSample]| samples.iter().any(|g| g.trail.is_some_and(|t| t.tread > 0.9));
+        // Around a point on the trail nearest the origin, as a third world found it: kept
+        // here, since planning the regions round the origin to find it took half the test,
+        // and found afresh in a third world should the trails have moved off it.
+        let mut area = around(IVec2::new(-262, -6));
+        let mut forward = sampled(&area);
+        if !trailed(&forward) {
+            let (lines, _) = world(7).trails_in(IVec2::splat(-400), IVec2::splat(400));
+            let near = lines.iter().flatten().map(|p| p.0).min_by(|p, q| p.length().total_cmp(&q.length())).expect("a trail near the origin");
+            area = around(near.as_ivec2());
+            forward = sampled(&area);
+        }
+        let b = world(7);
         // The other world plans from the far side first, on several threads.
         let _ = std::thread::scope(|s| {
             let far = s.spawn(|| b.geo(700, -500));
@@ -604,7 +616,7 @@ mod tests {
             (far.join().unwrap(), near.join().unwrap())
         });
         let backward: Vec<GeoSample> = area.iter().rev().map(|&(x, z)| b.geo(x, z)).collect();
-        assert!(forward.iter().any(|g| g.trail.is_some_and(|t| t.tread > 0.9)), "a trail runs through the area");
+        assert!(trailed(&forward), "a trail runs through the area");
         assert!(forward.iter().eq(backward.iter().rev()));
     }
 
@@ -616,28 +628,42 @@ mod tests {
         use crate::Generator;
         let registry = std::sync::Arc::new(crate::test_registry());
         let world = || Overworld::new(1, registry.clone());
-        let (a, b) = (world(), world());
-        // Round the gate nearest spawn that two trails leave (their ends within a block of
-        // each other, by a settlement's gate), found in a third world.
-        let third = world();
-        let spawn = third.spawn_point();
-        let centre = IVec2::new(spawn.x, spawn.z);
-        // Culture layouts move the gates; include the settlements just beyond spawn's
-        // first square while still requiring a real shared gate, not merely any trail.
-        let (lines, places) = third.trails_in(centre - 1200, centre + 1200);
-        let centre = centre.as_vec2();
-        let ends: Vec<Vec2> = lines.iter().filter(|l| l.len() > 1).flat_map(|l| [l[0].0, l[l.len() - 1].0]).collect();
-        let gate = |e: Vec2| places.iter().any(|p| p.kind == Kind::Settlement && p.at().as_vec2().distance(e) <= CELL as f32);
-        let shared = ends
-            .iter()
-            .enumerate()
-            .filter(|&(i, &e)| gate(e) && ends.iter().enumerate().any(|(j, &f)| j != i && e.distance(f) <= 1.0))
-            .map(|(_, &e)| e)
-            .min_by(|p, q| p.distance(centre).total_cmp(&q.distance(centre)))
-            .expect("a gate near spawn that two trails leave");
-        let corner = shared.as_ivec2() - 24;
-        let area: Vec<(i32, i32)> = (0..48 * 48).map(|i| (corner.x + i % 48, corner.y + i / 48)).collect();
-        let forward: Vec<GeoSample> = area.iter().map(|&(x, z)| a.geo(x, z)).collect();
+        // The gates two trails leave (their ends within a block of each other, by a
+        // settlement's gate), of the trails in a world's box from `min` to `max`.
+        let shared = |world: &Overworld, min: IVec2, max: IVec2| {
+            let (lines, places) = world.trails_in(min, max);
+            let ends: Vec<Vec2> = lines.iter().filter(|l| l.len() > 1).flat_map(|l| [l[0].0, l[l.len() - 1].0]).collect();
+            let gate = |e: Vec2| places.iter().any(|p| p.kind == Kind::Settlement && p.at().as_vec2().distance(e) <= CELL as f32);
+            ends.iter().enumerate().filter(|&(i, &e)| gate(e) && ends.iter().enumerate().any(|(j, &f)| j != i && e.distance(f) <= 1.0)).map(|(_, &e)| e).collect::<Vec<Vec2>>()
+        };
+        let around = |gate: Vec2| {
+            let corner = gate.as_ivec2() - 24;
+            (0..48 * 48).map(|i| (corner.x + i % 48, corner.y + i / 48)).collect::<Vec<(i32, i32)>>()
+        };
+        // Round the gate nearest spawn that two trails leave, as a third world found it: kept
+        // here, since planning the trails 1200 blocks round spawn to find it took half the
+        // test. Once sampled, the first world's trails round it must still leave it two
+        // ways; should they not, a third world finds the gate afresh, and a cold world
+        // samples round it.
+        let mut gate = Vec2::new(-576.0, -1864.0);
+        let a = world();
+        let mut forward: Vec<GeoSample> = around(gate).iter().map(|&(x, z)| a.geo(x, z)).collect();
+        if !shared(&a, gate.as_ivec2(), gate.as_ivec2()).contains(&gate) {
+            let third = world();
+            let spawn = third.spawn_point();
+            let centre = IVec2::new(spawn.x, spawn.z);
+            // Culture layouts move the gates; include the settlements just beyond spawn's
+            // first square while still requiring a real shared gate, not merely any trail.
+            gate = shared(&third, centre - 1200, centre + 1200)
+                .into_iter()
+                .min_by(|p, q| p.distance(centre.as_vec2()).total_cmp(&q.distance(centre.as_vec2())))
+                .expect("a gate near spawn that two trails leave");
+            let a = world();
+            forward = around(gate).iter().map(|&(x, z)| a.geo(x, z)).collect();
+        }
+        let area = around(gate);
+        let corner = gate.as_ivec2() - 24;
+        let b = world();
         // The other world plans the far side of the trail's settlement first, on several threads.
         let _ = std::thread::scope(|s| {
             let far = s.spawn(|| b.geo(corner.x + 700, corner.y - 500));

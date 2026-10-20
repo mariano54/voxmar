@@ -183,8 +183,8 @@
         ),
         (
             name: "hide_and_seek", age: "nomad", branch: "hunter", title: "Hide and Seek",
-            why: "Hide makes armour, pouches and bedding. Rabbits on grassland drop it, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
-            tasks: [[Have("hide", 4), Have("bone", 2)]],
+            why: "Hide makes armour, pouches and bedding once it has hung a minute on a drying rack. Rabbits on grassland drop raw hide, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four raw hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
+            tasks: [[Have("raw_hide", 4), Have("bone", 2)]],
             after: ["small_game", "a_sharp_edge"],
             rewards: [Xp("hunter", 60.0), Xp("crafting", 30.0)],
         ),
@@ -965,7 +965,7 @@
         ),
         (
             name: "a_lit_corner", age: "nomad", branch: "home", title: "A Lit Corner",
-            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and sleeping in it you wake well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
+            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and a night's sleep in it wakes you well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
             tasks: [[Built("home_bedside", 1)]],
             after: ["make_camp"],
             rewards: [Xp("construction", 40.0), Xp("crafting", 20.0)],

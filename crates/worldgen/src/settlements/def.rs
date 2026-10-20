@@ -383,6 +383,10 @@ pub struct SiteDef {
     pub reach: i32,
     pub firm: i32,
     pub tries: usize,
+    /// How many of its next best spots a square lays out in turn where its best cannot be
+    /// laid out (no level ground for the well, too few homes fit), before it is left
+    /// empty: its climate roll is still made once, on its best.
+    pub others: usize,
     /// Where water is needed, the closer look for creeks goes through `look` times
     /// `tries` of the best spots, sampling every `creek` blocks.
     pub look: usize,
@@ -415,6 +419,7 @@ impl Default for SiteDef {
             reach: 48,
             firm: 24,
             tries: 6,
+            others: 0,
             look: 6,
             creek: 4,
             score: ScoreDef::default(),
@@ -701,6 +706,27 @@ impl Default for DressingDef {
     }
 }
 
+/// How a walled place's wall stands (a size's `walls` says which are walled).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct WallsDef {
+    /// How far out from its buildings the wall runs round them.
+    pub margin: i32,
+    /// How high a palisade of logs stands, and a wall of stone.
+    pub height: (u32, u32),
+    /// The wealth past which it is stone, not a palisade.
+    pub stone: f32,
+    /// A tower at each corner and every this many blocks along it, this much higher
+    /// than the wall.
+    pub towers: (u32, u32),
+}
+
+impl Default for WallsDef {
+    fn default() -> Self {
+        Self { margin: 4, height: (3, 4), stone: 0.5, towers: (24, 2) }
+    }
+}
+
 /// The numbers planning reads besides the site's.
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields, default)]
@@ -725,6 +751,7 @@ pub struct RulesDef {
     pub specials: BTreeMap<String, SpecialSize>,
     pub houses: BuildingDef,
     pub dressing: DressingDef,
+    pub walls: WallsDef,
 }
 
 impl Default for RulesDef {
@@ -740,6 +767,7 @@ impl Default for RulesDef {
             specials: BTreeMap::new(),
             houses: BuildingDef::default(),
             dressing: DressingDef::default(),
+            walls: WallsDef::default(),
         }
     }
 }
@@ -843,6 +871,12 @@ struct SizeFile {
     /// Its lamps and props along lanes stand this much further apart.
     #[serde(default = "first_spacing")]
     lamps: f32,
+    /// The chance it is walled (`rules.walls`), leaning.
+    #[serde(default)]
+    walls: (f32, BTreeMap<String, f32>),
+    /// The size it is laid out as where it does not fit its ground, one of fewer houses.
+    #[serde(default)]
+    smaller: Option<String>,
 }
 
 fn lane_half() -> f32 {
@@ -1047,6 +1081,7 @@ struct RulesFile {
     specials: BTreeMap<String, SpecialSize>,
     houses: Option<BuildingDef>,
     dressing: Option<DressingDef>,
+    walls: Option<WallsDef>,
 }
 
 #[derive(Deserialize)]
@@ -1079,6 +1114,8 @@ struct SettlementFile {
     centrepieces: Vec<CentreFile>,
     #[serde(default)]
     people: super::people::PeopleFile,
+    #[serde(default)]
+    interiors: super::interior::InteriorsFile,
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1103,6 +1140,10 @@ pub struct SizeDef {
     pub paving: (f32, f32),
     pub well: (u32, u32),
     pub lamps: f32,
+    /// The chance it is walled, and how it leans.
+    pub walls: (f32, Lean),
+    /// The size it is laid out as where it does not fit, by name.
+    pub smaller: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1255,6 +1296,8 @@ pub struct SettlementsDef {
     pub roofs: Vec<RoofDef>,
     pub centrepieces: Vec<CentreDef>,
     pub people: super::people::PeopleDef,
+    /// What stands in homes (`interiors`).
+    pub interiors: super::interior::InteriorsDef,
     /// Every crop by its full name (from `crops.ron`), so settlements grow only everyday
     /// crops a newcomer may harvest, and never ripe.
     pub crops: BTreeMap<String, CropInfo>,
@@ -1270,6 +1313,17 @@ pub struct CropInfo {
 }
 
 impl SettlementsDef {
+    /// Every name a building answers to (`Building::answers`): its kind's (`smithy`, `pen`,
+    /// `well`), a house's (`cottage`, `barn`) and the work done in one (`bakery`), for
+    /// content that picks buildings out by name, checked against this.
+    pub fn building_names(&self) -> std::collections::BTreeSet<String> {
+        super::house::Kind::ALL
+            .iter()
+            .map(|kind| kind.name().to_owned())
+            .chain(self.houses.iter().flat_map(|house| std::iter::once(house.name.clone()).chain(house.work.clone())))
+            .collect()
+    }
+
     /// The blocks `crop` grows through, the last ripe: its `stages` in crops.ron, or the
     /// crop template's `<name>_crop_0` to `_2` and `<name>_crop` where it has none given
     /// (or crops.ron is not read).
@@ -1336,6 +1390,9 @@ impl SettlementsDef {
             if let Some(dressing) = rules.dressing {
                 mine.dressing = dressing;
             }
+            if let Some(walls) = rules.walls {
+                mine.walls = walls;
+            }
             mine.specials.extend(rules.specials);
         }
         // Each furnishing a later package names replaces the earlier one; lists replace
@@ -1385,6 +1442,7 @@ impl SettlementsDef {
             }
         }
         self.furnishings = furnishings;
+        self.interiors.extend(at, package, file.interiors)?;
         self.avoid.extend(file.avoid);
         self.kana.extend(file.kana);
         for s in file.sizes {
@@ -1406,6 +1464,8 @@ impl SettlementsDef {
                 paving: s.paving,
                 well: s.well,
                 lamps: s.lamps,
+                walls: (s.walls.0, Lean::parse(at, &s.walls.1)?),
+                smaller: s.smaller,
             });
         }
         for l in file.layouts {
@@ -1532,7 +1592,7 @@ impl SettlementsDef {
         }
         let site = &self.site;
         let within = |(a, b): (f32, f32), (lo, hi): (f32, f32)| a <= b && a >= lo && b <= hi;
-        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || !(0.0..=1.0).contains(&site.levels.1) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.bank < 0 || site.water < 0 {
+        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || !(0.0..=1.0).contains(&site.levels.1) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.others >= site.tries || site.bank < 0 || site.water < 0 {
             return fail(format!("the site needs mild temperatures within its temperatures, a taper and a chance above its levels in [0, 1], a step of 4 or more, a firm ground no wider than its reach, and tries: {site:?}"));
         }
         let rules = &self.rules;
@@ -1614,6 +1674,20 @@ impl SettlementsDef {
         let every = rules.dressing.every;
         if !(every.0 > 0.0 && every.1 >= 0.0 && every.1.is_finite()) || self.sizes.iter().any(|s| every.0 * s.lamps < 1.0) {
             return fail(format!("rules: dressing needs `every` above nothing then nothing or more, and every size's lamps that far apart times its `lamps` a block or more: {every:?}"));
+        }
+        let walls = &rules.walls;
+        if !(1..=12).contains(&walls.margin) || walls.height.0 < 2 || walls.height.1 < 2 || walls.height.0.max(walls.height.1) > 8 || walls.towers.0 < 6 || walls.towers.1 > 6 || !walls.stone.is_finite() {
+            return fail(format!("rules: walls need a margin of 1 to 12 blocks, heights of 2 to 8, towers 6 or more blocks apart and at most 6 higher: {walls:?}"));
+        }
+        for s in &self.sizes {
+            let Some(name) = &s.smaller else { continue };
+            match self.sizes.iter().find(|t| t.name == *name) {
+                Some(t) if t.houses.1 < s.houses.1 => {}
+                _ => return fail(format!("size `{}` is laid out as `{name}` where it does not fit, which is no size of fewer houses", s.name)),
+            }
+        }
+        if let Some(s) = self.sizes.iter().find(|s| !(0.0..=1.0).contains(&s.walls.0)) {
+            return fail(format!("size `{}`: its walls' chance {} is not 0 to 1", s.name, s.walls.0));
         }
         if site.temperature.0 > site.temperature.1 || site.height.0 > site.height.1 || site.relief < 0 || site.caves < 0 || site.glade.0 < 0 || site.glade.0 >= site.glade.1 || site.glade.1 > 48 || !(0..=8).contains(&site.eaves) {
             return fail(format!("the site needs ranges low to high, a glade of at most 48 blocks, its treeless ring the smaller, and eaves of 0 to 8: {site:?}"));
@@ -1856,6 +1930,7 @@ impl SettlementsDef {
                 return fail(format!("house `{}` needs people fewest to most", h.name));
             }
         }
+        self.interiors.check(registry)?;
         self.people.check(&self.sizes.iter().map(|s| s.name.clone()).collect::<Vec<_>>())
     }
 }
