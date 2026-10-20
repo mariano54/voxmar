@@ -1174,20 +1174,27 @@ pub(crate) fn full_content() -> &'static (voxmar_engine::content::Content, World
 }
 
 /// The world of `seed` on every package's content (`full_content`), one for every test that
-/// only reads what it generates, held for the rest of the run: a shared generator makes
-/// exactly what a new one would (`Overworld::shared`), and the next test on the seed finds
-/// its rivers and settlements already planned rather than planning them again. Tests that
-/// count what a world plans, or compare a fresh world with another, make their own.
+/// only reads what it generates, held for the rest of the run: what a world generates
+/// depends on neither which test asks first nor on what its caches hold, and the next test
+/// on the seed finds its rivers and settlements already planned rather than planning them
+/// again. Kept apart from `Overworld::shared`, whose letting go is tested. Tests that count
+/// what a world plans, or compare a fresh world with another, make their own.
 #[cfg(test)]
 pub(crate) fn shared_full_world(seed: u64) -> Arc<Overworld> {
-    static HELD: std::sync::Mutex<Vec<Arc<Overworld>>> = std::sync::Mutex::new(Vec::new());
+    static WORLDS: std::sync::Mutex<Vec<(u64, Arc<std::sync::OnceLock<Arc<Overworld>>>)>> = std::sync::Mutex::new(Vec::new());
+    let slot = {
+        let mut worlds = WORLDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match worlds.iter().find(|(s, _)| *s == seed) {
+            Some((_, slot)) => slot.clone(),
+            None => {
+                let slot = Arc::new(std::sync::OnceLock::new());
+                worlds.push((seed, slot.clone()));
+                slot
+            }
+        }
+    };
     let (content, world) = full_content();
-    let shared = Overworld::shared(seed, content, world);
-    let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !held.iter().any(|w| Arc::ptr_eq(w, &shared)) {
-        held.push(shared.clone());
-    }
-    shared
+    slot.get_or_init(|| Arc::new(Overworld::with_content(seed, content.blocks.clone(), world))).clone()
 }
 
 /// All base block files, in the same order as the game loader. Partial registries
