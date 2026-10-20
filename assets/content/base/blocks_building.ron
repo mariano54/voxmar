@@ -63,9 +63,11 @@
         // eave towards whoever set it, the first roof anyone has.
         (name: "hide_lean_to", render: Model, shape: "lean_to", facing: true, light_filter: 14, sound: Wood, textures: All("hide_cover"), hardness: 0.6, color: (170, 120, 75), tags: ["roof", "hide", "lean_to", "building", "shelter:draughty"]),
         // Wattle: stakes with sticks woven between them, a wall a wind still finds its way
-        // through; daubed with clay and straw it is a sound wall.
-        (name: "wattle_panel", render: Model, shape: "wattle", facing: true, sound: Wood, textures: All("wattle"), hardness: 0.8, color: (140, 105, 65), tags: ["wattle", "wall", "wood", "building", "fuel", "shelter:draughty"]),
-        (name: "daub", sound: Soil, textures: All("daub"), hardness: 1.0, color: (205, 185, 150), tags: ["daub", "wall", "building", "shelter:sound"]),
+        // through; daubed with clay it is a sound wall that will not burn (a placed panel is
+        // daubed in place, clay in hand: `coat`).
+        (name: "wattle_panel", render: Model, shape: "wattle", facing: true, sound: Wood, textures: All("wattle"), hardness: 0.8, color: (140, 105, 65), tags: ["wattle", "wall", "wood", "building", "fuel", "shelter:draughty"], coat: Some((with: "clay", into: "daub"))),
+        // Daub (clay and straw over the panel) is in blocks.ron, beside the clay and earth it
+        // coats.
         // Half-timbering: a dark timber frame with a brace, daub between.
         (name: "half_timber", sound: Wood, textures: All("half_timber"), hardness: 1.5, color: (190, 170, 135), tags: ["half_timber", "timber", "wall", "building", "shelter:sound"]),
         // Shutters for a window: shut, two plank leaves across the opening that keep light
