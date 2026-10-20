@@ -1348,6 +1348,7 @@ impl Gate {
         self.frames = 0;
         self.phase = 0;
         self.phase_since = now;
+        self.walked_to = None;
         self.settled = 0;
         self.step_server = self.server_now;
         self.phase_server = self.server_now;
@@ -5716,13 +5717,14 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
             } else if waited {
                 // Where each loose stone lies, and how far from the player's middle against
                 // how near it must be to be drawn in.
+                // Only this break's: those within a throw of the stone, not every one the client knows of.
                 let player = world.resource::<LocalPlayer>();
-                let middle = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
+                let chest = player.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0;
                 let lying: Vec<String> = world
                     .resource::<crate::drops::Drops>()
                     .lying()
-                    .filter(|(_, stack, _)| stack.item == loose)
-                    .map(|(_, stack, at)| format!("{} lie at ({:.2}, {:.2}, {:.2}), {:.2} blocks from the player's middle (drawn in within {})", stack.count, at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle), voxmar_engine::dropped::MAGNET))
+                    .filter(|(_, stack, at)| stack.item == loose && at.distance(middle) <= thrown)
+                    .map(|(_, stack, at)| format!("{} lie at ({:.2}, {:.2}, {:.2}), {:.2} blocks from the player's middle (drawn in within {})", stack.count, at.x, at.y, at.z, (at + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(chest), voxmar_engine::dropped::MAGNET))
                     .collect();
                 let lying = if lying.is_empty() { format!("no {} lies about", name(loose)) } else { lying.join(", ") };
                 gate.check("rubble: broken", Err(format!("the {} at {block} broke, {got} {} carried, the player at ({:.2}, {:.2}, {:.2}); {lying}", name(stone), name(loose), player.position.x, player.position.y, player.position.z)));
@@ -5741,9 +5743,9 @@ fn rubble(world: &mut World, gate: &mut Gate, now: f32) {
                 // Any still lying about out of reach: the player goes to them.
             } else if waited {
                 let free = world.resource::<LocalPlayer>().inventory.slots.iter().filter(|s| s.is_none()).count();
-                let lying: u32 = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, _)| stack.item == loose).map(|(_, stack, _)| u32::from(stack.count)).sum();
+                let lying: u32 = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, at)| stack.item == loose && at.distance(middle) <= thrown).map(|(_, stack, _)| u32::from(stack.count)).sum();
                 let told: Vec<&str> = world.resource::<crate::hud::console::Console>().since(gate.phase_since).collect();
-                gate.check("rubble: knocked together", Err(format!("four {} never came to hand: carried {}, {lying} lying about, {free} slots free; the server said {told:?}", name(loose), holding(world, &name(loose)).0)));
+                gate.check("rubble: knocked together", Err(format!("four {} never came to hand: carried {}, {lying} lying near the break, {free} slots free; the server said {told:?}", name(loose), holding(world, &name(loose)).0)));
                 end(world, gate);
             }
         }
