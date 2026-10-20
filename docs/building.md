@@ -14,6 +14,7 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Beam | `<timber>_beam` | 6 texels square along the cell, on its floor; under a ceiling at its top (a joist) | runs away from the placer | 3 logs in a row make 6 (2) |
 | Lattice window | `<timber>_lattice_window` | a frame and laths, light through the squares | faces the placer | 4 planks, 5 sticks make 4 (3) |
 | Roof | `thatch_roof`, `<timber>_shingles` | four courses a quarter block high, eave towards the placer | | thatch: 6 fibre make 4 (1); shingles: 6 slabs make 4 (5) |
+| Hip, valley | `thatch_corner`, `thatch_inner_corner`, `<timber>_shingles_corner`, `<timber>_shingles_inner_corner` | a roof's courses stepping in from the north and the west (a hip, where two eaves meet), or back from both (a valley, where two slopes meet in an L) | eaves towards the placer and their right | 2 roof pieces side by side make 2 hips, one over the other 2 valleys (thatch 1, shingles 5) |
 | Ridge | `thatch_ridge`, `<timber>_shingle_ridge` | courses rising from both sides to a cap | ridge across the placer's view | thatch: 3 fibre make 2 (1); shingles: 3 slabs make 2 (5) |
 | Hide lean-to | `hide_lean_to` | hide in four thin courses on two rafters, eave towards the placer | | 3 hide, 2 sticks make 2 (1) |
 | Wattle | `wattle_panel` | woven sticks across the middle of the cell, three stakes | faces the placer | 8 sticks round a twine make 4 (1) |
@@ -30,7 +31,7 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Newel post | `<timber>_newel_post` | a post five texels square with a cap | | a slab on a post makes 1 (3) |
 | Landing | `<timber>_landing` | boards across the top of the cell on two joists, level with a stair's top | joists run away from the placer | 3 slabs on 2 beams make 3 (3) |
 | Balcony door | `balcony_door` (`_top`, `_open`, `_open_top`) | a plank door whose upper half is a lattice | placed whole, as a door; a right click opens and shuts it | a lattice window on a wooden door makes 1 (4) |
-| Arrow slit | `stone_arrow_slit` | dressed stone with an upright slit three texels wide through it | the slit runs away from the placer | 2 stone bricks, a brick slab make 2 (5) |
+| Arrow slit | `stone_arrow_slit` | dressed stone with an upright slit three texels wide through it | the slit runs away from the placer | 2 stone bricks, a brick slab make 2 (6) |
 
 The home's ladder runs from a hide lean-to through wattle and daub and timber to stone and
 brick. Every piece on it carries a shelter tag for how well it keeps the weather out of a
