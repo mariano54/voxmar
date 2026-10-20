@@ -43,7 +43,9 @@ pub use voxmar_engine::weather::Weather;
 // 47: ServerMessage::Bark, a settlement person's wordless greeting, alarm or sigh (45 and
 // 46 are other lanes').
 // 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
-pub const PROTOCOL_VERSION: u32 = 48;
+// 49: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one
+// on.
+pub const PROTOCOL_VERSION: u32 = 49;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
