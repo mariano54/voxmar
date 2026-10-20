@@ -1,5 +1,5 @@
 // How many boxes a block's shape may have, and how many quads all shapes may have
 // together: the renderer keeps every shape's quads in one table (see voxel.wgsl).
 (
-    limits: (boxes: 16, quads: 4096),
+    limits: (boxes: 16, quads: 16384),
 )
