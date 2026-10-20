@@ -9,6 +9,7 @@ mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
 pub use barks::BARK_COMMAND_REACH;
 pub use commands::{weather_name, weather_numbers};
+pub use creatures::NEAR_THINK_LONGEST;
 mod cooking;
 mod creatures;
 mod fight;
@@ -37,12 +38,14 @@ mod prayers;
 mod process;
 mod rules;
 mod laying;
+mod smoulder;
 mod stations;
 mod traps;
 mod stores;
 mod treasure;
 mod troughs;
 pub mod save;
+mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
@@ -309,6 +312,20 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
 
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
+/// How each block (by id) shelters as a wall of a home's room, as `Server::room_walls`
+/// judges it (survival.ron's furniture looked past), for the client to hear a home's walls
+/// as the server judges them.
+pub fn wall_shelters(content: &Content) -> Vec<Option<voxmar_engine::effect::Shelter>> {
+    let Ok(rules) = rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()) else { return vec![None; content.blocks.len()] };
+    (0..content.blocks.len())
+        .map(|id| {
+            let id = voxmar_engine::block::BlockId(id as u16);
+            let tags = &content.blocks.def(id).tags;
+            voxmar_engine::effect::Shelter::of_wall(tags, content.blocks.info(id).solid, rules.furniture(tags))
+        })
+        .collect()
+}
+
 pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>> {
     let mut content = Content::load(&assets.join("content"))?;
     if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {
@@ -316,6 +333,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     }
     WorldContent::load(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
+    spawn_kit::SpawnKit::load(&content.files, &content.blocks)?;
     let mut notes = Vec::new();
     let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
     heal_most_below_food(&content, survival.heal_most)?;
@@ -640,6 +658,8 @@ pub(crate) struct Server {
     /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
     /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
+    smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
     /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
     /// kept by owner), by core cell: set when it is first lit, kept while its fire is out or
     /// a piece of it is broken, forgotten only when its owner breaks its hearthstone or lights
@@ -688,6 +708,9 @@ pub(crate) struct Server {
     /// once it has landed by then (`fight`).
     /// None until messages are first taken in (unit tests tick without them).
     heard: Option<Instant>,
+    /// How many players were told of others last tick: alone, a player is told once that
+    /// nobody else is there (`broadcast_players`).
+    shown_players: usize,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     /// The people of settlements near players.
@@ -790,7 +813,7 @@ impl Server {
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
-        let flames = flames::restore(&meta.flames, |name| content.blocks.id(name));
+        let flames = flames::restore(&meta.flames, |name| content.blocks.id(name), |block| content.flames.burn_life(block) > 0);
         let blazes = blaze::restore(&meta.blazes);
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
@@ -800,6 +823,7 @@ impl Server {
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect::<FxHashMap<_, _>>();
         let hearth_owners = hearth::HearthOwner::restore(&meta.hearth_owners, &lit, |name| content.multiblocks.get(name).is_some_and(|m| m.home));
+        let smoulders = smoulder::restore(&meta.smoulders, |name| content.multiblocks.get(name).is_some_and(|m| m.smoulder.is_some()));
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
@@ -817,6 +841,7 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            smoulders,
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
@@ -833,6 +858,7 @@ impl Server {
             catches,
             arrival: Instant::now(),
             heard: None,
+            shown_players: 0,
             creatures: creatures::Creatures::default(),
             villagers: villagers::Villagers::restore(state.villagers),
             wandering: Default::default(),
@@ -862,10 +888,48 @@ impl Server {
             spawn,
         };
         server.show_grown_crops(spawn_column);
+        server.lay_spawn_kit();
         server.restore_creatures(state.creatures);
         server.restore_companions(state.companions);
         server.restore_machines(state.machines);
         server
+    }
+
+    /// Lays the spawn kit by the spawn, once per world (`WorldMeta::spawn_kit`): its column is
+    /// loaded by now. Not marked placed, so it is wild.
+    fn lay_spawn_kit(&mut self) {
+        if self.meta.spawn_kit {
+            return;
+        }
+        let kit = spawn_kit::SpawnKit::load(&self.content.files, &self.content.blocks).expect("checked by load_content");
+        // A spawn by a column's edge has the kit's ground in its neighbours too.
+        let today = wear::day(self.day);
+        for pos in kit.columns(self.spawn) {
+            if self.world.contains(pos) {
+                continue;
+            }
+            let loaded = load_column(self.save.as_ref(), &*self.generator, &self.content.blocks, &self.wear_rules, today, pos);
+            self.insert_column(pos, loaded);
+        }
+        // An older save's columns are as players left them: a cell that differs from the
+        // land made fresh was touched, even where `placed` does not know it (dug ground,
+        // dirt set down).
+        let mut fresh = VoxelWorld::default();
+        for pos in kit.columns(self.spawn) {
+            if self.save.as_ref().is_some_and(|save| save.has_column(pos)) {
+                fresh.insert(pos, Arc::new(self.generator.generate(pos)));
+            }
+        }
+        let touched = |p: IVec3| self.placed.contains(&p) || fresh.contains(ColumnPos::of_block(p)) && fresh.block(p) != self.world.block(p);
+        let laid = kit.plan(&self.world, &self.content.blocks, self.spawn, self.meta.seed, touched);
+        for (name, laid, least) in kit.short(&self.content.blocks, &laid) {
+            let older = if self.meta.generator_version != Overworld::VERSION { " (the save is from an older world generator, so its land rarely matches what is generated now)" } else { "" };
+            tracing::warn!("the spawn kit laid {laid} {name} by the spawn, short of its {least}: no more untouched ground in reach{older}");
+        }
+        for (at, block) in laid {
+            self.set_block(at, block);
+        }
+        self.meta.spawn_kit = true;
     }
 
     /// Runs fixed-rate ticks until `stop` is set, then saves. Between ticks, messages are
@@ -967,6 +1031,7 @@ impl Server {
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
         self.reconcile_machines(pos, loaded.saved);
+        self.flames_loaded(pos);
     }
 
     fn handle_messages(&mut self) {
@@ -1171,6 +1236,7 @@ impl Server {
         meta.catches = self.catches.saved(|species| self.content.creatures.get(species).def.name.clone());
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
+        meta.smoulders = self.saved_smoulders();
         meta.hearth_owners = hearth::HearthOwner::saved(&self.hearth_owners);
         meta.day = Some(self.day as u64);
         meta.day_speed = self.day_speed;
@@ -1200,8 +1266,11 @@ impl Server {
         }
     }
 
-    fn broadcast_players(&self) {
-        if self.players.len() < 2 {
+    fn broadcast_players(&mut self) {
+        // Alone, a player is told others are gone once (none left to draw), then nothing.
+        let joined = self.players.values().filter(|p| p.joined).count();
+        let was = std::mem::replace(&mut self.shown_players, joined);
+        if joined < 2 && was < 2 {
             return;
         }
         let views: Vec<_> = self.players.values().filter(|p| p.joined).map(Player::view).collect();
@@ -1281,6 +1350,11 @@ impl Server {
         self.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
     }
 
+    /// Whether a live creature's body is in `cell`.
+    pub(crate) fn creature_in(&self, cell: IVec3) -> bool {
+        self.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+    }
+
     /// Whether putting `block` at `cell` would shut a player inside it: a solid block where
     /// a player stands, which no hand may place. Admin fills leave such a cell as it is
     /// (`/fill`, `/setblock`); regrowth brings back only plants that are not solid.
@@ -1315,6 +1389,7 @@ impl Server {
                 self.station_changed(pos, old, block);
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.smoulder_changed(pos);
                 self.home_changed(pos, block);
                 self.flame_changed(pos, block);
                 self.blaze_changed(pos, block);
@@ -1355,6 +1430,7 @@ impl Server {
             self.station_changed(pos, old, block);
             self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.smoulder_changed(pos);
             self.home_changed(pos, block);
             self.flame_changed(pos, block);
             self.blaze_changed(pos, block);
@@ -1417,14 +1493,18 @@ pub(crate) fn test_server() -> Server {
 #[cfg(test)]
 pub(crate) const TEST_DRAW_KEY: u64 = 0x0d1a;
 
-/// The game's own content, as `test_server` loads it.
+/// The game's own content, as `test_server` loads it: loaded once for the run (0.14 s a
+/// load, and some 300 tests ask for it) and handed out as copies, which share its tables.
+/// A test that changes a table of its copy changes its own (`Arc::make_mut`), never the
+/// one the others are handed.
 #[cfg(test)]
 pub(crate) fn test_content() -> Content {
-    load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")
+    static CONTENT: std::sync::OnceLock<Content> = std::sync::OnceLock::new();
+    CONTENT.get_or_init(|| load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")).clone()
 }
 
 /// As `test_server`, on `content` already loaded: a test that makes many servers loads it
-/// once (a copy shares its tables, so one changed through `Arc::get_mut` must be its own).
+/// once (a copy shares its tables, so one is changed through `Arc::make_mut`).
 #[cfg(test)]
 pub(crate) fn test_server_on(content: Content) -> Server {
     // One draw key for every test server, as a world's own is random: wandering, grazing

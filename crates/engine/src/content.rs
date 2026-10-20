@@ -202,6 +202,36 @@ pub struct ContentFile {
     pub source: String,
 }
 
+/// The files of a package read from `Content::files`, by name, once the load has passed
+/// them by: worldgen's (the land, its biomes, settlements and ores), the server's (survival,
+/// the spawn kit, wear), the client's (sounds, music, the look of the HUD) and the engine's
+/// own `refusals.ron`. With those the load reads itself, these are every name a package's
+/// `.ron` may have; any other is read by nothing, which the load warns of (a misspelt
+/// `quest.ron` would otherwise be dropped without a word).
+pub const READ_ELSEWHERE: &[&str] = &[
+    "action_fx.ron", "ambience.ron", "ambient.ron", "biomes.ron", "cave_biomes.ron", "celebrations.ron", "climate.ron", "combat_fx.ron",
+    "combat_hud.ron", "creature_motion.ron", "creature_sounds.ron", "cultures.ron", "decorations.ron", "hoards.ron",
+    "interface.ron", "lairs.ron", "land.ron", "look.ron", "menu_bar.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron",
+    "player_look.ron", "quest_book.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
+    "survival.ron", "terrain.ron", "trails.ron", "trees.ron", "wear.ron",
+];
+
+/// How many single letters `a` and `b` differ by (added, dropped or changed).
+fn letters_apart(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, x) in a.chars().enumerate() {
+        let mut last = row[0];
+        row[0] = i + 1;
+        for (j, &y) in b.iter().enumerate() {
+            let next = (last + usize::from(x != y)).min(row[j] + 1).min(row[j + 1] + 1);
+            last = row[j + 1];
+            row[j + 1] = next;
+        }
+    }
+    row[b.len()]
+}
+
 impl Content {
     /// The tags of blocks crafting looks for within reach: what recipes are made near (a
     /// chopping block) and what tools are mended at, each once.
@@ -211,6 +241,14 @@ impl Content {
         tags.sort_unstable();
         tags.dedup();
         tags
+    }
+
+    /// The least tool that is a `kind` of at least `tier`, by property: the lowest tier, then
+    /// the lowest worth (value.rs), then the first in registry order. What a refusal names
+    /// ("Needs a Flint Pickaxe or better").
+    pub fn least_tool(&self, kind: usize, tier: u8) -> Option<crate::block::BlockId> {
+        let mut known = std::collections::HashMap::new();
+        self.tools.all_of(kind, tier).map(|(t, id)| (t, crate::value::worth_in(self, id, &mut known), id)).min().map(|(_, _, id)| id)
     }
 
     /// Loads every package in `dir`, in name order so ids are the same everywhere.
@@ -264,11 +302,16 @@ impl Content {
         let mut shapes = Vec::new();
         let mut shape_limits = Setting::<crate::shape::ShapeLimits>::default();
         let mut files = Vec::new();
+        // The files nothing reads, and the names of those something did, to name the
+        // likeliest meant.
+        let (mut unread, mut read) = (Vec::new(), std::collections::BTreeSet::new());
         for package in &packages {
             let path = dir.join(package);
             let mut names: Vec<String> = std::fs::read_dir(&path)
                 .map_err(|e| read_error(&path, e))?
                 .flatten()
+                // Files only: a folder named `x.ron` is no definition file.
+                .filter(|entry| entry.file_type().is_ok_and(|kind| !kind.is_dir()))
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .filter(|name| name.ends_with(".ron"))
                 .collect();
@@ -276,6 +319,7 @@ impl Content {
             for name in names {
                 let file = path.join(&name);
                 let source = std::fs::read_to_string(&file).map_err(|e| read_error(&file, e))?;
+                let (named, unread_before) = (name.clone(), unread.len());
                 match name.as_str() {
                     // `blocks.ron`, and `blocks_<topic>.ron` for families of blocks a system
                     // owns (what creatures drop), each read the same way.
@@ -329,8 +373,10 @@ impl Content {
                         fishing.push(file);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "quests.ron" => {
-                        quests.push(crate::quest::QuestRegistry::read(package, &source)?);
+                    // `quests.ron`, and `quests_<topic>.ron` for a book of its own (the Nomad's,
+                    // the Farm's), read in name order like every file of a package.
+                    topic if topic == "quests.ron" || topic.strip_prefix("quests_").is_some_and(|t| t != ".ron") => {
+                        quests.push(crate::quest::QuestRegistry::read_named(package, &name, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     crate::quest_path::QuestPaths::FILE => {
@@ -421,9 +467,30 @@ impl Content {
                         // Kept with the other files too, so the fingerprint covers it.
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    _ => files.push(ContentFile { package: package.clone(), name, source }),
+                    _ => {
+                        if !READ_ELSEWHERE.contains(&name.as_str()) {
+                            unread.push(format!("{package}/{name}"));
+                        }
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                }
+                if unread.len() == unread_before {
+                    read.insert(named);
                 }
             }
+        }
+        for file in unread {
+            // Names compared without `.ron`, a short one (`fish`) only a letter from another.
+            let stem = |name: &str| name.strip_suffix(".ron").unwrap_or(name).to_owned();
+            let name = stem(file.rsplit('/').next().unwrap_or_default());
+            let near = if name.chars().count() <= 5 { 1 } else { 2 };
+            let meant = read.iter().map(|known| (letters_apart(&name, &stem(known)), known)).filter(|&(apart, _)| apart <= near).min();
+            let note = match meant {
+                Some((_, known)) => format!("{file} is read by nothing (meant {known}?)"),
+                None => format!("{file} is read by nothing: no part of the game reads a file of that name"),
+            };
+            tracing::warn!("{note}");
+            notes.push(note);
         }
         let renames = BlockRegistry::renames(&blocks);
         let blocks = BlockRegistry::expand(blocks)?;
@@ -467,6 +534,9 @@ impl Content {
                 if !machines.burn_seconds(fuel).is_some_and(|seconds| seconds.is_finite() && seconds > 0.0 && (seconds * count as f32).is_finite()) {
                     return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} needs a positive finite burn time in machines.ron", structure.name, blocks.def(fuel).name)));
                 }
+                if machines.fuel_heat(fuel).is_some_and(|heat| heat < structure.heat) {
+                    return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} burns cooler than the heat {} it asks", structure.name, blocks.def(fuel).name, structure.heat)));
+                }
             }
         }
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
@@ -474,6 +544,10 @@ impl Content {
         }
         let value = crate::value::Value::merge(value, &mut notes);
         value.check()?;
+        // A price or level set for a thing no package has would price nothing.
+        if let Some(name) = value.fixed.keys().chain(value.levels.keys()).find(|name| blocks.id(name).is_none()) {
+            return Err(RegistryError(format!("value.ron: a worth is set for `{name}`, which no package has")));
+        }
         let limits = stack_limits(&blocks, &stacking)?;
         for structure in multiblocks.iter() {
             for &(fuel, count) in &structure.fuels {
@@ -504,7 +578,27 @@ impl Content {
         }
         crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
-        crate::inventory::set_worn_slots(combat.worn_slots());
+        // A charm is worn in the charm slot, and is nothing else that is worn.
+        let mut worn = combat.worn_slots();
+        for id in blocks.ids().filter(|&id| blocks.def(id).has_tag("charm")) {
+            let at = &mut worn[id.0 as usize];
+            if at.is_some() {
+                return Err(RegistryError(format!("blocks: `{}` is a charm and armour or a shield too: it is worn in one slot", blocks.def(id).name)));
+            }
+            *at = Some(crate::combat::Slot::Charm.index() as u8);
+        }
+        // `Wearing` asks of the charm worn: a tag no charm carries (a torch's `fire`, a
+        // helmet's) would be an effect that can never hold, or two at once.
+        let charm = Some(crate::combat::Slot::Charm.index() as u8);
+        let charms: Vec<_> = blocks.ids().filter(|&id| worn[id.0 as usize] == charm).collect();
+        if let Some(tag) = effects.worn_tags().iter().find(|tag| !charms.iter().any(|&id| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: an effect asks for a charm tagged `{tag}`, which nothing worn carries")));
+        }
+        // And a charm that no effect asks for would be worn for nothing.
+        if let Some(&id) = charms.iter().find(|&&id| !effects.worn_tags().iter().any(|tag| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("blocks: `{}` is a charm, but no effect asks for it worn (effects.ron's `Wearing`)", blocks.def(id).name)));
+        }
+        crate::inventory::set_worn_slots(worn);
         // A store's slots follow the player's own in a slot number of a byte.
         let mut holds = vec![None; blocks.len()];
         for machine in machines.iter().filter(|m| m.is_store()) {
@@ -640,6 +734,17 @@ mod tests {
     /// and Alchemy wait for their systems (Combat's slices, brewing).
     const UNTRAINED: [&str; 6] = ["core:attack", "core:defence", "core:hitpoints", "core:ranged", "core:magic", "core:alchemy"];
 
+    /// The game's flues, hood and pot carry `CHIMNEY_PIECE_TAG`, so a renamed tag can't
+    /// quietly leave every chimney smoking from under its roof.
+    #[test]
+    fn the_chimney_pieces_carry_the_chimney_piece_tag() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        for name in ["base:chimney_stack", "base:stone_flue", "base:chimney_hood", "base:chimney_pot"] {
+            let id = content.blocks.id(name).unwrap_or_else(|| panic!("no block {name}"));
+            assert!(content.blocks.def(id).has_tag(crate::block::CHIMNEY_PIECE_TAG), "{name} is not a chimney piece");
+        }
+    }
+
     /// Every skill something trains has a way in at level 1: one whose only source asks
     /// for level 5 never leaves level 1 (Construction, with only the altar, did: design
     /// draft 94). And the skills nothing trains are exactly `UNTRAINED`.
@@ -713,7 +818,7 @@ mod tests {
 
     /// A recipe as the walk uses it: its skill, level and experience a batch, how many a
     /// batch makes, what each of its cells takes, and the station it needs (the crafting
-    /// table for a big grid, a cooking station's tag).
+    /// table for a big grid, a cooking station's tag). A smoulder counts as one too.
     struct Batch {
         skill: Option<SkillId>,
         level: u8,
@@ -791,10 +896,20 @@ mod tests {
                 let with = r.with.iter().flat_map(|&(item, n)| std::iter::repeat_n(vec![item], n as usize));
                 Some(Batch { skill: r.skill, level: r.def.level, xp: r.def.xp, count: r.def.count as u32, cells: held.chain(with).collect(), station: Some(r.def.station.clone()) })
             };
+            // A smoulder (the charcoal clamp): a batch is one structure, every piece it takes,
+            // making what each of its charred cells breaks into.
+            let smouldered = || {
+                content.multiblocks.iter().find_map(|m| {
+                    let s = m.smoulder.as_ref().filter(|s| content.blocks.info(s.done).drops == id)?;
+                    let count = s.wood.len() as u32 * content.blocks.info(s.done).drop_count as u32;
+                    let cells = m.pieces().into_iter().flat_map(|(accepts, n)| std::iter::repeat_n(accepts.to_vec(), n as usize)).collect();
+                    Some(Batch { skill: None, level: 0, xp: 0.0, count, cells, station: None })
+                })
+            };
             match way {
                 Way::Grid => grid(),
                 Way::Cooked | Way::CookedAt(_) => cooked(),
-                Way::Either => grid().or_else(cooked),
+                Way::Either => grid().or_else(cooked).or_else(smouldered),
             }
         }
 

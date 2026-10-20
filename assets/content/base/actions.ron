@@ -17,12 +17,12 @@
         // Cooking what is in hand on a station that cooks it (cooking.ron): two seconds, so
         // a fish's Cooking experience (what catching it taught) comes at a cook's pace
         // (design draft 104).
-        (name: "cook", duration: Seconds(2.0), requires: [Alive, InReach, Cookable, CookingLevel], effects: [Cook]),
+        (name: "cook", duration: Seconds(2.0), requires: [Alive, InReach, Cookable, CookingLevel, CookingTool], effects: [Cook]),
         // Tilling soil into farmland with a hoe (right click), where crops are sown.
         (name: "till", duration: Instant, requires: [Alive, InReach, Tillable], effects: [Till, WearHeld]),
         // Coating a block in place with what is in hand (right click): clay on a wattle
         // panel daubs it (blocks' `coat`), at the level of the recipe that makes the daub.
-        (name: "coat", duration: Instant, requires: [Alive, InReach, Coats], effects: [Coat]),
+        (name: "coat", duration: Instant, requires: [Alive, InReach, Coats, CoatClear], effects: [Coat]),
         // Casting a rod into water (right click with it): a few seconds, then a fish or
         // nothing (fishing.ron).
         (name: "fish", duration: Seconds(5.0), requires: [Alive, Fishable], effects: [Fish]),

@@ -36,7 +36,7 @@
         "furniture": [
             (name: "{name}_stool", render: Model, shape: "stool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
             (name: "{name}_chair", render: Model, shape: "chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
-            (name: "{name}_bench", render: Model, shape: "bench", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
+            (name: "{name}_bench", render: Model, shape: "bench", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood", "yard"]),
             (name: "{name}_table", render: Model, shape: "table", sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
             (name: "{name}_bed", render: Model, shape: "bed", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "bed", "decor", "wood"]),
             (name: "{name}_shelf", render: Model, shape: "shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
@@ -55,10 +55,17 @@
             (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}", "shelter:draughty"]),
             (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "decor", "colour:{name}"]),
             (name: "{name}_banner", render: Model, shape: "banner", facing: true, solid: false, sound: Moss, textures: All("banner_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "banner", "decor", "colour:{name}"]),
-            (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "curtain", "decor", "colour:{name}"]),
+            (name: "{name}_wall_hanging", render: Model, shape: "wall_hanging", facing: true, solid: false, sound: Moss, textures: All("hanging_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "drape", "decor", "colour:{name}"]),
+            // A curtain drawn across, and drawn back (a right click, `swaps`, as a door). Drawn
+            // across a window it keeps most of the room's light in (`light_filter`), so a lit
+            // home's window glows low at night; drawn back, the light goes through as air.
+            (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, light_filter: 8, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
+                swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
+            (name: "{name}_curtain_open", render: Model, shape: "curtain_open", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
+                swaps: "{name}_curtain", drops: "{name}_curtain", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
             (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
             (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),
-            (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "colour:{name}"]),
+            (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "yard", "colour:{name}"]),
             (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}", "shelter:draughty"]),
         ],
         // Crockery in one glaze: a plate, a bowl, a jar, a jug and a basket for tables and
@@ -121,7 +128,7 @@
         // A bale of straw, tied in two places.
         (
             name: "hay_bale", sound: Grass, textures: Column(end: "hay_bale_top", side: "hay_bale_side"),
-            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "building", "shelter:draughty"],
+            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "yard", "building", "shelter:draughty"],
         ),
         // A barrel of staves held by two iron hoops.
         (
@@ -155,10 +162,11 @@
         ),
 
         // Singles. A candle (tallow until bees make wax), and the fire a hearth has. A candle
-        // set down burns three game days to its end, a stub of wax never lit again (flame.rs).
+        // set down burns three game days to its end, a stub of wax never lit again (flame.rs);
+        // picked up, it keeps what it has burnt.
         (
             name: "candle", render: Model, shape: "candle", solid: false, light: 8, sound: Wood, textures: All("candle_grey"), tint: Fixed(240, 228, 196),
-            hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor", "furnishing", "burns_days:3", "burns_out_to:candle_end"],
+            hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor", "furnishing", "burns_days:3", "burns_out_to:candle_end", "tended"],
             particles: [(style: Flame, rate: 8.0, at: (0.5, 0.45, 0.5), spread: 0.01, size: 0.7, height: 0.2, color: Some((240, 150, 40)))],
         ),
         (
@@ -167,10 +175,11 @@
         ),
         // A clay oil lamp: a brighter light than a candle, burning five game days on a fill of
         // fat. Burnt dry it keeps its clay; right clicked with fat (`relight_with:fat`) it is
-        // filled and lit again, the fat used up. Made empty; broken, it gives back the empty lamp.
+        // filled and lit again, the fat used up. Made empty; picked up lit, it keeps what fat it
+        // has left (flame.rs), and set down again burns on.
         (
             name: "clay_oil_lamp", render: Model, shape: "oil_lamp", solid: false, light: 10, sound: Stone, textures: All("crockery_grey"), tint: Fixed(176, 100, 62),
-            drops: "clay_oil_lamp_empty", hardness: 0.1, color: (176, 100, 62), tags: ["lamp", "light", "decor", "furnishing", "burns_days:5", "burns_out_to:clay_oil_lamp_empty"],
+            hardness: 0.1, color: (176, 100, 62), tags: ["lamp", "light", "decor", "furnishing", "burns_days:5", "burns_out_to:clay_oil_lamp_empty", "tended"],
             particles: [(style: Flame, rate: 8.0, at: (0.5, 0.26, 0.84), spread: 0.01, size: 0.8, height: 0.2, color: Some((240, 150, 40)))],
         ),
         (

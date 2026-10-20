@@ -54,6 +54,9 @@ pub struct Fighting {
     /// How many of the server's pings (`ServerMessage::Ping`), which time the round trip
     /// guards and dodges are judged by, have been answered, ever.
     pub pings: u32,
+    /// The share of their pace the player kept as they last moved, for a shot being drawn
+    /// (`drawing_speed`); None when nothing was drawn.
+    pub drawing_pace: Option<f32>,
     /// How many clicks at a creature out of reach have swung at the air, ever (`whiff`),
     /// and when the last did (app seconds).
     pub whiffs: u32,
@@ -85,15 +88,25 @@ impl Fighting {
         self.struck_count += 1;
     }
 
-    /// A creature's blow at the player came down.
-    pub fn hurt(&mut self, creature: u32, damage: u16, defended: Defended, now: f64) {
+    /// A creature's blow at the player came down. An unguarded hit costs the pips, and
+    /// spoils a shot being drawn with a weapon whose class says so (`spoil`: its timing),
+    /// as the server does.
+    pub fn hurt(&mut self, creature: u32, damage: u16, defended: Defended, now: f64, spoil: Option<(Timing, voxmar_engine::combat::Feel)>) {
         if defended == Defended::Hit && damage > 0 {
             self.rhythm.lose_pips();
+            if let Some((timing, feel)) = spoil {
+                self.cancel(now, &timing, &feel);
+            }
         }
         self.fought.insert(creature, now);
         self.hurt.retain(|h| now - h.3 < KEPT);
         self.hurt.push((creature, damage, defended, now));
         self.hurt_count += 1;
+    }
+
+    /// Whether a shot or swing is being drawn at `now`: started, its blow not yet landed.
+    pub fn drawn(&self, now: f64) -> bool {
+        self.rhythm.pending().is_some_and(|s| s.lands > now)
     }
 
     /// Whether `creature` and the player have traded blows within `feel.engaged` of `now`:
@@ -237,6 +250,22 @@ mod tests {
         assert!(matches!(fighting.rhythm.click(later, &timing, &feel), Click::Swing(_)));
         fighting.holding(later + 0.1, &timing, Some(voxmar_engine::block::BlockId(3)), &feel);
         assert_eq!(fighting.cancels, 2);
+    }
+
+    /// A hit told of spoils a draw when the weapon's class says so, as the server does:
+    /// the swing is cancelled and counted, and the player is no longer slowed by it. A
+    /// blocked blow, or one with nothing to spoil, leaves the draw.
+    #[test]
+    fn a_hit_told_of_spoils_a_draw_that_spoils() {
+        let (timing, feel) = (Timing { cooldown: 1.0, windup: 0.5, buffer: 0.2, beat: 0.1 }, voxmar_engine::combat::Feel::default());
+        let mut fighting = Fighting::default();
+        assert!(matches!(fighting.rhythm.click(0.0, &timing, &feel), Click::Swing(_)));
+        assert!(fighting.drawn(0.2) && !fighting.drawn(0.6), "drawn through the wind-up only");
+        fighting.hurt(7, 2, Defended::Blocked, 0.1, Some((timing, feel)));
+        fighting.hurt(7, 2, Defended::Hit, 0.15, None);
+        assert!(fighting.drawn(0.2), "a blocked blow, or a weapon that does not spoil, keeps the draw");
+        fighting.hurt(7, 2, Defended::Hit, 0.2, Some((timing, feel)));
+        assert!(!fighting.drawn(0.3) && fighting.cancels == 1, "the hit spoiled the draw");
     }
 
     /// A click at a creature out of reach swings at the air: once a cooldown, only from

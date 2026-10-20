@@ -293,21 +293,29 @@ impl Server {
         self.items.spawn(stack, body, dropped::PICKUP_DELAY);
     }
 
-    /// Done stations in loaded columns show it.
+    /// Done stations in loaded columns show it. A load on what is no station now (an older
+    /// world's, on a station since retired: the earth clamp) falls out as it went in.
     pub(crate) fn show_done_stations(&mut self) {
         let stations = self.content.stations.clone();
         let mut done: Vec<(IVec3, BlockId)> = Vec::new();
+        let mut stationless: Vec<IVec3> = Vec::new();
         for (&pos, load) in &self.stations.loads {
-            if self.tick < load.due {
-                continue;
-            }
-            if let Some((station, Phase::Working)) = self.block(pos).and_then(|b| stations.of(b)) {
-                done.push((pos, station.ready));
+            let Some(block) = self.block(pos) else { continue };
+            match stations.of(block) {
+                None => stationless.push(pos),
+                Some((station, Phase::Working)) if self.tick >= load.due => done.push((pos, station.ready)),
+                Some(_) => {}
             }
         }
         done.sort_by_key(|(pos, _)| pos.to_array());
         for (pos, ready) in done {
             self.set_block(pos, ready);
+        }
+        stationless.sort_by_key(|pos| pos.to_array());
+        for pos in stationless {
+            let Some(load) = self.stations.loads.remove(&pos) else { continue };
+            let body = dropped::popped(pos, self.meta.next_pop(pos, 0x57a9));
+            self.items.spawn(ItemStack::new(load.item, load.count), body, dropped::PICKUP_DELAY);
         }
     }
 
@@ -656,35 +664,20 @@ mod tests {
         assert_eq!(back.get(AT), server.stations.get(AT));
     }
 
-    /// An earth clamp fires clay with nobody by it, and quests count what comes out as cooked;
-    /// while it smoulders it is a fire, so a rack by it dries twice as fast.
+    /// The earth clamp went (blocks_stations.ron): one an older world holds is the log it was
+    /// heaped over, and what was loaded in it falls out whole at the next look.
     #[test]
-    fn an_earth_clamp_fires_clay_by_itself_and_smoulders_like_a_fire() {
+    fn a_retired_earth_clamp_is_a_log_and_gives_back_its_load() {
         let mut server = fixture(1);
-        server.set_block(AT, block(&server, "base:earth_clamp"));
-        hold(&mut server, "base:clay", 20);
-        server.use_station(1, AT);
-        assert_eq!(at(&server, AT), "base:earth_clamp_lit");
-        assert_eq!(carried(&server, "base:clay"), 4, "sixteen go in");
-        let rack = AT + IVec3::new(2, 0, 0);
-        server.set_block(rack, block(&server, "base:drying_rack"));
-        hold(&mut server, "base:raw_beef", 1);
-        server.use_station(1, rack);
-        assert_eq!(server.stations.get(rack).unwrap().due, server.tick + 5 * MINUTE, "the smouldering clamp is a fire near");
-        server.tick += 2 * MINUTE;
+        let log = server.content.blocks.saved_id("base:earth_clamp_lit").expect("renamed");
+        assert_eq!(log, block(&server, "base:oak_log"));
+        server.set_block(AT, log);
+        let saved = [SavedLoad { position: AT.to_array(), item: "base:clay".into(), count: 16, due: server.tick + MINUTE }];
+        server.stations = Loads::restore(&saved, |name| server.content.blocks.item_named(name));
         server.show_done_stations();
-        assert_eq!(at(&server, AT), "base:earth_clamp_cooled");
-        server.use_station(1, AT);
-        assert_eq!(carried(&server, "base:fired_clay"), 16, "none cracked");
-        assert_eq!(server.players[&1].tallies.get("cooked:base:fired_clay"), Some(&16), "Fire the Clay and A Kiln Load count it");
-        assert_eq!(server.players[&1].tallies.get("cooked_at:earth_clamp:base:fired_clay"), Some(&16), "An Earth Clamp counts it as fired in the clamp");
-
-        hold(&mut server, "base:oak_log", 16);
-        server.use_station(1, AT);
-        server.tick += 2 * MINUTE;
-        server.use_station(1, AT);
-        assert_eq!(carried(&server, "base:charcoal"), 16);
-        assert_eq!(server.players[&1].tallies.get("cooked:base:charcoal"), Some(&16));
+        assert_eq!(server.stations.get(AT), None, "the load is gone from the log");
+        assert_eq!(loose(&server, "base:clay"), 16, "and lies beside it, all sixteen");
+        assert_eq!(at(&server, AT), "base:oak_log");
     }
 
     /// Wheat sprouts on farmland at y 200 for each x of `xs` along z 40.

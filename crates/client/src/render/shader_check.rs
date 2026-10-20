@@ -1,14 +1,15 @@
 //! The terrain shader composed with its imports and validated as the renderer would, for
 //! every pass it is built for, without a GPU: a shader that would not compile fails here,
 //! not only on the first frame. Bevy's own shader modules are read from its sources in
-//! Cargo's registry, at the versions Cargo.lock names.
+//! Cargo's registry (fetched, as this crate builds with Bevy), at the versions Cargo.lock
+//! names. Here in the client, a shader edit runs it (`tools/gate` by changed crate).
 
 use naga_oil::compose::{ComposableModuleDescriptor, Composer, NagaModuleDescriptor, ShaderDefValue};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const WORKSPACE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-const RENDER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../client/src/render");
+const RENDER: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/src/render");
 
 /// Each `.wgsl` under `dir`, with its text.
 fn wgsl_files(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
@@ -35,11 +36,22 @@ fn bevy_sources() -> Vec<PathBuf> {
             name.starts_with("bevy_").then(|| format!("{name}-{version}"))
         })
         .collect();
-    let home = std::env::var_os("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap()).join(".cargo"));
-    let registries: Vec<PathBuf> = std::fs::read_dir(home.join("registry/src")).expect("Cargo's registry sources").flatten().map(|e| e.path()).collect();
-    let found: Vec<PathBuf> = crates.iter().filter_map(|c| registries.iter().map(|r| r.join(c)).find(|p| p.is_dir())).collect();
-    assert!(found.iter().any(|p| p.ends_with(format!("bevy_pbr-{}", crates.iter().find_map(|c| c.strip_prefix("bevy_pbr-")).unwrap()))), "bevy_pbr's sources are not in Cargo's registry");
-    found
+    let home = std::env::var_os("CARGO_HOME").map(PathBuf::from).unwrap_or_else(|| {
+        let user = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).expect("CARGO_HOME, HOME or USERPROFILE names where Cargo keeps its registry");
+        PathBuf::from(user).join(".cargo")
+    });
+    let sources = home.join("registry/src");
+    let registries: Vec<PathBuf> = std::fs::read_dir(&sources)
+        .unwrap_or_else(|e| panic!("Bevy's shader sources are read from Cargo's registry, {}: {e} (set CARGO_HOME; `cargo fetch` fills it)", sources.display()))
+        .flatten()
+        .map(|e| e.path())
+        .collect();
+    // Crates for other targets (bevy_android) need not be fetched; the two the terrain
+    // shader imports from must be.
+    let needed = |c: &&String| c.starts_with("bevy_pbr-") || c.starts_with("bevy_render-");
+    let missing: Vec<&String> = crates.iter().filter(needed).filter(|c| !registries.iter().any(|r| r.join(c).is_dir())).collect();
+    assert!(missing.is_empty(), "not in Cargo's registry at {} (set CARGO_HOME; `cargo fetch` fills it): {missing:?}", sources.display());
+    crates.iter().filter_map(|c| registries.iter().map(|r| r.join(c)).find(|p| p.is_dir())).collect()
 }
 
 /// The defs Bevy loads its view types with (`MeshRenderPlugin`), as its `light.rs` limits.

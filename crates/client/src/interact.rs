@@ -65,6 +65,9 @@ pub struct Target {
     fishing_until: f32,
     /// When (seconds of game time) what is cooking comes off the fire, and more may go on.
     cooking_until: f32,
+    /// The right button has been held since it put something on to cook: what is in hand
+    /// (what is cooking, or what came off) is never set down by it until it is let go.
+    cook_held: bool,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
@@ -197,6 +200,10 @@ impl ActionContext for ClientContext<'_> {
         self.player.inventory.pouched.iter().map(|&(item, _)| item).collect()
     }
 
+    fn actor_carried(&self) -> Vec<BlockId> {
+        self.player.inventory.slots.iter().flatten().map(|s| s.item).collect()
+    }
+
     fn actor_hurt(&self) -> bool {
         self.player.health < self.player.max_health
     }
@@ -269,6 +276,9 @@ fn break_and_place(
 ) {
     target.place_cooldown -= time.delta_secs();
     target.mine_cooldown -= time.delta_secs();
+    if !mouse.pressed(MouseButton::Right) {
+        target.cook_held = false;
+    }
     let hit = target.hit.filter(|_| ui.cursor_locked && !player.dead);
     // A creature wandering across the block being mined does not stop the mining: only a
     // fresh click strikes it (`creatures::aim`).
@@ -393,7 +403,7 @@ fn break_and_place(
                 let cooks = actions.0.id("base:cook").and_then(|cook| actions.0.get(cook)).is_some_and(|def| def.validate(&context, action_target).is_ok());
                 match actions.0.get(action).map(|def| def.validate(&context, action_target)) {
                     Some(Ok(())) if !cooks => {
-                        net.propose_from(&player, action, action_target);
+                        net.propose_from_with(&player, action, action_target, worked(&context, hit.block));
                         target.used_right = true;
                         // A lock picked opens the chest's slots.
                         player.store_asked |= name == "base:pick_lock";
@@ -430,19 +440,26 @@ fn break_and_place(
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             match actions.0.get(cook).map(|def| def.validate(&context, action_target)) {
                 // One thing at a time: a click while it cooks neither restarts it nor eats.
-                Some(Ok(())) if time.elapsed_secs() < target.cooking_until => return,
+                Some(Ok(())) if time.elapsed_secs() < target.cooking_until => {
+                    target.cook_held = true;
+                    return;
+                }
                 Some(Ok(())) => {
                     let seconds = actions.0.get(cook).map_or(0.0, |def| def.seconds(&context, action_target));
-                    net.propose_from(&player, cook, action_target);
+                    net.propose_from_with(&player, cook, action_target, worked(&context, hit.block));
                     target.used_right = true;
                     target.place_cooldown = 0.4;
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
+                    target.cook_held = true;
                     return;
                 }
-                Some(Err(Rejection::Unmet(need @ Requirement::CookingLevel))) => {
+                // Below its level, or with no tool about (an axe for the chopping block): it
+                // says why, and what is held is not set down on the station instead.
+                Some(Err(Rejection::Unmet(need @ (Requirement::CookingLevel | Requirement::CookingTool)))) => {
                     if let Some(words) = refusal(&context, &locale, Some(hit.block), need) {
                         toasts.refused(words, time.elapsed_secs());
                     }
+                    target.cook_held = true;
                     return;
                 }
                 _ => {}
@@ -536,7 +553,10 @@ fn break_and_place(
         }
     }
     let Some(hit) = hit else { return };
-    if mouse.pressed(MouseButton::Right) && target.place_cooldown <= 0.0 {
+    // Held on through a cook, nothing repeats: neither the log on the chopping block nor the
+    // firewood it gives is laid on it.
+    let cooking = target.cook_held || time.elapsed_secs() < target.cooking_until;
+    if mouse.pressed(MouseButton::Right) && target.place_cooldown <= 0.0 && !cooking {
         target.place_cooldown = 0.2;
         let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
         let content = &launch.content;
@@ -641,6 +661,13 @@ fn water_block(world: &ClientWorld, pos: IVec3) -> BlockId {
     world.block(pos).unwrap_or(BlockId::AIR)
 }
 
+/// What an action at `block` is done with, to be heard by (`sounds.ron`'s `ways`): the block
+/// worked (a hearthstone lit, a drying rack loaded, a pit kiln fed), not what is in hand,
+/// so holding a station's item never sounds as loading one.
+fn worked(context: &ClientContext, block: IVec3) -> Vec<BlockId> {
+    context.world.block(block).into_iter().collect()
+}
+
 /// What to tell a player whose click was refused because `need` failed, at `block` if it
 /// aimed at one: the words `refusals.ron` gives it, with the skill and level it asks for or
 /// the least tool that would do; none for a requirement that is silent there.
@@ -651,6 +678,8 @@ fn meant(context: &ClientContext, block: IVec3, need: Requirement) -> bool {
     let Some(at) = context.world.block(block) else { return false };
     match need {
         Requirement::Swaps => !voxmar_engine::action::swapping(context, block).is_empty(),
+        // Clay held to a panel someone leans on: plainly meant as a coat.
+        Requirement::CoatClear => context.blocks().coating(at).is_some_and(|(with, _)| context.actor_held() == Some(with)),
         Requirement::Relights => context.content.flames.relit(&context.content.blocks, at).is_some(),
         Requirement::Bees => context.bees().is_some_and(|bees| bees.takes.iter().any(|take| take.block == at)),
         Requirement::Station => context.stations().is_some_and(|stations| stations.of(at).is_some()),
@@ -678,13 +707,21 @@ fn refusal(context: &ClientContext, locale: &Locale, block: Option<IVec3>, need:
         }
         Requirement::ToolGood => {
             let rule = content.tools.rule(world.block(block?)?)?;
-            let tool = content.tools.first_of(rule.tool?, rule.tier)?;
+            let tool = content.least_tool(rule.tool?, rule.tier)?;
             Some(locale.format(key, &[("tool", &locale.block(world.registry.def(tool)))]))
         }
         // The held seed's crop.
         Requirement::SkillLevel => {
             let crop = context.actor_seed().and_then(|seed| content.crops.planted_by(seed)).map(|id| content.crops.get(id))?;
             level(crop.skill, crop.def.level)
+        }
+        // The tool the held item's recipe at the station aimed at asks for: the first item
+        // that is one.
+        Requirement::CookingTool => {
+            let station = world.block(block?).map(|b| world.registry.def(b).tags.clone()).unwrap_or_default();
+            let tag = content.cooking.for_item(context.actor_held()?, &station)?.def.tool.clone()?;
+            let tool = content.blocks.tagged(&tag).next()?;
+            Some(locale.format(key, &[("tool", &locale.block(world.registry.def(tool)))]))
         }
         // The held item's recipe at the station aimed at.
         Requirement::CookingLevel => {
@@ -794,6 +831,78 @@ mod tests {
         assert!(refusals.iter().any(|why| why.contains("Farming") && why.contains(&level)), "{refusals:?}");
         let proposed = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).count();
         assert_eq!(proposed, 0);
+    }
+
+    /// A log held to a chopping block with an axe about splits on the press; the button held
+    /// on lays nothing there, neither the log while it splits nor the firewood once it is
+    /// in hand. Let go and pressed again, the firewood is laid.
+    #[test]
+    fn holding_on_through_a_split_lays_nothing() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        let (cook, place) = (content.actions.expect("base:cook"), content.actions.expect("core:place"));
+        let id = |name: &str| content.blocks.expect(name);
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, id("base:chopping_block"));
+        // Aimed at its top, where what is in hand could be laid.
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(id("base:oak_log"), 1));
+        player.inventory.slots[1] = Some(voxmar_engine::inventory::ItemStack::new(id("base:stone_axe"), 1));
+        player.selected = 0;
+        let proposed = |server_side: &voxmar_protocol::ServerConnection| -> Vec<ActionId> {
+            std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect()
+        };
+        // Thirty milliseconds a frame, by the game's clock alone.
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        let frames = |app: &mut App, n: usize| {
+            for _ in 0..n {
+                app.update();
+            }
+        };
+        // Pressed for one frame, then held: the press is spent after the first frame.
+        let hold = |app: &mut App, n: usize| {
+            app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+            app.update();
+            app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+            frames(app, n - 1);
+        };
+        hold(&mut app, 20);
+        assert_eq!(proposed(&server_side), [cook], "the split, and the log not laid");
+        // Split: the firewood in the emptied hand, the cook's time over, the button still down.
+        app.world_mut().resource_mut::<LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(id("base:firewood"), 2));
+        app.world_mut().resource_mut::<Target>().cooking_until = 0.0;
+        frames(&mut app, 20);
+        assert_eq!(proposed(&server_side), [], "held on, the firewood is not laid");
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.release(MouseButton::Right);
+        mouse.clear();
+        frames(&mut app, 2);
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        frames(&mut app, 2);
+        assert!(proposed(&server_side).contains(&place), "let go and pressed again, it is laid");
+    }
+
+    /// A log held on the chopping block with no axe about says it needs one and is not laid
+    /// on it, however long the button is held.
+    #[test]
+    fn a_split_refused_for_want_of_an_axe_lays_nothing() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        let id = |name: &str| content.blocks.expect(name);
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, id("base:chopping_block"));
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(id("base:oak_log"), 1));
+        player.selected = 0;
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+        for _ in 0..20 {
+            app.update();
+        }
+        let proposed: Vec<_> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).collect();
+        assert!(proposed.is_empty(), "nothing proposed, the log not laid: {proposed:?}");
     }
 
     /// Food is eaten on a right click unless the click tends a creature, places the food,

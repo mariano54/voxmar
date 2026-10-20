@@ -585,8 +585,14 @@ impl ToolRegistry {
         tool.kind == Some(kind) && tool.tier >= rule.tier
     }
 
-    /// The first item, in registry order, that is a `kind` of at least `tier`: what to name
-    /// when a better tool is needed.
+    /// Every item that is a `kind` of at least `tier`, with its tier.
+    pub fn all_of(&self, kind: usize, tier: u8) -> impl Iterator<Item = (u8, BlockId)> + '_ {
+        self.tools.iter().enumerate().filter(move |(_, t)| t.kind == Some(kind) && t.tier >= tier).map(|(i, t)| (t.tier, BlockId(i as u16)))
+    }
+
+    /// The first item, in registry order, that is a `kind` of at least `tier` and of the
+    /// lowest such tier. What a refusal names is `Content::least_tool`, which also weighs
+    /// worth.
     pub fn first_of(&self, kind: usize, tier: u8) -> Option<BlockId> {
         let mut best: Option<(u8, BlockId)> = None;
         for (i, tool) in self.tools.iter().enumerate() {
@@ -794,9 +800,10 @@ mod tests {
     }
 
     /// A dead snag's trunk (`base:dead_log`) is never an item: it drops nothing of its own
-    /// and breaking it gives a stick instead, every time, and nothing else breaks to
-    /// sticks. It is weathered wood on every face, as its limbs and fallen trunks are made
-    /// of it too.
+    /// and breaking it gives a stick instead, every time, and nothing else always breaks to
+    /// sticks: natural leaves give one only sometimes (the hafts of a bare-handed player's
+    /// first tools), and nothing else does at all. It is weathered wood on every face, as its
+    /// limbs and fallen trunks are made of it too.
     #[test]
     fn dead_logs_break_to_sticks() {
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
@@ -807,13 +814,52 @@ mod tests {
         assert!(info.layers.iter().all(|&layer| layer == info.layers[0]), "a dead log looks the same on every face: {:?}", info.layers);
         let rule = content.tools.rule(dead).expect("a rule for dead logs");
         assert_eq!(rule.instead, Some((stick, 1.0)));
-        let others: Vec<&str> = content
+        let others: Vec<(&str, f32)> = content
             .blocks
             .ids()
-            .filter(|&b| b != dead && content.tools.rule(b).is_some_and(|r| r.instead.is_some_and(|(given, _)| given == stick)))
-            .map(|b| content.blocks.def(b).name.as_str())
+            .filter(|&b| b != dead)
+            .filter_map(|b| content.tools.rule(b).and_then(|r| r.instead).filter(|&(given, _)| given == stick).map(|(_, chance)| (content.blocks.def(b).name.as_str(), chance)))
             .collect();
-        assert!(others.is_empty(), "only dead logs break to sticks, not {others:?}");
+        let leaves = |name: &str| content.blocks.def(content.blocks.expect(name)).has_tag("leaves");
+        assert!(others.iter().any(|&(name, _)| leaves(name)), "natural leaves give sticks sometimes, for the first tools");
+        let wrong: Vec<_> = others.iter().filter(|&&(name, chance)| !leaves(name) || chance >= 1.0).collect();
+        assert!(wrong.is_empty(), "only dead logs always break to sticks, and only leaves sometimes, not {wrong:?}");
+    }
+
+    /// Bare hands break neither natural stone nor a standing log (Mariano, Oct 15: the first
+    /// tool must matter), and what they need is made from what bare hands gather: the least
+    /// tool each rule names has a recipe the hand's grid makes, every ingredient of which a
+    /// block no tool is asked for gives, as its drop or `instead`.
+    #[test]
+    fn the_first_tools_come_from_bare_hands() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let (blocks, tools) = (&content.blocks, &content.tools);
+        let by_hand = |item: BlockId| {
+            blocks.ids().filter(|&b| !blocks.def(b).item && blocks.info(b).hardness > 0.0).any(|b| {
+                let rule = tools.rule(b);
+                rule.is_none_or(|r| r.tool.is_none() && r.level <= 1) && (blocks.info(b).drops == item || rule.and_then(|r| r.instead).is_some_and(|(given, _)| given == item))
+            })
+        };
+        for name in ["base:stone", "base:oak_log"] {
+            let block = blocks.expect(name);
+            assert!(!tools.good_enough(None, block), "{name} breaks by bare hand");
+            let rule = tools.rule(block).expect("a rule");
+            let tool = content.least_tool(rule.tool.expect("asks for a tool"), rule.tier).expect("a tool that does");
+            // Named by property: no tool that would do is of a lower tier, or as low and cheaper.
+            let worth = |t: BlockId| crate::value::worth(&content, t);
+            let least = (tools.tool(Some(tool)).tier, worth(tool));
+            let cheaper: Vec<&str> = tools.all_of(rule.tool.unwrap(), rule.tier).filter(|&(tier, t)| (tier, worth(t)) < least).map(|(_, t)| blocks.def(t).name.as_str()).collect();
+            assert!(cheaper.is_empty(), "{name}'s refusal names the {}, but {cheaper:?} would do for less", blocks.def(tool).name);
+            let recipe = content.recipes.iter().find(|r| r.output == tool && !r.needs_table());
+            let recipe = recipe.unwrap_or_else(|| panic!("{} has no recipe the hand's grid makes", blocks.def(tool).name));
+            let unreachable: Vec<&str> = recipe.cells().into_iter().flatten().filter(|&i| !by_hand(i)).map(|i| blocks.def(i).name.as_str()).collect();
+            assert!(unreachable.is_empty(), "{}: bare hands gather no {unreachable:?}", blocks.def(tool).name);
+            assert!(tools.good_enough(Some(tool), block), "the {} breaks {name}", blocks.def(tool).name);
+        }
+        // Cobble, the hand's own building stone, mossy too where the world grew it.
+        let refused: Vec<&str> = blocks.tagged("cobbled").filter(|&b| !tools.good_enough(None, b)).map(|b| blocks.def(b).name.as_str()).collect();
+        assert!(refused.is_empty(), "cobble a bare hand cannot break: {refused:?}");
     }
 
     /// Each tier of each kind is felt (Oct 14 tier audit, docs/tools-and-crafting.md): on

@@ -18,7 +18,16 @@ against what a player has done, so they complete retroactively. The quest book s
 ## Content
 
 `base/quests.ron` (engine `quest.rs`): name, age, branch, title, why (the reason and the
-reward, shown first), tasks, after, rewards. Goals:
+reward, shown first), tasks, after, rewards. A book of its own can go in a
+`quests_<topic>.ron` beside it (`quests_nomad.ron`, `quests_farm.ron`), like `blocks_` and
+`recipes_`: a package's files are read in name (byte) order, so `quests.ron` comes first and
+the topics follow in byte order (uppercase before lowercase), and the quests are held in that
+order. A quest may come `after` one in any file. A quest name written twice, in one file or
+two, fails the load naming both files, across packages too: a mod cannot replace a quest by
+writing its name. A file no part of the game reads (a misspelt `quest.ron`) still loads, and
+the load notes it with the likeliest name meant (`zz_mod/quest.ron is read by nothing (meant
+quests.ron?)`); the names other crates read are `content::READ_ELSEWHERE`.
+Goals:
 
 | Goal | Reads |
 | --- | --- |
@@ -57,7 +66,7 @@ Quests done, quests claimed and the tallies are saved with the player.
 ## Claiming
 
 Finishing a quest pays nothing by itself. A done quest with rewards waits in the quest
-book: it glows gold on the web, its chapter shows a gold "!", the chat says so, and its
+book: its shape on the web is gold with a "!" in its corner, its chapter shows a gold "!", the chat says so, and its
 page has a Claim button (`ClientMessage::ClaimQuest`) beside the rewards, which list the
 experience and the items. The server then gives the items and the experience once. A quest
 that pays nothing is claimed as it finishes. If the pack cannot hold every item, nothing
@@ -384,8 +393,8 @@ that quest needs.
 | Milk | 5 min | The Milk Pail | A Full Pen |
 | A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
 | Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
-| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole; An Earth Clamp smoulders beside it |
-| An earth clamp smouldering | 1 min a load | An Earth Clamp | Firing clay by hand at the pit kiln, digging the next load, Red Metal |
+| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+| A charcoal clamp smouldering | 2 game hours (about 150 s of the quest-book bot's time, which runs about 75 s a game hour) | Charcoal | Brick by Brick: firing clay at the pit kiln to A Kiln Load's forty and crafting kiln bricks; A Second Clamp |
 | A drying rack drying | 10 min (5 by a fire) | Hung to Dry | Hunting for the next load; Trail Rations |
 | A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed, the compost's next part |
 
@@ -400,8 +409,8 @@ base/recipes_weapons.ron), checked at load:
 
 | Weapon | Age | Level | Max hit | Cooldown | Reach | Ammo | Recipe |
 |---|---|---|---|---|---|---|---|
-| Sling | Nomad | Ranged 1 | 2 | 0.53 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
-| Short Bow | Nomad (late) | Ranged 3 | 4 | 0.6 s | 20 | Arrows | Three sticks, three twine (Crafting 3) |
+| Sling | Nomad | Ranged 1 | 2 | 0.8 s | 12 | Any cobbled stone (`tag:cobbled`) | Twine, hide, twine (Crafting 1) |
+| Short Bow | Nomad (late) | Ranged 3 | 4 | 1.0 s | 20 | Arrows | Three sticks, three twine (Crafting 3) |
 | Arrow (x4) | Nomad (late) | - | - | - | - | - | Flint or cobblestone, stick, feather (Crafting 3) |
 
 Next to early melee: fists hit 1, a stone sword 3, copper swords 5 and a copper axe 6. The

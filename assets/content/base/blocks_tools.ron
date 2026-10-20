@@ -70,8 +70,17 @@
             name: "farmland", sound: Soil, textures: Sides(top: "farmland", bottom: "dirt", side: "dirt"),
             hardness: 0.6, drops: "dirt", color: (100, 70, 45), tags: ["soil", "fertile", "tilled"],
         ),
+        // Flint lying loose on the ground (decorations.ron's `loose_flint`), picked
+        // up by hand: with gravel's, the flint of a new player's first tools.
+        (name: "loose_flint", render: Plant, model: Rock, solid: false, sound: Stone, textures: All("loose_flint"), hardness: 0.0, drops: "flint", color: (60, 60, 66), tags: ["loose", "natural"]),
     ],
     families: [
+        // Flint: tier 1 as wood is, but made from bare hands: flint (gravel gives it one time in
+        // eight) hafted on sticks (leaves give them), in the hand's grid. Stone and trees need
+        // a pickaxe and an axe (tools.ron), so these come first; the cheapest of tier 1, they
+        // are the tools a refusal names (`Content::least_tool`).
+        (template: "drop", name: "flint_pickaxe", tags: ["uses:50", "mend:flint", "pickaxe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        (template: "drop", name: "flint_axe", tags: ["uses:50", "mend:flint", "axe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
         // Wooden: tier 1.
         (template: "drop", name: "wooden_pickaxe", tags: ["uses:50", "mend:#planks", "pickaxe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
         (template: "drop", name: "wooden_axe", tags: ["uses:50", "mend:#planks", "axe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
@@ -106,9 +115,9 @@
         // scares what fears fire, but burns while carried (`burns:N` seconds, counted like a
         // tool's wear) and leaves a charred stick (`burns_to:`). It `kindles`: lights a torch's
         // stub again (flame.rs).
-        (template: "drop", name: "firebrand", tags: ["fire", "kindles", "burns:90", "burns_to:charred_stick", "held_light:8"], all: (color: (240, 140, 40))),
+        (template: "drop", name: "firebrand", tags: ["fire", "firelighter", "kindles", "burns:90", "burns_to:charred_stick", "held_light:8"], all: (color: (240, 140, 40))),
         (template: "drop", name: "charred_stick", tags: ["charred", "fuel"], all: (color: (60, 46, 36))),
-        // Charcoal: a log burnt at a campfire (cooking.ron), fuel and torches.
+        // Charcoal: from a charcoal clamp (multiblocks.ron), fuel and torches.
         // Pouches: one slot for many herbs, or many seeds (right click one to empty it).
         (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb", "holds_each:1000"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
         (template: "drop", name: "coin_purse", tags: ["pouch", "holds:currency", "holds_each:1000"], all: (color: (140, 100, 60), action: Some("base:empty_pouch"))),
@@ -125,6 +134,8 @@
         (template: "drop", name: "flint", tags: ["flint", "sharp"], all: (color: (60, 60, 66))),
         (template: "drop", name: "bronze_ingot", tags: ["ingot", "metal:bronze"], all: (color: (200, 140, 70))),
         (template: "drop", name: "charcoal", tags: ["charcoal", "coal", "fuel"], all: (color: (40, 36, 34))),
+        // Part-burnt wood, from a clamp opened before its time: firewood's heat, not charcoal's.
+        (template: "drop", name: "charred_wood", tags: ["charred", "fuel"], all: (color: (70, 52, 40))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),
         (template: "drop", name: "iron_ingot", tags: ["ingot", "metal:iron"], all: (color: (200, 205, 215))),

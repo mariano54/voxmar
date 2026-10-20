@@ -35,6 +35,13 @@
     // Rain at least this heavy (0 to 1) puts out a light that rain douses (a torch) with
     // open sky over it; it is lit again from any flame.
     douse_rain: 0.2,
+    // A light that gutters (a torch, `gutters_to:`) does so in this last share of its burn:
+    // its flame low and sputtering, the sign it wants lighting again.
+    gutter_share: 0.1,
+    // A light that is `tended` (a torch, a candle, a lamp), set down inside a settlement no
+    // more than this many blocks above or below its height, is tended by its people and never
+    // burns out; one in a mine under it burns as anywhere.
+    tend_height: 12,
     // A home (the lit hearth, else the bed last slept in) reaches this many blocks out on each
     // side, up and down. Its furnishings are counted in that box and a player feels it
     // standing in it (effects.ron's AtHome and HomeHas).
@@ -44,8 +51,9 @@
     // What stands in a room rather than walls it in: the survey of a home's walls looks past a
     // block with one of these tags and no shelter tag to the wall behind it, so a chest or a
     // table by the wall never counts as a draughty face, and a barrel in a doorway is no door.
-    // A shelter tag always wins: cloth hung for a wall, a hay bale or a column is a wall.
-    home_furniture: ["machine", "station", "furnishing", "storage", "decor", "multiblock_core", "farm", "waters"],
+    // A railing on a gallery or a balcony walls nothing either. A shelter tag always wins:
+    // cloth hung for a wall, a hay bale or a column is a wall.
+    home_furniture: ["machine", "station", "furnishing", "storage", "decor", "multiblock_core", "farm", "waters", "railing"],
     // The most a home's meal effects together (a pantry, a larder, a kitchen garden, home
     // cooking, a seat at the table: effects.ron's meal_heal and meal_time, which multiply)
     // make of a meal's heal, and of how long its good lasts.

@@ -273,7 +273,7 @@ impl Factory {
         let Some(node) = self.nodes.get_mut(&pos) else { return Some(stack) };
         let Some(machine) = machines.get(node.block) else { return Some(stack) };
         let mut left = stack.count;
-        if machine.burns() && machines.burn_seconds(stack.item).is_some() {
+        if machine.burns() && machines.burns_in(machine, stack.item).is_some() {
             left = fill(std::slice::from_mut(&mut node.state.fuel), stack.item, stack.wear, left);
         }
         if left > 0 && machine.is_processor() && machines.takes(machine, stack.item) {
@@ -308,7 +308,7 @@ impl Factory {
     /// burns or works, or for a bin, anything it holds.
     pub fn accepts(&self, pos: IVec3, item: BlockId, machines: &MachineRegistry) -> bool {
         let Some(machine) = self.nodes.get(&pos).and_then(|node| machines.get(node.block)) else { return false };
-        (machine.burns() && machines.burn_seconds(item).is_some()) || (machine.is_processor() && machines.takes(machine, item)) || machine.bin_takes(item)
+        (machine.burns() && machines.burns_in(machine, item).is_some()) || (machine.is_processor() && machines.takes(machine, item)) || machine.bin_takes(item)
     }
 
     /// Takes everything out of the machine's outputs, or out of a bin; and what went in,

@@ -10,6 +10,9 @@ use voxmar_engine::content::{ContentFile, Laid};
 use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, SLOTS, max_stack};
 
 const FILE: &str = "survival.ron";
+/// The tag of a wall a draught comes through (a lattice window, an arrow slit): always a
+/// draughty one, and what a draughty home's whistle can listen for.
+pub(crate) const DRAUGHT: &str = "draught";
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SurvivalRules {
@@ -35,6 +38,11 @@ pub(crate) struct SurvivalRules {
     /// Rain at least this heavy (precipitation 0..1) puts out a light that `rain_douses`
     /// with open sky over it (a torch).
     pub douse_rain: f32,
+    /// A light that `gutters_to:` something does so in this last share of its burn (0..1).
+    pub gutter_share: f32,
+    /// A light that is `tended` (flame.rs) set down in a settlement, no more than this many
+    /// blocks above or below the settlement's height, is tended there and never burns out.
+    pub tend_height: i32,
     /// A home reaches this many blocks out on each side, this many up and this many down:
     /// the box its furnishings are counted in and a player must stand in to feel it.
     pub home_reach: i32,
@@ -74,6 +82,8 @@ struct SurvivalFile {
     water_chill: Option<f32>,
     roof_scan: Option<i32>,
     douse_rain: Option<f32>,
+    gutter_share: Option<f32>,
+    tend_height: Option<i32>,
     home_reach: Option<i32>,
     home_up: Option<i32>,
     home_down: Option<i32>,
@@ -97,7 +107,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; set.push(stringify!($field)); })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, douse_rain, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, douse_rain, gutter_share, tend_height, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
             laid.set(&file.package, FILE, "survival rules", set, notes);
         }
         macro_rules! set {
@@ -135,6 +145,8 @@ impl SurvivalRules {
             water_chill: set!(water_chill),
             roof_scan: set!(roof_scan),
             douse_rain: set!(douse_rain),
+            gutter_share: set!(gutter_share),
+            tend_height: set!(tend_height),
             home_reach: set!(home_reach),
             home_up: set!(home_up),
             home_down: set!(home_down),
@@ -156,6 +168,8 @@ impl SurvivalRules {
             (rules.water_chill.is_finite(), "water_chill must be a number"),
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
             (rules.douse_rain.is_finite() && rules.douse_rain > 0.0 && rules.douse_rain <= 1.0, "douse_rain must be above 0, up to 1"),
+            (rules.gutter_share.is_finite() && (0.0..1.0).contains(&rules.gutter_share), "gutter_share must be 0 or more, below 1"),
+            ((0..=64).contains(&rules.tend_height), "tend_height must be 0 to 64 blocks"),
             ((1..=16).contains(&rules.home_reach), "home_reach must be 1 to 16 blocks"),
             ((0..=16).contains(&rules.home_up) && (0..=16).contains(&rules.home_down), "home_up and home_down must be 0 to 16 blocks"),
             (!rules.home_furniture.iter().any(|tag| tag.starts_with("shelter:")), "home_furniture names a shelter tag: a wall's, not furniture's"),
@@ -195,9 +209,24 @@ impl SurvivalRules {
             })
             .map(|def| def.name.clone())
             .collect();
-        match unjudged.is_empty() {
+        if !unjudged.is_empty() {
+            return Err(format!("blocks: each solid `building` or `roof` block that is not furniture ({FILE}'s home_furniture) carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", ")));
+        }
+        // A misspelt shelter tag judges nothing; a draught comes only through a draughty wall.
+        let misjudged: Vec<String> = blocks
+            .ids()
+            .map(|id| blocks.def(id))
+            .filter_map(|def| {
+                let unknown = def.tags.iter().find(|tag| tag.starts_with("shelter:") && !Shelter::ALL.iter().any(|s| s.tag() == tag.as_str()));
+                match unknown {
+                    Some(tag) => Some(format!("{} (`{tag}` is no shelter)", def.name)),
+                    None => (def.has_tag(DRAUGHT) && !def.has_tag(Shelter::Draughty.tag())).then(|| format!("{} (`{DRAUGHT}` but not `shelter:draughty`)", def.name)),
+                }
+            })
+            .collect();
+        match misjudged.is_empty() {
             true => Ok(()),
-            false => Err(format!("blocks: each solid `building` or `roof` block that is not furniture ({FILE}'s home_furniture) carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", "))),
+            false => Err(format!("blocks: a shelter tag is `shelter:draughty`, `shelter:sound` or `shelter:fine`, and a wall a draught comes through (`{DRAUGHT}`) is draughty; these are not: {}", misjudged.join(", "))),
         }
     }
 

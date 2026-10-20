@@ -1,14 +1,13 @@
 //! Connection to the (local or remote) server: applies replicated state and sends the
 //! player's input and actions. Present while in game.
 
-use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_protocol::{
     ClientConnection, ClientMessage, PlayerId, PlayerInput, PlayerView, ServerMessage, TICKS_PER_SECOND,
 };
 use voxmar_engine::action::{ActionId, ActionTarget};
-use voxmar_engine::block::RenderKind;
+use voxmar_engine::block::{BlockId, RenderKind};
 use voxmar_server::ServerHandle;
 
 use crate::lang::Locale;
@@ -35,8 +34,15 @@ impl Plugin for NetPlugin {
             .init_resource::<Clock>()
             .add_systems(PreUpdate, receive.run_if(in_game.clone()))
             .add_systems(Update, advance_day.run_if(in_game.clone()))
-            .add_systems(PostUpdate, (send_input, sync_remote_players).run_if(in_game));
+            .add_systems(PostUpdate, send_input.run_if(in_game));
     }
+}
+
+/// An action the player proposed, and what it was done with, to be heard by.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Proposed {
+    pub action: ActionId,
+    pub with: Vec<BlockId>,
 }
 
 #[derive(Resource)]
@@ -48,7 +54,9 @@ pub struct Net {
     server: Option<ServerHandle>,
     input_timer: f32,
     /// Actions proposed since `sfx` last took them, to be heard as they are done.
-    proposed: std::sync::Mutex<Vec<ActionId>>,
+    proposed: std::sync::Mutex<Vec<Proposed>>,
+    /// Actions proposed since `fx` last took them, with what they aim at, to be seen.
+    shown: std::sync::Mutex<Vec<(ActionId, ActionTarget)>>,
     /// The integrated server's ticks as `receive` began: every message of those ticks had
     /// been sent, and was taken in (`taken_ticks`).
     taken: std::sync::atomic::AtomicU64,
@@ -61,7 +69,7 @@ impl Net {
         let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
         let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
-        Self { connection, server, input_timer: 0.0, proposed: Default::default(), taken: Default::default() }
+        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), taken: Default::default() }
     }
 
     /// The next message from the server, for tests that play without the app.
@@ -88,14 +96,27 @@ impl Net {
     }
 
     pub fn propose(&self, action: ActionId, target: ActionTarget) {
+        self.propose_with(action, target, Vec::new());
+    }
+
+    /// Proposes `action`, done with `with` (the items in the crafting grid, or the block
+    /// worked), which say how it sounds (`sounds.ron`'s `ways`).
+    pub fn propose_with(&self, action: ActionId, target: ActionTarget, with: Vec<BlockId>) {
         self.connection.send(ClientMessage::Propose { action, target });
-        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(action);
+        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, with });
+        self.shown.lock().unwrap_or_else(|e| e.into_inner()).push((action, target));
     }
 
     /// The actions proposed since the last call: the client proposes only what it has
     /// checked the server will allow, so each is heard as it is done (`sfx::play_actions`).
-    pub fn take_proposed(&self) -> Vec<ActionId> {
+    pub fn take_proposed(&self) -> Vec<Proposed> {
         std::mem::take(&mut *self.proposed.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// The actions proposed since the last call, with their targets, to be seen as they
+    /// are done (`fx`).
+    pub fn take_shown(&self) -> Vec<(ActionId, ActionTarget)> {
+        std::mem::take(&mut *self.shown.lock().unwrap_or_else(|e| e.into_inner()))
     }
 
     /// Proposes an action aimed into the world (mining, placing, throwing), telling the
@@ -103,8 +124,13 @@ impl Net {
     /// and the server judges reach and aim from the last it heard, which while sprinting or
     /// flying could be well behind.
     pub fn propose_from(&self, player: &LocalPlayer, action: ActionId, target: ActionTarget) {
+        self.propose_from_with(player, action, target, Vec::new());
+    }
+
+    /// [`Net::propose_from`], done with `with` (see [`Net::propose_with`]).
+    pub fn propose_from_with(&self, player: &LocalPlayer, action: ActionId, target: ActionTarget, with: Vec<BlockId>) {
         self.connection.send(ClientMessage::Input(input(player)));
-        self.propose(action, target);
+        self.propose_with(action, target, with);
     }
 
     pub fn cancel(&self) {
@@ -185,30 +211,67 @@ impl Clock {
     }
 }
 
+/// Other players as the server last told them (drawn by `figures`), and any shown with no
+/// server behind them (`puppet`).
 #[derive(Resource, Default)]
 pub struct RemotePlayers {
-    players: FxHashMap<PlayerId, (PlayerView, Option<Entity>)>,
+    players: FxHashMap<PlayerId, PlayerView>,
+    /// Shown as if told of (the gate's stand-in): the server's next list, which never has
+    /// them, leaves them be.
+    puppets: FxHashMap<PlayerId, PlayerView>,
 }
 
 impl RemotePlayers {
-    /// What another player is called, while they are here.
-    pub fn name(&self, id: PlayerId) -> Option<&str> {
-        self.players.get(&id).map(|(view, _)| view.name.as_str())
+    /// Every other player here.
+    pub fn views(&self) -> impl Iterator<Item = &PlayerView> {
+        self.players.values().chain(self.puppets.values())
     }
 
-    /// The player nearest along the look ray within `within` blocks of the eye, and how far.
-    pub fn looked_at(&self, eye: Vec3, look: Vec3, within: f32) -> Option<(PlayerId, f32)> {
+    /// The other players the server told of, in place of those it told of before.
+    fn told(&mut self, players: Vec<PlayerView>) {
+        self.players = players.into_iter().map(|view| (view.id, view)).collect();
+    }
+
+    /// Shows another player as if the server had told of them, or moves one shown so (the
+    /// gate's stand-in, as no second client plays it). They stay, standing as last shown,
+    /// until forgotten (`forget`), whatever the server tells of others meanwhile.
+    pub fn puppet(&mut self, view: PlayerView) {
+        self.puppets.insert(view.id, view);
+    }
+
+    /// Stops showing another player.
+    pub fn forget(&mut self, id: PlayerId) {
+        self.players.remove(&id);
+        self.puppets.remove(&id);
+    }
+
+    fn get(&self, id: PlayerId) -> Option<&PlayerView> {
+        self.puppets.get(&id).or_else(|| self.players.get(&id))
+    }
+
+    /// What another player is called, while they are here.
+    pub fn name(&self, id: PlayerId) -> Option<&str> {
+        self.get(id).map(|view| view.name.as_str())
+    }
+
+    /// The player nearest along the look ray within `within` blocks of the eye, and how far:
+    /// each where `drawn` says their body is shown (`Figures::drawn_at`), else where the
+    /// server says they are.
+    pub fn looked_at(&self, eye: Vec3, look: Vec3, within: f32, drawn: impl Fn(PlayerId) -> Option<Vec3>) -> Option<(PlayerId, f32)> {
         use voxmar_engine::physics::{Aabb, player};
-        self.players
-            .iter()
-            .filter_map(|(&id, (view, _))| Some((id, crate::creatures::ray_box(eye, look, &Aabb::standing(view.position, player::WIDTH, player::HEIGHT))?)))
+        self.views()
+            .filter_map(|view| {
+                let id = view.id;
+                let at = drawn(id).unwrap_or(view.position);
+                Some((id, crate::creatures::ray_box(eye, look, &Aabb::standing(at, player::WIDTH, player::HEIGHT))?))
+            })
             .filter(|&(_, distance)| distance <= within)
             .min_by(|a, b| a.1.total_cmp(&b.1))
     }
 
     /// Where another player stands, if they are in sight.
     pub fn position(&self, id: PlayerId) -> Option<Vec3> {
-        self.players.get(&id).map(|(view, _)| view.position)
+        self.get(id).map(|view| view.position)
     }
 }
 
@@ -216,7 +279,6 @@ impl RemotePlayers {
 /// the reason.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn receive(
-    mut commands: Commands,
     net: Res<Net>,
     mut world: ResMut<ClientWorld>,
     mut player: ResMut<LocalPlayer>,
@@ -228,7 +290,7 @@ pub(crate) fn receive(
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air, mut cues): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>, MessageWriter<SoundCue>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
-    mut broken: MessageWriter<BlockBroken>,
+    (mut broken, mut catches): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>),
     mut fighting: ResMut<crate::fight::Fighting>,
     (mut stations, mut wore): (ResMut<crate::hud::target::StationSeen>, MessageWriter<crate::breaking::ToolWore>),
 ) {
@@ -294,12 +356,22 @@ pub(crate) fn receive(
                     {
                         cues.write(cue.at(pos.as_vec3() + Vec3::splat(0.5)));
                     }
+                    // Thatch or wattle catching fire, nearby.
+                    if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
+                        catches.write(crate::sfx::Catches { at: pos.as_vec3() + Vec3::splat(0.5) });
+                    }
                     world.set_block(pos, block);
                 }
             }
             ServerMessage::Blocks { changes } => {
                 for (pos, block) in changes {
-                    if world.block(pos) != Some(block) {
+                    let old = world.block(pos);
+                    if old != Some(block) {
+                        // Thatch or wattle catching fire, nearby: the server's word, never a
+                        // client timer.
+                        if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
+                            catches.write(crate::sfx::Catches { at: pos.as_vec3() + Vec3::splat(0.5) });
+                        }
                         world.set_block(pos, block);
                     }
                 }
@@ -338,18 +410,7 @@ pub(crate) fn receive(
                 }
             }
             ServerMessage::Players { players } => {
-                let seen: Vec<PlayerId> = players.iter().map(|p| p.id).collect();
-                for view in players {
-                    let entry = remote.players.entry(view.id).or_insert((view.clone(), None));
-                    entry.0 = view;
-                }
-                remote.players.retain(|id, (_, entity)| {
-                    let keep = seen.contains(id);
-                    if !keep && let Some(entity) = entity {
-                        commands.entity(*entity).despawn();
-                    }
-                    keep
-                });
+                remote.told(players);
             }
             ServerMessage::Time { tick, day, day_speed } => {
                 *clock = Clock { day: day as f64, day_speed, told_at: time.elapsed_secs_f64() };
@@ -388,7 +449,13 @@ pub(crate) fn receive(
                 creatures.struck(creature, damage, blow, killed, time.elapsed_secs());
                 fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
-            ServerMessage::Hurt { creature, damage, defended } => fighting.hurt(creature, damage, defended, time.elapsed_secs_f64()),
+            ServerMessage::Hurt { creature, damage, defended } => {
+                let combat = &launch.content.combat;
+                let held = player.inventory.get(player.selected).map(|s| s.item);
+                let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
+                let spoil = combat.spoiled_by_hits(&weapon).then(|| (combat.timing(&weapon), combat.feel));
+                fighting.hurt(creature, damage, defended, time.elapsed_secs_f64(), spoil)
+            }
             ServerMessage::Ping { id } => {
                 net.pong(id);
                 fighting.pings += 1;
@@ -449,42 +516,6 @@ fn input(player: &LocalPlayer) -> PlayerInput {
     }
 }
 
-/// Other players are drawn as simple boxes, which cast no shadow. Their pipelines compile as
-/// the world loads (`render::warm`), not when the first other player comes into view.
-fn sync_remote_players(
-    mut commands: Commands,
-    mut remote: ResMut<RemotePlayers>,
-    mut transforms: Query<&mut Transform>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut look: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
-) {
-    let (mesh, material) = look
-        .get_or_insert_with(|| {
-            let size = voxmar_engine::physics::player::WIDTH;
-            let mesh = meshes.add(Cuboid::new(size, voxmar_engine::physics::player::HEIGHT, size));
-            let material = materials.add(StandardMaterial { base_color: Color::srgb(0.85, 0.35, 0.3), unlit: true, ..default() });
-            crate::render::warm::warm(&mut commands, mesh.clone(), material.clone(), false, DespawnOnExit(Screen::InGame));
-            (mesh, material)
-        })
-        .clone();
-    for (view, entity) in remote.players.values_mut() {
-        let transform = Transform::from_translation(view.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT / 2.0)
-            .with_rotation(Quat::from_rotation_y(view.yaw));
-        match entity {
-            Some(entity) => {
-                if let Ok(mut t) = transforms.get_mut(*entity) {
-                    *t = transform;
-                }
-            }
-            None => {
-                let body = (Mesh3d(mesh.clone()), MeshMaterial3d(material.clone()), transform, NotShadowCaster, DespawnOnExit(Screen::InGame));
-                *entity = Some(commands.spawn(body).id());
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,16 +536,38 @@ mod tests {
         assert_eq!(admin_token_for("::1", "[::1]:25665=six").as_deref(), Some("six"));
     }
 
+    /// A stand-in shown with no server behind it (the gate's) stays through the server's
+    /// lists of the others, which never name it, until it is forgotten.
+    #[test]
+    fn a_puppet_stays_through_the_servers_lists_until_forgotten() {
+        let mut players = RemotePlayers::default();
+        let view = |id, name: &str| PlayerView { id, name: name.to_owned(), position: Vec3::ZERO, yaw: 0.0, pitch: 0.0, held: None };
+        players.puppet(view(7, "Gate"));
+        players.told(vec![view(9, "Ada")]);
+        players.told(vec![view(9, "Ada")]);
+        let mut here: Vec<_> = players.views().map(|v| v.id).collect();
+        here.sort();
+        assert_eq!(here, vec![7, 9], "the stand-in and the player the server told of");
+        assert_eq!(players.name(7), Some("Gate"));
+        players.told(Vec::new());
+        assert_eq!(players.views().map(|v| v.id).collect::<Vec<_>>(), vec![7], "the server telling of no one leaves the stand-in");
+        players.forget(7);
+        assert_eq!(players.views().count(), 0);
+    }
+
     #[test]
     fn a_player_is_looked_at_within_range_and_aim() {
         let mut players = RemotePlayers::default();
-        let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0 };
-        players.players.insert(9, (view, None));
+        let view = PlayerView { id: 9, name: "Ada".to_owned(), position: Vec3::new(0.0, 0.0, -10.0), yaw: 0.0, pitch: 0.0, held: None };
+        players.players.insert(9, view);
         let eye = Vec3::new(0.0, 1.62, 0.0);
-        let (who, distance) = players.looked_at(eye, Vec3::NEG_Z, 24.0).unwrap();
+        let (who, distance) = players.looked_at(eye, Vec3::NEG_Z, 24.0, |_| None).unwrap();
         assert_eq!(who, 9);
         assert!((distance - 9.7).abs() < 1e-4, "met at their near face: {distance}");
-        assert_eq!(players.looked_at(eye, Vec3::NEG_Z, 8.0), None, "further than they are named from");
-        assert_eq!(players.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 24.0), None, "looking past them");
+        assert_eq!(players.looked_at(eye, Vec3::NEG_Z, 8.0, |_| None), None, "further than they are named from");
+        assert_eq!(players.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 24.0, |_| None), None, "looking past them");
+        let drawn = |_| Some(Vec3::new(2.0, 0.0, -10.0));
+        assert_eq!(players.looked_at(eye + Vec3::X * 2.0, Vec3::NEG_Z, 24.0, drawn).map(|(who, _)| who), Some(9), "looking at their body as drawn");
+        assert_eq!(players.looked_at(eye, Vec3::NEG_Z, 24.0, drawn), None, "looking where the server has them, not where they are drawn");
     }
 }

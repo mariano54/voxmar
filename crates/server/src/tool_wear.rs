@@ -4,7 +4,7 @@
 //! breaks (leaving nothing, or a head a pack names). The player hears it warn once it is nearly worn
 //! out, and hears and sees it break (`ServerMessage::ToolWore`). Creative play wears nothing.
 
-use voxmar_engine::inventory::ItemStack;
+use voxmar_engine::inventory::{CURSOR, ItemStack};
 use voxmar_engine::tool::{Worn, wear_down};
 use voxmar_protocol::{PlayerId, ServerMessage};
 
@@ -18,8 +18,8 @@ impl Server {
         self.wear_slot(agent, slot, uses);
     }
 
-    /// Wears what lies in `agent`'s `slot` by `uses`: the one that did the work, such as
-    /// the weapon a swing began with.
+    /// Wears what lies in `agent`'s `slot` (a pack slot, or the pointer, `CURSOR`) by
+    /// `uses`: the one that did the work, such as the weapon a swing began with.
     pub(crate) fn wear_slot(&mut self, agent: PlayerId, slot: usize, uses: u16) {
         let (tools, blocks, skills) = (self.content.tools.clone(), self.content.blocks.clone(), self.content.skills.clone());
         let Some(player) = self.players.get_mut(&agent) else { return };
@@ -44,10 +44,14 @@ impl Server {
         let rest = (stack.count > 1).then(|| ItemStack { count: stack.count - 1, ..stack });
         stack.count = 1;
         let worn = wear_down(&mut stack, uses, total, tools.wear().warn);
-        player.inventory.slots[slot] = match worn {
+        let now = match worn {
             Worn::Broke => tools.head(item).map(|head| ItemStack::new(head, 1)),
             _ => Some(stack),
         };
+        match slot {
+            CURSOR => player.inventory.cursor = now,
+            _ => player.inventory.slots[slot] = now,
+        }
         let mut left = Vec::new();
         for piece in rest.into_iter().flat_map(voxmar_engine::inventory::split_stack) {
             let over = player.inventory.add_stack(piece);
@@ -68,17 +72,21 @@ impl Server {
         }
     }
 
-    /// Uses breaking or tilling the block at `pos` takes from the tool it began with: `tool`
-    /// is the hotbar slot in hand then and what was in it. One switched to since is not
-    /// worn, and one since moved out of that slot is not found there.
-    pub(crate) fn wear_on_block(&mut self, agent: PlayerId, pos: voxmar_engine::glam::IVec3, tilling: bool, (slot, began): (usize, Option<voxmar_engine::block::BlockId>)) {
+    /// Uses breaking or tilling the block at `pos` takes from the tool it was done with:
+    /// `tool` is the hotbar slot in hand, what was in it and how worn (`Timed::tool`). One
+    /// switched to since is not worn. Moved out of that slot since, the wear goes to the
+    /// same copy wherever it is carried (a pack slot or the pointer, found by its wear), else
+    /// the first carrying that tool, so moving it never dodges the wear (several breaks
+    /// shown done early can be waiting, and each wears it); with none carried, nothing wears.
+    pub(crate) fn wear_on_block(&mut self, agent: PlayerId, pos: voxmar_engine::glam::IVec3, tilling: bool, (slot, began, worn): crate::actions::Tool) {
         let tools = &self.content.tools;
-        let there = self.players.get(&agent).and_then(|p| p.inventory.get(slot)).map(|s| s.item);
-        if there != began {
-            return;
-        }
+        let Some(item) = began else { return };
+        let Some(player) = self.players.get(&agent) else { return };
+        let carries = |spot: usize, wear: Option<u16>| player.inventory.get(spot).is_some_and(|s| s.item == item && wear.is_none_or(|w| s.wear == w));
+        let elsewhere = |wear: Option<u16>| (0..player.inventory.slots.len()).chain([CURSOR]).find(|&s| carries(s, wear));
+        let Some(slot) = carries(slot, None).then_some(slot).or_else(|| elsewhere(Some(worn))).or_else(|| elsewhere(None)) else { return };
         let uses = if tilling {
-            if began.is_some_and(|item| tools.uses(item) > 0) { tools.wear().till } else { 0 }
+            if tools.uses(item) > 0 { tools.wear().till } else { 0 }
         } else {
             let Some(block) = self.block(pos) else { return };
             tools.break_wear(began, block, self.content.blocks.info(block).hardness)
@@ -270,14 +278,15 @@ mod tests {
         assert_eq!(lying, [("base:iron_pickaxe".to_string(), 1, 4, Some(owner), grave)]);
     }
 
-    /// Mining wears the tool it began with, from its slot: not one switched to before the
-    /// block broke, and nothing if that tool has left its slot.
+    /// Mining wears the tool it was done with (`Timed::tool`), from its slot: not one
+    /// switched to before the block broke. Moved to another slot or the pointer it wears
+    /// there, the same copy before another; no longer carried, nothing wears.
     #[test]
-    fn mining_wears_the_tool_it_began_with() {
+    fn mining_wears_the_tool_it_was_done_with() {
         let (mut server, _client) = holding("base:iron_pickaxe", 0);
         let pick = server.content.blocks.expect("base:iron_pickaxe");
         let began = server.tool_in_hand(1);
-        assert_eq!(began, (0, Some(pick)));
+        assert_eq!(began, (0, Some(pick), 0));
         let player = server.players.get_mut(&1).unwrap();
         player.inventory.slots[1] = Some(ItemStack::new(pick, 1));
         player.selected = 1;
@@ -289,12 +298,33 @@ mod tests {
         }
         assert!(wear(&server, 0).is_some_and(|w| w > 0), "the one it began with: {:?}", wear(&server, 0));
         assert_eq!(wear(&server, 1), Some(0), "the one switched to");
-        let before = wear(&server, 0);
-        let moved = server.players.get_mut(&1).unwrap().inventory.slots[0].take();
-        server.players.get_mut(&1).unwrap().inventory.slots[7] = moved;
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[1] = None;
+        player.inventory.slots[7] = player.inventory.slots[0].take();
+        let before = wear(&server, 7);
+        for _ in 0..5 {
+            let stone = put(&mut server, "base:stone");
+            server.wear_on_block(1, stone, false, began);
+        }
+        assert!(wear(&server, 7) > before, "moved to slot 8, it wore there: {before:?} to {:?}", wear(&server, 7));
+        // On the pointer, the same copy is found by its wear, before a fresh one ahead of it.
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[2] = Some(ItemStack::new(pick, 1));
+        player.inventory.cursor = player.inventory.slots[7].take();
+        let cursor = |server: &Server| server.players[&1].inventory.cursor.map(|s| s.wear);
+        let before = cursor(&server);
+        for _ in 0..5 {
+            let stone = put(&mut server, "base:stone");
+            server.wear_on_block(1, stone, false, (0, Some(pick), cursor(&server).unwrap()));
+        }
+        assert!(cursor(&server) > before && wear(&server, 2) == Some(0), "on the pointer it wore, not the fresh one: {before:?} to {:?}, {:?}", cursor(&server), wear(&server, 2));
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[2] = None;
+        player.inventory.slots[7] = player.inventory.cursor.take();
+        let gone = server.players.get_mut(&1).unwrap().inventory.slots[7].take();
         let stone = put(&mut server, "base:stone");
         server.wear_on_block(1, stone, false, began);
-        assert_eq!((wear(&server, 7), wear(&server, 1)), (before, Some(0)), "moved out of its slot, nothing wears");
+        assert!(server.players[&1].inventory.slots.iter().all(Option::is_none), "no longer carried, nothing wears or comes back: {gone:?}");
     }
 
     /// `/wear` sets what is left of the tool in hand, or of one in a hotbar slot it names
@@ -434,6 +464,16 @@ mod tests {
         again.restore_machines(saved.clone());
         let bin: Vec<ItemStack> = again.factory.get(at).unwrap().1.bin.iter().flatten().copied().collect();
         assert_eq!(bin, [ItemStack { wear: 41, ..ItemStack::new(pick, 1) }, ItemStack::new(pick, 1)], "worn kept through a save");
+        // A worn stack of several (half-burnt torches) keeps its wear too.
+        let torch = blocks.expect("base:torch");
+        let mut torches = saved.clone();
+        torches[0].bin = vec![("base:torch".into(), 5), ("base:torch".into(), 2)];
+        torches[0].bin_wear = vec![(1, 600)];
+        let mut lit = crate::test_server();
+        lit.set_block(at, chest);
+        lit.restore_machines(torches);
+        let bin: Vec<ItemStack> = lit.factory.get(at).unwrap().1.bin.iter().flatten().copied().collect();
+        assert_eq!(bin, [ItemStack::new(torch, 5), ItemStack { wear: 600, ..ItemStack::new(torch, 2) }], "a worn stack of two kept worn");
         saved[0].bin = vec![("base:iron_pickaxe".into(), 3)];
         saved[0].bin_wear.clear();
         let mut old = crate::test_server();

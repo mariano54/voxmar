@@ -47,6 +47,7 @@
         // What cloth is made into, in its own dye.
         (pattern: [["{name}_cloth", "{name}_cloth"]], output: "{name}_rug", count: 3, skill: "core:crafting", level: 3, xp: 3.0),
         (pattern: [["{name}_cloth", "{name}_cloth"], ["stick", ""]], output: "{name}_curtain", count: 2, skill: "core:crafting", level: 3, xp: 3.0),
+        (pattern: [["stick", "stick"], ["{name}_cloth", "{name}_cloth"]], output: "{name}_wall_hanging", count: 1, skill: "core:crafting", level: 4, xp: 4.0),
         (pattern: [["{name}_cloth", "{name}_cloth"], ["feather", "feather"]], output: "{name}_cushion", skill: "core:crafting", level: 4, xp: 4.0),
         (pattern: [["{name}_cloth", "{name}_cloth"], ["{name}_cloth", "{name}_cloth"], ["stick", ""]], output: "{name}_banner", count: 2, skill: "core:crafting", level: 5, xp: 6.0),
         (pattern: [["stick"], ["{name}_cloth"], ["torch"]], output: "{name}_paper_lantern", skill: "core:crafting", level: 6, xp: 5.0),
@@ -80,8 +81,6 @@
         (pattern: [["twine", "twine"], ["stick", "stick"]], output: "snare", skill: "core:hunter", level: 1, xp: 4.0),
         // A compost heap (stations.ron): boards round three sides and the bottom.
         (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "compost_heap", skill: "core:construction", level: 5, xp: 12.0),
-        // An earth clamp (stations.ron): dirt heaped over a log.
-        (pattern: [["dirt", "dirt", "dirt"], ["dirt", "tag:log", "dirt"], ["dirt", "dirt", "dirt"]], output: "earth_clamp", skill: "core:construction", level: 3, xp: 10.0),
         // A cooking pot: fired clay about a clay pot (Nomad, Crafting 3).
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "clay_pot", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "cooking_pot", skill: "core:crafting", level: 3, xp: 14.0),
         // A well: a ring of cobbles about a pail, under a beam (Farm, Construction 8).

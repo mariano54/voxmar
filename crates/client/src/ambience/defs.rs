@@ -87,18 +87,28 @@ pub enum Fixed {
     Cover,
     /// 1 with the head under water.
     Underwater,
+    /// How indoors the player is, 0..1: a roof overhead and walls around, a door open or
+    /// not. Outdoor layers duck by it, and one-shots that do are muffled as much.
+    Shelter,
+    /// A roof close overhead that the sky falls on, 0..1, walls or not: rain drums on it.
+    Roof,
     /// How far the middle of the nearest settlement (its square or green) is, across the
     /// ground, in blocks; [`NO_SETTLEMENT`] with none near.
     Settlement,
     /// How much a roof overhead muffles the open rain, 0 (none overhead) to 1 (`roofs`).
     Sheltered,
+    /// How far outside the nearest settlement's bounds (the ground its buildings stand
+    /// on, with a margin) the player is, in blocks: 0 within; [`NO_SETTLEMENT`] with none.
+    SettlementEdge,
+    /// How many people live in the nearest settlement (0 with none): its size.
+    SettlementPeople,
 }
 
 /// The `settlement` axis with no settlement near.
 pub const NO_SETTLEMENT: f32 = 10_000.0;
 
 impl Fixed {
-    pub const ALL: [Fixed; 29] = [
+    pub const ALL: [Fixed; 33] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -126,8 +136,12 @@ impl Fixed {
         Fixed::Dust,
         Fixed::Cover,
         Fixed::Underwater,
+        Fixed::Shelter,
+        Fixed::Roof,
         Fixed::Settlement,
         Fixed::Sheltered,
+        Fixed::SettlementEdge,
+        Fixed::SettlementPeople,
     ];
 
     fn name(self) -> &'static str {
@@ -159,8 +173,12 @@ impl Fixed {
             Fixed::Dust => "dust",
             Fixed::Cover => "cover",
             Fixed::Underwater => "underwater",
+            Fixed::Shelter => "shelter",
+            Fixed::Roof => "roof",
             Fixed::Settlement => "settlement",
             Fixed::Sheltered => "sheltered",
+            Fixed::SettlementEdge => "settlement_edge",
+            Fixed::SettlementPeople => "settlement_people",
         }
     }
 }
@@ -183,6 +201,7 @@ impl Environment {
     pub fn new(axes: usize) -> Self {
         let mut values = vec![0.0; Fixed::ALL.len() + axes];
         values[Fixed::Settlement as usize] = NO_SETTLEMENT;
+        values[Fixed::SettlementEdge as usize] = NO_SETTLEMENT;
         Self { values, home: 1.0, ..Self::default() }
     }
 
@@ -311,6 +330,13 @@ pub struct Bed {
     pub fade: f32,
 }
 
+impl Bed {
+    /// An outdoor layer, heard muffled from indoors: one that ducks by `shelter`.
+    pub fn outdoor(&self) -> bool {
+        self.duck.iter().any(|(by, _)| *by == DuckBy::Axis(Fixed::Shelter as usize))
+    }
+}
+
 /// Where a one-shot sounds from.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Placement {
@@ -320,6 +346,19 @@ pub enum Placement {
     Around { distance: (f32, f32), height: (f32, f32) },
     /// At the player, from no direction.
     Listener,
+    /// At one of the nearest settlement's buildings near (`BUILDINGS_HEARD`) that answer to
+    /// a name of the set (`Ambience::buildings`): its door, or its middle. None near, none
+    /// heard.
+    Building(usize),
+}
+
+/// Buildings a one-shot sounds from (`Building` in ambience.ron): those answering to any
+/// of `names` (a kind, a house, a work: `voxmar_worldgen::SettlementBuilding::answers`),
+/// heard at the `door` or else from the middle.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BuildingSet {
+    pub names: Vec<String>,
+    pub door: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -338,6 +377,30 @@ pub struct OneShot {
     pub when: Conditions,
     pub duck: Vec<(DuckBy, f32)>,
 }
+
+/// How being indoors is told and heard (a file's `shelter`; a later package's replaces it).
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Shelter {
+    /// Blocks out from the eye a wall may be and still count.
+    pub walls: i32,
+    /// Blocks above the eye a roof may be for rain to be heard drumming on it.
+    pub roof: i32,
+    /// Hz an outdoor one-shot is muffled down to when fully indoors: a one-shot is outdoor
+    /// when it ducks by `shelter`, and muffled as far as it ducks.
+    pub muffle: f32,
+    /// How loud thunder is fully indoors, against out in the open.
+    pub thunder: f32,
+}
+
+impl Default for Shelter {
+    fn default() -> Self {
+        Self { walls: 6, roof: 8, muffle: OPEN_AIR_HZ, thunder: 1.0 }
+    }
+}
+
+/// A cutoff that leaves a sound as it is.
+pub const OPEN_AIR_HZ: f32 = 20_000.0;
 
 /// What rain sounds like on a roof (`roofs`).
 #[derive(Clone, Debug, Default)]
@@ -361,30 +424,43 @@ pub struct Roofs {
 
 impl Roofs {
     /// The `sheltered` axis under a roof block with `tags` that patters `patter`: the
-    /// muffle, more for its shelter tags, and more for what it is made of unless draughty.
+    /// muffle, and more for what it is made of unless draughty. Each block muffles the rain
+    /// once: by what it is made of when that patter muffles, else by its shelter tags (the
+    /// walls' tags are the shelter flood's, for the wind and the draught).
     pub fn sheltered(&self, has_tag: impl Fn(&str) -> bool, patter: Option<usize>) -> f32 {
-        let left = self.shelter.iter().filter(|(tag, _)| has_tag(tag)).fold(1.0 - self.muffle, |left, (_, more)| left * (1.0 - more));
         let draughty = self.draughty.iter().any(|tag| has_tag(tag));
-        let made = patter.filter(|_| !draughty).and_then(|p| self.patter_shelter.get(p)).copied().unwrap_or(0.0);
-        (1.0 - left * (1.0 - made)).clamp(0.0, 1.0)
+        let made = patter.filter(|_| !draughty).and_then(|p| self.patter_shelter.get(p)).copied().filter(|&more| more > 0.0);
+        let left = match made {
+            Some(more) => (1.0 - self.muffle) * (1.0 - more),
+            None => self.shelter.iter().filter(|(tag, _)| has_tag(tag)).fold(1.0 - self.muffle, |left, (_, more)| left * (1.0 - more)),
+        };
+        (1.0 - left).clamp(0.0, 1.0)
     }
 }
 
 /// Every package's ambience.
 #[derive(Clone, Debug, Default)]
 pub struct Ambience {
+    pub shelter: Shelter,
     pub groups: Vec<Group>,
     /// Which blocks each group counts: tags and materials, matched against the registry,
     /// and whether only falling fluid of them (a waterfall's curtain).
-    selectors: Vec<(Vec<String>, Vec<Material>, bool)>,
+    selectors: Vec<(Vec<String>, Vec<Material>, bool, Option<voxmar_engine::effect::Shelter>)>,
     pub beds: Vec<Bed>,
     pub sounds: Vec<OneShot>,
     pub roofs: Roofs,
+    /// Each draughty shelter tag and the beds its walls whistle with (`draughts`), each
+    /// bed playing on a group that counts that tag.
+    pub draughts: Vec<(String, Vec<usize>)>,
+    /// The sets of buildings one-shots sound from, each once.
+    pub buildings: Vec<BuildingSet>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileDef {
+    #[serde(default)]
+    shelter: Option<Shelter>,
     #[serde(default)]
     groups: Vec<GroupDef>,
     #[serde(default)]
@@ -393,6 +469,8 @@ struct FileDef {
     sounds: Vec<SoundDef>,
     #[serde(default)]
     roofs: Option<RoofsDef>,
+    #[serde(default)]
+    draughts: BTreeMap<String, Vec<String>>,
 }
 
 /// `roofs`: a later package's height and muffle replace an earlier one's; its shelter and
@@ -432,6 +510,10 @@ struct GroupDef {
     /// A structure's core counts only while lit.
     #[serde(default)]
     lit: bool,
+    /// Walls of this shelter, as a home's room is judged (`Shelter::of_wall`: by the
+    /// block's tag, a solid untagged block draughty, furniture none), and never the floor.
+    #[serde(default)]
+    shelter: Option<voxmar_engine::effect::Shelter>,
 }
 
 #[derive(Deserialize)]
@@ -466,6 +548,11 @@ enum PlacementDef {
     Block(String),
     Around { distance: (f32, f32), height: (f32, f32) },
     Listener,
+    Building {
+        buildings: Vec<String>,
+        #[serde(default)]
+        door: bool,
+    },
 }
 
 #[derive(Deserialize)]
@@ -511,14 +598,26 @@ impl Ambience {
             parsed.push((file.package.as_str(), def));
         }
         let mut ambience = Ambience::default();
+        for (package, def) in &parsed {
+            if let Some(shelter) = def.shelter {
+                let sane = shelter.walls >= 1 && shelter.roof >= 1 && (20.0..=OPEN_AIR_HZ).contains(&shelter.muffle) && (0.0..=1.0).contains(&shelter.thunder);
+                if !sane {
+                    return Err(format!("{package}/{FILE}: shelter wants walls and roof of a block or more, muffle 20..20000 Hz, thunder 0..1"));
+                }
+                ambience.shelter = shelter;
+            }
+        }
         // Groups first, so every file's conditions may name any group.
         for (package, def) in &mut parsed {
             for group in def.groups.drain(..) {
                 if ambience.groups.iter().any(|g| g.name == group.name) || Fixed::ALL.iter().any(|a| a.name() == group.name) {
                     return Err(format!("{package}/{FILE}: group {} is defined twice", group.name));
                 }
+                if group.shelter.is_some() && (!group.tags.is_empty() || !group.materials.is_empty() || group.falling || group.lit || group.smouldering) {
+                    return Err(format!("{package}/{FILE}: group {} selects walls by shelter, and nothing else", group.name));
+                }
                 ambience.groups.push(Group { name: group.name, range: group.range, lit: group.lit, smouldering: group.smouldering });
-                ambience.selectors.push((group.tags, group.materials, group.falling));
+                ambience.selectors.push((group.tags, group.materials, group.falling, group.shelter));
             }
         }
         // Roofs next, as each patter is an axis.
@@ -556,6 +655,7 @@ impl Ambience {
         ambience.roofs.patter_shelter = patters.iter().map(|p| patter_shelter.get(p).copied().unwrap_or(0.0)).collect();
         ambience.roofs.patters = patters;
         ambience.roofs.shelter = shelter.into_iter().collect();
+        let draughts: Vec<(String, BTreeMap<String, Vec<String>>)> = parsed.iter_mut().map(|(package, def)| (package.to_string(), std::mem::take(&mut def.draughts))).collect();
         // Beds next, so sounds and beds can be ducked by any bed.
         let bed_names: Vec<String> =
             parsed.iter().flat_map(|(package, def)| def.beds.iter().map(move |b| format!("{package}:{}", b.name))).collect();
@@ -589,6 +689,16 @@ impl Ambience {
                     ),
                     PlacementDef::Around { distance, height } => Placement::Around { distance, height },
                     PlacementDef::Listener => Placement::Listener,
+                    PlacementDef::Building { buildings, door } => {
+                        if buildings.is_empty() {
+                            return Err(format!("{}: sounds from no building", context(&sound.name)));
+                        }
+                        let set = BuildingSet { names: buildings, door };
+                        Placement::Building(ambience.buildings.iter().position(|s| *s == set).unwrap_or_else(|| {
+                            ambience.buildings.push(set);
+                            ambience.buildings.len() - 1
+                        }))
+                    }
                 };
                 let when =
                     ambience.conditions(sound.when, sound.biome, sound.not_biome).map_err(|e| format!("{}: {e}", context(&sound.name)))?;
@@ -607,7 +717,44 @@ impl Ambience {
                 });
             }
         }
+        // Draughts last, naming beds: a later package's entry for a tag replaces an earlier
+        // one's. Each bed must play on a group that counts the tag, so more of those walls
+        // near is louder and none is silence.
+        let mut resolved: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (package, entries) in draughts {
+            for (tag, names) in entries {
+                let mut beds = Vec::new();
+                for name in names {
+                    let local = format!("{package}:{name}");
+                    let bed = bed_names.iter().position(|b| *b == name || *b == local).ok_or_else(|| format!("{package}/{FILE}: draughts: {tag} whistles with {name}, which is no bed"))?;
+                    let selects = |g: usize| ambience.selectors[g].0.contains(&tag) || ambience.selectors[g].3.is_some_and(|s| s.tag() == tag);
+                    let counts = (0..ambience.groups.len()).any(|g| selects(g) && ambience.beds[bed].when.uses_axis(Fixed::ALL.len() + g));
+                    if !counts {
+                        return Err(format!("{package}/{FILE}: draughts: {name} plays on no group counting {tag}, so it would not grow with the draughty walls near"));
+                    }
+                    beds.push(bed);
+                }
+                resolved.insert(tag, beds);
+            }
+        }
+        ambience.draughts = resolved.into_iter().collect();
         Ok(ambience)
+    }
+
+    /// Fails, for the launch, on a block's `shelter:` tag that neither keeps the rain's
+    /// noise out (`roofs.shelter`) nor whistles (`draughts`): every grade of shelter a
+    /// block can have says how it sounds.
+    pub fn check_shelter_tags(&self, registry: &BlockRegistry) -> Result<(), String> {
+        for id in 0..registry.len() {
+            let def = registry.def(voxmar_engine::block::BlockId(id as u16));
+            for tag in def.tags.iter().filter(|t| t.starts_with("shelter:")) {
+                let heard = self.roofs.shelter.iter().any(|(t, _)| t == tag) || self.draughts.iter().any(|(t, _)| t == tag);
+                if !heard {
+                    return Err(format!("{FILE}: {} is {tag}, which neither roofs.shelter muffles by nor draughts whistles with", def.name));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// The axis called `name`: a fixed one, a group or a roof patter.
@@ -683,8 +830,16 @@ impl Ambience {
             .collect()
     }
 
+    /// Each block's wall group, by block id, for the enclosure scan: the first group
+    /// selecting by `shelter` whose shelter the block has as a wall (`walls`, by block id:
+    /// as the server judges a home's room, `voxmar_server::wall_shelters`). Apart from its
+    /// own group, so earth is both the ground a meadow sounds from and a draughty wall.
+    pub fn wall_groups(&self, walls: &[Option<voxmar_engine::effect::Shelter>]) -> Vec<Option<u8>> {
+        walls.iter().map(|&wall| self.selectors.iter().position(|selector| selector.3.is_some() && selector.3 == wall).map(|g| g as u8)).collect()
+    }
+
     /// Each block's group, by block id, for the enclosure scan: the first group that
-    /// selects it by tag or material.
+    /// selects it by tag or material (a group selecting by shelter is a wall group).
     pub fn block_groups(&self, registry: &BlockRegistry) -> Vec<Option<u8>> {
         (0..registry.len())
             .map(|id| {
@@ -692,13 +847,38 @@ impl Ambience {
                 let (def, info) = (registry.def(id), registry.info(id));
                 self.selectors
                     .iter()
-                    .position(|(tags, materials, falling)| {
+                    .position(|(tags, materials, falling, shelter)| {
                         let pours = info.fluid.is_some_and(|f| f.falling);
-                        (tags.iter().any(|t| def.has_tag(t)) || materials.contains(&info.sound)) && (!falling || pours)
+                        shelter.is_none() && (tags.iter().any(|t| def.has_tag(t)) || materials.contains(&info.sound)) && (!falling || pours)
                     })
                     .map(|g| g as u8)
             })
             .collect()
+    }
+
+    /// Whether every recorded bed's files are there under `assets`, so a mistyped path
+    /// fails at launch rather than leaving the bed silent.
+    pub fn check_recordings(&self, assets: &std::path::Path) -> Result<(), String> {
+        for bed in &self.beds {
+            if let BedSound::Recorded(paths) = &bed.sound
+                && let Some(missing) = paths.iter().find(|path| !assets.join(path).is_file())
+            {
+                return Err(format!("{FILE}: bed `{}` is recorded in `{missing}`, which is not there", bed.name));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether every building a one-shot sounds from is one settlements have (`known`:
+    /// `SettlementsDef::building_names`), so a mistyped name is not a sound never heard.
+    pub fn check_buildings(&self, known: &std::collections::BTreeSet<String>) -> Result<(), String> {
+        for sound in &self.sounds {
+            let Placement::Building(set) = sound.at else { continue };
+            if let Some(name) = self.buildings[set].names.iter().find(|name| !known.contains(*name)) {
+                return Err(format!("{FILE}: {} sounds from building {name}, which no settlement has", sound.name));
+            }
+        }
+        Ok(())
     }
 
     /// The environment for a group's weighted count from the scan: 0..1.
@@ -776,6 +956,38 @@ mod tests {
         assert!(error(r#"(beds: [(name: "x", sound: Warbler, volume: 1)])"#).contains("not a bed"));
         assert!(error(r#"(sounds: [(name: "x", sound: Owl, volume: 1, at: Block("trees"), per_minute: 1)])"#).contains("no group trees"));
         assert!(error(r#"(beds: [(name: "x", sound: Wind, volume: 1, duck: {"thunder": 1})])"#).contains("thunder"));
+        assert!(error(r#"(shelter: (muffle: 5))"#).contains("shelter"));
+        assert!(error(r#"(shelter: (walls: 0))"#).contains("shelter"));
+        assert!(error(r#"(shelter: (thunder: 1.5))"#).contains("shelter"));
+    }
+
+    /// A one-shot can sound from a settlement's buildings by name, at their doors or from
+    /// their middles; sets asked for twice are one, a set of no names is a mistake, and the
+    /// names must be buildings settlements have.
+    #[test]
+    fn building_sounds_resolve_and_are_checked() {
+        let ambience = Ambience::load(&file(
+            r#"(sounds: [
+                (name: "anvil", sound: Hammer, volume: 0.3, at: Building(buildings: ["smithy"]), per_minute: 2, cooldown: 3),
+                (name: "door", sound: Door, volume: 0.3, at: Building(buildings: ["house"], door: true), per_minute: 2, cooldown: 3),
+                (name: "again", sound: Hammer, volume: 0.3, at: Building(buildings: ["smithy"]), per_minute: 2, cooldown: 3),
+            ])"#,
+        ))
+        .unwrap();
+        assert_eq!(ambience.buildings, [BuildingSet { names: vec!["smithy".into()], door: false }, BuildingSet { names: vec!["house".into()], door: true }]);
+        assert_eq!(ambience.sounds.iter().map(|s| s.at).collect::<Vec<_>>(), [Placement::Building(0), Placement::Building(1), Placement::Building(0)]);
+        let known: std::collections::BTreeSet<String> = ["smithy", "house"].map(String::from).into();
+        assert_eq!(ambience.check_buildings(&known), Ok(()));
+        let unknown = ambience.check_buildings(&["house".to_owned()].into());
+        assert!(unknown.as_ref().is_err_and(|e| e.contains("smithy")), "{unknown:?}");
+        let none = Ambience::load(&file(r#"(sounds: [(name: "x", sound: Hammer, volume: 0.3, at: Building(buildings: []), per_minute: 2, cooldown: 3)])"#));
+        assert!(none.as_ref().is_err_and(|e| e.contains("no building")), "{:?}", none.map(|_| ()));
+        // The shipped sounds name buildings the shipped settlements have.
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let world = voxmar_worldgen::WorldContent::load(&content).unwrap();
+        let shipped = Ambience::load(&content.files).unwrap();
+        assert!(!shipped.buildings.is_empty());
+        assert_eq!(shipped.check_buildings(&world.settlements.building_names()), Ok(()));
     }
 
     /// Roof patters are axes beds play on; a later package's entries replace an earlier
@@ -817,5 +1029,44 @@ mod tests {
         assert!(error(&format!(r#"(roofs: (patter: {{"stoen": "dull", {quiet}}}))"#)).contains("stoen"));
         assert!(error(&format!(r#"(roofs: (patter: {{{quiet}"sand": "hiss"}}))"#)).contains("hiss"), "a patter no bed plays on");
         assert!(Ambience::load(&files(r#"(roofs: (patter: {"sand": "rain"}))"#)).unwrap_err().contains("already an axis"));
+    }
+
+    /// A draughty tag names beds playing on a group that counts it, and every `shelter:` tag
+    /// a block has must muffle the rain or whistle: the launch fails on one that does
+    /// neither.
+    #[test]
+    fn draughts_are_checked() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let load = |draughts: &str| {
+            Ambience::load(&file(&format!(
+                r#"(
+                    groups: [(name: "draughty", tags: ["shelter:draughty"], range: (1, 10)), (name: "wood", tags: ["log"], range: (1, 10))],
+                    beds: [(name: "whistle", sound: Draught, volume: 0.2, when: {{"draughty": (min: 1)}}), (name: "creak", sound: Draught, volume: 0.2, when: {{"wood": (min: 1)}})],
+                    roofs: (shelter: {{"shelter:sound": 0.3, "shelter:fine": 0.5}}),
+                    draughts: {draughts},
+                )"#
+            )))
+        };
+        let fine = load(r#"{"shelter:draughty": ["whistle"]}"#).unwrap();
+        assert_eq!(fine.draughts, [("shelter:draughty".to_owned(), vec![0])]);
+        fine.check_shelter_tags(&content.blocks).unwrap();
+        assert!(load(r#"{"shelter:draughty": ["howl"]}"#).unwrap_err().contains("howl, which is no bed"));
+        assert!(load(r#"{"shelter:draughty": ["creak"]}"#).unwrap_err().contains("no group counting shelter:draughty"));
+        // A group may count walls by their shelter, as the home judges them, and by nothing
+        // else beside.
+        let walls = |extra: &str| {
+            Ambience::load(&file(&format!(
+                r#"(groups: [(name: "walls", shelter: Draughty, range: (1, 10){extra})], beds: [(name: "whistle", sound: Draught, volume: 0.2, when: {{"walls": (min: 1)}})], draughts: {{"shelter:draughty": ["whistle"]}})"#
+            )))
+        };
+        let by_shelter = walls("").unwrap();
+        let wall_groups = by_shelter.wall_groups(&voxmar_server::wall_shelters(&content));
+        let of = |name: &str| wall_groups[content.blocks.id(name).unwrap().0 as usize];
+        assert_eq!((of("base:wattle_panel"), of("base:dirt"), of("base:daub"), of("core:air")), (Some(0), Some(0), None, None), "wattle and bare earth are draughty walls; daub and air are not");
+        assert!(by_shelter.block_groups(&content.blocks).iter().all(Option::is_none), "a wall group is apart from the blocks' own groups");
+        assert!(walls(r#", tags: ["log"]"#).unwrap_err().contains("by shelter, and nothing else"));
+        // Wattle is draughty: with no whistle for it, the launch fails naming it.
+        let error = load("{}").unwrap().check_shelter_tags(&content.blocks).unwrap_err();
+        assert!(error.contains("shelter:draughty"), "{error}");
     }
 }

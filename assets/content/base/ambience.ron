@@ -18,9 +18,14 @@
 //   its family sound: stone, wood, soil, ...) names a `patter`, or None for silence; every
 //   roof material must have an entry, or the game does not start. Each patter is an axis,
 //   the rain falling while under a roof of it, for beds to play on. Under any roof the
-//   `sheltered` axis is `muffle`, and a roof block with a `shelter` tag, or of a patter in
-//   `patter_shelter`, muffles that much more of what is left; the open rain ducks under it, and so do the wind, storms, fields
+//   `sheltered` axis is `muffle`, and a roof block of a patter in `patter_shelter` muffles
+//   that much more of what is left, else one with a `shelter` tag does (each block muffles
+//   the rain once); the open rain ducks under it, and so do the wind, storms, fields
 //   and shore outside, so a home is a quiet place to be.
+// draughts: each draughty shelter tag names the beds its walls whistle with when the wind
+//   finds their gaps. Each bed must play on a group counting that tag, so the more of
+//   those walls near the louder, and none (every cell daubed) is silence. Every `shelter:`
+//   tag a block has must be in `roofs.shelter` or here, or the game does not start.
 // sounds: one-shots, played `per_minute` times a minute while their conditions fully hold,
 //   then not again for `cooldown` seconds. `at` is Block(group) (a block the scan found),
 //   Around(distance, height) or Listener. `reach` is the distance (blocks) at which they
@@ -34,16 +39,43 @@
 // (below the ground surface here), rain (heard falling, less under a roof), raining
 // (falling at all), wetness (of the ground), snow, storm (0..1), wind (blocks/s, gusts
 // included), gusts (how gusty, 0..1), hail, sleet, dust (0..1, as heard here), cover,
-// underwater, settlement (blocks to the middle of the nearest settlement, 10000 with none
-// within 192), sheltered (how much a roof overhead muffles the open rain), the groups
-// below, and the roof patters.
+// underwater, shelter (0 outdoors .. 1 indoors: a roof overhead and walls around, a door
+// open or not; caves too, not trees), roof (a roof close overhead the sky falls on, walls
+// or not), settlement (blocks to the middle of the nearest settlement, 10000 with none
+// within 192), settlement_edge (blocks outside the nearest settlement's bounds, the ground
+// its buildings stand on and six blocks round, 0 within, 10000 with none), settlement_people
+// (how many live there: its size), sheltered (how much a roof overhead muffles the open
+// rain), the groups below, and the roof patters.
+//
+// shelter: how indoors is told and heard. `walls`: blocks from the eye a wall may be and
+//   count; `roof`: blocks above it a roof may be for the `roof` axis; `muffle`: Hz an outdoor
+//   one-shot is muffled down to fully indoors (a layer is outdoor when it ducks by
+//   `shelter`, and one-shots are muffled as far as they duck); `thunder`: how loud thunder
+//   is fully indoors, against out in the open. A layer ducks by both: `sheltered` for the
+//   roof over it (by what the roof is made of), `shelter` for the walls round it as well.
 (
+    // Indoors is cozy: the weather and the wild outside fall to a murmur through the walls,
+    // the rain drums on the roof, and the hearth crackles clear (fire layers never duck by
+    // shelter).
+    shelter: (walls: 6, roof: 8, muffle: 700, thunder: 0.5),
     groups: [
+        // Walls that let the wind through, as the home judges a room's walls (`shelter`:
+        // a `shelter:draughty` block such as wattle or hide, or earth, gravel, sand and any
+        // other solid block with no shelter tag, until daub coats it; never the floor, nor
+        // furniture). Counted beside a block's own group, never instead. A few draughty cells
+        // within five blocks begin to whistle; a room walled in them whistles fully.
+        (name: "draughty", shelter: Draughty, range: (10, 160)),
         // Thatch or wattle smouldering by a flame, about to catch (fire.ron): heard only while
         // it smoulders (`smouldering`), one within a few blocks fully.
         (name: "smoulder", tags: ["thatch", "wattle"], range: (1, 4), smouldering: true),
+        // Thatch or wattle burning (fire.ron's `burning` block): each burning cell near counts,
+        // so the crackle is fullest while the fire runs through a roof and thins as cell after
+        // cell burns out to ash. Four within five blocks fully.
+        (name: "blaze", tags: ["blaze"], range: (0, 40)),
         (name: "leaves", tags: ["leaves"], range: (20, 300)),
         (name: "wood", tags: ["log"], range: (5, 60)),
+        // Boards: a timber floor, walls and roof (`planks`), as a home is built of them.
+        (name: "timber", tags: ["planks"], range: (20, 200)),
         // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a
         // kiln is stone to the step. One within five blocks is a fire fully heard; by ten
         // blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth or a
@@ -55,6 +87,8 @@
         (name: "pot", tags: ["simmering"], range: (2, 10)),
         (name: "falls", materials: [Water], falling: true, range: (6, 90)),
         (name: "water", materials: [Water], range: (20, 300)),
+        // Bees at a skep or a wild nest (`bees`): one close by is heard fully.
+        (name: "hive", tags: ["bees"], range: (1, 6)),
         // Not heard: the air's pollen keeps near flowers (client/src/weather/atmosphere.rs).
         // Before grass, as a block counts for the first group that selects it.
         (name: "flowers", tags: ["flower"], range: (4, 60)),
@@ -66,7 +100,8 @@
     roofs: (
         height: 12,
         muffle: 0.45,
-        // A sound or fine roof keeps out more of the rain's noise than a draughty one.
+        // A sound or fine roof keeps out more of the rain's noise than a draughty one, when
+        // what it is made of does not already say (`patter_shelter`).
         shelter: {"shelter:sound": 0.3, "shelter:fine": 0.5},
         // And what the roof is made of: thatch and turf hush the rain, shingles and boards
         // keep out a fair share, stone and brick most; glass little. Not a roof with a
@@ -86,20 +121,34 @@
             "snow": None, "water": None, "leaves": None,
         },
     ),
+    draughts: {"shelter:draughty": ["draught", "draught_rain"]},
     beds: [
+        // A draughty home at night: under a roof (`sheltered`), by walls that let the wind
+        // through, a thin whistle in the gusts, louder the more such walls are near; on a
+        // wet night with little wind, a fainter one. Daubing the wattle stops it.
+        (
+            name: "draught", sound: Draught, volume: 0.22, fade: 4,
+            when: {"draughty": (min: 1, fade: 0.95), "sheltered": (min: 0.35, fade: 0.2), "wind": (min: 7, fade: 5), "sun": (max: 0.05, fade: 0.15)},
+        ),
+        (
+            name: "draught_rain", sound: Draught, volume: 0.12, fade: 4,
+            when: {"draughty": (min: 1, fade: 0.95), "sheltered": (min: 0.35, fade: 0.2), "raining": (min: 0.3, fade: 0.2), "sun": (max: 0.05, fade: 0.15)},
+            duck: {"draught": 1},
+        ),
         // Rain, recorded (CC0; see THIRD_PARTY_NOTICES.md) and layered the AmbientSounds
         // way. Out in the open, a patter on leaves and ground that grows with the rain, then
-        // gives way to the roar of a downpour; under a roof, the drumming on it; under trees
-        // while they are wet, drops falling from the leaves.
+        // gives way to the roar of a downpour; under a roof close overhead, indoors or on a
+        // porch, the drumming on it; under trees while they are wet, drops falling from the
+        // leaves.
         (
             name: "rain", recording: ["sounds/rain_light_1.mp3", "sounds/rain_light_2.mp3", "sounds/rain_light_3.mp3"], volume: 0.5, fade: 3,
             when: {"rain": (min: 0.45, max: 0.75, fade: 0.42)},
-            duck: {"hail": 0.7, "sleet": 0.4, "sheltered": 1},
+            duck: {"hail": 0.7, "sleet": 0.4, "sheltered": 1, "shelter": 0.75},
         ),
         (
             name: "downpour", recording: ["sounds/rain_heavy_1.mp3", "sounds/rain_heavy_2.mp3", "sounds/rain_heavy_3.mp3"], volume: 0.75, fade: 3,
             when: {"rain": (min: 0.85, fade: 0.4)},
-            duck: {"hail": 0.7, "sheltered": 1},
+            duck: {"hail": 0.7, "sheltered": 1, "shelter": 0.75},
         ),
         // Rain on the roof overhead, by what it is made of (`roofs`), heard near the surface
         // (not through the rock over a cave).
@@ -122,53 +171,53 @@
         (
             name: "dripping_trees", recording: ["sounds/drips_1.mp3", "sounds/drips_2.mp3", "sounds/drips_3.mp3"], volume: 0.35, fade: 8,
             when: {"wetness": (min: 0.45, fade: 0.3), "leaves": (min: 0.35, fade: 0.3), "air": (min: 0.05, fade: 0.1)},
-            duck: {"downpour": 0.8},
+            duck: {"shelter": 0.8, "downpour": 0.8},
         ),
         // A soft breeze anywhere outdoors, stronger with the wind.
         (
             name: "breeze", sound: Wind, volume: 0.2,
             when: {"sky": (min: 0.4, fade: 0.4), "air": (min: 0.3, fade: 0.3), "wind": (min: 8, fade: 12)},
-            duck: {"sheltered": 1, "rain": 0.5, "high_wind": 0.7},
+            duck: {"sheltered": 1, "rain": 0.5, "high_wind": 0.7, "shelter": 0.85},
         ),
         // Wind on peaks and ridges, and in storms.
         (
             name: "high_wind", sound: Gale, volume: 0.4, fade: 6,
             when: {"relief": (min: 30, fade: 25), "sky": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 14)},
-            duck: {"sheltered": 1},
+            duck: {"sheltered": 1, "shelter": 0.8},
         ),
         (
             name: "storm_wind", sound: Gale, volume: 0.32,
             when: {"storm": (min: 0.6, fade: 0.5), "sky": (min: 0.3, fade: 0.4)},
-            duck: {"sheltered": 1},
+            duck: {"sheltered": 1, "shelter": 0.75},
         ),
         // Ice falling: hail rattling on everything, sleet's fine patter.
         (
             name: "hail", recording: ["sounds/hail_1.mp3", "sounds/hail_2.mp3", "sounds/hail_3.mp3"], volume: 0.55, fade: 2,
             when: {"hail": (min: 0.25, fade: 0.25)},
-            duck: {"sheltered": 0.5},
+            duck: {"sheltered": 0.5, "shelter": 0.6},
         ),
         (
             name: "sleet", sound: Sleet, volume: 0.3, fade: 3,
             when: {"sleet": (min: 0.2, fade: 0.2)},
-            duck: {"sheltered": 0.6},
+            duck: {"sheltered": 0.6, "shelter": 0.7},
         ),
         // Sand and dust driven by a strong wind.
         (
             name: "sandstorm", sound: Sandstorm, volume: 0.45, fade: 4,
             when: {"dust": (min: 0.4, fade: 0.35)},
-            duck: {"sheltered": 0.7, "rain": 0.5},
+            duck: {"sheltered": 0.7, "rain": 0.5, "shelter": 0.8},
         ),
         // Snow driven hard: a blizzard's howl.
         (
             name: "blizzard", sound: Gale, volume: 0.36, fade: 5,
             when: {"snow": (min: 0.4, fade: 0.3), "wind": (min: 8, fade: 6), "sky": (min: 0.3, fade: 0.4)},
-            duck: {"sheltered": 1},
+            duck: {"sheltered": 1, "shelter": 0.75},
         ),
         // Leaves in the breeze, under and among trees.
         (
             name: "leaves", sound: Rustle, volume: 0.24,
             when: {"leaves": (min: 0.4, fade: 0.4), "sky": (min: 0.4, fade: 0.4), "wind": (min: 6, fade: 10)},
-            duck: {"sheltered": 0.6, "rain": 0.6, "high_wind": 0.5},
+            duck: {"sheltered": 0.6, "rain": 0.6, "high_wind": 0.5, "shelter": 0.85},
         ),
         // Grasshoppers on a mild or warm day in open grassland. Temperatures are yearly
         // means, so insects sing from fairly cool climates up.
@@ -176,44 +225,63 @@
             name: "meadow", sound: Meadow, volume: 0.16,
             when: {"grass": (min: 0.4, fade: 0.4), "sun": (min: 0.15, fade: 0.15), "temperature": (min: 10, fade: 6), "sky": (min: 0.7, fade: 0.3), "leaves": (max: 0.15, fade: 0.25)},
             not_biome: ["desert", "frozen"],
-            duck: {"sheltered": 0.8, "rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95},
+            duck: {"sheltered": 0.8, "rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95, "shelter": 0.85},
         ),
         // Crickets on warm nights wherever there is grass or trees.
         (
             name: "crickets", sound: Crickets, volume: 0.12, fade: 8,
             when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3), "sky": (min: 0.4, fade: 0.4)},
             not_biome: ["desert", "frozen"],
-            duck: {"sheltered": 0.6, "rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95},
+            duck: {"sheltered": 0.6, "rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95, "shelter": 0.75},
         ),
         // Running water, recorded: a creek's babble, louder the more the place is by the
         // water (a wide fade on `flowing`, so it grows from the edge of the valley in).
         (
             name: "stream", recording: ["sounds/brook_1.mp3", "sounds/brook_2.mp3", "sounds/brook_3.mp3"], volume: 0.45,
             when: {"water": (min: 0.3, fade: 0.25), "flowing": (min: 0.9, fade: 0.6), "air": (min: 0.05, fade: 0.1)},
-            duck: {"rain": 0.4, "downpour": 0.5},
+            duck: {"shelter": 0.75, "rain": 0.4, "downpour": 0.5},
         ),
         // Small waves lapping at the shore of a lake.
         (
             name: "lake", recording: ["sounds/lake_1.mp3", "sounds/lake_2.mp3", "sounds/lake_3.mp3"], volume: 0.35, fade: 5,
             when: {"water": (min: 0.4, fade: 0.3), "still": (min: 0.7, fade: 0.45), "air": (min: 0.05, fade: 0.1)},
-            duck: {"rain": 0.5, "high_wind": 0.4},
+            duck: {"shelter": 0.75, "rain": 0.5, "high_wind": 0.4},
         ),
         // Surf on the coast.
         (
             name: "surf", sound: Surf, volume: 0.36, fade: 6,
             when: {"water": (min: 0.4, fade: 0.4), "continentalness": (max: 0.05, fade: 0.15), "height": (max: 12, fade: 25), "sky": (min: 0.4, fade: 0.4)},
-            duck: {"sheltered": 0.4, "rain": 0.3},
+            duck: {"sheltered": 0.4, "rain": 0.3, "shelter": 0.75},
         ),
         // The still air of caves, recorded in a quarry tunnel: a slight room tone with drips
-        // far off.
+        // far off. Wet rock: under a moderate climate or wetter (moisture 0.75 and up), fading
+        // to dry rock's own, below, under dry lands and deserts (0.45 and down).
         (
             name: "cave", recording: ["sounds/cave_1.mp3", "sounds/cave_2.mp3", "sounds/cave_3.mp3"], volume: 0.45, fade: 5,
-            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "air": (min: 0.02, fade: 0.05)},
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "air": (min: 0.02, fade: 0.05), "moisture": (min: 0.75, fade: 0.3)},
+        ),
+        // Dry rock: the low, still air of a cave with no water in it, a faint draught and
+        // nothing dripping.
+        (
+            name: "dry_cave", sound: Cave, volume: 0.4, fade: 5,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "air": (min: 0.02, fade: 0.05), "moisture": (max: 0.45, fade: 0.3)},
+        ),
+        // Water seeping into a pool underground, wet climate or dry: a thin trickle, near it.
+        (
+            name: "cave_seep", sound: Stream, volume: 0.14, fade: 4,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "water": (min: 0.05, fade: 0.05)},
         ),
         // Lava seething and bubbling, near it.
         (
             name: "lava", recording: ["sounds/lava_1.mp3", "sounds/lava_2.mp3", "sounds/lava_3.mp3"], volume: 0.42, fade: 2,
             when: {"lava": (min: 0.35, fade: 0.3)},
+        ),
+        // Bees about their hive by day: a warm drone by a skep or a wild nest, quiet at
+        // night and in the cold, when they keep in, and while it rains.
+        (
+            name: "bees", sound: Hum, volume: 0.16, fade: 3,
+            when: {"hive": (min: 0.3, fade: 0.3), "sun": (min: 0.05, fade: 0.1), "temperature": (min: 10, fade: 4)},
+            duck: {"raining": 0.9},
         ),
         // A fire burning close by: a warm low roar and the crackle of the wood, so home
         // sounds lived in. Quiet: it sits under the music.
@@ -221,11 +289,38 @@
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},
         ),
+        // Thatch about to catch: a soft, close sizzle, the warning before the flame (with
+        // `smoulder_crackle`'s spits). Only while the server says it smoulders.
+        (
+            name: "smoulder_hiss", sound: Smoulder, volume: 0.3, fade: 1,
+            when: {"smoulder": (min: 0.05, fade: 0.05)},
+        ),
+        // Thatch and wattle burning: a crisp, busy crackle as loud as there is fire near, so
+        // it thins as the fire burns out, and is gone with the last burning cell.
+        (
+            name: "blaze_crackle", sound: Blaze, volume: 0.5, fade: 1,
+            when: {"blaze": (min: 0.6, fade: 0.6)},
+        ),
+        // A settlement's people about their day: voices across it, too far to make out,
+        // fuller the more live there (a hamlet of a few murmurs, a village of thirty talks),
+        // within its bounds and fading out over forty blocks past them; by day, above ground,
+        // and fewer out in the rain.
+        (
+            name: "murmur", sound: Murmur, volume: 0.24, fade: 6,
+            when: {"settlement_edge": (max: 0, fade: 40), "settlement_people": (min: 24, fade: 22), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.5},
+        ),
+        // And at dusk, a few still about, talking low as the lamps come on.
+        (
+            name: "murmur_evening", sound: Murmur, volume: 0.1, fade: 6,
+            when: {"settlement_edge": (max: 0, fade: 30), "settlement_people": (min: 24, fade: 22), "sun": (min: -0.2, max: 0.1, fade: 0.1), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.5},
+        ),
         // A waterfall's roar, from the curtain of water pouring down.
         (
             name: "waterfall", recording: ["sounds/waterfall_1.mp3", "sounds/waterfall_2.mp3", "sounds/waterfall_3.mp3"], volume: 0.4, fade: 3,
             when: {"falls": (min: 0.5, fade: 0.45), "air": (min: 0.05, fade: 0.1)},
-            duck: {"stream": 0.6},
+            duck: {"shelter": 0.7, "stream": 0.6},
         ),
     ],
     sounds: [
@@ -235,20 +330,20 @@
             pitch: (0.9, 1.1), reach: 14,
             when: {"sun": (min: 0.05, fade: 0.15), "temperature": (min: 3, max: 32, fade: 6), "leaves": (min: 0.35, fade: 0.3)},
             not_biome: ["frozen"],
-            duck: {"rain": 0.85, "high_wind": 0.6, "storm_wind": 0.8},
+            duck: {"shelter": 0.8, "rain": 0.85, "high_wind": 0.6, "storm_wind": 0.8},
         ),
         (
             name: "thrush", sound: Thrush, volume: 0.45, at: Block("leaves"), per_minute: 2, cooldown: 18,
             pitch: (0.95, 1.05), reach: 18,
             when: {"sun": (min: 0.05, fade: 0.15), "temperature": (min: 3, max: 28, fade: 6), "leaves": (min: 0.3, fade: 0.3)},
             biome: ["forest"],
-            duck: {"rain": 0.85, "high_wind": 0.6},
+            duck: {"shelter": 0.8, "rain": 0.85, "high_wind": 0.6},
         ),
         (
             name: "whistler", sound: Whistler, volume: 0.38, at: Block("leaves"), per_minute: 1, cooldown: 25,
             reach: 16,
             when: {"sun": (min: 0.05, fade: 0.15), "temperature": (min: -10, max: 15, fade: 6), "leaves": (min: 0.35, fade: 0.3)},
-            duck: {"rain": 0.85, "high_wind": 0.6},
+            duck: {"shelter": 0.8, "rain": 0.85, "high_wind": 0.6},
         ),
         // The dawn chorus: many birds while the sun comes up.
         (
@@ -256,21 +351,21 @@
             pitch: (0.85, 1.2), reach: 14,
             when: {"sun": (min: -0.08, max: 0.12, fade: 0.06), "temperature": (min: 3, fade: 6), "leaves": (min: 0.35, fade: 0.3)},
             not_biome: ["frozen"],
-            duck: {"rain": 0.85, "high_wind": 0.6},
+            duck: {"shelter": 0.8, "rain": 0.85, "high_wind": 0.6},
         ),
         // Doves in warm country, in trees.
         (
             name: "dove", sound: Dove, volume: 0.38, at: Block("leaves"), per_minute: 1, cooldown: 30,
             reach: 16,
             when: {"sun": (min: 0.0, fade: 0.15), "temperature": (min: 16, fade: 5), "leaves": (min: 0.25, fade: 0.2)},
-            duck: {"rain": 0.85},
+            duck: {"shelter": 0.8, "rain": 0.85},
         ),
         // Brighter, faster birds in the tropics.
         (
             name: "tropical_bird", sound: Thrush, volume: 0.45, at: Block("leaves"), per_minute: 2.5, cooldown: 10,
             pitch: (1.2, 1.4), reach: 18,
             when: {"sun": (min: 0.0, fade: 0.15), "temperature": (min: 22, fade: 4), "moisture": (min: 1.2, fade: 0.3), "leaves": (min: 0.3, fade: 0.3)},
-            duck: {"rain": 0.7},
+            duck: {"shelter": 0.8, "rain": 0.7},
         ),
         // A woodpecker now and then, on a trunk.
         (
@@ -278,7 +373,7 @@
             pitch: (0.9, 1.1), reach: 20,
             when: {"sun": (min: 0.1, fade: 0.15), "temperature": (min: 0, fade: 5), "wood": (min: 0.35, fade: 0.3)},
             biome: ["forest"],
-            duck: {"rain": 0.9},
+            duck: {"shelter": 0.8, "rain": 0.9},
         ),
         // Owls in the woods at night.
         (
@@ -286,7 +381,7 @@
             reach: 24,
             when: {"sun": (max: -0.1, fade: 0.1), "leaves": (min: 0.3, fade: 0.3)},
             biome: ["forest"],
-            duck: {"rain": 0.8},
+            duck: {"shelter": 0.75, "rain": 0.8},
         ),
         // A cricket close by in the grass at night.
         (
@@ -294,7 +389,7 @@
             pitch: (0.95, 1.05), reach: 6,
             when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3)},
             not_biome: ["desert", "frozen"],
-            duck: {"rain": 0.9},
+            duck: {"shelter": 0.8, "rain": 0.9},
         ),
         // Frogs by water on warm evenings and nights, most in wetlands.
         (
@@ -302,32 +397,62 @@
             pitch: (0.85, 1.15), reach: 12,
             when: {"sun": (max: 0.1, fade: 0.15), "temperature": (min: 12, fade: 5), "water": (min: 0.25, fade: 0.2), "continentalness": (min: 0.05, fade: 0.1)},
             biome: ["wetland", "river"],
-            duck: {"rain": 0.3},
+            duck: {"shelter": 0.8, "rain": 0.3},
         ),
         // Gusts on heights.
         (
             name: "gust", sound: Gust, volume: 0.38, at: Around(distance: (6, 16), height: (2, 8)), per_minute: 2, cooldown: 12,
             pitch: (0.85, 1.15), reach: 16,
             when: {"relief": (min: 20, fade: 20), "sky": (min: 0.6, fade: 0.3), "wind": (min: 6, fade: 10)},
+            duck: {"shelter": 0.8},
         ),
         // Gusts anywhere out in the open on a gusty day, as often as the wind gusts.
         (
             name: "gusty", sound: Gust, volume: 0.3, at: Around(distance: (8, 20), height: (1, 6)), per_minute: 3, cooldown: 9,
             pitch: (0.8, 1.2), reach: 18,
             when: {"gusts": (min: 0.45, fade: 0.25), "wind": (min: 5, fade: 4), "sky": (min: 0.5, fade: 0.3)},
-            duck: {"high_wind": 0.5, "storm_wind": 0.5},
+            duck: {"shelter": 0.8, "high_wind": 0.5, "storm_wind": 0.5},
         ),
         // Trees creaking in strong wind.
         (
             name: "creak", sound: Creak, volume: 0.3, at: Block("wood"), per_minute: 1.5, cooldown: 12,
             pitch: (0.8, 1.2), reach: 10,
             when: {"wind": (min: 9, fade: 6), "wood": (min: 0.35, fade: 0.3)},
+            duck: {"shelter": 0.75},
         ),
-        // Drips and distant rumbles underground; the reverb comes from the cave itself.
+        // A timber home settling at night as it cools: now and then a board ticks or a
+        // rafter groans, low and slow, heard only indoors.
+        (
+            name: "rafters", sound: Creak, volume: 0.16, at: Block("timber"), per_minute: 0.8, cooldown: 25,
+            pitch: (0.55, 0.8), reach: 8,
+            when: {"shelter": (min: 0.6, fade: 0.3), "timber": (min: 0.35, fade: 0.3), "sun": (max: 0.0, fade: 0.15)},
+        ),
+        // After the rain, under a roof: the last of it running off the eaves, a drop now
+        // and then on the sill or the step, thinning as the ground dries.
+        (
+            name: "eaves_drip", sound: Drip, volume: 0.22, at: Around(distance: (2, 5), height: (0, 3)), per_minute: 9, cooldown: 1.5,
+            pitch: (1.1, 1.5), reach: 6,
+            when: {"wetness": (min: 0.4, fade: 0.3), "raining": (max: 0.05, fade: 0.1), "roof": (min: 0.5, fade: 0.3)},
+            duck: {"shelter": 0.5},
+        ),
+        // Drips and distant rumbles underground; the reverb comes from the cave itself. The
+        // drips are wet rock's, and come oftener the deeper and more shut in the cave: a
+        // second, deep tier joins the first where it is deep and echoing.
         (
             name: "drip", sound: Drip, volume: 0.3, at: Block("rock"), per_minute: 4, cooldown: 3,
             pitch: (0.8, 1.25), reach: 10,
-            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 6, fade: 6)},
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 6, fade: 6), "moisture": (min: 0.75, fade: 0.3)},
+        ),
+        (
+            name: "deep_drip", sound: Drip, volume: 0.35, at: Block("rock"), per_minute: 6, cooldown: 2,
+            pitch: (0.7, 1.15), reach: 12,
+            when: {"sky": (max: 0.02, fade: 0.1), "depth": (min: 24, fade: 12), "reverb": (min: 0.5, fade: 0.3), "moisture": (min: 0.75, fade: 0.3)},
+        ),
+        // Dry rock instead: grit now and then, ticking down from the roof.
+        (
+            name: "grit", sound: Grit, volume: 0.25, at: Block("rock"), per_minute: 2, cooldown: 8,
+            pitch: (0.85, 1.2), reach: 10,
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 6, fade: 6), "moisture": (max: 0.45, fade: 0.3)},
         ),
         (
             name: "rumble", sound: Rumble, volume: 0.35, at: Listener, per_minute: 0.3, cooldown: 120,
@@ -338,7 +463,7 @@
         (
             name: "far_drip", sound: Drip, volume: 0.15, at: Around(distance: (14, 30), height: (-4, 6)), per_minute: 1.5, cooldown: 10,
             pitch: (0.7, 1.0), reach: 10,
-            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "reverb": (min: 0.3, fade: 0.3)},
+            when: {"sky": (max: 0.05, fade: 0.15), "depth": (min: 5, fade: 4), "reverb": (min: 0.3, fade: 0.3), "moisture": (min: 0.75, fade: 0.3)},
         ),
         // Lava bursting a bubble now and then.
         (
@@ -353,11 +478,24 @@
             pitch: (1.1, 1.45), reach: 8,
             when: {"smoulder": (min: 0.05, fade: 0.05)},
         ),
+        // A withy or a bundle of straw popping as it burns, from the burning cells.
+        (
+            name: "blaze_pop", sound: Snap, volume: 0.35, at: Block("blaze"), per_minute: 24, cooldown: 1,
+            pitch: (1.0, 1.35), reach: 8,
+            when: {"blaze": (min: 0.1, fade: 0.1)},
+        ),
         // A log snapping in the fire, from the fire itself.
         (
             name: "fire_snap", sound: Snap, volume: 0.3, at: Block("fire"), per_minute: 6, cooldown: 3,
             pitch: (0.85, 1.2), reach: 5,
             when: {"fire": (min: 0.25, fade: 0.2)},
+        ),
+        // A log settling in a fire now and then: a soft fall, sparks and a hiss, so a hearth
+        // sat by for a while is never one loop.
+        (
+            name: "hearth_settle", sound: Settle, volume: 0.28, at: Block("fire"), per_minute: 1.2, cooldown: 20,
+            pitch: (0.9, 1.1), reach: 6,
+            when: {"fire": (min: 0.6, fade: 0.55)},
         ),
         // A pot on the fire bubbling away while it cooks.
         (
@@ -387,10 +525,86 @@
             duck: {"rain": 0.8},
         ),
         (
-            name: "well_bucket", sound: Well, volume: 0.28, at: Around(distance: (8, 20), height: (0, 2)), per_minute: 0.8, cooldown: 30,
+            name: "well_bucket", sound: Well, volume: 0.28, at: Building(buildings: ["well"]), per_minute: 0.8, cooldown: 30,
             pitch: (0.94, 1.06), reach: 12,
             when: {"settlement": (max: 24, fade: 56), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
             duck: {"rain": 0.6},
+        ),
+        // From the buildings themselves (`Building`: any of the nearest settlement's within
+        // 48 blocks that answer to a name, a kind, house or work of settlements.ron; at its
+        // door with `door: true`, else from its middle). None of them near, none heard.
+        // The smith at the anvil, by day.
+        (
+            name: "smithy", sound: Hammer, volume: 0.3, at: Building(buildings: ["smithy"]), per_minute: 4, cooldown: 6,
+            pitch: (1.05, 1.25), reach: 14,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.7},
+        ),
+        // And the iron ringing under the hammer, heard further than the blows.
+        (
+            name: "anvil", sound: Anvil, volume: 0.24, at: Building(buildings: ["smithy"]), per_minute: 2.5, cooldown: 8,
+            pitch: (0.95, 1.08), reach: 18,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.7},
+        ),
+        // The mill wheel turning in its race all day, and the woodyard splitting logs.
+        (
+            name: "mill_wheel", sound: Mill, volume: 0.26, at: Building(buildings: ["mill"]), per_minute: 10, cooldown: 3.5,
+            pitch: (0.95, 1.05), reach: 14,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+        ),
+        (
+            name: "chopping", sound: Chop, volume: 0.28, at: Building(buildings: ["woodyard"]), per_minute: 2, cooldown: 12,
+            pitch: (0.92, 1.08), reach: 16,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.8},
+        ),
+        // The shrine's bell at dawn and again at dusk, heard across the whole place and a
+        // way beyond it.
+        (
+            name: "shrine_bell", sound: Bell, volume: 0.28, at: Building(buildings: ["shrine"]), per_minute: 0.6, cooldown: 90,
+            pitch: (0.97, 1.03), reach: 48,
+            when: {"settlement_edge": (max: 24, fade: 60), "sun": (min: -0.15, max: 0.15, fade: 0.05), "depth": (max: 2, fade: 4)},
+        ),
+        // Pigs rooting in the pens, by day.
+        (
+            name: "pen_grunt", sound: Grunt, volume: 0.24, at: Building(buildings: ["pen", "barn"]), per_minute: 1.5, cooldown: 14,
+            pitch: (0.9, 1.15), reach: 10,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.6},
+        ),
+        // Sheep in the pens and the barns, by day and into the evening.
+        (
+            name: "pen_bleat", sound: Bleat, volume: 0.26, at: Building(buildings: ["pen", "barn"]), per_minute: 2.5, cooldown: 8,
+            pitch: (0.9, 1.15), reach: 12,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: -0.15, fade: 0.1), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.8},
+        ),
+        // Evening: people coming home, doors opening and shutting along the lanes, and
+        // supper things knocking in the houses. From dusk until full dark.
+        (
+            name: "doors", sound: Door, volume: 0.28, at: Building(buildings: ["house", "inn", "trader"], door: true), per_minute: 3, cooldown: 6,
+            pitch: (0.92, 1.08), reach: 12,
+            when: {"settlement_edge": (max: 6, fade: 30), "sun": (min: -0.25, max: 0.1, fade: 0.08), "depth": (max: 2, fade: 4)},
+        ),
+        (
+            name: "supper", sound: Clatter, volume: 0.2, at: Building(buildings: ["house", "inn"]), per_minute: 2, cooldown: 10,
+            pitch: (0.95, 1.1), reach: 8,
+            when: {"settlement_edge": (max: 2, fade: 20), "sun": (min: -0.3, max: 0.05, fade: 0.08), "depth": (max: 2, fade: 4)},
+        ),
+        // Night: the place asleep. Now and then a dog somewhere barks, and an owl calls
+        // from the roofs; nothing else.
+        (
+            name: "night_dog", sound: Bark, volume: 0.26, at: Around(distance: (20, 45), height: (0, 3)), per_minute: 0.8, cooldown: 30,
+            pitch: (0.9, 1.1), reach: 16,
+            when: {"settlement_edge": (max: 0, fade: 50), "sun": (max: -0.2, fade: 0.1), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.8},
+        ),
+        (
+            name: "night_owl", sound: Owl, volume: 0.3, at: Around(distance: (25, 45), height: (6, 14)), per_minute: 0.4, cooldown: 60,
+            reach: 24,
+            when: {"settlement_edge": (max: 0, fade: 50), "sun": (max: -0.25, fade: 0.1), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.8},
         ),
     ],
 )

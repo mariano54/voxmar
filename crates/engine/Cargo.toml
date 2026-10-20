@@ -10,9 +10,3 @@ serde.workspace = true
 ron.workspace = true
 rustc-hash.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-# Already in the tree under Bevy's renderer: `tests/shaders.rs` composes and validates the
-# terrain shader with them, as the renderer would, without a GPU.
-naga = "29"
-naga_oil = { version = "0.22", default-features = false }

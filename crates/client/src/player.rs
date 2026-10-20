@@ -452,6 +452,13 @@ fn movement(
         let held = player.inventory.get(player.selected).map(|s| s.item);
         combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).map(|g| g.speed)
     });
+    // Drawing a shot, the player moves at the class's `drawing_speed` (a bow held drawn
+    // walks and sprints slowly; a weapon that strikes is not slowed).
+    let drawing_speed = fighting.drawn(clock).then(|| {
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        combat.drawing_speed(&combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill))))
+    });
+    fighting.drawing_pace = drawing_speed;
     let controls = Controls {
         wish: wish.normalize_or_zero(),
         forward: pressed(KeyCode::KeyW) && !pressed(KeyCode::KeyS),
@@ -471,7 +478,7 @@ fn movement(
         jump_delay: player.jump_delay,
     };
     // Quicker or slower on foot as the player's effects say (fruit, a gale).
-    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed * guard_speed.unwrap_or(1.0);
+    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed * guard_speed.unwrap_or(1.0) * drawing_speed.unwrap_or(1.0);
     let tuning = launch.content.movement.on_foot(speed);
     let dt = time.delta_secs().min(0.25);
     let around = Around { world: &world };

@@ -400,6 +400,22 @@ pub const MAX_EMISSION_RANGE: f32 = 128.0;
 /// The deepest a block looks for what it smokes over (`Emission::over`), in blocks.
 pub const MAX_EMISSION_OVER: u8 = 8;
 
+/// Tags of a window, a block light comes in through (a pane, a lattice, a window frame, an
+/// arrow slit, or a wall a draught comes through), refused at load if it keeps light out.
+pub const LIGHT_THROUGH_TAGS: [&str; 5] = ["window", "lattice", "window_frame", "slit", "draught"];
+/// The tag of a railing, refused at load unless it is solid and a block high.
+pub const RAILING_TAG: &str = "railing";
+/// The tag of a chimney piece (a flue, a hood, a pot): stacked straight over a block that
+/// smokes, the client brings its smoke out of the top of the stack, and a piece lines a
+/// hearth's flue against its fire as stone does, so it is refused at load unless solid.
+pub const CHIMNEY_PIECE_TAG: &str = "chimney_piece";
+/// The tag of a landing, refused at load unless it is solid across the whole top of its
+/// cell (level with a stair's top).
+pub const LANDING_TAG: &str = "landing";
+/// The most a window may dim the light through it (`light_filter`): a shut shutter's 14
+/// is a wall's.
+pub const MAX_WINDOW_FILTER: u8 = 2;
+
 /// How a particle is drawn over what lies behind it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ParticleBlend {
@@ -1309,6 +1325,54 @@ impl BlockRegistry {
                 return Err(RegistryError(format!("`{}` drops merged-away `{}`; drop `{into}` (item_of) instead", defs[i].name, defs[dropped.0 as usize].name)));
             }
         }
+        // A window lets light through: a pane, a lattice, a frame or a slit, anything a
+        // draught comes through, and anything lit by the light through it. None of them is
+        // a whole cube or dims light as a shut shutter does.
+        for (def, block) in defs.iter().zip(&info) {
+            let tag = def.tags.iter().find(|t| LIGHT_THROUGH_TAGS.contains(&t.as_str()));
+            if (def.lit_through || tag.is_some()) && (block.occludes || def.light_filter > MAX_WINDOW_FILTER) {
+                let why = tag.map_or("`lit_through`".to_owned(), |t| format!("tagged `{t}`"));
+                return Err(RegistryError(format!(
+                    "`{}` is a window ({why}) but keeps the light out: a window is no whole cube, and its `light_filter` is {MAX_WINDOW_FILTER} at most, not {}",
+                    def.name, def.light_filter
+                )));
+            }
+        }
+        // A window glows by the light through it, and glowing is its drawing's (the client
+        // marks the texture layers of a `lit_through` block's faces): a drawing a block that
+        // does not glow shares, on a face or a box, would light it too.
+        fn textured<'a>(def: &'a BlockDef, block: &'a BlockInfo) -> impl Iterator<Item = u16> + 'a {
+            Face::ALL.into_iter().filter(move |&f| def.textures.face(f).is_some()).map(move |f| block.layers[f as usize])
+        }
+        let glowing: FxHashMap<u16, &str> = defs.iter().zip(&info).filter(|(def, _)| def.lit_through).flat_map(|(def, block)| textured(def, block).map(move |layer| (layer, def.name.as_str()))).collect();
+        for (i, (def, block)) in defs.iter().zip(&info).enumerate().filter(|(_, (def, _))| !def.lit_through) {
+            if let Some(window) = textured(def, block).chain(shape_layers[i].iter().copied()).find_map(|layer| glowing.get(&layer)) {
+                return Err(RegistryError(format!(
+                    "`{}` is drawn as window `{window}` is, which glows by the light through it (`lit_through`), so it would glow too: give the window a drawing of its own",
+                    def.name
+                )));
+            }
+        }
+        // A railing keeps anyone from walking off what it edges: solid, and a block high so
+        // nobody steps onto it. A landing is a floor level with a stair's top: a box across
+        // the whole top of its cell.
+        for (def, block) in defs.iter().zip(&info) {
+            let bounds: &[(glam::Vec3, glam::Vec3)] = match (block.solid, block.shape) {
+                (false, _) => &[],
+                (true, Some(s)) => &shapes[s as usize].bounds,
+                (true, None) => &[(glam::Vec3::ZERO, glam::Vec3::ONE)],
+            };
+            let full_top = bounds.iter().any(|&(min, max)| max.y >= 1.0 && min.x <= 0.0 && min.z <= 0.0 && max.x >= 1.0 && max.z >= 1.0);
+            if def.has_tag(RAILING_TAG) && !bounds.iter().any(|&(_, max)| max.y >= 1.0) {
+                return Err(RegistryError(format!("`{}` is a railing (`{RAILING_TAG}`) but nobody would be kept back by it: a railing is solid and a block high", def.name)));
+            }
+            if def.has_tag(CHIMNEY_PIECE_TAG) && !block.solid {
+                return Err(RegistryError(format!("`{}` is a chimney piece (`{CHIMNEY_PIECE_TAG}`) but not solid: a flue keeps a hearth's fire in", def.name)));
+            }
+            if def.has_tag(LANDING_TAG) && !full_top {
+                return Err(RegistryError(format!("`{}` is a landing (`{LANDING_TAG}`) but no floor level with a stair's top: a landing is solid across the whole top of its cell", def.name)));
+            }
+        }
         let shape_collision = shapes.iter().map(|s| s.bounds.iter().map(|&(min, max)| crate::physics::Aabb { min, max }).collect()).collect();
         // A coating names blocks that are, held as an item, and turns it into another.
         for def in &defs {
@@ -1811,6 +1875,66 @@ mod tests {
         assert!(refused(r#"(name: "a", flips: true)"#).contains("upside down"));
         // A torch goes on walls only as a block that rests on a wall, and goes with it.
         assert!(refused(r#"(name: "torch", wall: "lamp"), (name: "lamp", facing: true)"#).contains("does not rest on a wall"));
+    }
+
+    /// A window lets light in: one tagged as a window, a lattice, a frame, a slit or a
+    /// draughty gap, or lit through, is refused if it is a whole cube or dims light as a
+    /// shut shutter does; a slab-thin pane or a lattice of boxes is let through.
+    #[test]
+    fn a_window_that_keeps_the_light_out_is_refused() {
+        let load = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).map(|_| ()).map_err(|e| e.0)
+        };
+        assert_eq!(load(r#"(name: "pane", render: Cutout, tags: ["window"], lit_through: true)"#), Ok(()));
+        assert_eq!(load(r#"(name: "lattice", render: Model, shape: "slab", tags: ["lattice", "draught"])"#), Ok(()));
+        let whole = load(r#"(name: "pane", tags: ["window"])"#).unwrap_err();
+        assert!(whole.contains("`base:pane` is a window (tagged `window`)"), "{whole}");
+        let dim = load(r#"(name: "slit", render: Model, shape: "slab", light_filter: 14, tags: ["slit"])"#).unwrap_err();
+        assert!(dim.contains("`light_filter` is 2 at most, not 14"), "{dim}");
+        assert!(load(r#"(name: "glow", lit_through: true)"#).unwrap_err().contains("(`lit_through`)"));
+        assert!(load(r#"(name: "gap", render: Model, shape: "slab", light_filter: 3, tags: ["draught"])"#).is_err());
+    }
+
+    /// A window's drawing glows by the light through it, so a block drawn the same, on a
+    /// face or as a box of its shape, is refused, whatever window and other block are; a
+    /// window drawn its own way, or two windows sharing one, load.
+    #[test]
+    fn a_window_drawn_as_a_block_that_does_not_glow_is_refused() {
+        let load = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).map(|_| ()).map_err(|e| e.0)
+        };
+        let window = r#"(name: "lattice", render: Model, shape: "slab", textures: All("grain"), tags: ["window"], lit_through: true)"#;
+        let shared = load(&format!(r#"{window}, (name: "post", render: Model, shape: "stairs", textures: All("grain"))"#)).unwrap_err();
+        assert!(shared.contains("`base:post` is drawn as window `base:lattice` is"), "{shared}");
+        let sided = load(&format!(r#"{window}, (name: "beam", textures: Sides(top: "oak", bottom: "oak", side: "grain"))"#)).unwrap_err();
+        assert!(sided.contains("`base:beam`"), "{sided}");
+        assert_eq!(load(&format!(r#"{window}, (name: "post", render: Model, shape: "stairs", textures: All("timber"))"#)), Ok(()));
+        assert_eq!(load(&format!(r#"{window}, (name: "pane", render: Cutout, textures: All("grain"), tags: ["window"], lit_through: true)"#)), Ok(()));
+        // Faces with no drawing of their own are no sharing (they all count as the first).
+        assert_eq!(load(&format!(r#"(name: "stone"), {window}"#)), Ok(()));
+    }
+
+    /// A railing that is not solid or not a block high, or a landing with no floor across
+    /// the top of its cell, is refused; a whole block passes as either.
+    #[test]
+    fn a_railing_or_landing_that_would_let_someone_fall_is_refused() {
+        let load = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).map(|_| ()).map_err(|e| e.0)
+        };
+        assert_eq!(load(r#"(name: "rail", render: Model, shape: "stairs", tags: ["railing"])"#), Ok(()));
+        assert_eq!(load(r#"(name: "floor", tags: ["landing"])"#), Ok(()));
+        let low = load(r#"(name: "rail", render: Model, shape: "slab", tags: ["railing"])"#).unwrap_err();
+        assert!(low.contains("`base:rail` is a railing"), "{low}");
+        assert!(load(r#"(name: "rail", render: Model, shape: "stairs", solid: false, tags: ["railing"])"#).is_err());
+        let sunk = load(r#"(name: "floor", render: Model, shape: "slab", tags: ["landing"])"#).unwrap_err();
+        assert!(sunk.contains("`base:floor` is a landing"), "{sunk}");
+        assert!(load(r#"(name: "floor", render: Model, shape: "stairs", tags: ["landing"])"#).is_err());
+        assert_eq!(load(r#"(name: "flue", render: Model, shape: "slab", tags: ["chimney_piece"])"#), Ok(()));
+        let open = load(r#"(name: "flue", render: Model, shape: "slab", solid: false, tags: ["chimney_piece"])"#).unwrap_err();
+        assert!(open.contains("`base:flue` is a chimney piece"), "{open}");
     }
 
     #[test]

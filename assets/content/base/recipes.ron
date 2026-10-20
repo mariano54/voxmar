@@ -15,6 +15,8 @@
         // with a flint wedge in it.
         (ingredients: ["{name}_log"], output: "{name}_planks", count: 6, xp: 1.0, near: "chopping_block"),
         (pattern: [["flint"], ["tag:log"]], output: "chopping_block", skill: "core:crafting", level: 2, xp: 6.0),
+        // Kindling: three sticks bundled, a clamp's flue (multiblocks.ron).
+        (ingredients: ["stick", "stick", "stick"], output: "kindling", xp: 1.0),
         (pattern: [["{name}_planks"], ["{name}_planks"]], output: "stick", count: 4, xp: 1.0),
         // Four planks make a crafting table, for the bigger recipes.
         (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks"]], output: "crafting_table", skill: "core:engineering", xp: 8.0),
@@ -41,6 +43,11 @@
         // Ore smelted with coal or charcoal, by hand for now (a furnace comes later).
         (pattern: [["copper_ore"], ["coal_ore|charcoal"]], output: "copper_ingot", skill: "core:engineering", level: 5, xp: 6.0),
         (pattern: [["iron_ore"], ["coal_ore|charcoal"]], output: "iron_ingot", skill: "core:engineering", level: 15, xp: 12.0),
+        // Flint tools (tier 1), Engineering 1, in the hand's grid: what bare hands make first,
+        // since breaking stone or felling a tree needs a pickaxe or an axe (tools.ron). Flint
+        // from gravel, sticks from leaves.
+        (pattern: [["flint", "flint"], ["stick", "stick"]], output: "flint_pickaxe", skill: "core:engineering", level: 1, xp: 4),
+        (pattern: [["flint", "flint"], ["stick", ""]], output: "flint_axe", skill: "core:engineering", level: 1, xp: 4),
         // Wooden tools (tier 1), Engineering 1.
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["", "stick", ""], ["", "stick", ""]], output: "wooden_pickaxe", skill: "core:engineering", level: 1, xp: 4),
         (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "stick"], ["", "stick"]], output: "wooden_axe", skill: "core:engineering", level: 1, xp: 4),

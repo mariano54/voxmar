@@ -644,6 +644,9 @@ impl Server {
                     }
                     creature.body.velocity = voxmar_engine::glam::Vec3::ZERO;
                 }
+                // Let go of a hold now (`hold`, `/summon ... held`): the gate's Climb step lets
+                // its wolf go at the foot of the step.
+                "release" => creature.held_until = tick,
                 "hasten" => {
                     creature.products_due.iter_mut().for_each(|due| *due = tick);
                     if creature.grows_up.is_some() {
@@ -721,7 +724,7 @@ impl Server {
         let anchor = home.floor().as_ivec3();
         let survey = self.survey_around(anchor, Some(Self::me(id)?));
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[], seated: false };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[], worn: &[], seated: false, night: self.night() };
         let effects = &self.content.effects;
         let name = |effect| {
             let def = effects.get(effect);
@@ -831,13 +834,9 @@ impl Server {
         }
         let position = self.position_of(id);
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
-        let nearest = self
-            .overworld
-            .settlements_near(from, radius)
-            .into_iter()
-            .map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s))
-            .filter(|(offset, s)| offset.as_vec2().length() <= radius as f32 && size.is_none_or(|size| *size == s.size))
-            .min_by_key(|(offset, _)| offset.length_squared());
+        // Nearest first, planning only the squares nearer than the answer: every square
+        // within a radius of thousands planned at once held the server's tick for seconds.
+        let nearest = self.overworld.nearest_settlement(from, radius, |s| size.is_none_or(|size| *size == s.size)).map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s));
         match nearest {
             Some((offset, s)) => Ok(Words::key("command.locate.settlement")
                 .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
@@ -1431,6 +1430,7 @@ fn home_needs(lacks: &[voxmar_engine::effect::Lack]) -> Words {
             .iter()
             .map(|lack| match lack {
                 Lack::Roof => Words::key("home.lack.roof"),
+                Lack::Sky => Words::key("home.lack.sky"),
                 Lack::Away => Words::key("home.lack.away"),
                 Lack::Tag { tag, have, need } => Words::key("home.lack.tag").with("tag", Words::Own(format!("home.tag.{tag}"), tag.replace('_', " "))).with("have", Words::text(have)).with("need", Words::text(need)),
                 Lack::Walls { shelter, have, need } => Words::key("home.lack.walls").with("shelter", Words::key(&format!("home.shelter.{}", shelter.name()))).with("have", Words::text(have)).with("need", Words::text(need)),

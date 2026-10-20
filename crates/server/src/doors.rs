@@ -1,6 +1,7 @@
 //! Doors are data (`swaps` and `upper` on a block, the engine's `swapping` and
 //! `supported_by`); these tests drive one through the server's actions: placed whole,
-//! opened and shut here first, refused shut on whoever stands in it, and broken whole.
+//! opened and shut here first, refused shut on whoever stands in it, and broken whole;
+//! and a shuttered window, which swaps the same way.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -110,4 +111,26 @@ fn a_door_breaks_whole() {
         let dropped: u32 = server.items.saved(|b| blocks.def(b).name.clone()).iter().filter(|i| i.item == "base:wooden_door").map(|i| i.count as u32).sum();
         assert_eq!(held + dropped, 1, "one door back, broken by {half}");
     }
+}
+
+/// A shuttered lattice window turned east shuts with a right click and keeps its facing,
+/// drops nothing and gives nothing; it opens again the same way, and it never shuts on
+/// someone standing against it.
+#[test]
+fn shutters_on_a_lattice_shut_as_they_were_set_and_never_on_anyone() {
+    let mut server = fixture();
+    let open = id(&server, "base:birch_shuttered_window_east");
+    server.set_block(DOOR, open);
+    let held = server.players[&1].inventory.clone();
+    let name = |server: &Server| door(server)[0].clone();
+    act(&mut server, "base:open", ActionTarget::Block { block: DOOR, face: Face::NegX });
+    assert_eq!(name(&server), "base:birch_shuttered_window_shut_east");
+    assert!(server.items.saved(|b| server.content.blocks.def(b).name.clone()).is_empty(), "shutting the window dropped something");
+    assert_eq!(server.players[&1].inventory, held, "shutting the window changed what the player holds");
+    act(&mut server, "base:open", ActionTarget::Block { block: DOOR, face: Face::NegX });
+    assert_eq!(name(&server), "base:birch_shuttered_window_east");
+    // Stood against its open leaves, the player keeps it open.
+    server.players.get_mut(&1).unwrap().position = DOOR.as_vec3() + Vec3::new(1.2, 0.0, 0.5);
+    act(&mut server, "base:open", ActionTarget::Block { block: DOOR, face: Face::NegX });
+    assert_eq!(name(&server), "base:birch_shuttered_window_east", "shut on the player standing in it");
 }

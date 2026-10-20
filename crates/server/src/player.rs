@@ -61,6 +61,13 @@ pub struct Player {
     /// The announced effects (`EffectDef::announce`) the player has been told of this
     /// session, so stepping out of a room and back in does not say it twice.
     pub announced: Vec<EffectId>,
+    /// The home steps their home met when last surveyed (`EffectRegistry::home_steps`),
+    /// where that home stood (its `home_spot`'s cell: a home moved since says nothing of
+    /// what was lost), and whether it is yet to be surveyed since they joined, to tell them
+    /// what lights burnt out while they were away cost.
+    pub home_steps: Vec<EffectId>,
+    pub home_anchor: Option<voxmar_engine::glam::IVec3>,
+    pub home_unchecked: bool,
     /// Healing and hurting under way, in seconds (`process::Survival`).
     pub heal_clock: f32,
     pub hurt_clock: f32,
@@ -201,6 +208,9 @@ impl Player {
             vitals: Vitals::default(),
             timed_effects: Vec::new(),
             announced: Vec::new(),
+            home_steps: Vec::new(),
+            home_anchor: None,
+            home_unchecked: false,
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
             health_base: 0,
@@ -248,7 +258,7 @@ impl Player {
     }
 
     pub fn view(&self) -> PlayerView {
-        PlayerView { id: self.id, name: self.name.clone(), position: self.position, yaw: self.yaw }
+        PlayerView { id: self.id, name: self.name.clone(), position: self.position, yaw: self.yaw, pitch: self.pitch, held: self.held() }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -335,6 +345,8 @@ impl Player {
             prayer_points: Some(self.praying.points),
             casts: self.casts,
             draws: self.draws,
+            home_steps: self.home_steps.iter().map(|&id| effects.get(id).name.clone()).collect(),
+            home_anchor: self.home_anchor.map(|at| at.to_array()),
             spilled: Vec::new(),
         }
     }
@@ -598,6 +610,9 @@ impl Server {
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
+                player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
+                player.home_unchecked = !player.home_steps.is_empty();
             }
             // Players who left dead come back to life at home, or else the spawn point.
             Some(saved) => {
@@ -613,6 +628,9 @@ impl Server {
                 player.quests_done = saved.quests;
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
+                player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
+                player.home_unchecked = !player.home_steps.is_empty();
             }
             // The coin purse in the pack's last slot, out of the hotbar's way, and the kit
             // unless this address has had its share.
@@ -1204,6 +1222,42 @@ mod tests {
     }
 
     /// Drive the server directly: no tick race can hide an identity change or a cap bypass.
+    /// The last of the other players a client was told of, emptying what came before.
+    fn told_of_others(client: &ClientConnection) -> Option<Vec<PlayerView>> {
+        std::iter::from_fn(|| client.try_recv().ok().flatten())
+            .filter_map(|message| match message {
+                ServerMessage::Players { players } => Some(players),
+                _ => None,
+            })
+            .last()
+    }
+
+    /// Others see what a player holds and how they look up or down (at most as far as the
+    /// server lets them: 1.6 radians); the last one left is told the others are gone, once.
+    #[test]
+    fn others_are_told_what_a_player_holds_and_where_they_look_and_when_they_go() {
+        let mut server = crate::test_server();
+        let ada = join(&mut server, 1, "Ada");
+        let bo = join(&mut server, 2, "Bob");
+        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
+        let p = server.players.get_mut(&2).unwrap();
+        p.inventory.add(sword, 1);
+        let slot = (0..voxmar_engine::inventory::SLOTS).find(|&s| p.inventory.get(s).is_some_and(|stack| stack.item == sword)).expect("the sword in a slot");
+        let input = PlayerInput { position: p.position, yaw: 0.3, pitch: 3.0, selected_slot: slot as u8, flying: false, teleport: p.teleports };
+        bo.send(ClientMessage::Input(input));
+        server.handle_messages();
+        server.broadcast_players();
+        let told = told_of_others(&ada).expect("Ada was told of Bob");
+        let bob = told.iter().find(|v| v.id == 2).expect("Bob among the others");
+        assert_eq!((bob.held, bob.pitch), (Some(sword), 1.6), "what Bob holds and how far up he looks");
+        assert!(told.iter().all(|v| v.id != 1), "Ada was told of herself");
+        server.leave(2);
+        server.broadcast_players();
+        assert_eq!(told_of_others(&ada).map(|t| t.len()), Some(0), "Ada was not told Bob had gone");
+        server.broadcast_players();
+        assert!(told_of_others(&ada).is_none(), "alone, Ada was told of nobody again and again");
+    }
+
     #[test]
     fn the_saved_name_keeps_identity_herd_caps_births_and_death_drops() {
         check_saved_ownership(false);

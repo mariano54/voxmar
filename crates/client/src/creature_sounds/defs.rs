@@ -231,6 +231,15 @@ impl Bank {
         Ok(bank)
     }
 
+    /// Whether every clip a voice plays is there under `assets`, so a mistyped path fails
+    /// at launch rather than leaving the animal silent.
+    pub fn check_files(&self, assets: &std::path::Path) -> Result<(), String> {
+        match self.clips.iter().find(|key| !assets.join(&key.path).is_file()) {
+            Some(missing) => Err(format!("{FILE}: `{}` is not there", missing.path)),
+            None => Ok(()),
+        }
+    }
+
     pub fn voice(&self, species: CreatureId) -> Option<&Voice> {
         self.species.get(species.0 as usize).and_then(Option::as_ref)
     }
@@ -333,6 +342,10 @@ mod tests {
         let rabbit = bank.voice(creatures.find("rabbit").unwrap()).unwrap();
         let clip = &bank.clips[rabbit.event(Kind::Idle).unwrap().clips[0]];
         assert_eq!(clip, &ClipKey { path: "content/zmod/b.ogg".into(), aether: 10 });
+        // Every shipped voice's clips are there; the mod's b.ogg is not, and fails the launch.
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        assert_eq!(Bank::load(&content.files, creatures).unwrap().check_files(&assets), Ok(()));
+        assert!(bank.check_files(&assets).is_err());
     }
 
     #[test]

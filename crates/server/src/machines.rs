@@ -515,7 +515,7 @@ impl Server {
             state.fuel = machine.fuel.as_ref().and_then(stack);
             state.bin = machine.bin.iter().map(stack).collect();
             for &(at, wear) in &machine.bin_wear {
-                if let Some(Some(stack)) = state.bin.get_mut(at as usize).filter(|s| s.is_some_and(|s| s.count == 1)) {
+                if let Some(Some(stack)) = state.bin.get_mut(at as usize) {
                     stack.wear = wear;
                 }
             }

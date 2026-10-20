@@ -31,6 +31,21 @@ Soft ground stays near the quarter-second floor whatever the tool (1.2x a step p
 stone): it was already quick, and only the wait could change that, which is not a tier's
 to change.
 
+Bare hands break neither natural stone nor a standing log: their rules in `base/tools.ron`
+ask for a pickaxe and an axe of tier 1 (Mariano, Oct 15: the early game was too easy, and
+the first tool must matter). So a new player's first tools are flint ones, made in the
+hand's grid from what hands can gather: flint (nodules lie loose in the grass and on the
+forest floor, and gravel gives it one break in eight) and sticks (a tree's leaves give one
+in five, a dead snag always; leaves a player set down give none). However poor the land
+by the spawn, the **spawn kit** (`base/spawn_kit.ron`, server/src/spawn_kit.rs) lays four
+to six loose flint and a three-block snag 2 to 6 blocks from it, once per world (new worlds
+and older saves alike, `WorldMeta::spawn_kit`), into air on natural ground no player
+placed; it is wild, so picked flint grows back (`regrowth.ron`'s `loose`). A flint axe is two flint over a stick, a flint pickaxe two flint over
+two sticks, both tier 1 like wood. A click on stone or a log by hand says "Needs a Flint
+Pickaxe or better": a refusal names the least tool that would do, the lowest tier and then
+the cheapest (`Content::least_tool`). Cobblestone, mossy or not, still breaks by hand; a log
+set down as a wall wants an axe like a standing one (whoever has logs has felled them).
+
 `base/tools.ron` (engine/src/tool.rs) says what each kind is made for, by block tags (a
 pickaxe for stone and ore, an axe for logs and planks, a shovel for soil, sand, gravel,
 clay and snow, a hoe for crops and leaves, shears for leaves and wool, a knife for plants).

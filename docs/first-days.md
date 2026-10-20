@@ -360,6 +360,61 @@ on level ground, and a cast lands two times in five, about 12.5 s a fish. Crops 
 minutes of growth (wheat; carrots 14) day and night, and while they grow the main line,
 husbandry and the home quests are open.
 
+### Pacing: new things per three minutes (Oct 20)
+
+The quest-book bot also counts what is new to the player as it goes (`Pacing` in
+gameplay.rs): an item first in the pack, a place (a biome stood in, a cave, ruin or village
+entered, from the journal), a creature first met (the journal's animals, monsters and
+bosses), and a station first worked at (a block tagged `station`, a home station from
+`stations.ron`, or a multiblock's core). It prints them for each three minutes of the run,
+the longest wait with nothing new, and the longest stretch of one action over and over (the
+same action on the same block, creature or held item, until the player does anything else).
+It fails if a whole three minutes brings fewer than five new things (`PACING_NEW`) or one
+action goes on for more than a minute (`PACING_STRETCH`).
+
+32 runs on main 3930bb29 (server seconds):
+
+| Measure | Range | Median | What it was |
+|---|---|---|---|
+| New things, first three minutes | 27 to 43 | 36 | Tools, the first foods, the fire, the first two creatures and two biomes. |
+| New things, the rest | 9 to 19 | 15.5 | The bed, clay, the Hearth, the pit kiln and clamp; at least 14 when the window is a whole three minutes. |
+| Longest wait with nothing new | 49 to 170 | 88 | Firing clay toward A Kiln Load while the clamp chars (Charcoal), 80 to 106 s in 31 runs; once the hunt for A Bed of Your Own's hides (170 s, 109 of it hunting). |
+| Longest single-action stretch | 29 to 40 | 31 | Firing clay at the pit kiln, 13 to 17 in a row (Fire the Clay). |
+| The lit Crucible Kiln | 314 to 401 | 356 | |
+
+The target is 20 to 30 server minutes from a new world to the Farm age's end. The bot is
+a floor: it knows the way, its plot stands in for terrain, and it has no menus or
+reading, so 5 to 7 minutes for the bot is in line with a player several times slower.
+What the report shows, and is left for the books' owners:
+
+- **The Charcoal stretch.** From The Potter to the clamp's sixteen charcoal, about 85 s
+  bring nothing new: the bot fires clay by hand while the clamp works. That is the next
+  place for a new thing (a side quest or a station that opens there).
+- **The hunt's tail.** The bed's two hides take 26 to 171 s; the slow runs are the chase,
+  not the drop (rabbit and junglefowl hides drop 0.8). A Tempting Bite (bait) is the
+  answer the book already gives; a real player is slower still.
+- Nothing past the first window is a place or a creature: the plot is one or two biomes
+  and a lane of two kinds. In a real world the walks add both, so the second and third
+  windows are a floor too.
+
+### One charcoal route (Oct 20)
+
+Charcoal comes only from the charcoal clamp now: the earth clamp is retired (its blocks load
+as oak logs) and the campfire no longer chars logs. The quest-book bot builds the clamp as
+Charcoal says: eight logs, a flint dug from the gravel bank for the chopping block, ten
+firewood split on it (nine laid), kindling, twenty-four dirt for the walls and roof, lit
+from a torch. The bot's clock runs about 75 s a game hour.
+
+At eight game hours the clamp failed the pacing check above: about 600 s of the bot's time
+with nothing new and the bot idle (0 new things in three windows, one stretch of 440 s). It
+smoulders two game hours now (`smoulder.hours` in multiblocks.ron), and while it does the
+bot works on Brick by Brick, open since The Potter: clay fired to A Kiln Load's forty, then
+kiln bricks crafted between firings. Once the clamp is spent it digs out the charcoal and
+does Red Metal, then finishes the bricks. Seven runs: the lit Crucible Kiln at 465 to 520 s;
+the window from 360 s brings 7 new things (kiln bricks, charcoal, copper ore, ingot and
+pickaxe, the crucible and its station); the longest wait with nothing new is about 150 s
+(firing clay); the longest single-action stretch is 39 to 40 s (17 firings in a row).
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`

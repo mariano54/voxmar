@@ -92,6 +92,9 @@ pub enum Requirement {
     Cookable,
     /// The actor's Cooking level is at least what the held item's recipe there needs.
     CookingLevel,
+    /// The actor carries the tool the held item's recipe there asks for, if any (an axe to
+    /// split a log on a chopping block).
+    CookingTool,
     /// The actor holds something it can eat.
     HoldingFood,
     /// The actor has health to heal.
@@ -116,6 +119,10 @@ pub enum Requirement {
     /// The target is coated in place by what the actor holds (`coat` on its block), aimed
     /// at one of its sides: clay on a wattle panel or an earth wall.
     Coats,
+    /// What the target is coated into, if solid, would shut nobody in: no player and no
+    /// creature stands in its cell (a thin wattle panel turned a whole daub block), as
+    /// placing a block and shutting a door refuse.
+    CoatClear,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
     /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
@@ -154,7 +161,7 @@ pub enum Requirement {
 
 impl Requirement {
     /// Every requirement, in [`Requirement::index`] order (`refusal` says why each failed).
-    pub const ALL: [Requirement; 40] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Coats, Requirement::Relights];
+    pub const ALL: [Requirement; 42] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Coats, Requirement::CookingTool, Requirement::CoatClear, Requirement::Relights];
 
     /// Where it stands in [`Requirement::ALL`]. A new requirement must be added to both:
     /// this match does not compile without it.
@@ -199,7 +206,9 @@ impl Requirement {
             Requirement::SprungTrap => 36,
             Requirement::Seat => 37,
             Requirement::Coats => 38,
-            Requirement::Relights => 39,
+            Requirement::CookingTool => 39,
+            Requirement::CoatClear => 40,
+            Requirement::Relights => 41,
         }
     }
 
@@ -403,6 +412,11 @@ pub trait ActionContext {
     fn actor_eye(&self) -> Vec3;
     fn actor_alive(&self) -> bool;
     fn actor_held(&self) -> Option<BlockId>;
+    /// Everything the actor carries in its slots, the hand's among them (a tool a recipe
+    /// asks for, `Requirement::CookingTool`).
+    fn actor_carried(&self) -> Vec<BlockId> {
+        Vec::new()
+    }
     /// What the actor's pouches carry (see [`crate::inventory::Inventory::pouched`]).
     fn actor_pouched(&self) -> Vec<BlockId> {
         Vec::new()
@@ -652,6 +666,12 @@ impl ActionDef {
                     (_, None) => true,
                 }
             }
+            Requirement::CookingTool => {
+                let (block, _) = block_target()?;
+                let station = ctx.block(block).map(|b| ctx.blocks().def(b).tags.as_slice()).unwrap_or(&[]);
+                let recipe = ctx.actor_held().zip(ctx.cooking()).and_then(|(item, cooking)| cooking.for_item(item, station));
+                recipe.is_none_or(|recipe| recipe.has_tool(ctx.blocks(), ctx.actor_carried()))
+            }
             Requirement::ToolGood => {
                 let (block, _) = block_target()?;
                 match (ctx.block(block), ctx.tools()) {
@@ -709,6 +729,11 @@ impl ActionDef {
                 let coating = ctx.block(block).and_then(|b| ctx.blocks().coating(b));
                 side && coating.is_some_and(|(with, _)| ctx.actor_held() == Some(with))
             }
+            Requirement::CoatClear => {
+                let (block, _) = block_target()?;
+                let into = ctx.block(block).and_then(|b| ctx.blocks().coating(b)).map(|(_, into)| into);
+                into.is_none_or(|into| !ctx.info(into).solid || !(ctx.occupied(block) || ctx.creature_in(block)))
+            }
             Requirement::Seat => {
                 let (block, _) = block_target()?;
                 let seat = ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag(SEAT_TAG));
@@ -758,7 +783,7 @@ impl ActionDef {
                 match ctx.actor_held() {
                     None => true,
                     Some(item) => {
-                        let fuel = machine.burns() && machines.burn_seconds(item).is_some();
+                        let fuel = machine.burns() && machines.burns_in(machine, item).is_some();
                         let input = machine.is_processor() && machines.takes(machine, item);
                         // A bin takes anything but machines: a chute in hand is laid against it.
                         let bin = machine.bin_takes(item) && !ctx.blocks().def(item).has_tag(&machines.rules.machine_tag);

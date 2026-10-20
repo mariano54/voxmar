@@ -287,7 +287,7 @@ fn push_models(models: &mut Vec<ItemModel>, world: &ClientWorld, pieces: Option<
         // own turning frame.
         let spread = if copy == 0 { Vec3::ZERO } else { scatter(copy) * size * 0.35 };
         let offset = if sprite { Vec3::new(spread.x * 0.3, spread.y * 0.3, -(copy as f32) * size / 16.0) } else { spread };
-        models.push(ItemModel { center, phase: item.phase, offset, size, shape, layers, tinted, tint, light: item.light, held: None });
+        models.push(ItemModel { center, phase: item.phase, offset, size, shape, layers, tinted, tint, light: item.light, held: None, posed: None });
     }
 }
 

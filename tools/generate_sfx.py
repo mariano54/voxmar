@@ -2,10 +2,14 @@
 """Synthesizes the everyday action sounds: eating, crafting, lighting a fire, opening a
 chest or a door, cooking, lying down to sleep, casting a line, picking an item up, feeding
 an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
-spreading fertiliser, throwing an item down, a snare springing shut, and a tool nearly
-worn out and breaking; and the building
-materials' steps, placings and breakings (timber, thatch, shingle, cobblestone, stone
-brick, wattle, daub, hide, terracotta) under materials/.
+spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, food
+coming off the fire done or burnt, and a tool nearly worn out and breaking; for the
+interface, a quest book's page turned and a soft "no" when something is refused; and the
+building materials' steps, placings and breakings (timber, thatch, shingle, cobblestone,
+stone brick, wattle, daub, hide, terracotta) under materials/;
+and the work of the first two ages under work/: flint knapped,
+a hide scraped, clay shaped, pottery, stone dressed, cord twisted, wood whittled, the
+home stations loaded, a kiln fed, ore smelted, and a hearth or kiln kindled.
 
 Our own work, built from noise, resonators and decaying modes (no samples). Run once
 offline; the clips are written to assets/content/base/sounds/ as Ogg Vorbis and listed in
@@ -155,6 +159,22 @@ def light(rng):
     rush = lowpass(rng.standard_normal(n), 0.05) * swell
     place(out, catch, rush / (np.abs(rush).max() + 1e-9), 0.7)
     place(out, catch + 0.1, crackles(rng, 0.8, 26, 0.9) * np.exp(-np.arange(int(0.8 * RATE)) / RATE / 0.5))
+    return out
+
+
+def catch(rng):
+    """Thatch or wattle catching fire (fire.ron): a soft, low whoomph of flame taking hold,
+    swelling quickly and settling, with the first dry crackles running through it. Softer
+    than a strike: a warning heard across a room, not a bang."""
+    n = int(1.4 * RATE)
+    t = np.arange(n) / RATE
+    rise = rng.uniform(0.12, 0.18)
+    swell = np.minimum(t / rise, 1.0) ** 1.5 * np.exp(-np.maximum(t - rise, 0) / rng.uniform(0.38, 0.5))
+    body = lowpass(rng.standard_normal(n), 0.035) * swell
+    air = bandpass(rng.standard_normal(n), 900, 0.6) * swell * 0.25
+    out = body / (np.abs(body).max() + 1e-9) * 0.8 + air
+    tail = int(1.2 * RATE)
+    place(out, rise * 0.6, crackles(rng, 1.2, 30, 0.7) * np.exp(-np.arange(tail) / RATE / 0.55))
     return out
 
 
@@ -368,6 +388,84 @@ def tool_break(rng):
     place(out, 0.0, knock(rng, rng.uniform(380, 460)), 0.8)
     place(out, 0.01, crackles(rng, 0.12, 300, 0.7))
     place(out, 0.18, trickle(rng, 0.4, 2400, 40), 0.5)
+    return out
+
+
+def splash(rng, seconds, centre):
+    """Water broken: a wet burst of noise falling in pitch, and a few drops after."""
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    burst = bandpass(rng.standard_normal(n), centre * (0.55 + 0.45 * np.exp(-t / 0.08)), 0.9) * envelope(n, 0.004, 0.09)
+    return burst + 0.4 * lowpass(rng.standard_normal(n), 0.05) * envelope(n, 0.002, 0.05)
+
+
+def drop(rng, freq):
+    """One drop falling back into water: a short rising bloop."""
+    n = int(0.07 * RATE)
+    t = np.arange(n) / RATE
+    phase = np.cumsum(2 * np.pi * freq * (1 + 1.2 * t / 0.07) / RATE)
+    return np.sin(phase) * envelope(n, 0.002, 0.018)
+
+
+def catch(rng):
+    """A fish landed: it breaks the water, drops patter back, and it flaps twice on the
+    bank."""
+    out = np.zeros(int(0.85 * RATE))
+    place(out, 0.0, splash(rng, 0.35, rng.uniform(1400, 1800)), 1.0)
+    for _ in range(5):
+        place(out, rng.uniform(0.12, 0.38), drop(rng, rng.uniform(700, 1300)), rng.uniform(0.15, 0.3))
+    for at in [0.5, 0.66]:
+        n = int(0.06 * RATE)
+        slap = bandpass(rng.standard_normal(n), rng.uniform(900, 1200), 1.4) * envelope(n, 0.001, 0.015)
+        place(out, at + rng.uniform(-0.02, 0.02), slap + 0.5 * lowpass(rng.standard_normal(n), 0.04) * envelope(n, 0.001, 0.01), 0.6)
+    return out
+
+
+def burnt(rng):
+    """Food left too long: a sharp hiss as it catches, a dull puff of smoke and a few dry
+    sputters, darker than a sizzle."""
+    seconds = 1.0
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    hiss = bandpass(rng.standard_normal(n), 2600 * (1 - 0.5 * np.minimum(t / 0.6, 1)), 0.8) * envelope(n, 0.005, 0.25)
+    puff = lowpass(rng.standard_normal(n), 0.015) * envelope(n, 0.02, 0.18) * 3
+    out = hiss + puff
+    place(out, 0.25, crackles(rng, 0.6, 12, 0.7))
+    return out * np.minimum((seconds - t) / 0.2, 1.0)
+
+
+def cooked(rng):
+    """Food done and lifted off: the sizzle easing away and a light tap on a board."""
+    seconds = 0.7
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    sizzle = bandpass(rng.standard_normal(n), 4800, 0.8) * np.exp(-t / 0.22) * 0.6
+    out = sizzle + crackles(rng, seconds, 18, 0.5) * np.exp(-t / 0.3)
+    place(out, 0.3, knock(rng, rng.uniform(380, 460), 0.8))
+    return out
+
+
+def page(rng):
+    """A page of the quest book turned: a quick papery swish rising, settling with a light
+    flap."""
+    seconds = 0.16
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    swish = bandpass(rng.standard_normal(n), 2400 + 3200 * np.minimum(t / 0.09, 1), 1.2) * envelope(n, 0.025, 0.05)
+    out = swish * 0.8
+    m = int(0.03 * RATE)
+    flap = bandpass(rng.standard_normal(m), rng.uniform(1300, 1600), 1.6) * envelope(m, 0.001, 0.008)
+    place(out, 0.085 + rng.uniform(-0.01, 0.01), flap, 0.9)
+    return out
+
+
+def refuse(rng):
+    """Something the player tried refused: two soft, muted wooden knocks falling a step,
+    as a "no" said kindly, never a buzzer."""
+    out = np.zeros(int(0.3 * RATE))
+    low = rng.uniform(300, 330)
+    place(out, 0.0, lowpass(knock(rng, low * 1.25, 1.0), 0.25), 1.0)
+    place(out, 0.11, lowpass(knock(rng, low, 1.0), 0.25), 0.85)
     return out
 
 
@@ -679,6 +777,179 @@ def terracotta_break(rng):
     return out
 
 
+# The work of the first two ages, by what it is done with (sounds.ron's `ways`).
+
+
+def knap(rng):
+    """Flint knapped: a hammerstone's sharp, glassy cracks, each flake ticking away."""
+    out = np.zeros(int(0.6 * RATE))
+    at = 0.0
+    for blow in range(3):
+        level = (0.7, 0.85, 1.0)[blow]
+        place(out, at, stone(rng, rng.uniform(1100, 1500), 0.02), level)
+        place(out, at, thud(rng, 0.05, 0.08, 0.015), 0.4 * level)
+        n = int(0.03 * RATE)
+        snap = bandpass(rng.standard_normal(n) * envelope(n, 0.0001, 0.003), rng.uniform(5000, 6500), 1.4)
+        place(out, at, snap, 0.5 * level)
+        place(out, at + rng.uniform(0.03, 0.06), modes(rng.uniform(2600, 3400), 0.05, [(1.0, 0.3, 0.008), (1.7, 0.2, 0.005)], attack=0.0002), 0.6 * level)
+        at += rng.uniform(0.14, 0.19)
+    return out
+
+
+def scrape_hide(rng):
+    """A hide scraped: two long, rasping strokes of a stone edge over a stretched skin."""
+    out = np.zeros(int(0.85 * RATE))
+    for stroke in range(2):
+        n = int(rng.uniform(0.28, 0.34) * RATE)
+        t = np.arange(n) / n
+        rasp = rng.standard_normal(n) * (1 + 0.8 * np.sin(2 * np.pi * rng.uniform(55, 75) * np.arange(n) / RATE))
+        rasp *= np.sin(np.pi * t) ** 1.2
+        body = bandpass(rasp, 1700 + 900 * t, 1.6) + 0.5 * bandpass(rasp, 420, 2.5)
+        place(out, 0.04 + stroke * 0.4, body, 0.7 + 0.3 * stroke)
+    return out
+
+
+def shape_clay(rng):
+    """Clay shaped by hand: wet, soft slaps and a squelch as it is pressed."""
+    out = np.zeros(int(0.6 * RATE))
+    for slap in range(3):
+        n = int(0.09 * RATE)
+        body = lowpass(rng.standard_normal(n), 0.12) * envelope(n, 0.001, 0.02) * 6
+        wet = bandpass(rng.standard_normal(n) * envelope(n, 0.0005, 0.012), rng.uniform(900, 1300), 1.8)
+        place(out, slap * rng.uniform(0.13, 0.17), body + 0.8 * wet, (0.8, 0.7, 1.0)[slap])
+    n = int(0.2 * RATE)
+    t = np.arange(n) / n
+    squelch = bandpass(rng.standard_normal(n) * np.sin(np.pi * t), 500 + 500 * t, 3.0)
+    place(out, 0.36, squelch, 0.7)
+    return out
+
+
+def clink(rng):
+    """Fired clay knocked together: bright, short, ringing clinks of pottery."""
+    out = np.zeros(int(0.5 * RATE))
+    for knock_ in range(2):
+        place(out, knock_ * rng.uniform(0.11, 0.16), tile(rng), (0.8, 1.0)[knock_])
+    place(out, 0.02, modes(rng.uniform(1500, 1900), 0.2, [(1.0, 0.4, 0.05), (2.6, 0.2, 0.03)], attack=0.0003), 0.4)
+    return out
+
+
+def dress_stone(rng):
+    """Stone dressed: a hammerstone pecking at rock, grit falling from each blow."""
+    out = np.zeros(int(0.6 * RATE))
+    for blow in range(3):
+        at = blow * rng.uniform(0.13, 0.17)
+        place(out, at, stone(rng, rng.uniform(600, 820), 0.014), (0.75, 0.85, 1.0)[blow])
+        place(out, at, thud(rng, 0.05, 0.06, 0.012), 0.3)
+        place(out, at + 0.01, trickle(rng, 0.1, 2600, 220), 0.35)
+    return out
+
+
+def twist(rng):
+    """Fibre twisted into cord: dry stalks creaking as they wind tight, a soft rustle."""
+    out = np.zeros(int(0.6 * RATE))
+    place(out, 0.0, rustle(rng, 0.45, 2400), 0.5)
+    place(out, 0.08, creak(rng, 0.38, 70, 140, 900), 0.8)
+    return out
+
+
+def whittle(rng):
+    """Wood whittled: quick knife strokes peeling shavings, and a knock of the stick."""
+    out = np.zeros(int(0.55 * RATE))
+    for stroke in range(3):
+        at = stroke * rng.uniform(0.11, 0.14)
+        place(out, at, scrape(rng, rng.uniform(0.07, 0.09), rng.uniform(2600, 3300)), (0.7, 0.8, 0.9)[stroke])
+    place(out, 0.4, knock(rng, rng.uniform(380, 460)), 0.6)
+    return out
+
+
+def hang(rng):
+    """Meat hung on a drying rack: a wet slap on the rail and the poles creaking."""
+    out = np.zeros(int(0.55 * RATE))
+    n = int(0.1 * RATE)
+    slap = lowpass(rng.standard_normal(n), 0.15) * envelope(n, 0.001, 0.025) * 6
+    place(out, 0.0, slap + 0.6 * bandpass(rng.standard_normal(n) * envelope(n, 0.0005, 0.01), 1100, 1.6), 0.9)
+    place(out, 0.02, knock(rng, rng.uniform(300, 360)), 0.5)
+    place(out, 0.1, creak(rng, 0.3, 90, 60, 700), 0.6)
+    return out
+
+
+def stir(rng):
+    """Food tipped into a pot of water: a plop, a swirl of the ladle and a knock on the rim."""
+    out = np.zeros(int(0.75 * RATE))
+    n = int(0.12 * RATE)
+    t = np.arange(n) / RATE
+    plop = np.sin(2 * np.pi * (500 + 1400 * t / t[-1]) * t) * envelope(n, 0.001, 0.03)
+    place(out, 0.0, plop + 0.3 * lowpass(rng.standard_normal(n), 0.2) * envelope(n, 0.001, 0.02), 0.8)
+    m = int(0.4 * RATE)
+    s = np.arange(m) / m
+    swirl = bandpass(rng.standard_normal(m) * np.sin(np.pi * s) * (1 + 0.6 * np.sin(2 * np.pi * 7 * s)), 700 + 300 * np.sin(2 * np.pi * 2 * s), 2.0)
+    place(out, 0.1, swirl, 0.7)
+    place(out, 0.55, tile(rng), 0.5)
+    return out
+
+
+def heap(rng):
+    """Greens forked onto a compost heap: a soft, wet flump and a damp rustle settling."""
+    out = np.zeros(int(0.55 * RATE))
+    place(out, 0.0, thud(rng, 0.14, 0.03, 0.05), 1.0)
+    place(out, 0.0, rustle(rng, 0.3, 1300), 0.6)
+    place(out, 0.12, trickle(rng, 0.3, 1500, 90), 0.5)
+    return out
+
+
+def kiln_load(rng):
+    """Clay set into a pit kiln: a pot knocked into the embers and a breath of flame."""
+    out = np.zeros(int(0.8 * RATE))
+    place(out, 0.0, tile(rng), 0.8)
+    place(out, 0.02, thud(rng, 0.08, 0.05, 0.02), 0.4)
+    n = int(0.6 * RATE)
+    t = np.arange(n) / RATE
+    breath = lowpass(rng.standard_normal(n), 0.06) * np.minimum(t / 0.12, 1.0) * np.exp(-t / 0.25)
+    place(out, 0.08, breath / (np.abs(breath).max() + 1e-9), 0.5)
+    place(out, 0.1, crackles(rng, 0.6, 40, 0.8))
+    return out
+
+
+def smelt(rng):
+    """Ore tipped into a hot crucible: a rattle of stones on clay and a deep hiss."""
+    out = np.zeros(int(0.85 * RATE))
+    place(out, 0.0, clatter(rng, 0.3, 5, lambda r: stone(r, r.uniform(700, 1000), 0.01)), 0.8)
+    n = int(0.6 * RATE)
+    t = np.arange(n) / RATE
+    hiss = bandpass(rng.standard_normal(n), 3600, 0.7) * np.minimum(t / 0.05, 1.0) * np.exp(-t / 0.22)
+    place(out, 0.2, hiss, 0.6)
+    place(out, 0.2, lowpass(rng.standard_normal(n), 0.03) * np.exp(-t / 0.3) * 4, 0.5)
+    return out
+
+
+def kindle(rng, depth):
+    """A hearth or kiln lit: a strike, the kindling catching with a whoomph, and the fire
+    swelling into a roar that settles into its bed. `depth` lowers the roar (a kiln)."""
+    out = np.zeros(int(1.4 * RATE))
+    n = int(0.05 * RATE)
+    click = rng.standard_normal(n) * envelope(n, 0.0002, 0.005)
+    place(out, 0.0, bandpass(click, 4200, 1.2), 0.8)
+    place(out, 0.0, modes(rng.uniform(3800, 4600), 0.08, [(1.0, 0.3, 0.012), (1.48, 0.2, 0.008)], attack=0.0003), 0.8)
+    m = int(1.2 * RATE)
+    t = np.arange(m) / RATE
+    swell = np.minimum(t / 0.35, 1.0) ** 1.5 * np.exp(-np.maximum(t - 0.45, 0) / 0.5)
+    whoomph = lowpass(rng.standard_normal(m), 0.025 / depth) * np.exp(-t / 0.12) * 1.5
+    roar = lowpass(rng.standard_normal(m), 0.07 / depth) * swell
+    flutter = 1 + 0.35 * np.sin(2 * np.pi * rng.uniform(5, 8) * t)
+    body = whoomph + roar * flutter
+    place(out, 0.12, body / (np.abs(body).max() + 1e-9), 1.0)
+    place(out, 0.3, crackles(rng, 1.0, 30, 0.7) * np.exp(-np.arange(int(1.0 * RATE)) / RATE / 0.6))
+    return out
+
+
+def kindle_hearth(rng):
+    return kindle(rng, 1.0)
+
+
+def kindle_kiln(rng):
+    return kindle(rng, 1.6)
+
+
 def finish(mono, rng, width=0.15):
     """The clip made stereo (a hair of width from a short delay), faded, and brought to
     its loudness."""
@@ -702,6 +973,7 @@ SOUNDS = {
     "eat": (eat, 3),
     "craft": (craft, 3),
     "light": (light, 2),
+    "fire_catch": (catch, 2),
     "store_open": (store_open, 2),
     "door": (door, 2),
     "cook": (cook, 2),
@@ -718,6 +990,11 @@ SOUNDS = {
     "snare": (snare, 2),
     "tool_worn": (tool_worn, 2),
     "tool_break": (tool_break, 2),
+    "catch": (catch, 2),
+    "burnt": (burnt, 2),
+    "cooked": (cooked, 2),
+    "page": (page, 2),
+    "refuse": (refuse, 2),
     "materials/timber_step": (timber_step, 4),
     "materials/timber_place": (timber_place, 3),
     "materials/timber_break": (timber_break, 3),
@@ -745,6 +1022,20 @@ SOUNDS = {
     "materials/terracotta_step": (terracotta_step, 4),
     "materials/terracotta_place": (terracotta_place, 3),
     "materials/terracotta_break": (terracotta_break, 3),
+    "work/knap": (knap, 3),
+    "work/scrape_hide": (scrape_hide, 2),
+    "work/shape_clay": (shape_clay, 2),
+    "work/clink": (clink, 2),
+    "work/dress_stone": (dress_stone, 3),
+    "work/twist": (twist, 2),
+    "work/whittle": (whittle, 3),
+    "work/hang": (hang, 2),
+    "work/stir": (stir, 2),
+    "work/heap": (heap, 2),
+    "work/kiln_load": (kiln_load, 2),
+    "work/smelt": (smelt, 2),
+    "work/kindle_hearth": (kindle_hearth, 2),
+    "work/kindle_kiln": (kindle_kiln, 2),
 }
 
 

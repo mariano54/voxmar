@@ -74,6 +74,9 @@ impl Server {
             return;
         };
         self.tally(agent, "built", &structure.name, 1);
+        if structure.smoulder.is_some() {
+            return self.light_smoulder(agent, core, structure);
+        }
         // What catches by it as it is lit is the lighter's fire, whoever's home it is: lit by a
         // stranger, it never catches their thatch in its owner's home.
         let lighter = self.players.get(&agent).map(|p| crate::player_key(&p.name));
@@ -242,6 +245,8 @@ impl Server {
             if bed_lost || hearth_lost {
                 player.vitals.home = player.home_block(&self.lit);
                 player.changed(traits::VITALS);
+                // What the old home met is nothing to the new one: noted afresh there.
+                (player.home_steps, player.home_anchor) = (Vec::new(), None);
             }
         }
     }

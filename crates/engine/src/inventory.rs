@@ -7,8 +7,8 @@
 //! pointer ([`CURSOR`]), [`Inventory::quick_move`] between the hotbar and the rest, and
 //! [`Inventory::stow_cursor`] when the screen closes. The crafting grid is nine more slots
 //! ([`CRAFT`]; two by two of them away from a crafting table, see `craft::SMALL`), and [`Inventory::craft`] turns what it holds into a recipe's
-//! output. Six more slots ([`WORN`]) hold the armour worn and a shield, each only the piece
-//! made for it (`combat::Slot`). While a store is open (a chest, a cupboard: `machine::Role::Bin`),
+//! output. Seven more slots ([`WORN`]) hold the armour worn, a shield and a charm, each only the
+//! piece made for it (`combat::Slot`). While a store is open (a chest, a cupboard: `machine::Role::Bin`),
 //! its slots follow ([`STORE`]), a copy of what it holds that the server keeps in step with it.
 //! The client works out which moves a gesture means; the server checks and applies each the
 //! same way.
@@ -78,10 +78,10 @@ pub fn split_stack(stack: ItemStack) -> impl Iterator<Item = ItemStack> {
 pub const CURSOR: usize = SLOTS;
 /// The crafting grid's first slot; its nine are `CRAFT..CRAFT + 9`, row by row.
 pub const CRAFT: usize = CURSOR + 1;
-/// The first worn slot; its six are head, body, legs, hands, feet and the off-hand's
-/// shield (`combat::Slot`).
+/// The first worn slot; its seven are head, body, legs, hands, feet, the off-hand's
+/// shield and a charm (`combat::Slot`).
 pub const WORN: usize = CRAFT + GRID;
-pub const WORN_SLOTS: usize = 6;
+pub const WORN_SLOTS: usize = 7;
 /// The last slot number of the player's own.
 pub const LAST: usize = WORN + WORN_SLOTS - 1;
 /// The first slot of an open store, after the player's own; a store has at most
@@ -186,14 +186,15 @@ impl Default for Inventory {
 }
 
 impl Inventory {
-    /// Adds items, topping up existing stacks before using empty slots. Returns how many
-    /// did not fit.
+    /// Adds items, topping up existing unworn stacks before using empty slots (a worn
+    /// stack, such as a light picked up part-burnt, keeps its wear to itself). Returns how
+    /// many did not fit.
     pub fn add(&mut self, item: BlockId, mut count: u8) -> u8 {
         // Into its pouch first, if the player carries one.
         if pouch_for(item).is_some_and(|p| self.slots.iter().flatten().any(|s| s.item == p)) {
             count -= self.pouch(item, count);
         }
-        for stack in self.slots.iter_mut().flatten().filter(|s| s.item == item) {
+        for stack in self.slots.iter_mut().flatten().filter(|s| s.item == item && s.wear == 0) {
             let moved = count.min(max_stack(item).saturating_sub(stack.count));
             stack.count += moved;
             count -= moved;
@@ -334,7 +335,7 @@ impl Inventory {
     /// Adds to the slots only, never a pouch; returns how many went in.
     fn add_to_slots(&mut self, item: BlockId, count: u8) -> u8 {
         let mut left = count;
-        for stack in self.slots.iter_mut().flatten().filter(|s| s.item == item) {
+        for stack in self.slots.iter_mut().flatten().filter(|s| s.item == item && s.wear == 0) {
             let moved = left.min(max_stack(item).saturating_sub(stack.count));
             stack.count += moved;
             left -= moved;
@@ -421,9 +422,9 @@ impl Inventory {
     }
 
     /// Crafts what the grid holds into `output` (`count` of it), taking one item from each
-    /// filled cell: once, onto the pointer (which must be empty or hold the same item with
-    /// room), or with `all` as many times as the grid allows, into the inventory while it
-    /// has room. `recipe` names what a grid makes. Returns how many times it crafted.
+    /// filled cell: once, onto the pointer (which must be empty or hold the same item,
+    /// unworn, with room), or with `all` as many times as the grid allows, into the
+    /// inventory while it has room. `recipe` names what a grid makes. Returns how many times it crafted.
     pub fn craft(&mut self, recipe: impl Fn(&[Option<BlockId>; GRID]) -> Option<(BlockId, u8)>, all: bool) -> u32 {
         let mut made = 0;
         while let Some((output, count)) = recipe(&self.grid()) {
@@ -436,7 +437,7 @@ impl Inventory {
             } else {
                 match self.cursor {
                     None => self.cursor = Some(ItemStack::new(output, count)),
-                    Some(held) if held.item == output && held.count as u32 + count as u32 <= max_stack(output) as u32 => {
+                    Some(held) if held.item == output && held.wear == 0 && held.count as u32 + count as u32 <= max_stack(output) as u32 => {
                         self.cursor = Some(ItemStack { count: held.count + count, ..held });
                     }
                     Some(_) => break,
@@ -616,11 +617,17 @@ impl Inventory {
             .iter()
             .map(|slot| match slot {
                 None => max_stack(item) as u32,
-                Some(stack) if stack.item == item => max_stack(item).saturating_sub(stack.count) as u32,
+                Some(stack) if stack.item == item && stack.wear == 0 => max_stack(item).saturating_sub(stack.count) as u32,
                 Some(_) => 0,
             })
             .sum();
         room.min(count as u32) as u8
+    }
+
+    /// Whether any of `stack` fits, as [`Inventory::add_stack`] would put it: a worn one
+    /// only into an empty slot.
+    pub fn has_room_for(&self, stack: ItemStack) -> bool {
+        if stack.wear == 0 { self.room_for(stack.item, 1) > 0 } else { self.slots.iter().any(Option::is_none) }
     }
 
     /// Takes up to `count` items from `slot` (or [`CURSOR`]), returning what it took.
@@ -668,6 +675,36 @@ mod tests {
         assert_eq!((inv.count(SAND), inv.count(DIRT)), (7, 1), "nothing taken");
         assert!(inv.take_all(&[(SAND, 6), (DIRT, 1)], 4));
         assert_eq!((inv.slots[4], inv.slots[0], inv.count(DIRT)), (None, stack(SAND, 1), 0), "the held slot went first");
+    }
+
+    /// Fresh items added never top up a worn stack of the same item, nor count its room: the
+    /// wear stays its own.
+    #[test]
+    fn fresh_items_never_join_a_worn_stack() {
+        let mut inv = Inventory::default();
+        for slot in inv.slots.iter_mut().skip(1) {
+            *slot = Some(ItemStack::new(SAND, 1));
+        }
+        let worn = ItemStack { wear: 600, ..ItemStack::new(DIRT, 1) };
+        inv.slots[0] = Some(worn);
+        assert_eq!(inv.add(DIRT, 3), 3, "no room but the worn stack's, which it does not take");
+        assert_eq!(inv.slots[0], Some(worn));
+        assert_eq!(inv.room_for(DIRT, 3), 0);
+        assert!(!inv.has_room_for(ItemStack::new(DIRT, 1)) && !inv.has_room_for(worn));
+        inv.slots[1] = None;
+        assert!(inv.has_room_for(worn));
+        assert_eq!(inv.add(DIRT, 3), 0);
+        assert_eq!((inv.slots[0], inv.slots[1]), (Some(worn), Some(ItemStack::new(DIRT, 3))));
+        // Crafted one at a time onto the pointer, fresh output never tops up a worn stack held.
+        let mut inv = Inventory::default();
+        inv.craft[0] = Some(ItemStack::new(SAND, 2));
+        inv.cursor = Some(worn);
+        let makes = |grid: &[Option<BlockId>; GRID]| (grid[0] == Some(SAND)).then_some((DIRT, 1));
+        assert_eq!(inv.craft(makes, false), 0, "made onto a worn stack");
+        assert_eq!((inv.cursor, inv.craft[0]), (Some(worn), Some(ItemStack::new(SAND, 2))));
+        inv.cursor = Some(ItemStack::new(DIRT, 1));
+        assert_eq!(inv.craft(makes, false), 1);
+        assert_eq!(inv.cursor, Some(ItemStack::new(DIRT, 2)), "a fresh one held is topped up");
     }
 
     #[test]

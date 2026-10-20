@@ -106,6 +106,10 @@ pub struct WorldMeta {
     /// Lights set down and burning, and the world's day tick each goes out (`flames`).
     #[serde(default)]
     pub flames: Vec<SavedFlame>,
+    /// Columns whose lights set down before lights burnt out (or by the world) were given a
+    /// burn the first time they loaded, sorted: each is given one once.
+    #[serde(default)]
+    pub flame_columns: Vec<[i32; 2]>,
     #[serde(default)]
     pub planter_grown: Vec<[i32; 3]>,
     /// Blocks waiting to catch fire or to burn out (`blaze`). Older worlds have none.
@@ -126,6 +130,10 @@ pub struct WorldMeta {
     /// open cold; completed quests stay completed in the player's own file.
     #[serde(default)]
     pub lit: Vec<crate::hearth::Lit>,
+    /// Structures smouldering (a charcoal clamp), by the world's day ticks. Older worlds
+    /// have none.
+    #[serde(default)]
+    pub smoulders: Vec<crate::smoulder::Smouldering>,
     /// Whose each home hearth is, lit or cold, until its hearthstone is broken
     /// (`hearth::HearthOwner`). Older worlds have none: their lit hearths keep the owner
     /// saved with the fire.
@@ -161,6 +169,10 @@ pub struct WorldMeta {
     /// none in older worlds.
     #[serde(default)]
     pub rolls: u64,
+    /// Whether the spawn kit (`spawn_kit.ron`) lies by the spawn: laid once, on the first
+    /// start of a world or of an older save without it.
+    #[serde(default)]
+    pub spawn_kit: bool,
 }
 
 /// What tells the world's rolls (`WorldMeta::next_roll`) of one kind from another's.
@@ -191,12 +203,14 @@ pub fn pop_key(draw_key: u64) -> u64 {
 }
 
 /// How a burning light set down is saved: where, what by name, and the world's day tick
-/// it goes out.
+/// it goes out; or, `tended` in a settlement, the ticks of burn it has left.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SavedFlame {
     pub pos: [i32; 3],
     pub block: String,
     pub out: u64,
+    #[serde(default)]
+    pub tended: bool,
 }
 
 /// The key the world's casts draw by (`WorldMeta::next_cast`), made from its draw key as
@@ -278,12 +292,14 @@ impl WorldMeta {
             placed: Vec::new(),
             regrowing: Vec::new(),
             flames: Vec::new(),
+            flame_columns: Vec::new(),
             planter_grown: Vec::new(),
             blazes: Vec::new(),
             hives: Vec::new(),
             stations: Vec::new(),
             catches: Vec::new(),
             lit: Vec::new(),
+            smoulders: Vec::new(),
             hearth_owners: Vec::new(),
             generation: 0,
             worldgen_content: None,
@@ -292,6 +308,7 @@ impl WorldMeta {
             drops: 0,
             loot: 0,
             rolls: 0,
+            spawn_kit: false,
         }
     }
 }
@@ -356,6 +373,8 @@ pub struct Draws {
     pub kills: u64,
     /// Wanderers' greetings heard, for which of their greetings is said.
     pub greets: u64,
+    /// Shots that missed, each of which may land to pick up again (`recover_miss`).
+    pub strays: u64,
 }
 
 /// A kind of roll a player's draws number (`Draws`).
@@ -379,6 +398,7 @@ pub enum Draw {
     Free,
     Kill,
     Greet,
+    Stray,
 }
 
 impl Draw {
@@ -403,6 +423,7 @@ impl Draw {
             Draw::Free => 0xf4ee,
             Draw::Kill => 0xb10d,
             Draw::Greet => 0x6e37,
+            Draw::Stray => 0x57a7,
         }
     }
 }
@@ -429,6 +450,7 @@ impl Draws {
             Draw::Free => &mut self.frees,
             Draw::Kill => &mut self.kills,
             Draw::Greet => &mut self.greets,
+            Draw::Stray => &mut self.strays,
         };
         let draws = numbered_draws(key, kind.salt(), *count);
         *count += 1;
@@ -478,6 +500,10 @@ pub struct SavedPlayer {
     pub casts: u64,
     /// What the player's other rolls are numbered by (none in older saves).
     pub draws: Draws,
+    /// The home steps their home last met, by name, and where that home stood, to tell
+    /// them on return what lights burnt out while they were away cost (none in older saves).
+    pub home_steps: Vec<String>,
+    pub home_anchor: Option<[i32; 3]>,
     /// What an older save carried in stacks that now come one at a time (tools), with no
     /// empty slot left for it: dropped at the player's feet when they join. Never saved.
     pub spilled: Vec<ItemStack>,
@@ -553,6 +579,10 @@ struct PlayerFile {
     casts: u64,
     #[serde(default)]
     draws: Draws,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    home_steps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    home_anchor: Option<[i32; 3]>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -817,7 +847,8 @@ impl WorldSave {
                 .and_then(|(item, count)| Some(ItemStack::new(registry.item_named(&item)?, count.min(MAX_STACK))));
         }
         for &(slot, wear) in &file.wear {
-            if let Some(stack) = inventory.slots.get_mut(slot as usize).and_then(Option::as_mut).filter(|s| s.count == 1) {
+            // (A stack of lights picked up part-burnt keeps its wear too.)
+            if let Some(stack) = inventory.slots.get_mut(slot as usize).and_then(Option::as_mut) {
                 stack.wear = wear;
             }
         }
@@ -839,7 +870,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, draws: file.draws, spilled }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, draws: file.draws, home_steps: file.home_steps, home_anchor: file.home_anchor, spilled }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -885,6 +916,8 @@ impl WorldSave {
             prayer_points: player.prayer_points,
             casts: player.casts,
             draws: player.draws,
+            home_steps: player.home_steps.clone(),
+            home_anchor: player.home_anchor,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -1235,8 +1268,12 @@ mod tests {
     use voxmar_worldgen::Generator;
 
     fn registry(extra_first: bool) -> Arc<BlockRegistry> {
-        let source = include_str!("../../../assets/content/base/blocks.ron");
-        let mut defs = BlockRegistry::parse("base", source).unwrap();
+        // Every base block file, as the game loads them: worldgen places blocks from several.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.file_name().unwrap().to_str().unwrap().starts_with("blocks")).collect();
+        files.sort();
+        let packages = files.iter().map(|f| ("base".to_owned(), BlockRegistry::read("base", &std::fs::read_to_string(f).unwrap()).unwrap())).collect();
+        let mut defs = BlockRegistry::expand(packages).unwrap();
         if extra_first {
             // A mod loaded before `base` renumbers every base block.
             defs.insert(0, voxmar_engine::block::BlockDef { name: "aaa:marble".into(), ..defs[0].clone() });
@@ -1415,6 +1452,8 @@ mod tests {
             prayer_points: None,
             casts: 0,
             draws: Draws::default(),
+            home_steps: Vec::new(),
+            home_anchor: None,
             spilled: Vec::new(),
         };
         save.write_player("ada", &player, &registry).unwrap();
@@ -1435,13 +1474,19 @@ mod tests {
     fn players_round_trip_by_name() {
         let dir = temp_dir("players");
         let save = WorldSave::new(&dir);
-        let registry = registry(false);
+        // The game's blocks, and the charm (a creature's drop, from another blocks file).
+        let registry = {
+            let mut defs = BlockRegistry::parse("base", include_str!("../../../assets/content/base/blocks.ron")).unwrap();
+            defs.push(voxmar_engine::block::BlockDef { name: "base:charge_charm".into(), ..defs[0].clone() });
+            Arc::new(BlockRegistry::new(defs).unwrap())
+        };
         let mut inventory = Inventory::default();
         inventory.add(registry.expect("base:cobblestone"), 70);
         inventory.pouched.push((registry.expect("base:cobblestone"), 300));
         // What is worn keeps its slot (the save keeps names; content judges what fits).
         inventory.worn[1] = Some(ItemStack::new(registry.expect("base:dirt"), 1));
         inventory.worn[5] = Some(ItemStack::new(registry.expect("base:cobblestone"), 1));
+        inventory.worn[6] = Some(ItemStack::new(registry.expect("base:charge_charm"), 1));
         // A worn tool keeps how worn it is.
         inventory.slots[7] = Some(ItemStack { wear: 7, ..ItemStack::new(registry.expect("base:dirt"), 1) });
         let player = SavedPlayer {
@@ -1462,7 +1507,9 @@ mod tests {
             tallies: vec![("crafted:base:torch".into(), 8)],
             prayer_points: Some(7.5),
             casts: 12,
-            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3, kills: 12, greets: 4, wears: 12 },
+            draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3, kills: 12, greets: 4, strays: 6, wears: 12 },
+            home_steps: Vec::new(),
+            home_anchor: None,
             spilled: Vec::new(),
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
@@ -1471,6 +1518,19 @@ mod tests {
         assert_eq!(save.read_player("a/b", &registry).unwrap(), Some(player.clone()));
         assert_eq!(save.read_player("ünï cödé", &registry).unwrap(), Some(player.clone()));
         assert_eq!(save.read_player("alex", &registry).unwrap(), None);
+        // The charm slot keeps its charm, and a save from before the charm slot, with six
+        // worn entries, loads with the six as they were and the charm slot empty.
+        assert_eq!(save.read_player("steve", &registry).unwrap().unwrap().inventory.worn[6], player.inventory.worn[6]);
+        let six = dir.join("players/six.ron");
+        save.write_player("six", &player, &registry).unwrap();
+        let text = std::fs::read_to_string(&six).unwrap();
+        // Pretty-printed, the worn list has an entry a line: the charm's, last, goes.
+        assert_eq!(text.lines().filter(|line| line.contains("base:charge_charm")).count(), 1, "the charm saved once: {text}");
+        let without: Vec<&str> = text.lines().filter(|line| !line.contains("base:charge_charm")).collect();
+        std::fs::write(&six, without.join("\n")).unwrap();
+        let old = save.read_player("six", &registry).unwrap().unwrap().inventory.worn;
+        assert_eq!((old[..6].to_vec(), old[6]), (player.inventory.worn[..6].to_vec(), None), "a six-slot save's worn, the charm slot empty");
+        std::fs::remove_file(&six).unwrap();
         // Names that are not plain file names stay inside the players directory.
         let files = std::fs::read_dir(dir.join("players")).unwrap().count();
         assert!(files >= 4, "{files} player files");
@@ -1508,34 +1568,34 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A player saved before kills and greetings were counted loads with both at none and
-    /// every other count kept, and the next save writes them.
+    /// A player saved before kills, greetings and stray shots were counted loads with each
+    /// at none and every other count kept, and the next save writes them.
     #[test]
     fn a_save_without_kill_or_greeting_counts_loads_them_at_none() {
         let dir = temp_dir("draws-before-kills");
         let save = WorldSave::new(&dir);
         let registry = registry(false);
-        let draws = Draws { strikes: 31, mines: 40, frees: 3, kills: 12, greets: 4, ..Draws::default() };
-        let player = SavedPlayer { position: Vec3::new(1.5, 80.0, -20.25), yaw: 1.25, mode: None, flying: false, health: Health { current: 13, max: 20 }, inventory: Inventory::default(), skills: Vec::new(), effects: Vec::new(), home: None, bed: None, kindled: false, journal: Vec::new(), quests: Vec::new(), quests_claimed: Vec::new(), tallies: Vec::new(), prayer_points: None, casts: 0, draws, spilled: Vec::new() };
+        let draws = Draws { strikes: 31, mines: 40, frees: 3, kills: 12, greets: 4, strays: 6, ..Draws::default() };
+        let player = SavedPlayer { position: Vec3::new(1.5, 80.0, -20.25), yaw: 1.25, mode: None, flying: false, health: Health { current: 13, max: 20 }, inventory: Inventory::default(), skills: Vec::new(), effects: Vec::new(), home: None, bed: None, kindled: false, journal: Vec::new(), quests: Vec::new(), quests_claimed: Vec::new(), tallies: Vec::new(), prayer_points: None, casts: 0, draws, home_steps: Vec::new(), home_anchor: None, spilled: Vec::new() };
         save.write_player("ada", &player, &registry).unwrap();
         let file = dir.join("players/ada.ron");
         let mut text = std::fs::read_to_string(&file).unwrap();
-        // The file as an older build wrote it: no `kills` or `greets` among the draws.
-        for key in ["kills", "greets"] {
+        // The file as an older build wrote it: no `kills`, `greets` or `strays` among the draws.
+        for key in ["kills", "greets", "strays"] {
             // ` kills:`, not the end of `skills:`.
             let at = 1 + text.find(&format!(" {key}:")).unwrap_or_else(|| panic!("no `{key}` in {text}"));
             let end = at + text[at..].find([',', ')']).unwrap();
             let start = text[..at].trim_end().strip_suffix(',').map_or(at, |before| before.len());
             text.replace_range(start..end, "");
         }
-        assert!(!text.contains(" kills:") && !text.contains(" greets:") && text.contains(" frees:"), "{text}");
+        assert!(!text.contains(" kills:") && !text.contains(" greets:") && !text.contains(" strays:") && text.contains(" frees:"), "{text}");
         std::fs::write(&file, &text).unwrap();
         let old = save.read_player("ada", &registry).unwrap().expect("loads");
-        assert_eq!(old.draws, Draws { kills: 0, greets: 0, ..draws }, "the other counts kept, the new ones at none");
-        save.write_player("ada", &SavedPlayer { draws: Draws { kills: 1, greets: 2, ..old.draws }, ..old }, &registry).unwrap();
+        assert_eq!(old.draws, Draws { kills: 0, greets: 0, strays: 0, ..draws }, "the other counts kept, the new ones at none");
+        save.write_player("ada", &SavedPlayer { draws: Draws { kills: 1, greets: 2, strays: 3, ..old.draws }, ..old }, &registry).unwrap();
         let again = std::fs::read_to_string(&file).unwrap();
-        assert!(again.contains(" kills:") && again.contains(" greets:"), "the next save writes both: {again}");
-        assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().draws, Draws { kills: 1, greets: 2, ..draws });
+        assert!(again.contains(" kills:") && again.contains(" greets:") && again.contains(" strays:"), "the next save writes them: {again}");
+        assert_eq!(save.read_player("ada", &registry).unwrap().unwrap().draws, Draws { kills: 1, greets: 2, strays: 3, ..draws });
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1550,7 +1610,7 @@ mod tests {
         assert_eq!(draws.next(ada, Draw::Strike), numbered_draws(ada, Draw::Strike.salt(), 1));
         draws.next(ada, Draw::Cook);
         assert_eq!(draws, Draws { strikes: 2, cooks: 1, ..Draws::default() });
-        let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free, Draw::Kill, Draw::Greet];
+        let kinds = [Draw::Strike, Draw::Blow, Draw::Feed, Draw::Cook, Draw::Recover, Draw::Flourish, Draw::Mine, Draw::Yield, Draw::Forage, Draw::Harvest, Draw::Lock, Draw::Catch, Draw::Wake, Draw::Reward, Draw::Free, Draw::Kill, Draw::Greet, Draw::Stray];
         // Every kind's salt, the world's kinds of roll and its loot rolls' are told apart.
         let salts: Vec<u64> = kinds.iter().map(|k| k.salt()).chain([ROLL_PRODUCT, ROLL_LITTER, ROLL_YOUNG, ROLL_GRAZE, ROLL_SUMMON, ROLL_WANDER, ROLL_SPAWN, ROLL_PARTY, ROLL_FOLLOWER, ROLL_START, 0x1007]).collect();
         let unique: std::collections::BTreeSet<_> = salts.iter().collect();
@@ -1591,6 +1651,8 @@ mod tests {
             prayer_points: None,
             casts: 0,
             draws: Draws::default(),
+            home_steps: Vec::new(),
+            home_anchor: None,
             spilled: Vec::new(),
         };
         save.write_player("herbalist", &player, &registry).unwrap();

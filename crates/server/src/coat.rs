@@ -14,6 +14,10 @@ impl Server {
     pub(crate) fn coat(&mut self, agent: PlayerId, pos: IVec3) {
         let Some(here) = self.block(pos) else { return };
         let Some((with, into)) = self.content.blocks.coating(here) else { return };
+        // Never daubed shut around someone, whatever action asked (`CoatClear` tells them).
+        if self.content.blocks.info(into).solid && (self.player_in(pos) || self.creature_in(pos)) {
+            return;
+        }
         let Some(player) = self.players.get(&agent) else { return };
         let selected = player.selected;
         if player.inventory.get(selected).is_none_or(|stack| stack.item != with) {
@@ -127,5 +131,79 @@ mod tests {
         let info = server.content.blocks.info(daub);
         assert_eq!((info.drops, info.drop_count), (daub, 1), "daub breaks to itself");
         assert!(!server.content.recipes.iter().any(|r| r.output == clay), "something makes clay back");
+    }
+
+    /// A panel never daubs shut on a player: clay held to a wattle panel another player
+    /// leans into is refused (the thin panel would turn a whole daub block around them), as
+    /// placing a block on them is, and they are told why. So is one a creature or the dauber
+    /// leans into, and `coat` itself never daubs around anyone; once clear, the clay daubs it.
+    #[test]
+    fn a_panel_someone_leans_on_is_not_daubed_around_them() {
+        use voxmar_engine::action::ActionTarget;
+        use voxmar_engine::coords::Face;
+        use voxmar_engine::lang::Words;
+        use voxmar_protocol::ServerMessage;
+        let mut server = crate::test_server();
+        let mut keep = Vec::new();
+        for id in [1, 2] {
+            let (client, connection) = voxmar_protocol::local_pair();
+            keep.push(client);
+            let mut player = Player::new(id, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+            player.joined = true;
+            server.players.insert(id, player);
+        }
+        let at = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &crate::Server, name: &str| server.content.blocks.expect(name);
+        let (stone, wattle, clay, daub) = (block(&server, "base:stone"), block(&server, "base:wattle_panel"), block(&server, "base:clay"), block(&server, "base:daub"));
+        for x in -1..=1 {
+            for z in -3..=2 {
+                server.set_block(at + IVec3::new(x, -1, z), stone);
+            }
+        }
+        server.set_block(at, wattle);
+        let construction = server.content.skills.id("core:construction").expect("construction");
+        let level = server.content.recipes.iter().filter(|r| r.output == daub).map(|r| r.level).min().expect("a daub recipe");
+        let xp = server.content.skills.xp_for(level);
+        let dauber = server.players.get_mut(&1).unwrap();
+        dauber.position = at.as_vec3() + Vec3::new(0.5, 0.0, -1.5);
+        dauber.inventory.slots[0] = Some(ItemStack::new(clay, 3));
+        dauber.selected = 0;
+        dauber.skills.grant(construction, xp);
+        // The other leans into the panel's cell from its far side.
+        server.players.get_mut(&2).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, 1.1);
+        assert!(server.player_in(at), "the second player stands partly in the panel's cell");
+        let coat = server.content.actions.expect("base:coat");
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(wattle), "daubed shut around a player");
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 3, "the clay spent for nothing");
+        // Their client cannot see the other body, so the server says why.
+        let told = |client: &voxmar_protocol::ClientConnection| {
+            std::iter::from_fn(|| client.try_recv().ok().flatten())
+                .any(|m| matches!(m, ServerMessage::Refused { why: Words::Key(key, _) } if key == "refusal.someone_there"))
+        };
+        assert!(told(&keep[0]), "the dauber was not told someone is there");
+        // Nor by any other action that coats: `coat` itself keeps the cell clear.
+        server.coat(1, at);
+        assert_eq!(server.block(at), Some(wattle), "coat() daubed shut around a player");
+        server.players.get_mut(&2).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, 2.5);
+        // A creature leaning in from the far side, as the player did.
+        let mouflon = server.content.creatures.id("base:mouflon").expect("species");
+        let beast = server.spawn_creature(mouflon, at.as_vec3() + Vec3::new(0.5, 0.0, 1.2), 1).expect("room");
+        assert!(server.creature_in(at), "the creature stands partly in the panel's cell");
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(wattle), "daubed shut around a creature");
+        assert!(told(&keep[0]), "the dauber was not told a creature is there");
+        server.creatures.live.remove(&beast);
+        // The dauber leaning in themselves.
+        server.players.get_mut(&1).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, -0.2);
+        assert!(server.player_in(at), "the dauber stands partly in the panel's cell");
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(wattle), "daubed shut around the dauber");
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 3, "the clay spent for nothing");
+        // Everyone stepped back off it: the same clay daubs it.
+        server.players.get_mut(&1).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, -1.5);
+        server.propose(1, coat, ActionTarget::Block { block: at, face: Face::NegZ }, std::time::Instant::now());
+        assert_eq!(server.block(at), Some(daub), "not daubed once clear");
+        assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 2);
     }
 }
