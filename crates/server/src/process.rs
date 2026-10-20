@@ -71,7 +71,9 @@ impl Process for Falling {
             let column_loaded = server.world.contains(ColumnPos::of_block(player.position.floor().as_ivec3()));
             let mut below = aabb;
             below.translate(Vec3::new(0.0, -0.05, 0.0));
-            let on_ground = below.intersects(|p| server.is_solid(p));
+            // Ground is what the feet rest on as drawn: a shaft lined with posts or stair corners
+            // is still a fall.
+            let on_ground = below.overlaps(|p| server.boxes(p));
             // Any state of the fluid counts: flowing water (any fluid swum in) breaks a fall,
             // flowing lava burns.
             let touching = |kind: &dyn Fn(FluidId) -> bool| aabb.intersects(|p| server.block(p).and_then(|b| blocks.fluid(b)).is_some_and(|f| kind(f.fluid)));
@@ -508,5 +510,27 @@ mod tests {
         let _ = player.wound(1, tick);
         player.health.heal(1);
         assert_eq!(player.hurt_at, Some(tick), "a wound healed back at once is a wound");
+    }
+
+    /// Every roof piece (thatch, shingles, their ridges) keeps the sky off whoever stands
+    /// under it, as a solid block does: no rain soaks them, a rack under it does not dry, and
+    /// they are indoors for a home.
+    #[test]
+    fn every_roof_piece_keeps_the_sky_off() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        let cell = server.spawn.floor().as_ivec3();
+        server.load_area(cell - IVec3::new(4, 0, 4), cell + IVec3::new(4, 0, 4));
+        for dy in 0..server.survival.roof_scan + 2 {
+            server.set_block(cell + IVec3::Y * dy, voxmar_engine::block::BlockId::AIR);
+        }
+        assert!(server.open_sky(cell), "the test spot is open to the sky");
+        let blocks = server.content.blocks.clone();
+        let roofs: Vec<_> = blocks.ids().filter(|&id| blocks.def(id).has_tag("roof")).collect();
+        assert!(roofs.len() >= 8, "thatch, shingles in three woods and their ridges: {}", roofs.len());
+        for roof in roofs {
+            server.set_block(cell + IVec3::Y * 3, roof);
+            assert!(!server.open_sky(cell), "{} lets the sky through", blocks.def(roof).name);
+        }
     }
 }

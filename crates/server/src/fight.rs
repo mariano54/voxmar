@@ -327,7 +327,7 @@ impl Server {
         // left it no longer than the grace ago.
         let mut below = p.aabb();
         below.translate(voxmar_engine::glam::Vec3::new(0.0, -0.05, 0.0));
-        let grounded = below.intersects(|cell| self.is_solid(cell)) || self.tick <= p.grounded + ticks(feel.dodge_grace);
+        let grounded = below.overlaps(|cell| self.boxes(cell)) || self.tick <= p.grounded + ticks(feel.dodge_grace);
         let may = p.health.alive() && !p.flying && grounded && !self.eating(player);
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
