@@ -753,6 +753,18 @@ pub struct JettyDef {
     pub chance: f32,
 }
 
+/// Row houses (a terrace): homes built wall to wall along a straight stretch of street,
+/// `houses` of them (fewest, most), alike but for what is inside, under one run of roof.
+/// A home that could start one (two storeys or fewer over four walls, its ridge along the
+/// street or its roof flat, nothing out at its sides) does on `chance`, more where the
+/// place is crowded.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RowDef {
+    pub chance: f32,
+    pub houses: (u32, u32),
+}
+
 /// What a village's own flames must not reach: none of its blocks that catch (`catch`, by
 /// tag) stands within `reach` steps of one of its flames (`flames`, by tag), stepping only
 /// through open cells, as fire catches in a home; a roof of them there is laid in `instead`.
@@ -1116,6 +1128,8 @@ struct StyleFile {
     pieced: f32,
     #[serde(default)]
     jetty: Option<JettyDef>,
+    #[serde(default)]
+    row: Option<RowDef>,
 }
 
 /// A package's `rules`: each section it names replaces the earlier one whole, each
@@ -1329,6 +1343,7 @@ pub struct StyleDef {
     pub roof_pieces: Vec<RoofPiecesDef>,
     pub pieced: f32,
     pub jetty: Option<JettyDef>,
+    pub row: Option<RowDef>,
 }
 
 /// Every package's `settlements.ron` together.
@@ -1616,6 +1631,7 @@ impl SettlementsDef {
                 roof_pieces: s.roof_pieces.into_iter().map(|p| RoofPiecesDef { slope: qualify(package, &p.slope), ridge: qualify(package, &p.ridge), weight: p.weight }).collect(),
                 pieced: s.pieced,
                 jetty: s.jetty.map(|j| JettyDef { beam: qualify(package, &j.beam), chance: j.chance }),
+                row: s.row,
             });
         }
         self.people.extend(at, package, file.people)?;
@@ -1844,6 +1860,9 @@ impl SettlementsDef {
             }
         }
         for style in &self.styles {
+            if style.row.as_ref().is_some_and(|r| !(0.0..=1.0).contains(&r.chance) || r.houses.0 < 2 || r.houses.0 > r.houses.1 || r.houses.1 > 12) {
+                return fail(format!("style `{}`: a row's `chance` is a share (0 to 1) and its `houses` from 2 to at most 12", style.name));
+            }
             if style.jetty.as_ref().is_some_and(|j| !(0.0..=1.0).contains(&j.chance)) {
                 return fail(format!("style `{}`: a jetty's `chance` is a share (0 to 1)", style.name));
             }

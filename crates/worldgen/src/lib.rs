@@ -671,6 +671,16 @@ impl Overworld {
     /// Every block that catches fire (thatch, wattle) a flame among `blocks` reaches, as
     /// settlements keep their own flames from it (`rules.fire`): each flame and what it
     /// reaches.
+    /// Whether `block` is one of settlements' own flames (`rules.fire.flames`), and how
+    /// many steps their fire reaches.
+    pub fn settlement_flame(&self, block: voxmar_engine::block::BlockId) -> bool {
+        self.settlements.fire().is_some_and(|f| f.flame(block))
+    }
+
+    pub fn settlement_fire_reach(&self) -> i32 {
+        self.settlements.fire().map_or(0, |f| f.reach)
+    }
+
     pub fn flames_reaching(&self, blocks: &rustc_hash::FxHashMap<IVec3, voxmar_engine::block::BlockId>) -> Vec<(IVec3, IVec3)> {
         self.settlements.fire().map_or_else(Vec::new, |f| f.exposed(blocks))
     }

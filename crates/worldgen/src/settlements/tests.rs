@@ -614,7 +614,7 @@ fn house_catalogue() {
             let (w, d) = centre.extent();
             let spec = Spec {
                 kind: Kind::Centrepiece, w, d, wall: 3, storeys: 1, roof: Roof::Gable, pitch: 1, ridge_x: false, extras: Vec::new(), door: 0, shed: 0,
-                wing: None, stilts: 0, regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: Some(centre), seed: k as u64,
+                wing: None, stilts: 0, regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: Some(centre), seed: k as u64, row: None,
             };
             let frame = super::canvas::Frame::fit(IVec2::ZERO, IVec2::new(w - 1, d - 1), super::canvas::Facing::South, IVec2::ZERO, 0);
             let named = |part: &str| c.parts.iter().find(|(p, _)| p == part).and_then(|(_, n)| registry.id(&super::def::fill(n, "oak", "oak")));
@@ -660,7 +660,7 @@ fn house_catalogue() {
                     form: h.form,
                     inside: h.inside.clone(),
                     centre: None,
-                    seed: k as u64 + 1,
+                    seed: k as u64 + 1, row: None,
                 };
                 let (low, high) = spec.envelope();
                 let frame = super::canvas::Frame::fit(low, high, facing, IVec2::ZERO, 0);
@@ -734,7 +734,7 @@ fn house_catalogue() {
                     form: h.form,
                     inside: h.inside.clone(),
                     centre: None,
-                    seed: k as u64 + 1,
+                    seed: k as u64 + 1, row: None,
                 };
                 let (low, high) = spec.envelope();
                 let extent = super::canvas::Frame::extent(low, high, facing);
@@ -946,7 +946,7 @@ fn plans_keep_to_their_squares_and_rules() {
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
 fn settlements_are_unchanged() {
-    const EXPECTED: u64 = 13394484238960257129;
+    const EXPECTED: u64 = 7840931323061764997;
     let world = shared_world(1);
     let mut text = String::new();
     for cz in -3..3 {
@@ -1162,7 +1162,7 @@ fn chimneys_stand_inside_and_just_clear_the_roof() {
                     form: h.form,
                     inside: h.inside.clone(),
                     centre: None,
-                    seed: (n * 31 + k) as u64,
+                    seed: (n * 31 + k) as u64, row: None,
                 };
                 let (low, high) = spec.envelope();
                 let frame = super::canvas::Frame::fit(low, high, super::canvas::Facing::North, low, 0);
@@ -1315,7 +1315,7 @@ fn stair_candidates_keep_original_first_valid_paths() {
     let mut spec = Spec {
         kind: Kind::House, w: 5, d: 5, wall: 3, storeys: 3, roof: Roof::Gable, pitch: 1, ridge_x: false,
         extras: Vec::new(), door: 2, shed: 0, wing: None, stilts: 0, regular: true, window_chance: 0.5,
-        form: Form::Box, inside: Vec::new(), centre: None, seed: 1,
+        form: Form::Box, inside: Vec::new(), centre: None, seed: 1, row: None,
     };
     let back = vec![(3, 3), (2, 3), (1, 3), (1, 2)];
     let front = vec![(1, 1), (2, 1), (3, 1), (3, 2)];
@@ -1346,7 +1346,7 @@ fn every_storey_has_a_stair_up() {
                     let mut spec = Spec {
                         kind, w, d, wall: h.walls.0 as i32, storeys: h.storeys.1 as i32, roof: Roof::Gable, pitch: 1, ridge_x: w > d,
                         extras: if chimney { vec![Extra::Chimney] } else { Vec::new() }, door: w / 2, shed: 0, wing: None, stilts: 0,
-                        regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 1,
+                        regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 1, row: None,
                     };
                     let envelope = spec.envelope();
                     house::make_room_for_stairs(&mut spec);
@@ -1376,7 +1376,7 @@ fn every_storey_has_a_stair_up() {
     for (w, d) in [(4, 4), (3, 6), (5, 5)] {
         let mut spec = Spec {
             kind: Kind::House, w, d, wall: 5, storeys: 3, roof: Roof::Gable, pitch: 1, ridge_x: false, extras: vec![Extra::Chimney], door: w / 2, shed: 0,
-            wing: None, stilts: 0, regular: true, window_chance: 0.5, form: Form::Box, inside: Vec::new(), centre: None, seed: 1,
+            wing: None, stilts: 0, regular: true, window_chance: 0.5, form: Form::Box, inside: Vec::new(), centre: None, seed: 1, row: None,
         };
         house::make_room_for_stairs(&mut spec);
         let up = house::stairs(&spec, spec.door.clamp(1, w - 2), spec.chimney().map(|c| c.0));
@@ -1491,7 +1491,7 @@ fn room_columns_exclude_exterior_walls_and_courtyards() {
         kind: Kind::House, w: 13, d: 13, wall: 3, storeys: 1, roof: Roof::Gable,
         pitch: 1, ridge_x: false, extras: vec![Extra::Porch], door: 6, shed: 3,
         wing: None, stilts: 2, regular: true, window_chance: 0.0, form: Form::Box,
-        inside: Vec::new(), centre: None, seed: 3,
+        inside: Vec::new(), centre: None, seed: 3, row: None,
     };
     for facing in [Facing::North, Facing::South, Facing::West, Facing::East] {
         let frame = Frame { origin: IVec3::new(100, 132, 200), facing };
@@ -1560,7 +1560,7 @@ fn every_storey_can_be_walked_to() {
                 let mut spec = Spec {
                     kind, w, d, wall, storeys: h.storeys.1 as i32, roof: Roof::Gable, pitch: 1, ridge_x: w > d,
                     extras: if chimney { vec![Extra::Chimney] } else { Vec::new() }, door: w / 2, shed: 0, wing: None, stilts: 0,
-                    regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 3,
+                    regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 3, row: None,
                 };
                 house::make_room_for_stairs(&mut spec);
                 let (low, high) = spec.envelope();
@@ -3430,7 +3430,7 @@ fn jettied_storeys_stand_out_on_their_beams() {
     let registry = content.blocks.clone();
     let solid = |b: BlockId| registry.info(b).solid;
     let (mut places, mut beams, mut wrong) = (0, 0, Vec::new());
-    for seed in [42u64, 7] {
+    for seed in [42u64, 7, 3] {
         let world = Overworld::with_content(seed, registry.clone(), &world_content);
         let spawn = world.spawn_point();
         for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
@@ -3471,6 +3471,73 @@ fn jettied_storeys_stand_out_on_their_beams() {
     eprintln!("{places} places, {beams} jetty beams");
     assert!(beams >= 10, "only {beams} jetty beams in {places} places");
     assert!(wrong.is_empty(), "jetty beams not under a jetty: {wrong:?}");
+}
+
+/// Row houses in full content: neighbours in a row stand wall to wall (two walls between
+/// their rooms, solid, with no window in either), and their roofs run on over the join at
+/// one height, with no eave or gap between them, wherever both have room beside the join.
+#[test]
+fn row_houses_stand_wall_to_wall_under_one_roof() {
+    use voxmar_engine::coords::ColumnPos;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let solid = |b: BlockId| registry.info(b).solid;
+    let glass = |b: BlockId| registry.def(b).name.contains("glass") || registry.def(b).name.contains("window");
+    let (mut places, mut joins, mut rows, mut wrong) = (0, 0, 0, Vec::new());
+    for seed in [42u64, 7] {
+        let world = Overworld::with_content(seed, registry.clone(), &world_content);
+        let spawn = world.spawn_point();
+        for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
+            let Some(plan) = slot.0.as_ref() else { continue };
+            places += 1;
+            let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
+            let mut at = |p: IVec3| -> BlockId {
+                let pos = ColumnPos::of_block(p);
+                let column = columns.entry(pos).or_insert_with(|| world.generate(pos));
+                let o = pos.origin();
+                column.block(IVec3::new(p.x - o.x, p.y, p.z - o.z))
+            };
+            let homes: Vec<&super::Building> = plan.buildings.iter().filter(|b| !b.room.is_empty() && b.door.is_some()).collect();
+            let mut in_row = rustc_hash::FxHashSet::default();
+            for a in &homes {
+                let along = a.facing.turn(1, 0);
+                let key = |p: IVec2| p.dot(along);
+                let edge = a.room.iter().map(|&p| key(p)).max().unwrap();
+                let side: Vec<IVec2> = a.room.iter().copied().filter(|&p| key(p) == edge).collect();
+                // The house built on to its right: its room starts past two walls.
+                let Some(b) = homes.iter().find(|b| b.facing == a.facing && b.floor == a.floor && b.room.iter().any(|&p| side.contains(&(p - along * 3)))) else { continue };
+                joins += 1;
+                in_row.insert(a.min);
+                if !in_row.contains(&b.min) {
+                    rows += 1;
+                }
+                in_row.insert(b.min);
+                // Where both have room either side of the join (a wing behind stands out
+                // past its neighbour's back wall, into its yard).
+                for &p in side.iter().filter(|&&p| b.room.contains(&(p + along * 3))) {
+                    let (wa, wb) = (p + along, p + along * 2);
+                    for y in a.floor + 1..=a.floor + 2 {
+                        for w in [wa, wb] {
+                            let block = at(IVec3::new(w.x, y, w.y));
+                            if (!solid(block) || glass(block)) && wrong.len() < 8 {
+                                wrong.push(format!("{}: the wall between rooms at {w}, y {y} is {}", plan.name.0, registry.def(block).name));
+                            }
+                        }
+                    }
+                    let top = |at: &mut dyn FnMut(IVec3) -> BlockId, w: IVec2| (a.floor..a.floor + 24).rev().find(|&y| solid(at(IVec3::new(w.x, y, w.y))));
+                    let (ta, tb) = (top(&mut at, wa), top(&mut at, wb));
+                    if ta != tb && wrong.len() < 8 {
+                        wrong.push(format!("{}: the roofs over the join at {wa} and {wb} stand at {ta:?} and {tb:?}", plan.name.0));
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{places} places, {rows} rows, {joins} joins");
+    assert!(joins >= 12, "only {joins} houses built on to in {places} places");
+    assert!(wrong.is_empty(), "row houses not wall to wall under one roof: {wrong:?}");
 }
 
 /// `/locate settlement` finds what a look at every square in reach would find nearest,
@@ -3570,7 +3637,7 @@ fn jettied_houses_keep_their_floors_and_their_sign() {
     for seed in 0..12u64 {
         let spec = Spec {
             kind: Kind::House, w, d, wall, storeys, roof: Roof::Gable, pitch: 1, ridge_x: true, door: w / 2, shed: 0, wing: None, stilts: 0,
-            extras: vec![Extra::SignBoard], regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: None, seed,
+            extras: vec![Extra::SignBoard], regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: None, seed, row: None,
         };
         let (low, high) = spec.envelope();
         let frame = super::canvas::Frame::fit(low, high, super::canvas::Facing::North, low, 0);
