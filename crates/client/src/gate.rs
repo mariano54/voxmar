@@ -6233,11 +6233,6 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
         }
         2 => {
             aim_at(world, station_at.as_vec3() + Vec3::new(0.5, 0.9, 0.5));
-            // Let go once the split is under way: it goes on by itself, and a button still held
-            // would set the firewood it gives down on the block, a block at a time.
-            if world.resource::<crate::interact::Target>().cooking_until > world.resource::<Time>().elapsed_secs() {
-                mouse(world, MouseButton::Right, false);
-            }
             let (split, log, tool) = (carried(world, plan.split), carried(world, plan.log), carried(world, plan.tool));
             if split == 2 && log == 0 {
                 mouse(world, MouseButton::Right, false);
