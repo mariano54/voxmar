@@ -242,6 +242,8 @@
 
     // In game.
     "screen.inventory": "Inventory",
+    "screen.look.recipes": "Recipes",
+    "screen.look.uses": "Uses",
     "screen.character": "Character",
     "screen.menu": "Menu",
 
@@ -643,7 +645,6 @@
     "inventory.craft": "Craft",
     "inventory.craft.take": "Click to craft one, Shift-click for all",
     "inventory.craft.nothing": "Nothing to make",
-    "inventory.craft.lookup": "Press {key} over an item for its recipes",
     "skills.full": "You are at full health",
     // Why an action was refused (refusals.ron), said by the crosshair.
     "refusal.in_the_way": "Something is in the way",

@@ -451,7 +451,7 @@ fn craft(
     mut count: Query<&mut Text, (With<OutputCount>, Without<CraftName>, Without<CraftHint>)>,
     mut name: Query<&mut Text, (With<CraftName>, Without<OutputCount>, Without<CraftHint>)>,
     mut hint: Query<&mut Text, (With<CraftHint>, Without<OutputCount>, Without<CraftName>)>,
-    (locale, settings): (Res<Locale>, Res<Settings>),
+    locale: Res<Locale>,
 ) {
     if !ui.inventory_open {
         return;
@@ -473,14 +473,16 @@ fn craft(
     let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
     let made = found.filter(|r| allowed(r)).map(|r| (r.output, r.count));
     let filled = player.inventory.grid().iter().any(Option::is_some);
+    // How to look a recipe up is in the key row under the screen, where no item's name
+    // reaches it; here only what to do with what the grid makes.
     let (title, how) = match made {
         _ if let Some((skill, level)) = lacking => {
             let skill = locale.skill(skills.get(skill));
-            (locale.format("skills.needs", &[("skill", &skill), ("level", &level)]), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))]))
+            (locale.format("skills.needs", &[("skill", &skill), ("level", &level)]), String::new())
         }
         Some((item, _)) => (locale.block(launch.content.blocks.def(item)), locale.get("inventory.craft.take").to_owned()),
-        None if filled => (locale.get("inventory.craft.nothing").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
-        None => (locale.get("inventory.craft").to_owned(), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))])),
+        None if filled => (locale.get("inventory.craft.nothing").to_owned(), String::new()),
+        None => (locale.get("inventory.craft").to_owned(), String::new()),
     };
     for (query, words) in [(name.single_mut().ok(), title), (hint.single_mut().ok(), how)] {
         if let Some(mut text) = query

@@ -652,7 +652,9 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) 
                 // sits over its words.
                 let side = Node { width: Val::Px(SIDEBAR), flex_shrink: 0.0, flex_direction: FlexDirection::Column, padding: UiRect::bottom(Val::Px(BODY + space::HAIR)), ..default() };
                 columns.spawn(side).with_children(|side| {
-                    let detail = Node { flex_grow: 1.0, min_height: Val::ZERO, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), overflow: Overflow::scroll_y(), ..default() };
+                    // A pixel of room either side, inside what it clips: a glyph that draws a little
+                    // left of where it is set (住) is not cut off at the page's edge.
+                    let detail = Node { flex_grow: 1.0, min_height: Val::ZERO, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), padding: UiRect::horizontal(Val::Px(PX)), overflow: Overflow::scroll_y(), ..default() };
                     let detail = side.spawn((Detail, ScrollList, detail)).id();
                     spawn_scroll_more(side, font, detail);
                 });

@@ -229,6 +229,8 @@
 
     // ゲーム中
     "screen.inventory": "インベントリ",
+    "screen.look.recipes": "レシピ",
+    "screen.look.uses": "使い道",
     "screen.character": "キャラクター",
     "screen.menu": "メニュー",
 
@@ -630,7 +632,6 @@
     "inventory.craft": "クラフト",
     "inventory.craft.take": "クリックで1つ、Shift+クリックで全部作る",
     "inventory.craft.nothing": "作れるものがない",
-    "inventory.craft.lookup": "アイテムの上で{key}を押すと\nレシピが見られる",
     "skills.full": "体力は満タン",
     // Why an action was refused (refusals.ron), said by the crosshair.
     "refusal.in_the_way": "何かがじゃまをしている",
