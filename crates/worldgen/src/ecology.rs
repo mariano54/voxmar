@@ -636,11 +636,11 @@ impl Ecology {
     /// blocks whose first column is `first`, as each one's column (its index in the cell,
     /// row by row) and plant. A patch at a random spot, as other rare herbs have
     /// (`in_patch`), would seldom touch so thin a line, so these start from it: each such
-    /// herb that the biomes of the cell name takes patches in proportion to the columns of
-    /// its habitat there (its rate counts plants per million of them, times the naming
+    /// herb takes patches in each biome of the cell naming it, in proportion to that biome's
+    /// columns of its habitat there (its rate counts plants per million of them, times the
     /// biome's weight), each started at one of those columns chosen by hash, at least
-    /// `EDGE_SPACING` blocks from the others, of as many of the nearest such columns within
-    /// `EDGE_REACH` as its size. `column(i)` gives the site and ground of the cell's i-th
+    /// `EDGE_SPACING` blocks from the others, of as many of the nearest such columns of the
+    /// same biome within `EDGE_REACH` as its size. `column(i)` gives the site and ground of the cell's i-th
     /// column, or none where nothing may grow (under water, under a tree, on a trail). Only
     /// the cell's own columns decide, so a cell is the same whatever generated it.
     pub fn edge_patches<'s>(&self, first: IVec2, column: impl Fn(usize) -> Option<(&'s Site, Ground)>) -> Vec<(usize, Plant)> {
@@ -649,26 +649,28 @@ impl Ecology {
             return out;
         }
         let side = PATCH_CELL as usize;
-        // The columns of each herb's habitat, with the weight their biome names it with.
-        let mut found: Vec<(PlantId, Vec<(usize, f32)>)> = Vec::new();
+        // The columns of each herb's habitat, by herb and biome, with the weight their biome
+        // names it with: each biome's columns make and hold its own patches, so a biome
+        // naming the herb heavily does not grow it on a lighter neighbour's bank.
+        let mut found: Vec<((PlantId, BiomeId), Vec<(usize, f32)>)> = Vec::new();
         for i in 0..side * side {
             let Some((site, ground)) = column(i) else { continue };
             for &(plant, weight) in &self.flora[site.home.0 as usize].edge_herbs {
                 if self.rooted(plant, ground) == 0.0 || habitat(self.plants[plant.0 as usize].habitat, site) < 0.5 {
                     continue;
                 }
-                match found.iter_mut().find(|(p, _)| *p == plant) {
+                match found.iter_mut().find(|(p, _)| *p == (plant, site.home)) {
                     Some((_, columns)) => columns.push((i, weight)),
-                    None => found.push((plant, vec![(i, weight)])),
+                    None => found.push(((plant, site.home), vec![(i, weight)])),
                 }
             }
         }
         let cell = first.div_euclid(IVec2::splat(PATCH_CELL));
         let unit = |bits: u64| (bits & 0xff_ffff) as f32 / (1u32 << 24) as f32;
         let at = |i: usize| IVec2::new(first.x + (i % side) as i32, first.y + (i / side) as i32);
-        for (plant, columns) in found {
+        for ((plant, home), columns) in found {
             let Some((rate, least, most)) = self.plants[plant.0 as usize].patches else { continue };
-            let seed = self.seed ^ EDGES ^ (plant.0 as u64) << 24;
+            let seed = self.seed ^ EDGES ^ (plant.0 as u64) << 24 ^ (home.0 as u64) << 40;
             // As many patches as the habitat's columns make on average, rounded up or down
             // by a roll.
             let mean = (least + most) as f32 / 2.0;
