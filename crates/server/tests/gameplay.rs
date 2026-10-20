@@ -5193,6 +5193,10 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
         let mut outcomes = Vec::new();
         let mut askew = 0;
         while outcomes.len() < 2 {
+            // A blow taken lets the creature recover a while before it is provoked again.
+            if !outcomes.is_empty() {
+                client.wait_server(1);
+            }
             let before = provoke_until_it_winds_up(&mut client, id, slot, name);
             // Only a wind-up begun facing us: one begun facing away (a creature struck from
             // behind or the side) turns at its turn rate, and walks at a third of its pace
@@ -5227,7 +5231,6 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
             }
             let struck = blow_from(&client.hurt_by, id, before).expect("the selected creature struck");
             outcomes.push(client.hurt[struck].1);
-            client.wait_server(1);
         }
         assert!(outcomes.iter().all(|&o| matches!(o, Defended::Hit | Defended::Missed)), "backing off a {name} at a walk came to {outcomes:?}");
     }
