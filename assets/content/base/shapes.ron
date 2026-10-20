@@ -148,6 +148,38 @@
             (from: (1, 1, 1), to: (15, 13, 3), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
             (from: (0, 14, 1), to: (16, 16, 16)),
         ]),
+        // A window seat against the wall behind it (south): a panelled box, its lid a seat's
+        // height, a cushion on it.
+        "window_seat": (boxes: [
+            (from: (0, 0, 5), to: (16, 7, 16), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+            (from: (1, 7, 6), to: (15, 9, 15), textures: All("furniture_linen")),
+        ]),
+        // A deep sill along the wall behind it (south), at the top of its cell: a board two
+        // thirds of a block deep on two brackets.
+        "deep_sill": (boxes: [
+            (from: (0, 14, 6), to: (16, 16, 16)),
+            (from: (2, 9, 13), to: (4, 14, 16), textures: All("furniture_grain")),
+            (from: (12, 9, 13), to: (14, 14, 16), textures: All("furniture_grain")),
+        ]),
+        // A shelf open to the north with two clay crocks on its lower board and a keg on its
+        // upper one.
+        "pantry_shelf": (boxes: [
+            (from: (0, 0, 14), to: (16, 16, 16)),
+            (from: (0, 0, 2), to: (2, 16, 14), textures: All("furniture_grain")),
+            (from: (14, 0, 2), to: (16, 16, 14), textures: All("furniture_grain")),
+            (from: (2, 0, 2), to: (14, 2, 14)),
+            (from: (2, 8, 2), to: (14, 10, 14)),
+            (from: (2, 14, 2), to: (14, 16, 14)),
+            (from: (3, 2, 6), to: (7, 7, 11), textures: All("furniture_pot")),
+            (from: (9, 2, 5), to: (13, 6, 10), textures: All("furniture_pot")),
+            (from: (5, 10, 5), to: (11, 14, 12), textures: All("furniture_cask")),
+        ]),
+        // A stair (the step facing north) with panelled doors in its riser.
+        "stair_cupboard": (boxes: [
+            (from: (0, 0, 1), to: (16, 8, 16), cull: true),
+            (from: (0, 8, 8), to: (16, 16, 16), cull: true),
+            (from: (1, 1, 0), to: (15, 7, 1), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+        ]),
         // Taller in the leg and the crown than a cupboard, narrower in the body.
         "wardrobe": (boxes: [
             (from: (1, 0, 3), to: (15, 3, 15), textures: All("furniture_grain")),
@@ -292,6 +324,13 @@
         "chopping_block": (boxes: [
             (from: (2, 0, 2), to: (14, 10, 14)),
             (from: (7.5, 10, 4), to: (8.5, 13, 11), turn: 30, textures: All("chopping_block_wedge")),
+        ]),
+        // A grindstone (blocks_workshop.ron): a stone wheel on an axle between two posts.
+        "grindstone": (boxes: [
+            (from: (1, 0, 5), to: (3, 10, 11)),
+            (from: (13, 0, 5), to: (15, 10, 11)),
+            (from: (3, 6.5, 7.5), to: (13, 7.5, 8.5)),
+            (from: (5, 1, 2), to: (11, 13, 14), textures: All("grindstone_wheel")),
         ]),
 
         // Singles: lights, a hearth's pieces, a loom and its kin, graves and columns.

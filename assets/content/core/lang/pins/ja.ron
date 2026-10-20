@@ -374,4 +374,6 @@
     "command.core.machine.help.summary": ("Tells how the machine at a block is doing (~ is where you are): what it makes, its power, or what it lacks.", "ブロックにある機械の様子を伝えます。"),
     "command.core.home.help": ("Tells where your home is, how far its furnishing has come, and what the next step needs.", "家の場所と、家具が整ってきた度合い、次の段階に必要なものを伝えます。"),
     "command.core.home.help.summary": ("Tells where your home is, how far its furnishing has come, and what the next step needs.", "家の場所と次の段階に必要なものを伝えます。"),
+    "command.core.quest.help": ("Marks a quest done for you (an age's rite opens its stations), its rewards waiting to be claimed.", "クエストを達成済みにします (時代の儀式を済ませると、その時代の作業台が使えるようになります)。報酬は受け取りを待ちます。"),
+    "command.core.quest.help.summary": ("Marks a quest done for you (an age's rite opens its stations), its rewards waiting to be claimed.", "クエストを達成済みにします。"),
 }

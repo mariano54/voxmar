@@ -29,7 +29,7 @@ fn every_recipe_in_the_base_content_expands_to_at_least_one() {
     }
     assert!(dead.is_empty(), "recipes that expand to nothing:\n{}", dead.join("\n"));
     // The first tools a player makes, by name.
-    for tool in ["wooden_pickaxe", "wooden_axe", "wooden_shovel", "wooden_hoe", "wooden_knife"] {
+    for tool in ["flint_pickaxe", "flint_axe", "flint_knife", "digging_stick"] {
         let id = content.blocks.id(&format!("base:{tool}")).unwrap();
         assert!(content.recipes.iter().any(|r| r.output == id), "{tool} cannot be crafted");
     }

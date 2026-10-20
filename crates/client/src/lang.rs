@@ -503,6 +503,8 @@ mod tests {
         keys.extend(FIRST_PARTY.iter().map(|package| format!("package.{package}")));
         // The quest book's chapters, one per age the first-party quests name.
         keys.extend(content.quests.iter().filter(|quest| first_party(&quest.name)).map(|quest| format!("quest.age.{}", quest.age)));
+        // And each age a rite opens, which a recipe greyed for it names.
+        keys.extend(content.quests.iter().filter(|quest| first_party(&quest.name)).filter_map(|quest| quest.opens.as_ref()).map(|age| format!("quest.age.{age}")));
         // The interface fonts and the shader packs the game ships, as the settings name them.
         keys.extend(crate::ui::skin::InterfaceFont::ALL.map(|font| font.key().to_owned()));
         keys.extend(crate::render::pack::ShaderPacks::load(&assets()).0.iter().filter(|pack| pack.shipped).map(crate::render::pack::ShaderPack::key));

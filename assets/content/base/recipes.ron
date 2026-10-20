@@ -7,6 +7,8 @@
 // all of the recipe's blocks, so one line serves every wood. Each trains a `skill`
 // (Crafting unless it says; Engineering for tools, stations and machines), may need a
 // `level` in it, and gives `xp` for every one made.
+// A recipe with an `age` (the next age's stations: the pit kiln, the cooking pot...) is
+// refused until the player has done that age's rite, the quest that `opens` it.
 (
     recipes: [
         // Every log splits into four planks of its wood; two planks make four sticks.
@@ -26,38 +28,39 @@
         // The Farm age's fire: a pit kiln (cobbles round a campfire), clay shaped for it, and
         // kiln bricks from what it fires; a crucible at their heart. Bronze is three
         // copper to one tin, smelted in the Crucible Kiln.
-        (pattern: [["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "campfire", "tag:cobbled"]], output: "pit_kiln", skill: "core:construction", level: 1, xp: 15.0),
+        (pattern: [["tag:cobbled", "", "tag:cobbled"], ["tag:cobbled", "campfire", "tag:cobbled"]], output: "pit_kiln", age: "farm", skill: "core:construction", level: 1, xp: 15.0),
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "clay_pot", count: 2, level: 2, xp: 12.0),
         (pattern: [["fired_clay"], ["fired_clay"]], output: "vial", count: 3, level: 4, xp: 8.0),
         (ingredients: ["fired_clay", "fired_clay", "fired_clay", "fired_clay"], output: "kiln_bricks", count: 2, level: 5, xp: 12.0),
-        (pattern: [["kiln_bricks", "", "kiln_bricks"], ["kiln_bricks", "clay_pot", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "crucible", skill: "core:engineering", level: 10, xp: 40.0),
+        (pattern: [["kiln_bricks", "", "kiln_bricks"], ["kiln_bricks", "clay_pot", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "crucible", age: "farm", skill: "core:engineering", level: 10, xp: 40.0),
         // A sleeping bag three ways: wool and hide, pelts, or feathers and hide, which takes a
         // raw hide off the first night's hunt as well as a cured one.
         (pattern: [["wool", "wool", "wool"], ["hide", "hide", ""]], output: "sleeping_bag", level: 5, xp: 30.0),
         (pattern: [["tag:fur", "tag:fur"], ["tag:fur", "tag:fur"]], output: "sleeping_bag", level: 5, xp: 30.0),
         (pattern: [["feather", "feather"], ["raw_hide|hide", "raw_hide|hide"]], output: "sleeping_bag", level: 1, xp: 30.0),
         // A herb planter: a box of soil herbs grow back in.
-        (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:construction", level: 3, xp: 10.0),
+        (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", age: "farm", skill: "core:construction", level: 3, xp: 10.0),
         // Ore smelted with coal or charcoal, by hand for now (a furnace comes later).
         (pattern: [["copper_ore"], ["coal_ore|charcoal"]], output: "copper_ingot", skill: "core:engineering", level: 5, xp: 6.0),
         (pattern: [["iron_ore"], ["coal_ore|charcoal"]], output: "iron_ingot", skill: "core:engineering", level: 15, xp: 12.0),
         // Flint tools (tier 1), Engineering 1, in the hand's grid: what bare hands make first,
         // since breaking stone or felling a tree needs a pickaxe or an axe (tools.ron). Flint
-        // from gravel, sticks from leaves.
+        // from gravel, sticks from leaves; a knife is a flake on a stick, a digging stick two
+        // sticks end to end.
         (pattern: [["flint", "flint"], ["stick", "stick"]], output: "flint_pickaxe", skill: "core:engineering", level: 1, xp: 4),
         (pattern: [["flint", "flint"], ["stick", ""]], output: "flint_axe", skill: "core:engineering", level: 1, xp: 4),
-        // Wooden tools (tier 1), Engineering 1.
-        (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["", "stick", ""], ["", "stick", ""]], output: "wooden_pickaxe", skill: "core:engineering", level: 1, xp: 4),
-        (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "stick"], ["", "stick"]], output: "wooden_axe", skill: "core:engineering", level: 1, xp: 4),
-        (pattern: [["{name}_planks"], ["stick"], ["stick"]], output: "wooden_shovel", skill: "core:engineering", level: 1, xp: 4),
-        (pattern: [["{name}_planks", "{name}_planks"], ["", "stick"], ["", "stick"]], output: "wooden_hoe", skill: "core:engineering", level: 1, xp: 4),
-        (pattern: [["{name}_planks"], ["stick"]], output: "wooden_knife", skill: "core:engineering", level: 1, xp: 4),
-        // Stone tools (tier 2), Engineering 1.
-        (pattern: [["cobblestone", "cobblestone", "cobblestone"], ["", "stick", ""], ["", "stick", ""]], output: "stone_pickaxe", skill: "core:engineering", level: 1, xp: 6),
-        (pattern: [["cobblestone", "cobblestone"], ["cobblestone", "stick"], ["", "stick"]], output: "stone_axe", skill: "core:engineering", level: 1, xp: 6),
-        (pattern: [["cobblestone"], ["stick"], ["stick"]], output: "stone_shovel", skill: "core:engineering", level: 1, xp: 6),
-        (pattern: [["cobblestone", "cobblestone"], ["", "stick"], ["", "stick"]], output: "stone_hoe", skill: "core:engineering", level: 1, xp: 6),
-        (pattern: [["cobblestone"], ["stick"]], output: "stone_knife", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["flint"], ["stick"]], output: "flint_knife", skill: "core:engineering", level: 1, xp: 4),
+        (pattern: [["stick"], ["stick"]], output: "digging_stick", skill: "core:engineering", level: 1, xp: 2),
+        // Stone tools (tier 2), Engineering 1, hafted from stone heads: toolstone (hard rock,
+        // blocks.ron) ground at a grindstone, a wheel of cobble dressed with sand on two sticks.
+        // Soft stone will not take an edge, so a player finds the hard rock first.
+        (pattern: [["sand", "tag:cobbled"], ["stick", "stick"]], output: "grindstone", skill: "core:crafting", level: 1, xp: 6),
+        (ingredients: ["tag:toolstone"], output: "stone_head", near: "grindstone", skill: "core:crafting", level: 1, xp: 2),
+        (pattern: [["stone_head", "stone_head", "stone_head"], ["", "stick", ""], ["", "stick", ""]], output: "stone_pickaxe", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["stone_head", "stone_head"], ["stone_head", "stick"], ["", "stick"]], output: "stone_axe", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["stone_head"], ["stick"], ["stick"]], output: "stone_shovel", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["stone_head", "stone_head"], ["", "stick"], ["", "stick"]], output: "stone_hoe", skill: "core:engineering", level: 1, xp: 6),
+        (pattern: [["stone_head"], ["stick"]], output: "stone_knife", skill: "core:engineering", level: 1, xp: 6),
         // Copper tools (tier 3), Engineering 5.
         (pattern: [["copper_ingot", "copper_ingot", "copper_ingot"], ["", "stick", ""], ["", "stick", ""]], output: "copper_pickaxe", skill: "core:engineering", level: 5, xp: 16),
         (pattern: [["copper_ingot", "copper_ingot"], ["copper_ingot", "stick"], ["", "stick"]], output: "copper_axe", skill: "core:engineering", level: 5, xp: 16),
@@ -81,7 +84,7 @@
         // with one.
         (ingredients: ["hide", "twine", "twine"], output: "coin_purse", level: 1, xp: 8.0),
         // A stone altar (Construction 5, design's draft 70): pray at it and offer bones (combat's prayers.ron).
-        (pattern: [["stone_bricks", "stone_bricks", "stone_bricks"], ["", "stone_bricks", ""], ["stone_bricks", "stone_bricks", "stone_bricks"]], output: "stone_altar", skill: "core:construction", level: 5, xp: 12.0),
+        (pattern: [["stone_bricks", "stone_bricks", "stone_bricks"], ["", "stone_bricks", ""], ["stone_bricks", "stone_bricks", "stone_bricks"]], output: "stone_altar", age: "farm", skill: "core:construction", level: 5, xp: 12.0),
         // For taming and breeding: a treat any tameable animal takes, twice as gladly as its
         // own food; seed mix that readies any kept animal to breed.
         (ingredients: ["wheat", "wheat", "apple", "egg"], output: "taming_treat", count: 2, skill: "core:cooking", level: 27, xp: 30.0),
@@ -92,6 +95,9 @@
         (pattern: [["red_sand", "red_sand"], ["red_sand", "red_sand"]], output: "red_sandstone", xp: 2.0),
         // Moss grows over stonework.
         (ingredients: ["stone_bricks", "moss_block"], output: "mossy_stone_bricks", xp: 3.0),
+        // Cobblestone is made: plain stone breaks into loose stones (blocks.ron), and four
+        // knock together into two.
+        (pattern: [["loose_stone", "loose_stone"], ["loose_stone", "loose_stone"]], output: "cobblestone", count: 2, xp: 1.0),
         (ingredients: ["cobblestone", "moss_block"], output: "mossy_cobblestone", xp: 3.0),
         // Two logs (barked or stripped), or bark-on-all-sides wood blocks, over two
         // cobblestones make a campfire. Removing bark is never a prerequisite.
