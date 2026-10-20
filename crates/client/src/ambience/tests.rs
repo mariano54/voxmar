@@ -962,6 +962,37 @@ fn a_home_settles_at_night_and_its_eaves_drip_after_rain() {
     assert_eq!(played("eaves_drip", &[("wetness", 0.9)]), 0, "out in the open");
 }
 
+/// A village at work by day: the anvil ringing at the smithy, the mill wheel turning, logs
+/// split at the woodyard and pigs in the pens, each from its own building; the shrine's
+/// bell at dawn and dusk only; at night none of it. And a fire sat by now and then has a
+/// log settle in it.
+#[test]
+fn a_village_works_by_day_and_rings_its_bell_at_dusk() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let names = ["anvil", "mill_wheel", "chopping", "pen_grunt", "shrine_bell"];
+    let heard = |sun: f32, seconds: f32| {
+        let set = [("settlement", 10.0), ("settlementedge", 0.0), ("settlementpeople", 30.0), ("sun", sun)];
+        let (timeline, _) = run(&ambience, &scene(&ambience, "village", &["plains", "temperate"], &set), seconds);
+        names.map(|name| {
+            let at: Vec<_> = timeline.iter().filter_map(|(_, c)| match c { Cue::Sound { sound: s, at, .. } if *s == sound(name) => Some(*at), _ => None }).collect();
+            assert!(at.iter().all(|at| *at == Some(Vec3::new(12.0, 0.0, 0.0))), "{name} from its building: {at:?}");
+            (name, at.len())
+        })
+    };
+    let day = heard(0.8, 300.0);
+    assert!(day[..4].iter().all(|(_, n)| *n > 0) && day[4].1 == 0, "by day: {day:?}");
+    let dusk = heard(-0.1, 900.0);
+    assert!(dusk[4].1 > 0 && dusk[..4].iter().all(|(_, n)| *n == 0), "at dusk: {dusk:?}");
+    let night = heard(-0.8, 600.0);
+    assert!(night.iter().all(|(_, n)| *n == 0), "at night: {night:?}");
+    let settles = |fire: f32| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "hearth", &["plains"], &[("fire", fire)]), 300.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound("hearth_settle"))).count()
+    };
+    assert!(settles(1.0) > 0 && settles(0.0) == 0, "a log settles in a fire sat by");
+}
+
 /// Every recorded bed's files are there; one a mod mistyped is not, and fails the launch.
 #[test]
 fn recorded_beds_are_there() {
