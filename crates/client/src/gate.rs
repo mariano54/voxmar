@@ -652,6 +652,9 @@ struct Gate {
     /// Where a stage last walked the player to pick something up (`walk_to_lying`), so the
     /// step is asked once.
     walked_to: Option<Vec3>,
+    /// Where the observer floated before a step moved it over its own ground (`reap`), to
+    /// be put back when the step ends.
+    observer_home: Option<Vec3>,
     /// Frames in this stage that what a shot is about has been on screen: it shows a frame
     /// or two after the change.
     settled: u32,
@@ -1034,6 +1037,7 @@ impl Gate {
             phase: 0,
             phase_since: 0.0,
             walked_to: None,
+            observer_home: None,
             settled: 0,
             feet: IVec3::ZERO,
             entered: vec![Step::Load],
@@ -6226,6 +6230,9 @@ fn reap(world: &mut World, gate: &mut Gate, now: f32) {
         for item in ["stone_hoe", "wheat", "wheat_seeds"] {
             net.command(&format!("clear {item}"));
         }
+        if let (Some(home), Some(observer)) = (gate.observer_home.take(), gate.observer.as_mut()) {
+            observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", home.x, home.y, home.z) });
+        }
         gate.next(Step::Merged, now);
     };
     let (Some(ripe), Some(hoe)) = (ripe, hoe) else {
@@ -6249,6 +6256,13 @@ fn reap(world: &mut World, gate: &mut Gate, now: f32) {
             ] {
                 net.command(&line);
             }
+            // The observer over the patch, high up: floating over its own spawn, the patch's
+            // column may be beyond what is streamed to it (on the Mac's world it saw none of
+            // the nine the client did). Put back when the step ends.
+            if let Some(observer) = gate.observer.as_mut() {
+                gate.observer_home = observer.position;
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", centre.x as f32 + 0.5, centre.y + 40, centre.z as f32 + 0.5) });
+            }
             gate.advance(now);
         }
         1 => {
@@ -6271,7 +6285,8 @@ fn reap(world: &mut World, gate: &mut Gate, now: f32) {
                 }
                 gate.advance(now);
             } else if waited {
-                gate.check("reap", Err(format!("of nine ripe wheat {client} stood on the client and {server} on the server, the spot ({there}) or the stone hoe in hand ({has}, {held}) never came in {REAP_WAIT} seconds")));
+                let loaded = gate.observer.as_ref().map_or(9, |o| cells.iter().filter(|&&p| o.world.block(p).is_some()).count());
+                gate.check("reap", Err(format!("of nine ripe wheat {client} stood on the client and {server} on the server ({loaded} of the nine cells streamed to the observer), the spot ({there}) or the stone hoe in hand ({has}, {held}) never came in {REAP_WAIT} seconds")));
                 end(world, gate);
             }
         }
@@ -8269,7 +8284,9 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.check("make: wants", Ok(format!("pointed at, the stone pickaxe reads {line:?}")));
             // A pit kiln's all: four cobblestone round a campfire.
             let net = world.resource::<Net>();
-            for line in ["give cobblestone 1", "clear campfire", "give campfire 1"] {
+            // Its own four, whatever earlier steps left: stone breaks to loose stone now, so
+            // none may be held.
+            for line in ["clear cobblestone", "give cobblestone 4", "clear campfire", "give campfire 1"] {
                 net.command(line);
             }
             gate.advance(now);
