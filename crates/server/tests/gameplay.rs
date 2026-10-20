@@ -1064,6 +1064,11 @@ fn a_village_rug_gives_nothing_but_a_players_comes_back_whole_across_restarts() 
     furnishing_drops_across_restarts("rug", "red_rug", "red_rug", 1);
 }
 
+#[test]
+fn a_village_hay_bale_gives_nothing_but_a_players_breaks_into_nine_straw_across_restarts() {
+    furnishing_drops_across_restarts("hay-bale", "hay_bale", "straw", 9);
+}
+
 fn furnishing_drops_across_restarts(label: &str, name: &str, material: &str, count: usize) {
     let dir = world_dir(label);
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
@@ -8792,11 +8797,15 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         f.propose("base:till", ActionTarget::Block { block: ground, face: Face::PosY });
     }
     f.wait(5.0, "tilling the field", |c| field.iter().all(|&g| c.world.block(g) == Some(farmland)));
-    f.hold("base:wheat_seeds");
+    // One square at a time, each seen sown before the next: from seeds in hand, and once
+    // those are gone from the seed pouch the herbs filled, which sows what it carries.
+    let seeds = f.c.content.blocks.expect("base:wheat_seeds");
     for &ground in &field {
+        let in_slots = f.c.inventory.slots.iter().flatten().any(|s| s.item == seeds);
+        f.hold(if in_slots { "base:wheat_seeds" } else { "base:seed_pouch" });
         f.propose("base:plant", ActionTarget::Block { block: ground, face: Face::PosY });
+        f.wait(5.0, "sowing the field", |c| c.world.block(ground + IVec3::Y) == Some(sprout));
     }
-    f.wait(5.0, "sowing the field", |c| field.iter().all(|&g| c.world.block(g + IVec3::Y) == Some(sprout)));
     f.mark("sown");
 
     // The Potter: six clay pots at the table, five fired clay round an empty top middle
