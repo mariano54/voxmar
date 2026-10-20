@@ -1069,6 +1069,51 @@ fn a_village_hay_bale_gives_nothing_but_a_players_breaks_into_nine_straw_across_
     furnishing_drops_across_restarts("hay-bale", "hay_bale", "straw", 9);
 }
 
+/// Every village prop (settlements.ron's furnishings) that a player's own copy breaks into
+/// something gives nothing where the world set it: each is set as a village sets it and
+/// broken, and nothing of what it drops comes to hand or lies loose.
+#[test]
+fn village_props_set_by_the_world_give_nothing() {
+    use voxmar_worldgen::{Select, WorldContent};
+    let mut client = Client::join();
+    let world = WorldContent::load(&client.content).expect("world content");
+    let f = &world.settlements.furnishings;
+    let blocks = &client.content.blocks;
+    let mut props: Vec<BlockId> = f.barrel.iter().chain(&f.bell).map(|name| blocks.expect(name)).collect();
+    for list in [&f.hay, &f.sacks, &f.crates, &f.hanging, &f.nets] {
+        for select in list {
+            match select {
+                Select::Name(name, _) => props.push(blocks.expect(name)),
+                Select::Tag(tag, _) => props.extend(blocks.tagged(tag)),
+            }
+        }
+    }
+    props.sort();
+    props.dedup();
+    let giving: Vec<(String, BlockId)> = props
+        .into_iter()
+        .filter(|&id| !blocks.info(id).drops.is_air() && blocks.info(id).drop_count > 0)
+        .map(|id| (blocks.def(id).name.trim_start_matches("base:").to_owned(), blocks.info(id).drops))
+        .collect();
+    assert!(giving.iter().any(|(name, _)| name == "hay_bale"), "no village prop gives anything: {giving:?}");
+    let spot = client.position.floor().as_ivec3() + IVec3::new(1, 0, 1);
+    for line in ["/clear", "/fill ~1 ~-1 ~1 ~1 ~-1 ~1 stone", "/fill ~1 ~ ~1 ~1 ~1 ~1 air"] {
+        client.ok(line);
+    }
+    for (name, drops) in &giving {
+        let prop = client.content.blocks.expect(&format!("base:{name}"));
+        client.ok(&format!("/setblock ~1 ~ ~1 {name}"));
+        client.pump_until(|c| c.world.block(spot) == Some(prop));
+        client.propose("core:mine", ActionTarget::Block { block: spot, face: Face::PosY });
+        client.pump_until(|c| c.world.block(spot) == Some(BlockId::AIR));
+        let goods = |c: &Client| {
+            c.inventory.slots.iter().flatten().filter(|s| s.item == *drops).map(|s| s.count as usize).sum::<usize>()
+                + c.items.values().filter(|i| i.stack.item == *drops).map(|i| i.stack.count as usize).sum::<usize>()
+        };
+        assert_eq!(client.quiet(goods), 0, "a village's {name} gave {}", client.content.blocks.def(*drops).name);
+    }
+}
+
 fn furnishing_drops_across_restarts(label: &str, name: &str, material: &str, count: usize) {
     let dir = world_dir(label);
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
