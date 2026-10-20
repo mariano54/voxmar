@@ -845,7 +845,7 @@ impl Recordings {
     /// Every list of clips in the file, with what it is the sound of. Each struct is taken
     /// apart field by field, never with `..`, so a list added to one cannot be left out.
     fn clip_lists(&self) -> Vec<(String, &[String])> {
-        let Recordings { thunder, swim, splash, quest_done, quest_claim, level_up, level_milestone, pickup, actions, interface, materials, fire, mix: _ } = self;
+        let Recordings { thunder, swim, splash, quest_done, quest_claim, level_up, level_milestone, pickup, tool_worn, tool_break, actions, interface, materials, fire, mix: _ } = self;
         let ThunderRecordings { near, middle, far } = thunder;
         let FireSounds { catch, volume: _ } = fire;
         let mut lists: Vec<(String, &[String])> = vec![
@@ -853,6 +853,7 @@ impl Recordings {
             ("swim".into(), swim), ("splash".into(), splash), ("pickup".into(), pickup),
             ("quest_done".into(), quest_done), ("quest_claim".into(), quest_claim),
             ("level_up".into(), level_up), ("level_milestone".into(), level_milestone),
+            ("tool_worn".into(), tool_worn), ("tool_break".into(), tool_break),
             ("fire".into(), catch),
         ];
         for (action, sound) in actions {
