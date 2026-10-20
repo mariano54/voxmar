@@ -33,10 +33,11 @@ recipes start from worked materials (sticks, twine, hide, fired clay, bricks, be
 from blocks straight out of the ground; daub also takes clay, smoothed onto a wattle panel,
 and the stone flue cobbles laid in clay.
 
-Timber posts, beams, lattices and jetty beams are draughty; thatch and shingles are both
-sound (the trade between them is fire); the stone flue and the hood are sound. A door frame
-is an opening, not a wall, and carries no grade, as an open door or shutter does not. The
-home lane's load check holds every solid building block to exactly one grade.
+Timber posts, beams and jetty beams are sound, lattices draughty; thatch and shingles are
+both sound (the trade between them is fire); the stone flue and the hood are sound. A door
+frame is an opening, not a wall, and carries no grade, as an open door or shutter does not.
+The home's load check (`Rules::check_shelters`) holds every solid building or roof block
+but furniture to exactly one grade.
 
 Chimney pieces (`chimney_piece`: the stone and brick flues, the hood, the pot) carry a
 hearth's smoke up through a roof: the stone flue comes at Construction 2, before brick, so a

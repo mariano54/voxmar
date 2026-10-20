@@ -15,7 +15,7 @@ use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
 use crate::cooking::CookingRegistry;
 use crate::creature::condition::ConditionRules;
-use crate::creature::{CreatureRegistry, DefenceTraining, Limits, Rules};
+use crate::creature::{Climbing, CreatureRegistry, DefenceTraining, Limits, Rules};
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
 use crate::effect::EffectRegistry;
@@ -63,6 +63,8 @@ pub struct Content {
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
+    /// What catches fire from a flame beside it, and how it burns (`fire.ron`).
+    pub fire: Arc<crate::fire::Fire>,
     /// Wild nests, skeps and what bees do (`bees.ron`).
     pub bees: Arc<crate::bees::Bees>,
     /// Home stations left to work, and fertilisers (`stations.ron`).
@@ -221,6 +223,7 @@ impl Content {
         let mut creature_limits = Setting::<Limits>::default();
         let mut defence = Setting::<DefenceTraining>::default();
         let mut condition = Setting::<ConditionRules>::default();
+        let mut climbing = Setting::<Climbing>::default();
         let mut fishing_rules = Setting::<crate::fishing::FishingRules>::default();
         let mut notes = Vec::new();
         let mut cooking = Vec::new();
@@ -233,6 +236,7 @@ impl Content {
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
+        let mut fire = Vec::new();
         let mut bees = Vec::new();
         let mut stations = Vec::new();
         let mut traps = Vec::new();
@@ -298,6 +302,7 @@ impl Content {
                         creature_limits.set(package, &name, "creature limits", read.limits, &mut notes);
                         defence.set(package, &name, "Defence training", read.defence, &mut notes);
                         condition.set(package, &name, "condition rules", read.condition, &mut notes);
+                        climbing.set(package, &name, "climbing", read.climbing, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons, machines).
@@ -339,6 +344,10 @@ impl Content {
                     }
                     "regrowth.ron" => {
                         regrowth.push(crate::regrowth::Regrowth::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "fire.ron" => {
+                        fire.push(crate::fire::Fire::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "bees.ron" => {
@@ -416,7 +425,7 @@ impl Content {
         let mut blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
         blocks.rename(renames)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
-        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value };
+        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value, climbing: climbing.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
@@ -430,25 +439,6 @@ impl Content {
         if let Some(tag) = effects.near_asks().iter().map(|(tag, _)| tag).chain(effects.held_tags()).find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
             return Err(RegistryError(format!("effects.ron: an effect asks for a block or held item tagged `{tag}`, which no block carries")));
         }
-        // Every full solid building block says how well it shelters a room (`HomeWalls`),
-        // once; no block says it twice.
-        {
-            use crate::block::RenderKind;
-            use crate::effect::Shelter;
-            let unjudged: Vec<String> = blocks
-                .ids()
-                .map(|id| blocks.def(id))
-                .filter(|def| {
-                    let shelters = Shelter::ALL.iter().filter(|s| def.has_tag(s.tag())).count();
-                    let full = def.solid && def.shape.is_none() && matches!(def.render, RenderKind::Opaque | RenderKind::Cutout | RenderKind::Leaves | RenderKind::Translucent);
-                    shelters > 1 || (shelters == 0 && full && def.has_tag("building"))
-                })
-                .map(|def| def.name.clone())
-                .collect();
-            if !unjudged.is_empty() {
-                return Err(RegistryError(format!("blocks: each full solid `building` block carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", "))));
-            }
-        }
         // Every kept animal needs water, met by a block tagged `drink` near its home.
         crate::creature::condition::check_drink(&blocks, !creatures.is_empty())?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
@@ -456,6 +446,7 @@ impl Content {
         let prayers = crate::prayer::PrayerRegistry::new(prayers, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
+        let fire = crate::fire::Fire::new(fire, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
         for structure in multiblocks.iter() {
@@ -545,6 +536,7 @@ impl Content {
             prayers: Arc::new(prayers),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            fire: Arc::new(fire),
             bees: Arc::new(bees),
             stations: Arc::new(stations),
             traps: Arc::new(traps),
