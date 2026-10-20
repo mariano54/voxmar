@@ -278,7 +278,7 @@ mod tests {
             block("stone", &["stone", "natural"]),
             block("iron_ore", &["ore", "metal:iron", "natural"]),
             block("log", &["log", "wood"]),
-            block("wooden_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2"]),
+            block("flint_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2"]),
             block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"]),
             block("stone_axe", &["axe", "tool", "tier:2", "speed:4"]),
         ])
@@ -315,7 +315,7 @@ mod tests {
         let iron = tools.rule(id("iron_ore")).unwrap();
         assert_eq!((iron.skill, iron.level, iron.tier, iron.xp), (skills.id("core:mining"), 15, 2, 35.0));
         assert!(!tools.good_enough(None, id("iron_ore")));
-        assert!(!tools.good_enough(Some(id("wooden_pickaxe")), id("iron_ore")));
+        assert!(!tools.good_enough(Some(id("flint_pickaxe")), id("iron_ore")));
         assert!(tools.good_enough(Some(id("stone_pickaxe")), id("iron_ore")));
         assert!(tools.good_enough(None, id("stone")), "stone needs no tool");
         assert!(tools.rule(id("log")).is_none());
@@ -450,7 +450,7 @@ mod tests {
         for grass in [id("tall_grass"), id("tall_grass_top")] {
             assert_eq!(content.tools.instead(None, grass), None, "by hand");
             assert_eq!(content.tools.instead(Some(id("stone_axe")), grass), None, "with an axe");
-            let chances: Vec<f32> = ["wooden_knife", "stone_knife", "copper_knife", "iron_knife"]
+            let chances: Vec<f32> = ["flint_knife", "stone_knife", "copper_knife", "iron_knife"]
                 .iter()
                 .map(|knife| content.tools.instead(Some(id(knife)), grass).filter(|&(given, _)| given == twine).expect("twine with a knife").1)
                 .collect();
@@ -471,15 +471,15 @@ mod tests {
     }
 
     /// A stone or better hoe reaps the ripe crops about the one it cuts, an iron one a
-    /// wider patch; a wooden hoe, a bare hand and other tools reap only the one.
+    /// wider patch; a bare hand and other tools reap only the one.
     #[test]
     fn better_hoes_reap_round_a_crop() {
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
         let content = crate::content::Content::load(&assets).unwrap();
         let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
         let wheat = id("wheat_crop");
-        let reaps: Vec<u8> = ["wooden_hoe", "stone_hoe", "copper_hoe", "iron_hoe"].iter().map(|hoe| content.tools.reap(Some(id(hoe)), wheat)).collect();
-        assert_eq!(reaps, [0, 1, 1, 2]);
+        let reaps: Vec<u8> = ["stone_hoe", "copper_hoe", "iron_hoe"].iter().map(|hoe| content.tools.reap(Some(id(hoe)), wheat)).collect();
+        assert_eq!(reaps, [1, 1, 2]);
         assert_eq!(content.tools.reap(None, wheat), 0, "by hand");
         assert_eq!(content.tools.reap(Some(id("iron_hoe")), id("stone")), 0, "a hoe reaps only what it is made for");
         assert_eq!(content.tools.reap(Some(id("iron_axe")), wheat), 0, "an axe reaps nothing");
@@ -499,7 +499,7 @@ mod tests {
     /// Each tier of each kind is felt (Oct 14 tier audit, docs/tools-and-crafting.md): on
     /// the blocks tools are for (a log, cobblestone, an ore), a block with the next tier
     /// takes at most 1/1.35 of the time with the one before, counting the quarter second the
-    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to wood, wood to
+    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to flint, flint to
     /// stone, stone to copper, copper to iron.
     #[test]
     fn every_tool_tier_is_felt() {
@@ -510,7 +510,7 @@ mod tests {
         for (kind, blocks) in [("axe", ["oak_log"].as_slice()), ("pickaxe", ["cobblestone", "coal_ore"].as_slice())] {
             for block in blocks {
                 let hardness = content.blocks.info(id(block)).hardness;
-                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["wooden", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
+                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["flint", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
                 let seconds: Vec<f32> = held.iter().map(|&item| hardness / content.tools.speed(item, id(block)) + BREAK_WAIT).collect();
                 for (step, pair) in seconds.windows(2).enumerate() {
                     assert!(pair[0] / pair[1] >= 1.35, "{block}: tier {step} to {} with a {kind} is only {:.2}x ({seconds:?})", step + 1, pair[0] / pair[1]);

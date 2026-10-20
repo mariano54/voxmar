@@ -47,6 +47,16 @@ use crate::Server;
 /// Creatures think every this many ticks within `NEAR` blocks of a player, every
 /// `FAR_THINK` beyond.
 const NEAR_THINK: u64 = 4;
+/// What tells a creature's own rolls apart (`Live::rolls`): a thought's, a product's timing.
+pub(crate) const THOUGHT: u64 = 0x7409;
+pub(crate) const PRODUCT: u64 = 0x9d0c;
+
+/// The roll a creature of `seed` draws at its own count `rolls` for a kind (`THOUGHT`,
+/// `PRODUCT`): the kind's salt nested round the count, so no count's draw of one kind is
+/// another count's draw of the other.
+pub(crate) fn own_roll(seed: u64, rolls: u64, kind: u64) -> u64 {
+    mix(mix(seed, rolls), kind)
+}
 pub(crate) const FAR_THINK: u64 = 20;
 const NEAR: f32 = 64.0;
 /// Wild creatures further than this from every player go.
@@ -95,6 +105,9 @@ pub struct Live {
     /// Its size against its species'.
     pub scale: f32,
     pub seed: u64,
+    /// Rolls of its own drawn so far (each thought's, each product's timing), so its next
+    /// is numbered by them, never by the tick it falls on. Saved with a kept one.
+    pub rolls: u64,
     /// The last player to hurt it, for the kill's loot and experience.
     pub hurt_by: Option<PlayerId>,
     /// The last player to land a damaging blow on it and the tick they did: its blows that
@@ -497,7 +510,7 @@ impl Server {
         }
     }
 
-    fn think_and_move(&mut self) {
+    pub(crate) fn think_and_move(&mut self) {
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ids: Vec<u32> = self.creatures.live.keys().copied().collect();
         let neighbours = Neighbours::of(&self.creatures.live);
@@ -520,7 +533,7 @@ impl Server {
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
                 // What it grazes, else, kept and hungry, a trough of its food by home.
-                let food = if species.eats.is_empty() { None } else { self.food_near(position, &species.eats, id) }.or_else(|| self.trough_for(id));
+                let food = if species.eats.is_empty() { None } else { self.food_near(position, &species.eats, creature.seed) }.or_else(|| self.trough_for(id));
                 let situation = Situation {
                     position,
                     home: creature.home,
@@ -535,10 +548,12 @@ impl Server {
                     kept: creature.owner.is_some(),
                     errand: self.villagers.errand(id, handoff).or_else(|| self.wandering.errand(id)),
                     dt: every as f32 * dt,
-                    seed: mix(creature.seed, self.tick),
+                    // By its own count of thoughts, never the tick it thinks on.
+                    seed: own_roll(creature.seed, creature.rolls, THOUGHT),
                 };
                 let wet = Ground::of(self).water_at(position.floor().as_ivec3());
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
+                creature.rolls += 1;
                 // A charge's wind-up holds him to its locked line until he sets off, through
                 // the wait for the player's round trip past the wind-up (`lag_allowance`).
                 let winding_a_charge = creature.winding && species.attack_at(creature.attack).is_some_and(|a| a.charge.is_some());
@@ -644,11 +659,11 @@ impl Server {
 
     /// The nearest block of a creature's food within reach of `at`, if any: plants it
     /// grazes, or the grass block under them.
-    fn food_near(&self, at: Vec3, eats: &[BlockId], salt: u32) -> Option<IVec3> {
+    fn food_near(&self, at: Vec3, eats: &[BlockId], seed: u64) -> Option<IVec3> {
         let feet = at.floor().as_ivec3();
-        // A few rings out, starting at a seeded side so neighbours don't all pick the same
-        // tuft.
-        let start = (mix(salt as u64, self.tick / 200) % 4) as i32;
+        // A few rings out, starting at a side of its own (by its seed) so neighbours don't
+        // all pick the same tuft.
+        let start = (mix(seed, 0xf00d) % 4) as i32;
         let ground = Ground::of(self);
         for r in 0..=FOOD_RANGE {
             for i in 0..(8 * r).max(1) {
@@ -718,7 +733,7 @@ impl Server {
             _ if held => tracking.unwrap_or_default(),
             Some(goal) if goal.with_y(0.0).distance(body.position.with_y(0.0)) > 0.4 => {
                 let wish = (goal - body.position).with_y(if species.def.habitat.water == Water::Swim { goal.y - body.position.y } else { 0.0 });
-                Drive { wish: wish.normalize_or_zero(), speed: decision.speed * (1.0 - self.fights.slow(id)), face: decision.face.map(|f| f - body.position) }
+                Drive { wish: wish.normalize_or_zero(), speed: decision.speed * (1.0 - self.fights.slow(id, self.game_secs())), face: decision.face.map(|f| f - body.position) }
             }
             _ => Drive { wish: Vec3::ZERO, speed: 0.0, face: decision.face.map(|f| f - body.position) },
         };
@@ -1028,7 +1043,7 @@ impl Server {
         let book = &self.content.prayers;
         let (accurate, strong) = (1.0 + book.boost(on, voxmar_engine::prayer::Stat::Accuracy), 1.0 + book.boost(on, voxmar_engine::prayer::Stat::Strength));
         let level = self.level(player, weapon.skill);
-        let sunder = self.fights.sunder(id);
+        let sunder = self.fights.sunder(id, self.game_secs());
         let defence = voxmar_engine::combat::defence_against(species.def.defence, species.def.weak, weapon.style);
         // By the count of blows they have struck, not the tick it lands on.
         let [hit, amount] = self.players.get_mut(&player)?.draw(Draw::Strike);
@@ -1221,6 +1236,16 @@ impl Server {
         self.spawn_seeded_unseen(species, at, seed, 0.0)
     }
 
+    /// Starts creature `id`'s own count of rolls (`Live::rolls`) at the world's next roll
+    /// (`ROLL_START`): one with a fixed seed (a lair's boss, a settlement's resident), woken
+    /// again as the same individual, draws its thoughts afresh rather than over again.
+    pub(crate) fn start_rolls(&mut self, id: u32) {
+        let [a, b] = self.meta.next_cast(crate::save::ROLL_START);
+        if let Some(creature) = self.creatures.live.get_mut(&id) {
+            creature.rolls = u64::from(a.to_bits()) << 32 | u64::from(b.to_bits());
+        }
+    }
+
     /// Natural spawns check the individual's gene-scaled body before it enters the
     /// world. Explicit summons and seeded residents may appear in view.
     fn spawn_unseen(&mut self, species: CreatureId, at: Vec3, salt: u64, angle: f32) -> Option<u32> {
@@ -1282,6 +1307,7 @@ impl Server {
             decision: Decision::default(),
             scale,
             seed,
+            rolls: 0,
             hurt_by: None,
             fought: None,
             was_kept: false,
@@ -1383,7 +1409,8 @@ impl Server {
         if [Budget::Animal, Budget::Bird, Budget::Monster].into_iter().all(|of| room_of(of).0 >= room_of(of).1) {
             return;
         }
-        let seed = mix(mix(self.meta.seed, self.tick), salt ^ 0x5ba7);
+        // By the world's count of rolls, never the tick it is tried on.
+        let seed = mix(self.meta.roll_seed(crate::save::ROLL_SPAWN), salt ^ 0x5ba7);
         let angle = unit_from(seed) * std::f32::consts::TAU;
         let distance = limits.spawn_near + unit_from(mix(seed, 1)) * (limits.spawn_far - limits.spawn_near);
         let x = (at.x + angle.cos() * distance).floor() as i32;
@@ -2382,7 +2409,7 @@ mod density_tests {
         let angle = server.content.creatures.limits().spawn_unseen_angle;
         let mut draws = Vec::new();
         for _ in 0..2 {
-            server.creatures.next = 1;
+            (server.creatures.next, server.meta.rolls) = (1, 0);
             let (mut seen, mut behind) = (0, 0);
             let mut draw = Vec::new();
             for salt in 0..400u64 {
@@ -2402,7 +2429,41 @@ mod density_tests {
             draw.sort_by_key(|(salt, id, ..)| (*salt, *id));
             draws.push(draw);
         }
-        assert_eq!(draws[0], draws[1], "the same loaded world, clock and players must draw the same creatures");
+        assert_eq!(draws[0], draws[1], "the same loaded world, count of rolls and players must draw the same creatures");
+    }
+
+    /// Where a creature comes near a player, and what it is like, is drawn by the world's
+    /// count of rolls, never the tick it is tried on.
+    #[test]
+    fn a_spawn_draws_by_the_worlds_count_not_the_tick() {
+        let content = crate::test_content();
+        let spawned = |tick: u64| {
+            let mut server = crate::test_server_on(content.clone());
+            server.meta.draw_key = 0x0d1a;
+            let spot = find_biome(&server, "plains").expect("plains");
+            let height = server.overworld.site(spot.0, spot.1).height;
+            let at = Vec3::new(spot.0 as f32 + 0.5, height as f32 + 1.0, spot.1 as f32 + 0.5);
+            let (client, connection) = voxmar_protocol::local_pair();
+            std::mem::forget(client);
+            let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+            player.joined = true;
+            server.players.insert(1, player);
+            let cell = at.floor().as_ivec3();
+            server.load_area(cell - IVec3::new(80, 0, 80), cell + IVec3::new(80, 0, 80));
+            server.day = (LATER + 6_000) as f64;
+            server.tick = tick;
+            let mut made = Vec::new();
+            for salt in 0..60u64 {
+                server.creatures.live.clear();
+                server.spawn_near(1, salt);
+                made.extend(server.creatures.live.values().map(|c| (salt, c.species, c.seed, c.body.position.to_array())));
+                server.tick += 7;
+            }
+            (made, server.meta.rolls)
+        };
+        let first = spawned(40);
+        assert!(!first.0.is_empty() && first.1 >= 60, "{} spawned over {} rolls", first.0.len(), first.1);
+        assert_eq!(spawned(40_977), first, "the same tries later drew otherwise");
     }
 
     #[test]
@@ -2561,14 +2622,14 @@ mod density_tests {
 /// Creatures hurt beside walls, in corners and by trees: they run clear, round what is in
 /// their way, and their bodies (heads too) never go into a block.
 #[cfg(test)]
-mod cornered_tests {
+pub(crate) mod cornered_tests {
     use super::*;
 
     const SPECIES: [&str; 4] = ["base:red_deer", "base:rabbit", "base:mouflon", "base:wild_boar"];
 
     /// A stone pen over empty columns, high over spawn: a floor `half` blocks each way from
     /// its centre, walled three high round its edge. Returns the centre, at feet level.
-    pub(super) fn pen(server: &mut Server, half: i32) -> IVec3 {
+    pub(crate) fn pen(server: &mut Server, half: i32) -> IVec3 {
         let centre = server.spawn.floor().as_ivec3() + IVec3::Y * 40;
         let (from, to) = (ColumnPos::of_block(centre - IVec3::splat(half)), ColumnPos::of_block(centre + IVec3::splat(half)));
         for z in from.0.y..=to.0.y {
@@ -2597,7 +2658,7 @@ mod cornered_tests {
         }
     }
 
-    pub(super) fn join(server: &mut Server, at: Vec3) -> PlayerId {
+    pub(crate) fn join(server: &mut Server, at: Vec3) -> PlayerId {
         let (_client, connection) = voxmar_protocol::local_pair();
         let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
         player.joined = true;
@@ -2606,7 +2667,7 @@ mod cornered_tests {
     }
 
     /// A creature of `name` at `at`, facing along `facing`.
-    pub(super) fn put(server: &mut Server, name: &str, at: Vec3, facing: Vec3) -> u32 {
+    pub(crate) fn put(server: &mut Server, name: &str, at: Vec3, facing: Vec3) -> u32 {
         let species = server.content.creatures.id(name).expect("species");
         let id = server.spawn_creature(species, at, 7).expect("room");
         server.creatures.live.get_mut(&id).unwrap().body.yaw = motion::yaw_of(facing);
@@ -3002,6 +3063,62 @@ mod herd_tests {
         (short, sharp, widest)
     }
 
+    /// What a creature thinks is drawn by its own count of thoughts, never the tick it
+    /// thinks on: the same herd let be from a tick far on wanders alike.
+    #[test]
+    fn a_creatures_thoughts_draw_by_its_own_count_not_the_tick() {
+        let wandered = |from: u64| {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            let ids: Vec<u32> = (0..3).map(|i| put(&mut server, "base:mouflon", c.as_vec3() + Vec3::new(i as f32 * 1.5 - 1.5, 0.0, 0.0), Vec3::X)).collect();
+            server.tick = from;
+            for _ in 0..20 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+            }
+            ids.iter().map(|id| (server.creatures.live[id].rolls, server.creatures.live[id].body.position.to_array())).collect::<Vec<_>>()
+        };
+        // A whole number of every beat a creature may think at on (`NEAR_THINK`,
+        // `FAR_THINK`, each up to two more), so each thinks on the same ticks of its own.
+        let beats: u64 = (0..3).map(|k| NEAR_THINK + k).chain((0..3).map(|k| FAR_THINK + k)).product();
+        let first = wandered(1_000);
+        assert!(first.iter().all(|(rolls, _)| *rolls > 3), "they hardly thought: {first:?}");
+        assert_eq!(wandered(1_000 + 7 * beats), first, "the same herd from later thought otherwise");
+    }
+
+    /// The start of a fixed-seed creature's own count is seen in how it moves, so it is
+    /// cast by the cast key on the world's count, never drawn by the draw key.
+    #[test]
+    fn a_creatures_count_starts_from_the_cast_key() {
+        use crate::save::{ROLL_START, cast_key, numbered_draws};
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 14);
+        let id = put(&mut server, "base:mouflon", c.as_vec3(), Vec3::X);
+        server.meta.draw_key = 0x0d1a;
+        server.meta.rolls = 41;
+        let bits = |[a, b]: [f32; 2]| u64::from(a.to_bits()) << 32 | u64::from(b.to_bits());
+        server.start_rolls(id);
+        assert_eq!(server.creatures.live[&id].rolls, bits(numbered_draws(cast_key(0x0d1a), ROLL_START, 41)));
+        assert_ne!(server.creatures.live[&id].rolls, bits(numbered_draws(0x0d1a, ROLL_START, 41)), "the count started from the draw key");
+        assert_eq!(server.meta.rolls, 42);
+    }
+
+    /// A creature's thoughts and products draw by its count with salts of their own nested
+    /// round it, so no count's thought is another count's product, or the same seed's.
+    #[test]
+    fn thoughts_and_products_never_draw_alike_at_any_count() {
+        let thought = |seed: u64, n: u64| own_roll(seed, n, THOUGHT);
+        let product = |seed: u64, n: u64| own_roll(seed, n, PRODUCT);
+        for seed in [0, 1, 0x5eed, u64::MAX] {
+            for n in [0, 1, 7, 600, 1 << 40] {
+                assert_ne!(thought(seed, n), product(seed, n ^ THOUGHT ^ PRODUCT), "seed {seed:x} count {n}: a thought is a product");
+                assert_ne!(thought(seed, n), product(seed, n), "seed {seed:x} count {n}");
+                assert_ne!(thought(seed, n), thought(seed, n + 1), "seed {seed:x} count {n}: two counts think alike");
+                assert_ne!(thought(seed, n), seed, "seed {seed:x} count {n}");
+            }
+        }
+    }
+
     /// Before: a herd's will to keep together was drawn afresh each tick, its companion was
     /// whichever the list of those about put first, two near each other went round to each
     /// other's far side, and strolls took them well off: 288 sharp turns for mouflon, 256
@@ -3134,9 +3251,11 @@ mod herd_tests {
                     }
                 }
                 let id = put(&mut server, name, c.as_vec3() + Vec3::new(-1.5, -1.5, 0.5), Vec3::X);
+                // In the lake below the bank's top (as `out` is above it), over water: one on
+                // the bank whose box only overhangs the lake's edge is not in the deep.
                 let deep = |server: &Server| {
                     let body = &server.creatures.live[&id].body;
-                    body.in_water && Ground::of(server).water_at(body.position.floor().as_ivec3() - IVec3::Y)
+                    body.in_water && body.position.y < c.y as f32 - 0.01 && Ground::of(server).water_at(body.position.floor().as_ivec3() - IVec3::Y)
                 };
                 let out = (0..12 * TICKS_PER_SECOND as u64).find(|_| {
                     server.tick += 1;

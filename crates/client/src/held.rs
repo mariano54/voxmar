@@ -488,6 +488,8 @@ pub struct Motion {
     speed: f32,
     /// The rhythm's seconds into the last swing, last frame.
     since_swing: f32,
+    /// The swings at the air seen (`Fighting::whiffs`).
+    whiffs: u32,
     /// Whether a dodge was under way last frame, and how many blows at the player had been
     /// heard.
     dashing: bool,
@@ -555,7 +557,7 @@ impl Motion {
     /// Advances the hand by `dt` seconds of what the player does.
     pub fn step(&mut self, doing: Doing, dt: f32, hand: &Hand, moves: &AllMoves) -> Weights {
         if doing.item != self.item {
-            *self = Motion { item: doing.item, light: self.light, lit: self.lit, dashing: self.dashing, hurt_seen: self.hurt_seen, ..Motion::default() };
+            *self = Motion { item: doing.item, light: self.light, lit: self.lit, dashing: self.dashing, hurt_seen: self.hurt_seen, whiffs: self.whiffs, ..Motion::default() };
         }
         self.raised += dt;
         // Strokes run their course, and a held button starts the next.
@@ -632,6 +634,14 @@ impl Motion {
     /// The models the hand was drawn with last frame.
     pub fn drawn(&self) -> usize {
         self.drawn
+    }
+
+    /// Whether a swing at the air began (`Fighting::whiff`), not for a switch of what is
+    /// held.
+    pub fn whiff_began(&mut self, whiffs: u32, switched: bool) -> bool {
+        let began = !switched && whiffs != self.whiffs;
+        self.whiffs = whiffs;
+        began
     }
 
     /// Whether a swing began: the rhythm's seconds into its swing dropped (a click starts
@@ -736,7 +746,8 @@ fn show(
     let since = fighting.rhythm.meter(time.elapsed_secs_f64(), &timing) * timing.cooldown;
     let guarding = fighting.guard.is_some();
     let eating = target.eating_until > now;
-    let swung = motion.swing_began(since, switched) && !guarding && !eating;
+    let whiffed = motion.whiff_began(fighting.whiffs, switched);
+    let swung = (motion.swing_began(since, switched) || whiffed) && !guarding && !eating;
     let dodged = motion.dodge_began(fighting.dash.map(|(dir, ..)| dir), player.rotation() * Vec3::X);
     let flinched = motion.flinch_began(fighting.hurt_count, fighting.hurt.iter().rev().map(|&(_, damage, defended, _)| (damage, defended)));
     let locked = ui.cursor_locked && !player.dead;
@@ -1064,6 +1075,23 @@ mod tests {
         assert!(!motion.swing_began(0.0, true));
     }
 
+    /// A whiff is seen once, and not again when what is held changes after it. Before: the
+    /// switch made the hand anew with no whiffs seen, and the next frame swung the new item.
+    #[test]
+    fn a_whiff_is_seen_once_and_not_again_after_a_switch() {
+        let handling = shipped();
+        let (hand, moves) = (handling.hand, handling.moves);
+        let mut motion = Motion::default();
+        assert!(!motion.whiff_began(0, false));
+        assert!(motion.whiff_began(1, false));
+        assert!(!motion.whiff_began(1, false));
+        // A switch the frame it is seen, then the hand made anew for the new item.
+        assert!(!motion.whiff_began(1, true));
+        motion.step(Doing { item: Some(BlockId(5)), ..Doing::default() }, 0.05, &hand, &moves);
+        assert!(!motion.whiff_began(1, false), "the switch was taken for a whiff");
+        assert!(motion.whiff_began(2, false));
+    }
+
     #[test]
     fn the_stances_ease_in_and_out() {
         let handling = shipped();
@@ -1337,7 +1365,7 @@ mod tests {
             ("stone_pickaxe", "pickaxe", vec![("rest", weights()), ("dig", Weights { dig: 1.0, ..weights() })]),
             ("fang_dagger", "dagger", vec![("rest", weights()), ("attack", Weights { attack: 1.0, ..weights() })]),
             ("bronze_spear", "spear", vec![("rest", weights()), ("attack", Weights { attack: 1.0, ..weights() })]),
-            ("wooden_hoe", "hoe", vec![("rest", weights())]),
+            ("stone_hoe", "hoe", vec![("rest", weights())]),
             ("fishing_rod", "rod", vec![("rest", weights())]),
             ("torch_lit", "light", vec![("rest", weights())]),
             ("cooked_small_game", "edible", vec![("rest", weights()), ("eat", Weights { eat: 1.0, ..weights() })]),

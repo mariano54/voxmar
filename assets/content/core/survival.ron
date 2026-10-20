@@ -4,9 +4,10 @@
     // Health a player starts with, before their Hitpoints level sets it (twice the level).
     max_health: 20,
     // What a new player starts with: item and count (in as many slots as it takes; baked
-    // food takes one each), after `pack_end`. Nothing: a new player punches a tree, makes
-    // planks, a crafting table and wooden tools (the first quests say how). A mod that wants
-    // a kit lists one here, for example `("base:bread", 4)`.
+    // food takes one each), after `pack_end`. Nothing: a new player picks up the flint lying
+    // near where they wake, breaks a dead snag for sticks and knaps flint tools, since bare
+    // hands cannot fell a tree (the first quests say how). A mod that wants a kit lists one
+    // here, for example `("base:bread", 4)`.
     starter_kit: [],
     // What a new player starts with in the pack's last slots (last first), out of the
     // hotbar's way: the empty coin purse.
