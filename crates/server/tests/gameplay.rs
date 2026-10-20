@@ -7443,6 +7443,93 @@ struct Fresh {
     /// The creatures the bot swung at: each holds a grudge (`Memory::HurtBy`), a miss as
     /// much as a hit, though a miss leaves it whole.
     swung: Vec<u32>,
+    /// What the pacing check counts (`Pacing`), kept as the player goes.
+    pacing: std::cell::RefCell<Pacing>,
+}
+
+/// A kind of new thing the pacing check counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum Novelty {
+    /// An item first in the pack.
+    Item,
+    /// A biome stood in, or a cave, ruin or village entered (the journal's pages).
+    Place,
+    /// A creature first met (the journal's animals, monsters and bosses).
+    Creature,
+    /// A station first worked at: a block tagged `station`, a home station (`stations.ron`)
+    /// or a multiblock's core.
+    Station,
+}
+
+/// The pacing check (docs/first-days.md, "Pacing"): each new thing the player meets, by
+/// kind and server second, and the stretches spent doing one action over and over.
+#[derive(Default)]
+struct Pacing {
+    /// Each new thing: the server second it came, its kind and its name.
+    new: Vec<(f32, Novelty, String)>,
+    seen: std::collections::HashSet<(Novelty, String)>,
+    /// The action going on over and over: what it is (the action and the block or item it
+    /// is on), the second it began, and how many times so far.
+    stretch: Option<(String, f32, u32)>,
+    /// The longest such stretch so far: what, its seconds, and how many times.
+    longest: (String, f32, u32),
+}
+
+impl Pacing {
+    fn met(&mut self, at: f32, kind: Novelty, name: &str) {
+        if self.seen.insert((kind, name.to_owned())) {
+            self.new.push((at, kind, name.to_owned()));
+        }
+    }
+
+    /// The player proposes `what` at `at`: the same as the stretch going on adds to it,
+    /// anything else ends it.
+    fn act(&mut self, at: f32, what: String) {
+        match &mut self.stretch {
+            Some((doing, _, times)) if *doing == what => *times += 1,
+            _ => {
+                self.end(at);
+                self.stretch = Some((what, at, 1));
+            }
+        }
+    }
+
+    /// The stretch going on ends at `at`.
+    fn end(&mut self, at: f32) {
+        if let Some((what, from, times)) = self.stretch.take()
+            && at - from > self.longest.1
+        {
+            self.longest = (what, at - from, times);
+        }
+    }
+
+    /// The new things in each window of `window` server seconds from the start up to `to`,
+    /// by kind.
+    fn windows(&self, window: f32, to: f32) -> Vec<std::collections::BTreeMap<Novelty, Vec<&str>>> {
+        let count = (to / window).ceil().max(1.0) as usize;
+        let mut out = vec![std::collections::BTreeMap::new(); count];
+        for (at, kind, name) in &self.new {
+            let i = ((at / window) as usize).min(count - 1);
+            out[i].entry(*kind).or_insert_with(Vec::new).push(name.as_str());
+        }
+        out
+    }
+
+    /// The longest wait with nothing new, from the start to `to`: its seconds, the second it
+    /// began, and the new thing that ended it (none, if the run did).
+    fn longest_gap(&self, to: f32) -> (f32, f32, Option<&str>) {
+        let mut times: Vec<(f32, Option<&str>)> = self.new.iter().map(|(at, _, name)| (*at, Some(name.as_str()))).collect();
+        times.push((to, None));
+        let mut from = 0.0;
+        let mut longest = (0.0, 0.0, None);
+        for (at, name) in times {
+            if at - from > longest.0 {
+                longest = (at - from, from, name);
+            }
+            from = from.max(at);
+        }
+        longest
+    }
 }
 
 /// How many of `item` the pack and its pouches carry.
@@ -7482,6 +7569,7 @@ impl Fresh {
     /// claims its rewards, as a player does (the experience they pay is what later steps'
     /// levels come from).
     fn mark(&mut self, name: &'static str) {
+        self.look_round();
         let (at, acts) = (self.secs(), self.acts.map(|t| t as f32 / TICKS_PER_SECOND as f32));
         let c = &self.c;
         let levels = PACED_SKILLS.iter().map(|&skill| (skill, c.content.skills.id(&format!("core:{skill}")).map_or(0, |id| c.content.skills.level(c.skills.xp(id))))).collect();
@@ -7544,11 +7632,31 @@ impl Fresh {
         done(&self.c)
     }
 
-    /// Lets one server tick pass.
+    /// Lets one server tick pass, and counts what is new in the pack and the journal.
     fn tick(&mut self) {
         let t = self.c.ticks();
         self.c.pump_until(|c| c.ticks() > t);
         self.steps += 1;
+        self.look_round();
+    }
+
+    /// Counts what is new since the last look: items in the pack, places and creatures in
+    /// the journal.
+    fn look_round(&self) {
+        use voxmar_engine::journal::Page;
+        let (c, at) = (&self.c, self.secs());
+        let mut pacing = self.pacing.borrow_mut();
+        for stack in c.inventory.slots.iter().flatten() {
+            pacing.met(at, Novelty::Item, &c.content.blocks.def(stack.item).name);
+        }
+        for entry in c.journal.entries() {
+            let kind = match entry.page {
+                Page::Biomes | Page::Places => Novelty::Place,
+                Page::Animals | Page::Monsters | Page::Bosses => Novelty::Creature,
+                _ => continue,
+            };
+            pacing.met(at, kind, &entry.name);
+        }
     }
 
     /// The game's clock: the moment the server's tick stands for, at its pace. The player's
@@ -7560,6 +7668,30 @@ impl Fresh {
     }
 
     fn propose(&self, action: &str, target: ActionTarget) {
+        let c = &self.c;
+        let name = |b: BlockId| c.content.blocks.def(b).name.clone();
+        let on = match target {
+            ActionTarget::Block { block, .. } => c.world.block(block),
+            _ => None,
+        };
+        // What it is done with or to, for telling one action over and over from another:
+        // the block or creature it is on, or what is in hand (the food cooked, the stack
+        // crafted).
+        let creature = match target {
+            ActionTarget::Creature(id) => c.creatures.get(&id).map(|v| c.content.creatures.get(v.species).def.name.clone()),
+            _ => None,
+        };
+        let with = creature.unwrap_or_else(|| on.or_else(|| c.inventory.get(self.held as usize).map(|s| s.item)).map_or_else(String::new, name));
+        let mut pacing = self.pacing.borrow_mut();
+        pacing.act(self.secs(), format!("{action} {with}"));
+        if let Some(block) = on.filter(|_| !matches!(action, "core:mine" | "core:place")) {
+            let def = c.content.blocks.def(block);
+            let station = c.content.stations.of(block).map(|(s, _)| s.empty);
+            if let Some(kind) = station.or_else(|| (def.has_tag("station") || def.has_tag("multiblock_core")).then_some(block)) {
+                pacing.met(self.secs(), Novelty::Station, &name(kind));
+            }
+        }
+        drop(pacing);
         self.c.propose_at(action, target, self.now());
     }
 
@@ -8158,7 +8290,7 @@ impl Fresh {
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
-        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch, steps: 0, swung: Vec::new() };
+        let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch, steps: 0, swung: Vec::new(), pacing: Default::default() };
         // Ten animals in the lane: three rabbits and seven junglefowl.
         for (i, z) in (-10..=-1).enumerate() {
             plot.stock(if i % 3 == 1 { "rabbit" } else { "junglefowl" }, z);
@@ -8179,7 +8311,7 @@ fn the_bot_closes_on_a_drop_from_where_the_server_put_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // A cobblestone four blocks off, beyond the pull.
     let cell = origin + IVec3::X * 4;
     f.c.ok(&format!("/drop cobblestone 1 {} {} {}", cell.x, cell.y, cell.z));
@@ -8202,7 +8334,7 @@ fn the_bot_collects_while_the_server_ticks_far_ahead_of_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     for i in 1..=6 {
         let cell = origin + IVec3::X * (4 * i);
         f.c.ok(&format!("/drop cobblestone 1 {} {} {}", cell.x, cell.y, cell.z));
@@ -8220,7 +8352,7 @@ fn a_server_in_lockstep_ticks_once_for_each_tick_its_bot_lets_pass() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     for _ in 0..200 {
         let t = f.c.ticks();
         f.send();
@@ -8238,7 +8370,7 @@ fn the_bot_steps_down_into_a_pit_for_a_drop_and_back_out() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // Ground under the floor, then a pit four blocks off, one wide and three deep, a
     // cobblestone at its bottom.
     f.c.fill(origin, IVec3::new(2, -5, -2), IVec3::new(6, -2, 2), "stone");
@@ -8265,7 +8397,7 @@ fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // A log hanging a block over the ground four blocks off, a cobblestone in the gap under it.
     let gap = origin + IVec3::X * 4;
     f.c.ok(&format!("/setblock {} {} {} oak_log", gap.x, gap.y + 1, gap.z));
@@ -8285,7 +8417,7 @@ fn the_bot_hops_to_a_spot_it_just_fits_in_a_one_wide_nook() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // Walls either side of a row of cells four to five blocks off, shut at its far end.
     f.c.fill(origin, IVec3::new(3, 0, -1), IVec3::new(6, 1, -1), "stone");
     f.c.fill(origin, IVec3::new(3, 0, 1), IVec3::new(6, 1, 1), "stone");
@@ -8307,7 +8439,7 @@ fn the_bot_leaves_a_drop_no_one_can_reach_and_digs_another() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     // Ground under the floor, and in it a one-high slot two blocks down, three blocks off,
     // a cobblestone in it.
     f.c.fill(origin, IVec3::new(1, -5, -2), IVec3::new(5, -2, 2), "stone");
@@ -8341,7 +8473,7 @@ fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
     let c = on_a_test_floor();
     let (feet, ticks) = (c.position, c.ticks());
     let origin = feet.floor().as_ivec3();
-    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new(), pacing: Default::default() };
     f.c.ok("/give stone_pickaxe 1");
     f.c.ok("/give cobblestone 1");
     f.c.pump_until(|c| holding(c, "base:stone_pickaxe") == 1 && holding(c, "base:cobblestone") == 1);
@@ -8928,7 +9060,59 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let missed: Vec<&str> = QUEST_BOOK_ORDER.iter().copied().filter(|q| !quest_status(&f.c, q).0).collect();
     assert!(missed.is_empty(), "quests of the line not done: {missed:?}");
     eprintln!("{}", timeline(&f));
+    f.look_round();
+    let end = f.secs();
+    f.pacing.borrow_mut().end(end);
+    let pacing = f.pacing.borrow();
+    let report = pacing_report(&pacing, end);
+    eprintln!("{report}");
     eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
+    // Something new comes every three minutes of the line, several things, and no one
+    // action is done over and over for long (docs/first-days.md, "Pacing").
+    for (i, window) in pacing.windows(PACING_WINDOW, end).iter().enumerate() {
+        let full = (i as f32 + 1.0) * PACING_WINDOW <= end;
+        let new = window.values().map(Vec::len).sum::<usize>();
+        assert!(!full || new >= PACING_NEW, "only {new} new things in three minutes from {} s:\n{report}", i as f32 * PACING_WINDOW);
+    }
+    assert!(pacing.longest.1 <= PACING_STRETCH, "one action over and over for too long:\n{report}");
+}
+
+/// The pacing check's window: new things are counted in each three minutes of the run.
+const PACING_WINDOW: f32 = 180.0;
+
+/// The fewest new things each whole window must bring (14 to 43 in 32 runs, Oct 20).
+const PACING_NEW: usize = 5;
+
+/// The longest the player may do one action over and over, in server seconds (firing
+/// clay at the pit kiln, 29 to 40 s in 32 runs, Oct 20).
+const PACING_STRETCH: f32 = 60.0;
+
+/// The pacing check's report: what was new in each window of the run, by kind, and the
+/// longest stretch of one action over and over.
+fn pacing_report(pacing: &Pacing, end: f32) -> String {
+    let mut out = String::from("pacing: new things per three minutes (item, place, creature, station)\n");
+    for (i, window) in pacing.windows(PACING_WINDOW, end).iter().enumerate() {
+        let from = i as f32 * PACING_WINDOW;
+        let count = |kind| window.get(&kind).map_or(0, Vec::len);
+        let all: Vec<String> = window.iter().map(|(kind, names)| format!("{kind:?}: {}", names.join(", "))).collect();
+        out += &format!(
+            "  {:>5.0} to {:>5.0} s: {:>3} new ({} items, {} places, {} creatures, {} stations)  {}\n",
+            from,
+            (from + PACING_WINDOW).min(end),
+            window.values().map(Vec::len).sum::<usize>(),
+            count(Novelty::Item),
+            count(Novelty::Place),
+            count(Novelty::Creature),
+            count(Novelty::Station),
+            all.join("; ")
+        );
+    }
+    let (gap, from, ended) = pacing.longest_gap(end);
+    out += &format!("  longest wait with nothing new: {gap:.1} s from {from:.1} s, ended by {}\n", ended.unwrap_or("the end of the run"));
+    let (what, secs, times) = &pacing.longest;
+    out += &format!("  longest single-action stretch: {what}, {times} times over {secs:.1} s\n");
+    out += &format!("  the end of the line at {:.1} server min: a floor, since the bot knows the way (a new player's target is 20 to 30)", end / 60.0);
+    out
 }
 
 /// Each milestone's server seconds, the phase before it and what that went on, and the
