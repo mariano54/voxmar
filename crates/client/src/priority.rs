@@ -7,8 +7,9 @@
 //! waits for (main, render, Bevy's systems) ask for the user-interactive class, which the
 //! scheduler serves before default work (builds, scripts) and keeps on the performance cores,
 //! and every thread a frame never waits for (worldgen, lighting, meshing, Bevy's io and async
-//! pools, file reads) the utility class, below them. Both are requests any process may make;
-//! nothing needs elevated rights.
+//! pools, file reads) the utility class, below them. The in-process server's tick thread,
+//! which runs the world, takes the frame threads' class too (the server's `frame_class`).
+//! Both are requests any process may make; nothing needs elevated rights.
 //!
 //! On Linux, where raising a thread needs privileges, frame threads stay as they are and
 //! background ones are niced by 5. `VOXMAR_THREAD_PRIORITY=off` gives the threads the
