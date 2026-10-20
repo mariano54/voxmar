@@ -744,6 +744,21 @@ mod tests {
     /// rather than graze on and walk back into it.
     #[test]
     fn a_rabbit_that_slips_a_snare_runs_from_it_with_no_one_near() {
+        let off = slipped_runs(false);
+        assert!(off > 4.0, "a rabbit that slipped the snare is at most {off:.1} blocks from it in 3 s");
+    }
+
+    /// Kin it alarmed as it bolted alarm it back as they run: it still runs from the snare,
+    /// not toward its home by the snare.
+    #[test]
+    fn a_rabbit_that_slips_a_snare_runs_from_it_while_kin_raise_the_alarm() {
+        let off = slipped_runs(true);
+        assert!(off > 4.0, "a slipped rabbit its kin alarmed is at most {off:.1} blocks from the snare in 3 s");
+    }
+
+    /// The furthest a rabbit that slipped the snare gets from it in 3 s, with no player near;
+    /// `kin` alarms it again every tick, as kin running beside it would.
+    fn slipped_runs(kin: bool) -> f32 {
         let (mut server, snare) = snare_as_it_is(1);
         server.players.get_mut(&1).unwrap().position = Vec3::new(31.5, FLOOR as f32 + 1.0, 31.5);
         let at = snare.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
@@ -762,12 +777,15 @@ mod tests {
         // the furthest it got while it was here.
         let mut off = 0.0_f32;
         for _ in 0..3 * TICKS_PER_SECOND {
+            if kin && let Some(c) = server.creatures.live.get_mut(&rabbit) {
+                c.mind.alarmed();
+            }
             server.tick();
             if let Some(c) = server.creatures.live.get(&rabbit) {
                 off = off.max(c.body.position.with_y(0.0).distance(at.with_y(0.0)));
             }
         }
-        assert!(off > 4.0, "a rabbit that slipped the snare is at most {off:.1} blocks from it in 3 s");
+        off
     }
 
     /// A better hunter's snare holds more and is torn less, by its setter's Hunter level when

@@ -323,7 +323,7 @@ impl Module for Flee {
     fn act(&self, ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, fresh: bool) -> Decision {
         let at = ctx.at;
         // With no one to run from, it runs from where it was startled, else toward home.
-        let startled = ctx.mind.startled_at.filter(|_| ctx.mind.recalls(Memory::Alarm));
+        let startled = ctx.mind.startled_at.filter(|_| ctx.mind.recalls(Memory::Startled));
         let from = target.map_or(startled.unwrap_or(at.position * 2.0 - at.home), |p| p.position);
         let mut away = (at.position - from).with_y(0.0).normalize_or_zero();
         if away == Vec3::ZERO {
