@@ -801,3 +801,14 @@ fn a_survey_of_the_world_left_is_not_heard_in_the_next() {
     assert_eq!(answers.iter().map(|s| (s.number, s.place.as_ref().map(|p| p.temperature))).collect::<Vec<_>>(), [(4, Some(0.2))]);
     assert!(!surveys.out);
 }
+
+/// The beds wait for every recorded clip to load (or fail) before any plays, so a muffled
+/// twin, made at once from the same recording, never starts ahead of its dry clip.
+#[test]
+fn recorded_beds_and_their_muffled_twins_start_together() {
+    // Bed 0 synthesized (there at once), bed 1 recorded in two clips.
+    let beds = vec![vec![0], vec![1, 2]];
+    assert!(!super::beds_ready(&beds, |&clip| clip != 2), "a recording still loading");
+    assert!(super::beds_ready(&beds, |_| true));
+    assert!(super::beds_ready(&Vec::<Vec<u8>>::new(), |_| false), "no beds, nothing to wait on");
+}

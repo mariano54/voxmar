@@ -231,6 +231,8 @@ struct Ambient {
     kinds: Arc<Kinds>,
     content: Content,
     clips: Option<Clips>,
+    /// The clips made, waiting on the recorded beds to load (see [`beds_ready`]).
+    loading: Option<Clips>,
     clips_rx: Receiver<Synthesized>,
     surveys: Surveys,
     since_survey: f32,
@@ -351,6 +353,7 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
         kinds,
         content: launch.content.clone(),
         clips: None,
+        loading: None,
         clips_rx,
         surveys: Surveys::new(),
         since_survey: SURVEY_INTERVAL,
@@ -394,7 +397,29 @@ fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_eng
 
 fn receive_clips(ambient: Option<ResMut<Ambient>>, mut sources: ResMut<Assets<AudioSource>>, assets: Res<AssetServer>) {
     let Some(mut ambient) = ambient else { return };
-    let Ok(synthesized) = ambient.clips_rx.try_recv() else { return };
+    if ambient.clips.is_some() {
+        return;
+    }
+    if ambient.loading.is_none() {
+        let Ok(synthesized) = ambient.clips_rx.try_recv() else { return };
+        ambient.loading = Some(made_clips(&ambient, synthesized, &mut sources, &assets));
+    }
+    let loaded = |clip: &Handle<AudioSource>| sources.contains(clip) || assets.load_state(clip).is_failed();
+    if ambient.loading.as_ref().is_some_and(|clips| beds_ready(&clips.beds, loaded)) {
+        ambient.clips = ambient.loading.take();
+    }
+}
+
+/// Whether every bed's clips are ready to play (`loaded`: there, or failed to load). A
+/// recorded bed loads from its package as an asset, but its muffled twin is made from the
+/// recording on a worker and is there at once: the beds wait for the recordings, so the
+/// two start together and play in step.
+fn beds_ready<T>(beds: &[Vec<T>], loaded: impl Fn(&T) -> bool) -> bool {
+    beds.iter().flatten().all(loaded)
+}
+
+/// The clips made on the worker, as assets: the recorded beds asked of the asset server.
+fn made_clips(ambient: &Ambient, synthesized: Synthesized, sources: &mut Assets<AudioSource>, assets: &AssetServer) -> Clips {
     let bed_handles: Vec<(Synth, Vec<Handle<AudioSource>>)> = synthesized
         .beds
         .into_iter()
@@ -417,7 +442,7 @@ fn receive_clips(ambient: Option<ResMut<Ambient>>, mut sources: ResMut<Assets<Au
     for (bed, files) in synthesized.muffled {
         muffled[bed] = files.into_iter().map(|bytes| sources.add(AudioSource { bytes: Arc::from(bytes) })).collect();
     }
-    ambient.clips = Some(Clips { beds, muffled, sounds });
+    Clips { beds, muffled, sounds }
 }
 
 /// Scans the surroundings on a worker about once a second, and eases the environment
