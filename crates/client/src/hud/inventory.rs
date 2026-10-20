@@ -122,12 +122,12 @@ struct InventoryScreen;
 struct InventorySlot(usize);
 /// The faint mark in an empty worn well of what it takes.
 #[derive(Component)]
-struct WornGlyph(usize);
+pub(crate) struct WornGlyph(pub(crate) usize);
 
 /// The mark for worn slot `slot`, if it is one, by `combat::Slot`'s order.
 fn worn_glyph(slot: usize) -> Option<Piece> {
     let at = slot.checked_sub(WORN).filter(|_| slot <= LAST)?;
-    [Piece::WornHead, Piece::WornBody, Piece::WornLegs, Piece::WornHands, Piece::WornFeet, Piece::WornShield].get(at).copied()
+    [Piece::WornHead, Piece::WornBody, Piece::WornLegs, Piece::WornHands, Piece::WornFeet, Piece::WornShield, Piece::WornCharm].get(at).copied()
 }
 
 /// What packages restyle of the interface (`interface.ron`, in `core`); a later package
@@ -272,7 +272,7 @@ pub(crate) struct TooltipLines;
 /// What the crafting grid makes: click to craft one onto the pointer, shift-click to craft
 /// as many as fit into the inventory.
 #[derive(Component)]
-struct OutputSlot;
+pub(crate) struct OutputSlot;
 #[derive(Component)]
 struct OutputIcon;
 /// The words beside the crafting grid's result: its name, then how to take it.
@@ -305,8 +305,8 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                 margin: UiRect::top(Val::Px(top)),
                 ..default()
             };
-            let spawn_slot = |grid: &mut ChildSpawnerCommands, slot: usize| {
-                let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
+            let spawn_placed = |grid: &mut ChildSpawnerCommands, slot: usize, grid_row: GridPlacement, grid_column: GridPlacement| {
+                let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), grid_row, grid_column, ..default() };
                 grid.spawn((Button, Silent, InventorySlot(slot), RelativeCursorPosition::default(), node, Piece::Well.image())).with_children(|cell| {
                     // A worn well shows faintly what it takes, under the piece worn in it.
                     if let Some(glyph) = worn_glyph(slot) {
@@ -317,6 +317,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     slot_contents(cell, font, slot)
                 });
             };
+            let spawn_slot = |grid: &mut ChildSpawnerCommands, slot: usize| spawn_placed(grid, slot, GridPlacement::auto(), GridPlacement::auto());
             // An open store's slots and its name, in place of the crafting grid (`fit_store`).
             let store = Node {
                 flex_direction: FlexDirection::Column,
@@ -333,16 +334,24 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             // The crafting grid and what it makes, above the pack.
             let crafting = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::bottom(Val::Px(space::GAP)), ..default() };
             card.spawn(crafting).with_children(|row| {
-                // What is worn: head and body, legs and hands, feet and shield.
+                // What is worn: head and body, legs and hands, feet and shield in pairs, and a
+                // charm beside them at the middle row, so the wells stand no taller than a
+                // crafting table's grid and the screen keeps its height.
                 let worn = Node {
                     display: Display::Grid,
-                    grid_template_columns: RepeatedGridTrack::px(2, SLOT),
+                    grid_template_columns: RepeatedGridTrack::px(3, SLOT),
                     row_gap: Val::Px(PX),
                     column_gap: Val::Px(PX),
                     margin: UiRect::right(Val::Px(space::SECTION)),
                     ..default()
                 };
-                row.spawn(worn).with_children(|grid| (WORN..=LAST).for_each(|slot| spawn_slot(grid, slot)));
+                row.spawn(worn).with_children(|grid| {
+                    for slot in WORN..=LAST {
+                        let at = slot - WORN;
+                        let (row, column) = if slot == LAST { (2, 3) } else { (at as i16 / 2 + 1, at as i16 % 2 + 1) };
+                        spawn_placed(grid, slot, GridPlacement::start(row), GridPlacement::start(column));
+                    }
+                });
                 // The grid, its arrow, what it makes and its words: an open store's slots
                 // take their place (`fit_store`), while what is worn stays.
                 let craft = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() };
@@ -531,6 +540,8 @@ fn craft(
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let Some(craft) = actions.named("core:craft") else { return };
     let mut inventory = player.inventory.clone();
+    // What it is made of says how it sounds: flint knapped, clay shaped, wood whittled.
+    let with = player.inventory.grid().into_iter().flatten().collect();
     let done = match mended {
         Some(mended) => inventory.mend(mended, all),
         None => craft_grid(&mut inventory, &recipes, allowed, near, all) > 0,
@@ -538,7 +549,7 @@ fn craft(
     if done {
         player.inventory = inventory;
         // Heard as crafting (`sounds.ron`), not as a click.
-        net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
+        net.propose_with(craft, ActionTarget::Slot(if all { 0 } else { 1 }), with);
     }
 }
 
@@ -885,12 +896,23 @@ fn follow_pointer(
     }
 }
 
-/// A light tap whenever the pointer picks up or puts down items.
-fn tap(ui: Res<UiState>, player: Res<LocalPlayer>, mut sounds: MessageWriter<UiSound>, mut held: Local<Option<ItemStack>>) {
+/// A light tap whenever the pointer picks up or puts down items; picking up half a stack
+/// (a right click, this frame or the last) is a split.
+fn tap(
+    ui: Res<UiState>,
+    player: Res<LocalPlayer>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut sounds: MessageWriter<UiSound>,
+    mut held: Local<Option<ItemStack>>,
+    mut right: Local<[bool; 2]>,
+) {
+    let control = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+    *right = [mouse.just_pressed(MouseButton::Right) || (mouse.just_pressed(MouseButton::Left) && control), right[0]];
     let now = player.inventory.cursor.filter(|_| ui.inventory_open);
     if now != *held {
         if ui.inventory_open {
-            sounds.write(UiSound::Item);
+            sounds.write(if held.is_none() && right.iter().any(|r| *r) { UiSound::Split } else { UiSound::Item });
         }
         *held = now;
     }
@@ -977,11 +999,12 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             Method::Craft { .. } => add(locale.get("tooltip.from.craft").to_owned()),
             Method::Cook { .. } => add(locale.get("tooltip.from.cook").to_owned()),
             Method::Product { creature, .. } | Method::Drop { creature, .. } => add(locale.creature(&content.creatures.get(*creature).def)),
-            Method::Break { block, .. } => add(locale.block(content.blocks.def(*block))),
+            Method::Process { .. } => add(locale.get("tooltip.from.machine").to_owned()),
+            Method::Work { .. } => add(locale.get("tooltip.from.station").to_owned()),
+            Method::Harvest { .. } => add(locale.get("tooltip.from.harvest").to_owned()),
+            Method::Break { .. } => add(locale.get("tooltip.from.break").to_owned()),
+            Method::Catch { .. } => add(locale.get("tooltip.from.fishing").to_owned()),
         }
-    }
-    if content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item)) {
-        add(locale.get("tooltip.from.harvest").to_owned());
     }
     let mut into: Vec<String> = Vec::new();
     for entry in book.using(item) {
@@ -1091,9 +1114,13 @@ fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, play
 
 /// What a piece of armour or a shield is: its slot and the Defence level that wears it (red
 /// while the player is below it, with why it then gives nothing), its armour and weight,
-/// and the styles it is strong against.
+/// and the styles it is strong against; or that a charm is one.
 pub(crate) fn armour_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
     let combat = &content.combat;
+    // A charm says only where it goes: what it does is its effect's, shown while worn.
+    if voxmar_engine::inventory::worn_slot(item) == Some(voxmar_engine::combat::Slot::Charm.index()) {
+        return vec![(locale.get("item.charm").to_owned(), SOFT), (locale.get("item.charm_wear").to_owned(), SOFT)];
+    }
     let defence = content.skills.ids().find(|&id| content.skills.get(id).name == "core:defence");
     let level = defence.map_or(1, |id| content.skills.level(player.skills.xp(id)));
     // What it is, the Defence it needs (red above the player's), then what it stops.
@@ -1192,13 +1219,16 @@ fn hover_item(
     window: Query<&Window, With<PrimaryWindow>>,
     catalogue: Res<super::creative::Catalogue>,
     near: Res<NearTags>,
+    (make, plan): (Query<(&super::makeable::MakeCell, &RelativeCursorPosition)>, Res<super::makeable::Drawn>),
 ) {
     // Without a pointer (no window: `--gate`, `--capture`) nothing is under it to change.
     if ui.recipes_open || window.single().ok().and_then(Window::cursor_position).is_none() {
         return;
     }
     let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find_near(&player.inventory.grid(), |tag| near.has(tag)).map(|r| r.output)).flatten();
-    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or(catalogue.hovered) } else { None };
+    // A thing on the Can Make list looks up as the item it makes.
+    let planned = || make.iter().find(|(_, cursor)| cursor.cursor_over()).and_then(|(cell, _)| plan.0.get(cell.0)).map(|makeable| makeable.output);
+    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or_else(planned).or(catalogue.hovered) } else { None };
     if over.0 != item {
         over.0 = item;
     }

@@ -43,9 +43,13 @@ pub use voxmar_engine::weather::Weather;
 // 47: ServerMessage::Bark, a settlement person's wordless greeting, alarm or sigh (45 and
 // 46 are other lanes').
 // 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
-// 52: tools wear (ItemStack::wear) and ServerMessage::ToolWore; 49 to 51 are other lanes'
-// (the coordinator sets this one at its final merge).
-pub const PROTOCOL_VERSION: u32 = 52;
+// 49: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one
+// on.
+// 50: kept for the light ladder, landing ahead of this one.
+// 51: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
+// 53 (placeholder; the ladder may take 52, the lander renumbers): tools wear
+// (ItemStack::wear) and ServerMessage::ToolWore.
+pub const PROTOCOL_VERSION: u32 = 53;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -320,4 +324,8 @@ pub struct PlayerView {
     pub name: String,
     pub position: Vec3,
     pub yaw: f32,
+    /// How far they look up (positive) or down, radians.
+    pub pitch: f32,
+    /// What is in their hand.
+    pub held: Option<BlockId>,
 }

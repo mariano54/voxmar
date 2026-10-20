@@ -571,6 +571,19 @@
             "..kkkkkk..",
             "..........",
         ])]),
+        // A hanging on the wall over a rug: soft furnishings.
+        "ui/effect/soft_furnishings": (size: (10, 10), layers: [Grid(legend: {'k': "#3a2410", 'r': "#b03a30", 'y': "#e8c060", 'b': "#3a6a9a", 'c': "#f0e6d0"}, rows: [
+            ".kkkkkkkk.",
+            "..rrrrrr..",
+            "..ryyyyr..",
+            "..ryrryr..",
+            "..ryyyyr..",
+            "..rrrrrr..",
+            "..........",
+            "bbbbbbbbbb",
+            "bcbcbcbcbc",
+            "bbbbbbbbbb",
+        ])]),
         // A stone split clean.
         "ui/effect/stonewise": (size: (10, 10), layers: [Grid(legend: {'k': "#1a1612", 'g': "#7a7672", 'G': "#b0aca6"}, rows: [
             "..........",
@@ -596,6 +609,32 @@
             ".kwwdwwwk.",
             ".kwwdwwwk.",
             ".kkkkkkkk.",
+        ])]),
+        // A four-paned window with the sun in its corner.
+        "ui/effect/bright_room": (size: (10, 10), layers: [Grid(legend: {'k': "#3a2410", 'w': "#a0703a", 's': "#ffe070", 'b': "#9ad0f0", 'c': "#d8f0ff"}, rows: [
+            "s.s.......",
+            ".sss......",
+            "ssswwwwww.",
+            ".sswbbwbbw",
+            "s.swcbwcbw",
+            "...wbbwbbw",
+            "...wwwwwww",
+            "...wbbwbbw",
+            "...wcbwcbw",
+            "...wwwwwww",
+        ])]),
+        // A crescent moon over a little fire on its logs: an evening in.
+        "ui/effect/evening_in": (size: (10, 10), layers: [Grid(legend: {'m': "#f0e6a0", 'r': "#d04018", 'o': "#f08a20", 'y': "#ffd850", 'w': "#7a4a22", 'k': "#3a2410"}, rows: [
+            "......mm..",
+            ".....m....",
+            ".....m....",
+            "......mm..",
+            "....r.....",
+            "...ror....",
+            "..royor...",
+            "..royyr...",
+            ".wwkwwkww.",
+            ".kwwkwwkk.",
         ])]),
         // A shelf with its jars in a row.
         "ui/effect/everything_in_its_place": (size: (10, 10), layers: [Grid(legend: {'k': "#1a1008", 'w': "#a0703a", 'b': "#4a80c0", 'r': "#c04030", 'g': "#40a040"}, rows: [
@@ -817,6 +856,32 @@
             "..kssssk..",
             ".kddddddk.",
             ".kkkkkkkk.",
+        ])]),
+        // Old Tusk's charge charm: a curved tusk hung on a cord.
+        "ui/effect/tusk_stride": (size: (10, 10), layers: [Grid(legend: {'k': "#1a1008", 'c': "#8a5a30", 'i': "#e8dcc0", 'I': "#fff8e8", 's': "#b8a888"}, rows: [
+            "c........c",
+            ".c......c.",
+            "..c....c..",
+            "...cccc...",
+            "...kiik...",
+            "..kiIsk...",
+            "..kIisk...",
+            "...kisk...",
+            "....kik...",
+            ".....kk...",
+        ])]),
+        // A striped awning over a door, a bench beside it: a dooryard.
+        "ui/effect/dooryard": (size: (10, 10), layers: [Grid(legend: {'r': "#c03828", 'c': "#f0e0c0", 'k': "#3a2410", 'd': "#8a5a2a", 'w': "#a0703a", 'g': "#5a9a3a"}, rows: [
+            "rcrcrcrcr.",
+            "rcrcrcrcrc",
+            ".k.....k..",
+            ".k.dddd.k.",
+            ".k.dddd.k.",
+            "...ddwd...",
+            "...dddd...",
+            "wwwwdddd..",
+            "w..wdddd..",
+            "gggggggggg",
         ])]),
     },
 )

@@ -114,8 +114,11 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Workshop | + roof, 2 lights, a loom, spindle stand or quern, 2 storage | crafting and construction +2, engineering +1 |
 | Pantry | 2 storage, a hearth or any heat block | the good effects of a meal last x1.25 (`meal_time`) |
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
-| Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and sleeping there is a Well rested sleep |
+| Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
+| Bright room | a roof, 2 windows (`window`: hide window, glass) | heal x1.05, learn x1.05 |
+| Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging or a curtain) | 1° warmer |
+| Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
 beside the sleeping bag. Before any roof or hearth it is the warmer night and the better rest
@@ -125,6 +128,20 @@ The herb nook is the Farm age's: two herbs tied with twine hang to dry (Crafting
 bunches); two bunches and a jar, basket or crate make it. Its farming level counts where it
 is felt, sowing the kitchen garden at the door (a crop a level early) and harvesting it, and
 its alchemy level at the bench.
+Soft furnishings keep the draught off: a rug underfoot and cloth hung on a wall or at a window
+(`drape`: a wall hanging, two cloths over two sticks, Crafting 4, any dye, or a curtain) under the home's roof, 1°
+warmer; two rugs are not enough
+(`a_rug_and_a_hanging_under_a_roof_are_soft_furnishings`, the server's
+`a_rug_and_a_hanging_make_soft_furnishings`, the gate's walls step: "home: soft furnishings").
+The dooryard is the Farm age's too, the home's outside (home audit 2, item 10: outdoor decor
+used to count for nothing): an awning at the door and two more things set out under the sky
+about it. A yard piece counts only where it stands under the open sky (effects.ron
+`outdoors`, a tag list load-checked against what `HomeHas` asks), so a bench or bales kept
+indoors are no yard; only blocks still standing count, so a bale taken away or broken takes
+its part with it; and it holds only out in the yard, never under the roof, which `/home`
+names ("you out under the open sky", `Lack::Sky`)
+(`an_awning_and_yard_pieces_out_of_doors_make_a_dooryard`, the server's
+`an_awning_a_bench_and_a_bale_make_a_dooryard`, the gate's walls step: "home: dooryard").
 
 `boosts` are the effect vocabulary's own (they stop at +6 and recipes marked firm ignore
 them); `meal_heal` and `meal_time` are two new modifiers, applied as the meal is eaten from
@@ -284,6 +301,35 @@ Tests: the engine's `a_proper_bed_rests_well_and_every_sleep_mends_slower_than_f
 shambler near and expects the refusal, then waits on every chip the engine says the bag
 gives there.
 
+## Nights
+
+Nights are told apart (home audit 2, item 6). An effect can ask for `Night`: from sunset to
+sunrise (`calendar::night`, by the same day the sky draws), the last third of the day, 16000
+up to 24000 ticks after sunrise: `/time set sunset` is night, `/time set sunrise` day.
+
+- **The better rests are a night's.** A sleep rule marked `night: true` gives its rest only
+  after dark: Well rested (a proper bed, a snug home, a lit corner) and Deep rest (a cosy
+  home). A nap by day still gives Rested and its mend, and says what a night's sleep there
+  would give ("A night's sleep here would rest you better: Well rested").
+- **A nap does not keep a night's rest away.** A bed holds its rest back while that rest, or a
+  better one, is on the player, or while the last sleep's mend (Healing Sleep) still runs
+  (`EffectRegistry::rested`): a second nap rests no more, and a bed after a bag in one night
+  mends no more, but once the nap's mend is over, sleeping that night gives the better rest
+  though the nap's Rested is still on.
+- **An evening in.** After dark, indoors at home within four blocks of a fire to sit by
+  (`campfire`: a campfire, the hearth, the stove; a torch is no fireside), the home's own
+  fire (`HomeHas("campfire", 1)`, not a neighbour's through a wall): Evening in, heal
+  x1.2 and 2° warmer, announced. Morning ends it. A time of day, not a step to build toward:
+  it is on its own ladder (`night`), so `/home` never names it as the next room.
+
+Tests: the engine's `a_night_sleep_rule_holds_only_after_dark` and
+`sleep_gives_the_rest_the_home_allows_once` (a nap does not keep a better
+rest away), the calendar's night; the server's
+`a_nap_by_day_is_no_nights_rest_and_an_evening_in_is_by_the_fire_after_dark`. The gate's walls
+step sets midnight in the walled room by the hearth and waits on the Evening in chip, with its
+line seen at any point in the run, since the server tells an effect once a session and the
+motifs step can be where it first came on ("home: evening in"), then sets noon.
+
 ## Drying off
 
 Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
@@ -378,8 +424,7 @@ to the rest of the home, so the barrel is a larder from the first night:
   never reaches into a pouch. This is data per station, `from_stores` (true unless said
   otherwise). The drying rack and the cooking pot take from the stores. The compost heap
   does not, because grain and seed kept in a barrel are for eating and sowing, and a heap
-  that ate them would punish keeping a larder. Nor does the earth clamp: logs and clay in
-  the stores are for building, and one log in hand would draw the woodshed in. The chat line says how many came from the stores
+  that ate them would punish keeping a larder. The chat line says how many came from the stores
   (`station.loaded_from_stores`, en and ja). Cooking at a fire (cooking.ron) and machines
   are left out. A fire cooks the one item in hand and a machine takes items into its own
   slots, so there is no load to top up.
@@ -464,8 +509,14 @@ enough to see the smoke, step over and break the thatch or panel by bare hand (a
 second: hardness 0.8 or 1).
 
 The wait is shown. While a block waits to catch it **smoulders**: grey smoke curls off it
-with the odd ember (`smoke` in fire.ron, the client's emitters) and it crackles (ambience.ron's
-`smoulder` group, `smouldering: true`, and its `smoulder_crackle` sound). The server tells
+with the odd ember (`smoke` in fire.ron, the client's emitters) and it hisses and crackles
+(ambience.ron's `smoulder` group, `smouldering: true`, its `smoulder_hiss` bed and
+`smoulder_crackle` sound). As it catches, a soft whoomph comes from it (sounds.ron's `fire`
+`catch`, played on the server's block change to the blaze; a fire that can burn without one
+does not start). Burning, it crackles crisply (the `blaze` group, `blaze_crackle` bed and
+`blaze_pop` sound), as loud as there are burning cells near, so the crackle thins as the fire
+burns out and stops with the last of it. All of it follows the server's word, never a timer
+of the client's. The server tells
 every player which blocks smoulder when that changes (`ServerMessage::Smoulders`, protocol 48),
 since only it knows what changed (a village's thatch by its own torches does not smoulder).
 The first time in a session a player's own change sets something smouldering (a torch set, a
@@ -521,8 +572,11 @@ left (`ash`, here air) and the smoke a smouldering block gives off (non-empty), 
 away, and two worlds burn alike), `a_flame_taken_away_or_put_out_burns_nothing` (and a lit
 hearth two off sets it alight), `a_hearth_lit_under_thatch_smoulders_then_catches` (the hint
 once, the smoulder told, caught only on time), `a_stone_lined_flue_keeps_a_hearths_fire_from_the_roof`,
-`fires_are_saved_with_the_world`. The gate's Blaze step sets a torch by a wattle panel and
-counts the smoke off it before it catches ("fire: smoulders", "fire: catches", "fire: burns out").
+`fires_are_saved_with_the_world`. The gate's Kindle step sets a torch by a wattle panel,
+twenty blocks off the home's steps, and counts the smoke off it ("fire: smoulders"); the fire
+burns on through the home's steps, each frame noting when the panel shows a blaze and when it
+is gone, and the Blaze step, before the catalogue, judges those by fire.ron's times ("fire:
+catches", "fire: burns out"), so its 18 s of waiting run under other steps.
 
 ## Daubing in place
 
@@ -535,7 +589,7 @@ becomes is not coated again), and asks the level of the easiest recipe that make
 becomes (Construction 2 for daub), teaching that recipe's experience a piece; below it, it is
 refused with the level it takes. Action `base:coat` (requirement `Coats`, silent: it only says
 the click meant it), server `coat.rs`, test `clay_daubs_a_placed_wattle_panel_in_place`; the
-gate's Blaze step daubs a panel by its torch ("daub: coats").
+gate's Kindle step daubs a panel by its torch ("daub: coats").
 
 Earth walls daub the same way. Dirt, coarse dirt, gravel, sand and red sand carry the same
 `coat` (blocks.ron), so a room dug into a bank or walled in earth turns from draughty to sound
@@ -565,9 +619,11 @@ particles keep) and `over: Some(("hearth", 3))` (given off only with a `hearth` 
 stove pipe or a forge's flue can do the same. The client searches farther only for chunks
 whose palette holds such a block, and counts nearness as a share of each emission's range,
 so a far chimney takes its place among the nearest torches
-(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step builds a hearth beside
-its campfire, checks its chimney gives nothing off cold, lights it and counts the puffs
-("chimney smoke").
+(`a_chimney_smokes_over_a_hearth_from_afar`). Chimney pieces (`chimney_piece`) stacked
+straight over the chimney carry its smoke up and out of their top, so a chimney carried up
+through a roof smokes from its pot (docs/building.md). The gate's Cook step builds a hearth
+beside its campfire, its chimney carried up a brick flue to a pot, checks nothing smokes
+cold, lights it and counts the pot's puffs ("chimney smoke").
 
 A cold hearth is quiet. Lighting a hearth keeps its fire until a piece of it is taken away
 (server/src/hearth.rs; a kiln's burns for its fuel charge), and the server tells every
@@ -587,8 +643,18 @@ hearth behind it lights the ground outside, and is `lit_through` (a block field,
 window can say it): its bright texels glow by the block light reaching its face, which came
 through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
 glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
-stands out after dark. A dark room's window stays dark; a wall keeps the light in
-(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+stands out after dark. Two windows in a home's walls under its roof make it a **Bright
+room** (Rooms above; home audit 2, item 10: windows used to count for nothing), whatever pane
+a package tags `window` (`two_windows_at_home_make_a_bright_room`, the server's
+`windows_at_home_make_a_bright_room`, the gate's walls step: "home: bright room"). A dark
+room's window stays dark; a wall keeps the light in
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). A curtain hung inside a
+window draws across and back with a right click (`swaps`, as a door; drawn back it is
+`{name}_curtain_open` and gives the curtain): drawn across, it keeps most of the room's
+light in (`light_filter: 8`), so a lit home's window glows low at night, and drawn back
+the light goes through as air (`a_drawn_curtain_keeps_the_light_in`; the gate's walls step
+hangs one inside a pane and draws it back: "home: curtain"). Either way it is a curtain for
+the ladder's steps and a drape (`drape`, which Soft furnishings asks beside a rug). The gate's Door step then
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).
 
@@ -648,5 +714,5 @@ for a supper or a talk with fireside guests.
 
 - Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
   protocol to take a slot count.
-- Passing the night by sleeping, and a visible Rested icon (effects use the plain buff icon).
+- Passing the night by sleeping (sleep stays a rest, not a skip).
 - Sleeping, and the ladder, for villagers' houses.
