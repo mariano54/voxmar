@@ -39,8 +39,6 @@ const RESEARCH: f32 = 0.5;
 const MOVED: i32 = 4;
 /// How far up smoke looks for a ceiling, which it fades out under rather than rising into.
 const HEADROOM: i32 = 8;
-/// The most chimney pieces a block's smoke is carried up through, to the top of the stack.
-const FLUE: i32 = 8;
 /// The fastest wind smoke and embers drift with, in blocks per second.
 const MAX_DRIFT: f32 = 6.0;
 /// Emitters nearer than this give off all their particles; beyond, fewer, down to
@@ -168,20 +166,15 @@ impl Emitters {
             let far = ((scaled as f32).sqrt() - NEAR) / (RANGE as f32 - NEAR);
             let share = 1.0 - (1.0 - FAR_SHARE) * far.clamp(0.0, 1.0);
             // A block's smoke comes out of the top of the flue over it, its flames, embers and
-            // sparks where it stands (what it is `over` is judged from there either way). A
-            // flue taller than `FLUE` smokes from its last counted piece, as if open above.
-            let (top, capped) = flue_top(world, pos);
+            // sparks where it stands (what it is `over` is judged from there either way).
+            let top = flue_top(world, pos);
             let smoke = world.registry.def(block).particles.iter().take(8).enumerate().filter(|(_, e)| e.style == ParticleStyle::Smoke).fold(0u8, |bits, (i, _)| bits | 1 << i);
             let places = if top == pos { [(pos, u8::MAX), (pos, 0)] } else { [(pos, !smoke), (top, smoke)] };
             for (at, emissions) in places {
                 if emissions == 0 || self.near.len() == MAX_EMITTERS {
                     continue;
                 }
-                let headroom = if capped && at == top {
-                    HEADROOM
-                } else {
-                    (1..=HEADROOM).find(|&dy| world.block(at + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid)).unwrap_or(HEADROOM + 1) - 1
-                };
+                let headroom = (1..=HEADROOM).find(|&dy| world.block(at + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid)).unwrap_or(HEADROOM + 1) - 1;
                 let giving = giving(world, &self.cores, pos, block, distance, headroom) & emissions;
                 if giving != 0 {
                     self.near.push(Emitter { pos: at, block, from: pos, sky: sky_light(world, at + IVec3::Y), headroom: headroom as f32 + 0.5, share, giving });
@@ -309,13 +302,11 @@ fn emit(
     }
 }
 
-/// The top of the chimney pieces stacked straight over `pos` (up to `FLUE` of them), or
-/// `pos` itself with none over it: where its smoke comes out; and whether the stack goes
-/// on past `FLUE`.
-fn flue_top(world: &ClientWorld, pos: IVec3) -> (IVec3, bool) {
+/// The top of the chimney pieces stacked straight over `pos`, however tall (an unloaded
+/// cell ends it), or `pos` itself with none over it: where its smoke comes out.
+fn flue_top(world: &ClientWorld, pos: IVec3) -> IVec3 {
     let piece = |at: IVec3| world.block(at).is_some_and(|b| world.registry.def(b).has_tag(CHIMNEY_PIECE_TAG));
-    let top = (1..=FLUE).take_while(|&dy| piece(pos + IVec3::Y * dy)).last().map_or(pos, |dy| pos + IVec3::Y * dy);
-    (top, top == pos + IVec3::Y * FLUE && piece(top + IVec3::Y))
+    (1..).take_while(|&dy| piece(pos + IVec3::Y * dy)).last().map_or(pos, |dy| pos + IVec3::Y * dy)
 }
 
 /// Per block id, whether some structure has it as its core.
@@ -541,12 +532,12 @@ mod tests {
         world.set_block(flue, BlockId::AIR);
         world.set_block(pot, block("base:chimney_pot"));
         assert_eq!(found(&mut emitters, &world), vec![top], "a pot a block over the chimney carried its smoke");
-        // Nine flues over the chimney: the smoke comes out of the eighth, the last counted.
+        // Nine flues over the chimney: the smoke comes out of the ninth, the real top.
         world.set_block(pot, BlockId::AIR);
         for dy in 1..=9 {
             world.set_block(top + IVec3::Y * dy, block("base:chimney_stack"));
         }
-        assert_eq!(found(&mut emitters, &world), vec![top + IVec3::Y * FLUE], "a flue taller than FLUE gave no smoke at its last counted piece");
+        assert_eq!(found(&mut emitters, &world), vec![top + IVec3::Y * 9], "a nine-piece flue gave no smoke at its top");
     }
 
     /// Under a hood only a campfire's smoke goes up the flue: its flames, embers and sparks
