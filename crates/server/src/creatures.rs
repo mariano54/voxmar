@@ -441,6 +441,14 @@ impl motion::Surroundings for Ground<'_> {
     }
 }
 
+/// Whether a creature of `species` at `from` would strike a player standing at `to` from
+/// where it stands, as its brain judges close (`strike`): in its reach and strike band, with
+/// a blow that is not a charge (a charge is traced where it lands, not along its run).
+fn strikes_from(species: &creature::Creature, phase: u8, scale: f32, from: Vec3, to: Vec3) -> bool {
+    let (edge, level) = (species.edge((to - from).with_y(0.0).length(), scale), species.level(from.y, to.y, scale));
+    species.reaches(phase, edge, level) && species.strikes_from_here(phase, edge, level) && species.in_band(from.y, to.y, voxmar_engine::physics::player::HEIGHT, scale)
+}
+
 impl Server {
     /// Whether a creature's blow from `body` at a player with their feet at `to` has a way
     /// through the air: from high in its body out to the tip of its reach (`reach` blocks
@@ -605,12 +613,10 @@ impl Server {
             let every = if nearest < NEAR { NEAR_THINK } else { FAR_THINK } + creature.seed % 3;
             if (self.tick + id as u64).is_multiple_of(every) {
                 let range = species.def.senses.sight.max(species.def.senses.hearing).max(16.0) * 1.5;
-                // Whom it would strike at from here, as its brain judges close (`strike`).
+                // Whom it would strike at from here, as its brain judges close (`strike`): a
+                // charge is traced where it lands, not along its run.
                 let (phase, scale) = (creature.phase, creature.scale);
-                let strikes = |to: Vec3| {
-                    let edge = species.edge((to - position).with_y(0.0).length(), scale);
-                    species.reaches(phase, edge, species.level(position.y, to.y, scale)) && species.in_band(position.y, to.y, voxmar_engine::physics::player::HEIGHT, scale)
-                };
+                let strikes = |to: Vec3| strikes_from(species, phase, scale, position, to);
                 let players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, range, &species.favourite, creature.owner.as_deref());
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
@@ -903,7 +909,9 @@ impl Server {
         // Only in a chase: a grazer at its grass traces nothing.
         let (phase, doing) = (self.creatures.live[&id].phase, self.creatures.live[&id].mind.doing);
         let chasing = doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
-        let shut_off = chasing && wanted == Vec3::ZERO && decision.goal.is_some_and(|g| !self.blow_open(&body, species.longest_reach(phase), g));
+        // A charge it would make from here is no blow from here (`strikes_from`).
+        let scale = self.creatures.live[&id].scale;
+        let shut_off = chasing && wanted == Vec3::ZERO && decision.goal.is_some_and(|g| strikes_from(species, phase, scale, body.position, g) && !self.blow_open(&body, species.longest_reach(phase), g));
         let creature = self.creatures.live.get_mut(&id).expect("still there");
         // What a search found holds for a second, bobbing at the surface or not; out on dry
         // ground it is done with.
@@ -4120,6 +4128,55 @@ mod fight_tests {
             assert!(!tusk.level(0.0, -2.0, scale) && !tusk.level(0.0, -3.0, scale), "at {scale}");
             assert!(tusk.level(0.0, -1.0, scale) && tusk.level(0.0, 0.0, scale) && tusk.level(0.0, 1.0, scale), "at {scale}");
         }
+    }
+
+    /// Old Tusk at charge range from a player with a trunk (a column four high) on the line:
+    /// his charge is not his blow from where he stands (it is traced where it lands), so the
+    /// player is open to it and his brain picks it, rather than walking in to gore. His gore
+    /// up close is traced from where he stands, and the trunk shuts it.
+    #[test]
+    fn old_tusk_charges_past_a_tree_on_the_line() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let tusk = server.content.creatures.id("base:old_tusk").expect("Old Tusk");
+        let id = put(&mut server, "base:old_tusk", c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), Vec3::X);
+        set(&mut server, "base:stone", (0..4).map(|y| c + IVec3::new(0, y, 0)));
+        let species = server.content.creatures.get(tusk);
+        let body = server.creatures.live[&id].body;
+        let at = |x: f32| c.as_vec3() + Vec3::new(x, 0.0, 0.5);
+        let open = |to: Vec3| !strikes_from(species, 0, 1.0, body.position, to) || server.blow_open(&body, species.longest_reach(0), to);
+        assert!(!server.blow_open(&body, species.longest_reach(0), at(4.5)), "the trunk did not stand in the way");
+        assert!(species.reaches(0, species.edge(9.0, 1.0), true) && !strikes_from(species, 0, 1.0, body.position, at(4.5)), "at nine blocks only his charge fits");
+        assert!(open(at(4.5)), "the trunk barred his charge");
+        let near = Body { position: at(-1.2), ..body };
+        assert!(strikes_from(species, 0, 1.0, near.position, at(1.0)) && !server.blow_open(&near, species.longest_reach(0), at(1.0)), "his gore went through the trunk");
+    }
+
+    /// Hurt, Old Tusk winds up and runs his charge at a player eight blocks off beyond a
+    /// trunk on the line, within ten seconds (the gate's wait). Before: the trunk shut his
+    /// charge's reach off from where he stood, he took the chase for one with no blow
+    /// open, gave it up and stood idle.
+    #[test]
+    fn hurt_old_tusk_charges_a_player_beyond_a_trunk() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        set(&mut server, "base:stone", (0..4).map(|y| c + IVec3::new(0, y, 0)));
+        let player = join(&mut server, c.as_vec3() + Vec3::new(4.5, 0.0, 0.5));
+        let id = put(&mut server, "base:old_tusk", c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), Vec3::X);
+        server.tick = 1000;
+        server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+        server.fights.run_clock(0.0);
+        let dt = 1.0 / TICKS_PER_SECOND as f32;
+        let charged = (0..10 * TICKS_PER_SECOND as u64).any(|_| {
+            server.tick += 1;
+            server.think_and_move();
+            server.fights.run_clock(dt);
+            server.tick_fights();
+            server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+            server.creatures.live[&id].charging.is_some()
+        });
+        let tusk = &server.creatures.live[&id];
+        assert!(charged, "no charge in ten seconds: at {:.1}, doing {:?}", tusk.body.position - c.as_vec3(), tusk.mind.doing);
     }
 
     /// The player in a pocket two high at the foot of a hole three deep, a block over their

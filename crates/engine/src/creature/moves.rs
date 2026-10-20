@@ -196,6 +196,18 @@ impl super::Creature {
         if self.def.moves.is_empty() { edge <= self.longest_reach(phase) } else { self.choose(phase, edge, 0, level).is_some() }
     }
 
+    /// Whether a blow it would strike a target `edge` blocks from its body's edge with, in
+    /// `phase`, is struck from where it stands: any that fits but a charge, which runs at
+    /// the target first, so what is in the air between them now is no bar to it (the hit
+    /// is traced where it lands).
+    pub fn strikes_from_here(&self, phase: u8, edge: f32, level: bool) -> bool {
+        if self.def.moves.is_empty() {
+            return self.reaches(phase, edge, level);
+        }
+        let edge = edge.max(0.0);
+        self.moves_in(phase).any(|(_, m)| edge >= m.least && edge <= m.attack.reach && m.attack.charge.is_none()) || self.def.attack.is_some_and(|a| edge <= a.reach)
+    }
+
     /// Whether a target with its feet at `target` is level with it, its feet at `feet` at
     /// its individual `scale`: where a charge along the ground runs into them, from a block
     /// below its feet (down a step) to below the top of its body. Two blocks down a hole,
