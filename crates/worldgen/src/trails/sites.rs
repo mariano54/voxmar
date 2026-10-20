@@ -146,7 +146,8 @@ pub fn places(seed: u64, region: IVec2, cell: &dyn Fn(IVec2) -> Cell) -> Vec<Poi
     for i in 0..CELLS * CELLS {
         let c = first + IVec2::new(i % CELLS, i / CELLS);
         let here = cell(c);
-        if here.submerged() {
+        // Nothing built in or beside it: a trail may cross what is built next to its end.
+        if here.submerged() || here.built || around(c, 1).any(|n| cell(n).built) {
             continue;
         }
         let h = here.height as i32;
