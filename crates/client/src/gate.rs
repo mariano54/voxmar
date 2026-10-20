@@ -1887,6 +1887,11 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             }
             // A click a cell: press, release the next frame, and on to the next cell.
             let cells = [0, 1, -1].map(|dx| feet + IVec3::new(dx, -1, 2));
+            // The first block set down settles in a puff of its own dust (`action_fx.ron`),
+            // kept for the record while it shows.
+            if !gate.placed.is_empty() && gate.shot(world, "place-dust").is_none() {
+                return;
+            }
             let Some(&cell) = cells.get(gate.placed.len()) else {
                 aim(world, cells[0]);
                 gate.next(Step::PlaceSettle, now);
@@ -1919,6 +1924,19 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
             let (count, wanted) = (held_count(world), gate.count_before.saturating_sub(3));
             let result = if count == wanted { Ok(format!("the hand holds {count}")) } else { Err(format!("the hand holds {count}, not {wanted}")) };
             gate.check("place: inventory", result);
+            // Each block set down settled in a puff of its own dust: the particles counted as
+            // the effect spawned them, the same at any frame rate.
+            let amount = world.resource::<crate::render::particles::Particles>().amount;
+            let dust = world.resource::<crate::fx::FxSeen>().0.get("settle").copied().unwrap_or(0);
+            // As many as `action_fx.ron`'s `settle` gives a block at full particles.
+            let per = crate::fx::ActionFx::load(&world.resource::<crate::session::Launch>().content.files).ok().and_then(|fx| fx.effects.get("settle").map(|e| e.count)).unwrap_or(0);
+            let owed = (cells.len() as f32 * per as f32 * amount.min(1.0) * 0.5) as u32;
+            let result = if dust >= owed.max(1) || amount <= 0.0 {
+                Ok(format!("{dust} motes of dust settled round {} blocks (at a particle amount of {amount:.2})", cells.len()))
+            } else {
+                Err(format!("only {dust} motes of dust round {} blocks, under {owed} (particle amount {amount:.2})", cells.len()))
+            };
+            gate.check("place: dust", result);
             aim(world, feet + IVec3::new(0, -1, -2));
             gate.next(Step::Dig, now);
         }
@@ -11083,10 +11101,10 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// The building pieces the pieces step sets (blocks_building.ron), in a facing or two.
-const PIECES: [&str; 19] = [
+const PIECES: [&str; 23] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
-    "stone_arrow_slit",
+    "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing",
 ];
 /// How many pieces the player judges from one spot before the middle one: three, so the
 /// crosshair turned to a piece beside it reaches it before crossing a neighbour.
@@ -11103,7 +11121,9 @@ const WAYS: [&str; 2] = ["birch_door_frame", "oak_window_frame"];
 /// movement with is its shape's boxes, filling some of its cell but not all (a whole cube
 /// would be a block that only looks shaped), or for the home's walls (daub, half-timber)
 /// the whole cell, or for a door or window frame nothing at all. A right click on the shutters folds them back, open on client and
-/// server and stopping nothing. Last, a three-by-three thatch canopy set beside the row
+/// server and stopping nothing. A balcony door set beside the player, its lattice half over
+/// its plank half, stops movement shut with both halves' boxes, and a right click opens
+/// both, stopping nothing. Last, a three-by-three thatch canopy set beside the row
 /// leaves the cell under its middle darker to the sky than it was open.
 fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let row = gate.shapes_row + IVec3::new(0, 0, 3);
@@ -11116,6 +11136,9 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // middle, turning to each in reach rather than sent before every one.
     let spot = |i: usize| cells[((i / PIECE_BATCH) * PIECE_BATCH + PIECE_BATCH / 2).min(cells.len() - 1)];
     let under = canopy - IVec3::Y;
+    // The balcony door, on the ledge two along from where the player judges the shutters,
+    // turned west to face them.
+    let balcony = IVec3::new(spot(shutters_at).x + 2, row.y - 1, row.z - 2);
     // Where the player stands to judge a piece: on the ledge, two blocks before it, eyes
     // level with the row.
     let stand = |cell: IVec3| Vec3::new(cell.x as f32 + 0.5, (row.y - 1) as f32, (row.z - 2) as f32 + 0.5);
@@ -11133,6 +11156,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         net.command(&format!("fill {} {} {} {} {} {} air", ledge.0.x, ledge.0.y, ledge.0.z, ledge.1.x, ledge.1.y, ledge.1.z));
         net.command(&format!("fill {} {} {} {} {} {} air", row.x, row.y, row.z, canopy.x + 1, row.y, row.z + 1));
         net.command(&format!("fill {} {} {} {} {} {} air", canopy.x - 1, canopy.y, canopy.z - 1, canopy.x + 1, canopy.y, canopy.z + 1));
+        net.command(&format!("fill {} {} {} {} {} {} air", balcony.x, balcony.y, balcony.z, balcony.x, balcony.y + 1, balcony.z));
         gate.next(Step::Held, now);
     };
     let here = |world: &World, gate: &Gate, cell: IVec3, name: &str| {
@@ -11196,7 +11220,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let shaped = i < PIECES.len();
             let way = i >= PIECES.len() + WALLS.len();
             let result = if !stood(world, spot(i)) {
-                Err(format!("sent to stand before {name} at {}, the player is at {}", stand(spot(i)), world.resource::<LocalPlayer>().position))
+                Err(format!("sent to the spot at {} to judge {name}, the player is at {}", stand(spot(i)), world.resource::<LocalPlayer>().position))
             } else if on != Some(cell) {
                 Err(format!("aimed at {name}, the crosshair is on {on:?}, not {cell}"))
             } else if way && !boxes.is_empty() {
@@ -11252,8 +11276,58 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("{:.1} server s after a right click, the shutters' cell holds {has} on the client (solid {solid}), wooden_shutters_open wanted on both", gate.server_in_phase()))
             };
             gate.check("pieces: shutters open", result);
+            let net = world.resource::<Net>();
+            net.command(&format!("setblock {} {} {} balcony_door_west", balcony.x, balcony.y, balcony.z));
+            net.command(&format!("setblock {} {} {} balcony_door_top_west", balcony.x, balcony.y + 1, balcony.z));
+            gate.advance(now);
+        }
+        // The balcony door shut on client and server, both halves stopping movement with
+        // their shapes' boxes; then a right click to open it.
+        p if p == first_piece + names.len() as u32 + 2 => {
+            let client = world.resource::<ClientWorld>();
+            let halves = [balcony, balcony + IVec3::Y].map(|cell| client.block(cell).map(|b| client.registry.collision(b).to_vec()).unwrap_or_default());
+            let shapes = halves.iter().all(|boxes| !boxes.is_empty() && boxes.iter().map(|b| (b.max - b.min).element_product()).sum::<f32>() < 0.999);
+            let arrived = here(world, gate, balcony, "balcony_door_west") && here(world, gate, balcony + IVec3::Y, "balcony_door_top_west");
+            if !(arrived && shapes) && gate.server_in_phase() < STEP_LIMIT / 4.0 {
+                aim_at(world, balcony.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
+                return;
+            }
+            let filled = |boxes: &[voxmar_engine::physics::Aabb]| boxes.iter().map(|b| (b.max - b.min).element_product()).sum::<f32>() * 100.0;
+            let result = if !arrived {
+                Err(format!("{:.1} server s after setting it, the balcony door's halves are {:?} on the client, not on both client and server", gate.server_in_phase(), door_cells(world, balcony)))
+            } else if !shapes {
+                Err(format!("the shut balcony door's halves stop movement with {} and {} boxes filling {:.0}% and {:.0}%: not their shapes", halves[0].len(), halves[1].len(), filled(&halves[0]), filled(&halves[1])))
+            } else {
+                Ok(format!("a balcony door set shut, on client and server: its halves stop movement with {} and {} boxes filling {:.0}% and {:.0}% of their cells", halves[0].len(), halves[1].len(), filled(&halves[0]), filled(&halves[1])))
+            };
+            let shut = result.is_ok();
+            gate.check("pieces: balcony door shut", result);
+            if shut {
+                let actions = world.resource::<crate::Actions>().0.clone();
+                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: balcony, face: voxmar_engine::coords::Face::NegX });
+                gate.advance(now);
+            } else {
+                leave(world, gate);
+            }
+        }
+        // Opened, both halves on client and server, stopping nothing; then a thatch canopy
+        // beside the row.
+        p if p == first_piece + names.len() as u32 + 3 => {
+            let client = world.resource::<ClientWorld>();
+            let stops = [balcony, balcony + IVec3::Y].iter().any(|&cell| client.block(cell).is_none_or(|b| !client.registry.collision(b).is_empty()));
+            let open = here(world, gate, balcony, "balcony_door_open_west") && here(world, gate, balcony + IVec3::Y, "balcony_door_open_top_west");
+            if !(open && !stops) && gate.server_in_phase() < STEP_LIMIT / 4.0 {
+                return;
+            }
+            let result = if open && !stops {
+                Ok("a right click opened both halves of the balcony door, on client and server, stopping nothing".to_owned())
+            } else {
+                Err(format!("{:.1} server s after a right click, the balcony door's halves are {:?} on the client (stopping movement: {stops}), both open wanted on both", gate.server_in_phase(), door_cells(world, balcony)))
+            };
+            gate.check("pieces: balcony door open", result);
             gate.pieces_open = crate::breaking::sky_light(world.resource::<ClientWorld>(), under);
             let net = world.resource::<Net>();
+            net.command(&format!("fill {} {} {} {} {} {} air", balcony.x, balcony.y, balcony.z, balcony.x, balcony.y + 1, balcony.z));
             net.command(&format!("fill {} {} {} {} {} {} thatch_roof", canopy.x - 1, canopy.y, canopy.z - 1, canopy.x + 1, canopy.y, canopy.z + 1));
             gate.advance(now);
         }
