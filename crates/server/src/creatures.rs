@@ -1073,7 +1073,7 @@ impl Server {
         if !stroke.certain && hit >= voxmar_engine::combat::hit_chance_with(attack, weapon.accuracy, defence, 0, stroke.accuracy) {
             let creature = self.creatures.live.get_mut(&id).expect("checked above");
             if !calm {
-                creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
+                creature.mind.hurt_young(species, Some(player), creature.health as f32 / species.def.health as f32, creature.grows_up.is_some());
             }
             self.struck(player, id, 0, false, stroke.blow);
             return Some(0);
@@ -1106,7 +1106,7 @@ impl Server {
             creature.fought = Some((player, self.tick));
         }
         if !calm {
-            creature.mind.hurt(species, Some(player), creature.health as f32 / species.def.health as f32);
+            creature.mind.hurt_young(species, Some(player), creature.health as f32 / species.def.health as f32, creature.grows_up.is_some());
             // A blow, not a bleed, keeps a hunter past its leash fighting (`Memory::Struck`).
             if !matches!(blow, voxmar_engine::combat::Blow::Bleed) {
                 creature.mind.remember(brain::Memory::Struck, brain::STRUCK_LATELY);
@@ -2705,11 +2705,22 @@ pub(crate) mod cornered_tests {
         id
     }
 
+    /// Prey that gores back while it is hale (a wild boar) runs once badly hurt: put in at a
+    /// tenth of its health, so struck it runs as the rest do.
+    pub(super) fn badly_hurt(server: &mut Server, id: u32) {
+        let live = server.creatures.live.get_mut(&id).unwrap();
+        let species = server.content.creatures.get(live.species);
+        if species.fights() && !species.def.boss {
+            live.health = (species.def.health / 10).max(1);
+        }
+    }
+
     /// Runs `seconds` of creature ticks, the player landing a harmless blow on `id` each
     /// second it is within reach, and checks every tick that no body or head is in a
-    /// block. Returns the furthest it got from the player.
-    fn hunted(server: &mut Server, id: u32, player: PlayerId, seconds: f32) -> f32 {
-        let mut furthest = 0.0f32;
+    /// block. Returns the furthest it got from the player, and whether it struck at them
+    /// (began a blow; the player is healed each tick).
+    fn hunted(server: &mut Server, id: u32, player: PlayerId, seconds: f32) -> (f32, bool) {
+        let (mut furthest, mut struck) = (0.0f32, false);
         for t in 0..(seconds * TICKS_PER_SECOND as f32) as u64 {
             server.tick += 1;
             let reach = server.players[&player].position.distance(server.creatures.live[&id].body.position);
@@ -2723,8 +2734,24 @@ pub(crate) mod cornered_tests {
                 assert!(!c.body.head_blocked(&ground), "creature {other}'s head went into a block at {} (tick {t})", c.body.position);
             }
             furthest = furthest.max(server.players[&player].position.distance(server.creatures.live[&id].body.position));
+            struck |= server.creatures.live[&id].decision.attack.is_some();
+            server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
         }
-        furthest
+        (furthest, struck)
+    }
+
+    /// One of `name` put at `at` facing `facing`, if its kind fights back, struck at full
+    /// health: it stands and fights, striking the player within 3 s, and (`hunted`) never
+    /// puts its body or head in a block doing it.
+    fn fights_back_hale(server: &mut Server, name: &str, at: Vec3, facing: Vec3, player: PlayerId) {
+        let species = server.content.creatures.id(name).expect("species");
+        if !server.content.creatures.get(species).fights() {
+            return;
+        }
+        let id = put(server, name, at, facing);
+        let (_, struck) = hunted(server, id, player, 3.0);
+        assert!(struck, "{name} struck at full health did not strike back within 3 s");
+        server.creatures.live.remove(&id);
     }
 
     /// Struck with its back to a wall, the way it would run is shut: it runs along the wall
@@ -2736,17 +2763,19 @@ pub(crate) mod cornered_tests {
         wall(&mut server, (-16..=16).map(|z| centre + IVec3::new(-3, 0, z)).collect::<Vec<_>>(), 3);
         let player = join(&mut server, centre.as_vec3() + Vec3::new(1.5, 0.0, 0.5));
         for name in SPECIES {
+            fights_back_hale(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X, player);
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.5, 0.0, 0.5), Vec3::X);
-            let away = hunted(&mut server, id, player, 5.0);
+            badly_hurt(&mut server, id);
+            let (away, _) = hunted(&mut server, id, player, 5.0);
             assert!(away > 6.0, "{name} struck against a wall got only {away:.1} blocks from the player");
             server.creatures.live.remove(&id);
         }
     }
 
-    /// A pen walled two high keeps its animals, struck and running, tall heads and all: a
-    /// head over the wall is no step (motion's head-met step is judged at the feet).
+    /// A pen walled two high keeps its animals struck, running or fighting back (a kept
+    /// boar gores its keeper), tall heads and all: a head over the wall is no step (motion's head-met step is judged at the feet).
     #[test]
-    fn a_pen_two_high_keeps_its_animals_struck_and_running() {
+    fn a_pen_two_high_keeps_its_animals_struck_whether_they_run_or_fight() {
         let mut server = crate::test_server();
         let half = 5;
         let centre = pen(&mut server, half);
@@ -2776,8 +2805,10 @@ pub(crate) mod cornered_tests {
         let corner = centre.as_vec3() + Vec3::new(-4.4, 0.0, -4.4);
         let player = join(&mut server, corner + Vec3::new(2.5, 0.0, 2.5));
         for name in SPECIES {
+            fights_back_hale(&mut server, name, corner, Vec3::new(1.0, 0.0, 1.0).normalize(), player);
             let id = put(&mut server, name, corner, Vec3::new(1.0, 0.0, 1.0).normalize());
-            let away = hunted(&mut server, id, player, 6.0);
+            badly_hurt(&mut server, id);
+            let (away, _) = hunted(&mut server, id, player, 6.0);
             assert!(away > 5.0, "{name} struck in a corner got only {away:.1} blocks from the player");
             server.creatures.live.remove(&id);
         }
@@ -2794,8 +2825,10 @@ pub(crate) mod cornered_tests {
         }
         let player = join(&mut server, centre.as_vec3() + Vec3::new(1.5, 0.0, 0.5));
         for name in SPECIES {
+            fights_back_hale(&mut server, name, centre.as_vec3() + Vec3::new(-1.3, 0.0, 0.5), Vec3::X, player);
             let id = put(&mut server, name, centre.as_vec3() + Vec3::new(-1.3, 0.0, 0.5), Vec3::X);
-            let away = hunted(&mut server, id, player, 5.0);
+            badly_hurt(&mut server, id);
+            let (away, _) = hunted(&mut server, id, player, 5.0);
             assert!(away > 6.0, "{name} struck before a tree got only {away:.1} blocks from the player");
             server.creatures.live.remove(&id);
         }
@@ -2891,8 +2924,8 @@ mod way_tests {
             }
             c.as_vec3() + Vec3::new(5.5, 1.0, 0.5)
         };
-        // The badger's own jump does not lift it a block.
-        for name in ["base:wolf", "base:brown_bear", "base:badger"] {
+        // The badger's own jump does not lift it a block. A wild boar only fights back, struck.
+        for name in ["base:wolf", "base:brown_bear", "base:badger", "base:wild_boar"] {
             assert!(hunter(name, tree, 6).is_some(), "{name} never came round the tree");
             assert!(hunter(name, step, 6).is_some(), "{name} never came up the step");
         }
@@ -3313,7 +3346,7 @@ mod herd_tests {
 #[cfg(test)]
 mod chase_tests {
     use super::*;
-    use super::cornered_tests::{join, pen, put, wall};
+    use super::cornered_tests::{badly_hurt, join, pen, put, wall};
 
     fn doing(server: &Server, id: u32) -> &'static str {
         let c = &server.creatures.live[&id];
@@ -3361,6 +3394,7 @@ mod chase_tests {
                 let at = c.as_vec3() + Vec3::new(x, 0.0, z);
                 let player = join(&mut server, at + Vec3::new(ax, 0.0, az).normalize() * 1.5);
                 let id = put(&mut server, name, at, -Vec3::new(ax, 0.0, az));
+                badly_hurt(&mut server, id);
                 server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
                 for _ in 0..6 * TICKS_PER_SECOND as u64 {
                     server.tick += 1;
@@ -3389,7 +3423,7 @@ mod chase_tests {
     #[test]
     fn struck_hunters_come_round_fence_tree_and_pond() {
         let scenes = [((6.5, 0.5), (-0.5, 0.5)), ((-3.5, 7.5), (-3.5, 0.5)), ((-6.5, 4.5), (-6.5, -6.5))];
-        for name in ["base:wolf", "base:brown_bear", "base:badger"] {
+        for name in ["base:wolf", "base:brown_bear", "base:badger", "base:wild_boar"] {
             for &((px, pz), (hx, hz)) in &scenes {
                 let mut server = crate::test_server();
                 let c = pen(&mut server, 14);
@@ -3861,10 +3895,10 @@ mod fight_tests {
     use super::cornered_tests::{join, pen, put, wall};
     use super::*;
 
-    pub(super) const FIGHTERS: [&str; 5] = ["base:wolf", "base:brown_bear", "base:badger", "base:aurochs", "base:bison"];
+    pub(super) const FIGHTERS: [&str; 6] = ["base:wolf", "base:brown_bear", "base:badger", "base:aurochs", "base:bison", "base:wild_boar"];
     /// The fighters wider than a block, which take no way through a doorway a block across.
     pub(super) const WIDE: [&str; 3] = ["base:brown_bear", "base:aurochs", "base:bison"];
-    pub(super) const PREY: [&str; 5] = ["base:red_deer", "base:mouflon", "base:wild_boar", "base:rabbit", "base:junglefowl"];
+    pub(super) const PREY: [&str; 4] = ["base:red_deer", "base:mouflon", "base:rabbit", "base:junglefowl"];
 
     #[derive(Debug, Default)]
     pub(super) struct Fight {
