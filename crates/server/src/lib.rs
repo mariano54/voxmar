@@ -3,6 +3,7 @@
 
 mod actions;
 mod apiary;
+mod barks;
 mod commands;
 mod condition;
 /// The weather in words, for the debug overlay as for `/weather`.
@@ -1228,6 +1229,18 @@ impl Server {
 
     pub(crate) fn block(&self, pos: IVec3) -> Option<BlockId> {
         self.world.block(pos)
+    }
+
+    /// Whether a live player's body takes up any of `cell`.
+    pub(crate) fn player_in(&self, cell: IVec3) -> bool {
+        self.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
+    }
+
+    /// Whether putting `block` at `cell` would shut a player inside it: a solid block where
+    /// a player stands, which no hand may place. Admin fills leave such a cell as it is
+    /// (`/fill`, `/setblock`); regrowth brings back only plants that are not solid.
+    pub(crate) fn would_trap_a_player(&self, cell: IVec3, block: BlockId) -> bool {
+        self.content.blocks.info(block).solid && self.player_in(cell)
     }
 
     pub(crate) fn is_solid(&self, pos: IVec3) -> bool {

@@ -15,7 +15,7 @@ use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
 use crate::cooking::CookingRegistry;
 use crate::creature::condition::ConditionRules;
-use crate::creature::{CreatureRegistry, DefenceTraining, Limits, Rules};
+use crate::creature::{Climbing, CreatureRegistry, DefenceTraining, Limits, Rules};
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
 use crate::effect::EffectRegistry;
@@ -221,6 +221,7 @@ impl Content {
         let mut creature_limits = Setting::<Limits>::default();
         let mut defence = Setting::<DefenceTraining>::default();
         let mut condition = Setting::<ConditionRules>::default();
+        let mut climbing = Setting::<Climbing>::default();
         let mut fishing_rules = Setting::<crate::fishing::FishingRules>::default();
         let mut notes = Vec::new();
         let mut cooking = Vec::new();
@@ -298,6 +299,7 @@ impl Content {
                         creature_limits.set(package, &name, "creature limits", read.limits, &mut notes);
                         defence.set(package, &name, "Defence training", read.defence, &mut notes);
                         condition.set(package, &name, "condition rules", read.condition, &mut notes);
+                        climbing.set(package, &name, "climbing", read.climbing, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons, machines).
@@ -416,7 +418,7 @@ impl Content {
         let mut blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
         blocks.rename(renames)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
-        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value };
+        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value, climbing: climbing.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;

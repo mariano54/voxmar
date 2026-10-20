@@ -1375,16 +1375,24 @@ impl Server {
         self.wandering.active.insert(id, inst);
     }
 
-    /// Angers (or, if they cannot fight, frightens) every member of a party at `player`.
+    /// Angers (or, if they cannot fight, are young or are badly hurt, frightens) every
+    /// member of a party at `player`.
     fn stir(&mut self, inst: &Instance, player: PlayerId, fight: bool) {
         for member in &inst.members {
             let Some(creature) = self.creatures.live.get_mut(&member.creature) else { continue };
-            let fights = fight && self.content.creatures.get(creature.species).fights();
+            let species = self.content.creatures.get(creature.species);
+            // One badly hurt that would run from a fight runs rather than be angered again.
+            let health = f32::from(creature.health) / f32::from(species.def.health.max(1));
+            let fights = fight && species.holds(creature.grows_up.is_some(), health, creature.mind.personality.bravery);
             if fights {
                 creature.mind.anger = 1.0;
                 creature.mind.remember(Memory::HurtBy(player), GRUDGE);
             } else {
                 creature.mind.fear = 1.0;
+                // Scattering, it drops any fight it had (a pet boar goes with its party).
+                if species.flees() {
+                    creature.mind.anger = 0.0;
+                }
                 creature.mind.remember(Memory::ScaredBy(player), GRUDGE);
             }
         }

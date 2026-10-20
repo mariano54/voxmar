@@ -2,8 +2,8 @@
 //! 15, 2026; Mariano: the progression is too easy, so the bow must not make Nomad hunting
 //! free kills). A seeded model in game time, from the content's own numbers: the rolls of
 //! the server's `land_blow` and `creature_strikes`, each creature's run and fear (a
-//! creature hurt flees while its fear fades, `brain::FEAR_FADE`, unless it fights back,
-//! `Mind::hurt`), and each weapon's rhythm, reach and ammunition.
+//! creature hurt flees while its fear fades, `brain::FEAR_FADE`, unless it holds its
+//! ground and fights back, `Creature::holds` as `Mind::hurt` asks it), and each weapon's rhythm, reach and ammunition.
 //!
 //! The bow is meant to be safer than melee but slower and costlier, and the better way
 //! to take skittish prey that no sprint catches.
@@ -184,7 +184,7 @@ fn hunt(content: &Content, creature: &Creature, item: &str, seed: u64) -> (bool,
             // (`Mind::hurt`): it fights back, or runs while its fear lasts. A shot at the
             // air, out of reach, does not.
             if in_reach {
-                let fights = creature.fights() && life / f32::from(def.health) > 0.5 - 0.35 * (1.0 - def.temperament.fear);
+                let fights = creature.holds(false, life / f32::from(def.health), 1.0 - def.temperament.fear);
                 if fights {
                     angry = true;
                 } else {

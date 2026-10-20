@@ -3892,9 +3892,10 @@ fn gaps_between_shapes_smaller_than_the_player_are_no_way_through() {
     client.send_position(start + Vec3::X, false);
     client.send_position(on, false);
     assert!(client.all_accepted(), "a jump onto a headstone was put back to {:?}", client.teleported);
-    // ...but not under a slab in the upper half of the cell above the next, 1.75 over its top.
-    client.fill(at, IVec3::new(2, 2, 0), IVec3::new(2, 2, 0), "oak_slab_top");
+    // ...but not under a slab in the upper half of the cell above the next, 1.75 over its top
+    // (set once they are off it: no fill shuts a player in).
     client.tp(start + Vec3::X);
+    client.fill(at, IVec3::new(2, 2, 0), IVec3::new(2, 2, 0), "oak_slab_top");
     client.send_position(on, false);
     client.pump_until(|c| c.teleported.is_some());
     assert_eq!(client.teleported.take(), Some(start + Vec3::X), "stood on a headstone with 1.75 blocks of headroom");
@@ -4749,7 +4750,9 @@ fn carried_of(client: &Client, item: voxmar_engine::block::BlockId) -> u32 {
 #[test]
 fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
-    let mut client = Client::join();
+    // Draws by a key whose first shot hits: by chance, the shots it took to hit were four
+    // on most keys, each a server second apart, and now and then none of sixteen hit.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(5), ..Default::default() });
     let (sling, stone) = (client.content.blocks.expect("base:sling"), client.content.blocks.expect("base:cobblestone"));
     let ranged = client.content.skills.id("core:ranged").expect("a ranged skill");
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
@@ -4782,7 +4785,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     };
     client.ok(&format!("/tp {} {} {}", at.x + 8.0, at.y, at.z));
     aim(&mut client);
-    client.wait_server(1);
+    client.settle();
     // Nothing to shoot: no swing, and the player is told what the sling needs.
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
@@ -4796,11 +4799,13 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     let mut shots = 0;
     while client.damage.iter().all(|&d| d == 0) {
         assert!(shots < 16, "sixteen sling shots from eight blocks never hit: {:?}", client.damage);
+        if shots > 0 {
+            client.wait_server(1);
+        }
         client.propose("core:attack", ActionTarget::Creature(id));
         shots += 1;
         client.pump_until(|c| c.blows == shots);
         client.pump_until(|c| carried_of(c, stone) == 16 - shots);
-        client.wait_server(1);
     }
     client.pump_until(|c| c.skills.xp(ranged) > xp);
     // A wall between is a miss, and the stone is still spent.
@@ -4846,7 +4851,9 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
 #[test]
 fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
     real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
-    let mut client = Client::join();
+    // Draws by a key whose first shot hits and leaves its arrow: by chance, it took from two
+    // shots to twenty-six, each a server second apart.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(10), ..Default::default() });
     let (bow, arrow) = (client.content.blocks.expect("base:short_bow"), client.content.blocks.expect("base:arrow"));
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
     let recover = client.content.combat.recover(&client.content.combat.wielded(Some(bow), |_| 10));
@@ -4869,7 +4876,7 @@ fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
     client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
     let yaw = yaw_toward(client.position, at);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
-    client.wait_server(1);
+    client.settle();
     // Shot until a hit leaves an arrow by the bear: a hit leaves one half the time, so a
     // forty-health bear dies only after a dozen or more hits, by which one has all but surely
     // been left. A miss in reach may land by it too (`recover_miss`), so only an arrow that
