@@ -452,6 +452,13 @@ fn movement(
         let held = player.inventory.get(player.selected).map(|s| s.item);
         combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).map(|g| g.speed)
     });
+    // Drawing a shot, the player moves at the class's `drawing_speed` (a bow held drawn
+    // walks and sprints slowly; a weapon that strikes is not slowed).
+    let drawing_speed = fighting.drawn(clock).then(|| {
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        combat.drawing_speed(&combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill))))
+    });
+    fighting.drawing_pace = drawing_speed;
     let controls = Controls {
         wish: wish.normalize_or_zero(),
         forward: pressed(KeyCode::KeyW) && !pressed(KeyCode::KeyS),
@@ -471,7 +478,7 @@ fn movement(
         jump_delay: player.jump_delay,
     };
     // Quicker or slower on foot as the player's effects say (fruit, a gale).
-    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed * guard_speed.unwrap_or(1.0);
+    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed * guard_speed.unwrap_or(1.0) * drawing_speed.unwrap_or(1.0);
     let tuning = launch.content.movement.on_foot(speed);
     let dt = time.delta_secs().min(0.25);
     let around = Around { world: &world };
@@ -484,7 +491,7 @@ fn movement(
     let clearance = combat.feel.creature_clearance;
     for aabb in creatures.bodies(&launch) {
         if let Some(out) = out_of(body.position, &aabb, dims::WIDTH / 2.0 + clearance)
-            && !Aabb::standing(out, dims::WIDTH, dims::HEIGHT).intersects(|cell| around.solid(cell))
+            && !Aabb::standing(out, dims::WIDTH, dims::HEIGHT).overlaps(|cell| around.boxes(cell))
         {
             body.position = out;
         }
@@ -503,8 +510,21 @@ fn movement(
 /// exactly its speed, so it covers its distance at any frame rate, stopping at a wall or at
 /// a ledge, so it never drops the player off an edge. Returns what is left of it.
 fn dash(body: &mut Body, (dir, speed, left): (Vec3, f32, f32), around: &impl Surroundings, tuning: &movement::Tuning, controls: Controls, dt: f32) -> Option<(Vec3, f32, f32)> {
-    let ahead = (body.position + dir * 0.45).floor().as_ivec3();
-    let ground = (0..=1).any(|d| around.solid(ahead - IVec3::Y * (1 + d)));
+    // Ground ahead: a block's top at the feet or up to a block below them, in the cell ahead
+    // at the feet's height (a slab underfoot is in the feet's own cell) or one of the two under
+    // it, under the footprint there (a post's top only where the player would be over it).
+    let at = body.position + dir * 0.45;
+    let ahead = at.floor().as_ivec3();
+    let feet = body.position.y;
+    let half = dims::WIDTH / 2.0;
+    let ground = (0..=2).any(|d| {
+        let cell = ahead - IVec3::Y * d;
+        around.boxes(cell).iter().any(|b| {
+            let (min, max) = (b.min + cell.as_vec3(), b.max + cell.as_vec3());
+            let under = min.x < at.x + half && max.x > at.x - half && min.z < at.z + half && max.z > at.z - half;
+            under && (feet - 1.0 - 1e-3..=feet + 1e-3).contains(&max.y)
+        })
+    });
     // The last frame moves only for the time left of it.
     let step = dt.min(left);
     let now = if ground && dt > 0.0 { speed * step / dt } else { 0.0 };
@@ -548,6 +568,12 @@ impl Surroundings for Around<'_> {
         self.world.is_solid(cell)
     }
 
+    /// As the server judges moves (`Server::boxes`): a shaped block by its boxes, unloaded
+    /// space as a whole cube, so the player cannot fall out of the loaded world.
+    fn boxes(&self, cell: IVec3) -> &[Aabb] {
+        self.world.block(cell).map_or(&voxmar_engine::physics::CUBE, |b| self.world.registry.collision(b))
+    }
+
     fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
         movement::water_around(&self.world.registry, |p| self.world.block(p), aabb)
     }
@@ -584,6 +610,23 @@ pub(crate) fn follow_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The same case as the server's `an_unloaded_cell_stops_a_player_as_a_whole_cube`: a
+    /// cell in a loaded column of air stops nothing; one in the next column, not loaded, and
+    /// one under the world stop the player as a whole cube, as the server judges them.
+    #[test]
+    fn an_unloaded_cell_stops_a_player_as_a_whole_cube() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let mut world = ClientWorld::new(content.blocks, 2, crate::render::terrain::Terrain::detached());
+        let loaded = IVec3::new(1, 64, 1);
+        world.insert_column(ColumnPos::of_block(loaded), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+        let around = Around { world: &world };
+        assert!(around.boxes(loaded).is_empty());
+        for unloaded in [loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE, IVec3::new(1, -1, 1)] {
+            assert_eq!(around.boxes(unloaded), &voxmar_engine::physics::CUBE, "{unloaded}");
+        }
+    }
 
     /// Flat ground below y 0.
     struct Floor;
@@ -629,6 +672,88 @@ mod tests {
             assert!((went - 3.0).abs() < 0.02, "{fps} fps: {went} blocks in {frames} frames");
             assert_eq!(body.velocity.with_y(0.0), Vec3::ZERO, "it stops at the end");
         }
+    }
+
+    /// A floor of slabs (the lower half of y 0) with nothing under it, ending at x 2.
+    struct Slabs;
+
+    const SLAB: [Aabb; 1] = [Aabb { min: Vec3::ZERO, max: Vec3::new(1.0, 0.5, 1.0) }];
+
+    impl Surroundings for Slabs {
+        fn solid(&self, cell: IVec3) -> bool {
+            cell.y == 0 && cell.x < 2
+        }
+
+        fn boxes(&self, cell: IVec3) -> &[Aabb] {
+            if self.solid(cell) { &SLAB } else { &[] }
+        }
+
+        fn water(&self, _: &Aabb) -> (f32, Vec2) {
+            (0.0, Vec2::ZERO)
+        }
+    }
+
+    /// On a floor of slabs over air (an upper storey, a bridge) a dash goes on as on whole
+    /// blocks, and stops at the floor's edge rather than dropping off it.
+    #[test]
+    fn a_dash_runs_along_a_slab_floor_and_stops_at_its_edge() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let tuning = content.movement.on_foot(1.0);
+        let start = Vec3::new(-5.5, 0.5, 0.5);
+        let mut body = Body { position: start, velocity: Vec3::ZERO, on_ground: true, in_water: false, flying: false, fly_speed: 1.0, against_wall: false, sprinting: false, jump_delay: 0.0 };
+        let mut under_way = Some((Vec3::X, 3.0 / 0.25, 0.25));
+        while let Some(d) = under_way {
+            under_way = dash(&mut body, d, &Slabs, &tuning, Controls::default(), 1.0 / 60.0);
+        }
+        let went = body.position.x - start.x;
+        assert!((went - 3.0).abs() < 0.02, "dashed {went} blocks along the slabs");
+        // From near the edge it stops short of dropping off.
+        body.position = Vec3::new(1.0, 0.5, 0.5);
+        let mut under_way = Some((Vec3::X, 3.0 / 0.25, 0.25));
+        while let Some(d) = under_way {
+            under_way = dash(&mut body, d, &Slabs, &tuning, Controls::default(), 1.0 / 60.0);
+        }
+        assert!(body.position.x < 2.0 && body.position.y == 0.5, "dashed off the edge to {}", body.position);
+    }
+
+    /// A floor of whole blocks ending at x = 2, and beyond its edge, a block lower, a post
+    /// standing in the far corner of the cell: its top is level with the floor but not under
+    /// a player passing the near side.
+    struct PostBeyond;
+
+    const WHOLE: [Aabb; 1] = [Aabb { min: Vec3::ZERO, max: Vec3::ONE }];
+    const CORNER_POST: [Aabb; 1] = [Aabb { min: Vec3::new(0.0, 0.0, 0.8), max: Vec3::new(0.2, 1.0, 1.0) }];
+
+    impl Surroundings for PostBeyond {
+        fn solid(&self, cell: IVec3) -> bool {
+            !self.boxes(cell).is_empty()
+        }
+
+        fn boxes(&self, cell: IVec3) -> &[Aabb] {
+            match (cell.x, cell.y, cell.z) {
+                (x, -1, 0) if x < 2 => &WHOLE,
+                (2, -1, 0) => &CORNER_POST,
+                _ => &[],
+            }
+        }
+
+        fn water(&self, _: &Aabb) -> (f32, Vec2) {
+            (0.0, Vec2::ZERO)
+        }
+    }
+
+    /// A post's top is ground only where the player is over it: a dash past the near side
+    /// of one stops at the floor's edge rather than running off it.
+    #[test]
+    fn a_dash_stops_at_an_edge_beside_a_post_it_is_not_over() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let tuning = content.movement.on_foot(1.0);
+        let mut body = Body { position: Vec3::new(1.0, 0.0, 0.3), velocity: Vec3::ZERO, on_ground: true, in_water: false, flying: false, fly_speed: 1.0, against_wall: false, sprinting: false, jump_delay: 0.0 };
+        let mut under_way = Some((Vec3::X, 3.0 / 0.25, 0.25));
+        while let Some(d) = under_way {
+            under_way = dash(&mut body, d, &PostBeyond, &tuning, Controls::default(), 1.0 / 60.0);
+        }
+        assert!(body.position.x < 2.0 && body.position.y == 0.0, "dashed off the edge past the post to {}", body.position);
     }
 
     #[test]
