@@ -64,7 +64,10 @@ pub struct Target {
     /// When (seconds of game time) the line cast last comes up, and another may be cast.
     fishing_until: f32,
     /// When (seconds of game time) what is cooking comes off the fire, and more may go on.
-    pub(crate) cooking_until: f32,
+    cooking_until: f32,
+    /// The right button has been held since it put something on to cook: what is in hand
+    /// (what is cooking, or what came off) is never set down by it until it is let go.
+    cook_held: bool,
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
@@ -273,6 +276,9 @@ fn break_and_place(
 ) {
     target.place_cooldown -= time.delta_secs();
     target.mine_cooldown -= time.delta_secs();
+    if !mouse.pressed(MouseButton::Right) {
+        target.cook_held = false;
+    }
     let hit = target.hit.filter(|_| ui.cursor_locked && !player.dead);
     // A creature wandering across the block being mined does not stop the mining: only a
     // fresh click strikes it (`creatures::aim`).
@@ -441,6 +447,7 @@ fn break_and_place(
                     target.used_right = true;
                     target.place_cooldown = 0.4;
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
+                    target.cook_held = true;
                     return;
                 }
                 // Below its level, or with no tool about (an axe for the chopping block): it
@@ -542,7 +549,10 @@ fn break_and_place(
         }
     }
     let Some(hit) = hit else { return };
-    if mouse.pressed(MouseButton::Right) && target.place_cooldown <= 0.0 {
+    // Held on through a cook, nothing repeats: neither the log on the chopping block nor the
+    // firewood it gives is laid on it.
+    let cooking = target.cook_held || time.elapsed_secs() < target.cooking_until;
+    if mouse.pressed(MouseButton::Right) && target.place_cooldown <= 0.0 && !cooking {
         target.place_cooldown = 0.2;
         let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
         let content = &launch.content;
@@ -817,6 +827,49 @@ mod tests {
         assert!(refusals.iter().any(|why| why.contains("Farming") && why.contains(&level)), "{refusals:?}");
         let proposed = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).count();
         assert_eq!(proposed, 0);
+    }
+
+    /// A log held to a chopping block with an axe about splits on the press; the button held
+    /// on lays nothing there, neither the log while it splits nor the firewood once it is
+    /// in hand. Let go and pressed again, the firewood is laid.
+    #[test]
+    fn holding_on_through_a_split_lays_nothing() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        let (cook, place) = (content.actions.expect("base:cook"), content.actions.expect("core:place"));
+        let id = |name: &str| content.blocks.expect(name);
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, id("base:chopping_block"));
+        // Aimed at its top, where what is in hand could be laid.
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(id("base:oak_log"), 1));
+        player.inventory.slots[1] = Some(voxmar_engine::inventory::ItemStack::new(id("base:stone_axe"), 1));
+        player.selected = 0;
+        let proposed = |server_side: &voxmar_protocol::ServerConnection| -> Vec<ActionId> {
+            std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect()
+        };
+        // Thirty milliseconds a frame, by the game's clock alone.
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        let frames = |app: &mut App, n: usize| {
+            for _ in 0..n {
+                app.update();
+            }
+        };
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        frames(&mut app, 20);
+        assert_eq!(proposed(&server_side), [cook], "the split, and the log not laid");
+        // Split: the firewood in the emptied hand, the cook's time over, the button still down.
+        app.world_mut().resource_mut::<LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(id("base:firewood"), 2));
+        app.world_mut().resource_mut::<Target>().cooking_until = 0.0;
+        frames(&mut app, 20);
+        assert_eq!(proposed(&server_side), [], "held on, the firewood is not laid");
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.release(MouseButton::Right);
+        mouse.clear();
+        frames(&mut app, 2);
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        frames(&mut app, 2);
+        assert!(proposed(&server_side).contains(&place), "let go and pressed again, it is laid");
     }
 
     /// Food is eaten on a right click unless the click tends a creature, places the food,
