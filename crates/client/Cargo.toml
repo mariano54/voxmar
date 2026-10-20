@@ -81,3 +81,8 @@ zip.workspace = true
 crc32fast = "1.5"
 # Bevy's audio decoder, to check a borrowed track decodes before it plays (music.rs).
 rodio = { version = "0.22.2", default-features = false }
+
+[dev-dependencies]
+# Already in the tree under Bevy: `render/shader_check.rs` composes and validates the
+# terrain shader with it, as the renderer would, without a GPU.
+naga_oil = { version = "0.22", default-features = false }
