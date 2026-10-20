@@ -17,7 +17,9 @@
 //! Helpers take their caller's scheduling class: on macOS a new thread starts at the default
 //! class whatever its creator's, so the game's background workers (utility) would otherwise
 //! start up to a worker count of helpers above themselves, level with the frame threads.
-//! On Linux a thread inherits its creator's nice value already. `VOXMAR_THREAD_PRIORITY=off`
+//! Above the default class, though, they take the default: a build the server's tick
+//! (user-interactive) starts would otherwise put up to a worker count of helpers level with
+//! a game's frame threads. On Linux a thread inherits its creator's nice value already. `VOXMAR_THREAD_PRIORITY=off`
 //! (the game's timing switch, see the client's `priority.rs`) leaves helpers as they start.
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -75,7 +77,7 @@ pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
 /// caller's scheduling class, each taking the next item in order.
 fn with_helpers<T: Sync>(items: &[T], f: impl Fn(&T) + Sync, helpers: usize) {
     let next = AtomicUsize::new(0);
-    let class = SchedulingClass::current();
+    let class = SchedulingClass::current().capped();
     let work = || {
         while let Some(item) = items.get(next.fetch_add(1, Ordering::Relaxed)) {
             f(item);
@@ -113,6 +115,17 @@ impl SchedulingClass {
         }
         #[cfg(not(target_os = "macos"))]
         Self()
+    }
+
+    /// This class, or the default if it is above it.
+    fn capped(self) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            use libc::qos_class_t::{QOS_CLASS_DEFAULT, QOS_CLASS_USER_INITIATED, QOS_CLASS_USER_INTERACTIVE};
+            Self(self.0.map(|class| if matches!(class, QOS_CLASS_USER_INTERACTIVE | QOS_CLASS_USER_INITIATED) { QOS_CLASS_DEFAULT } else { class }))
+        }
+        #[cfg(not(target_os = "macos"))]
+        self
     }
 
     fn apply(self) {
@@ -178,5 +191,18 @@ mod tests {
         let (caller, seen) = classes;
         assert_eq!(seen.iter().filter(|(thread, _)| *thread != caller).count(), 2, "two helpers took an item each");
         assert!(seen.iter().all(|(_, class)| matches!(class, Some(libc::qos_class_t::QOS_CLASS_UTILITY))));
+    }
+
+    /// The server's tick (user-interactive) keeps its helpers at the default class, below the
+    /// frame threads; a background class stays as it is.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn helpers_are_never_above_the_default_class() {
+        use libc::qos_class_t::*;
+        let capped = |class| SchedulingClass(Some(class)).capped().0;
+        assert!(matches!(capped(QOS_CLASS_USER_INTERACTIVE), Some(QOS_CLASS_DEFAULT)));
+        assert!(matches!(capped(QOS_CLASS_USER_INITIATED), Some(QOS_CLASS_DEFAULT)));
+        assert!(matches!(capped(QOS_CLASS_UTILITY), Some(QOS_CLASS_UTILITY)));
+        assert!(SchedulingClass(None).capped().0.is_none());
     }
 }

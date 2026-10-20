@@ -965,7 +965,9 @@ impl Tended {
         proposals.saturating_sub(self.proposals) > harmless.saturating_sub(self.harmless)
     }
 
-    /// Whether the pack now holding `count` of what is watched says it was done.
+    /// Whether the pack now holding `count` of what is watched says it was done, as the
+    /// tests check each tend's direction (`answer_tended` counts how many at once).
+    #[cfg(test)]
     fn done(&self, count: u32) -> bool {
         match self.answer {
             Sound::Idle => count > self.had,
