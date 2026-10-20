@@ -483,9 +483,11 @@ impl Server {
 
     /// `agent` sleeps at the bed at `bed`: it is where they wake after dying (their hearth
     /// first, once they have one), and they wake rested, as well as the home around the
-    /// bed allows (effects.ron's `sleeps`). A bed a village home was furnished with is its
-    /// resident's and turns them away, but in creative. A bed always works, as a bed; the rest is held back
-    /// while one is still on them, so the buff cannot be had again until it wears off.
+    /// bed allows (effects.ron's `sleeps`; the better rests only by night). A bed a village
+    /// home was furnished with is its resident's and turns them away, but in creative. A bed
+    /// always works, as a bed; the rest is held back while it or a better one is still on
+    /// them, or the last sleep's mend still runs (`EffectRegistry::rested`): a nap's lesser
+    /// rest does not keep a night's better one away, and a bed after a bed mends no more.
     fn sleep(&mut self, agent: PlayerId, bed: IVec3) {
         // A bed a village furnished a home with (its settlement's plan says so, and no player
         // has set one down there since) is its resident's; any other works, however it came
@@ -505,21 +507,25 @@ impl Server {
             return;
         }
         let effects = self.content.effects.clone();
-        if effects.rested(&self.players[&agent].timed_effects) {
-            let player = &self.players[&agent];
-            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.not_tired") });
-            return;
-        }
         let home = self.home_survey(agent);
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], seated: false, night: self.night() };
         // A proper bed rests better than a bag on the ground (effects.ron's `bed` tags).
         let bed_tags = self.block(bed).map(|b| self.content.blocks.def(b).tags.clone()).unwrap_or_default();
         let given = effects.given_by_sleep(&situation, &bed_tags);
+        // The rest is held back while it, or a better one, is still on them; a nap's lesser
+        // rest does not keep a night's better one away.
+        if effects.rested(&self.players[&agent].timed_effects, &given) {
+            let player = &self.players[&agent];
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.not_tired") });
+            return;
+        }
         // The best rest it gives (the one the others are hidden by) is the one it says.
-        let best = given.iter().map(|&(id, _)| id).filter(|&id| !given.iter().any(|&(other, _)| other != id && effects.hides(other, id))).next_back();
+        let best = effects.best_rest(&given);
+        // By day, the better rest a night's sleep here would give (effects.ron's `night`).
+        let at_night = if situation.night { None } else { effects.best_rest(&effects.given_by_sleep(&voxmar_engine::effect::Situation { night: true, ..situation }, &bed_tags)).filter(|&night| Some(night) != best) };
         let player = self.players.get_mut(&agent).unwrap();
         player.give_effects(&given);
         player.changed(traits::VITALS);
@@ -528,6 +534,11 @@ impl Server {
             let key = voxmar_engine::lang::def_key("effect", &def.name);
             let words = Words::key("bed.rested").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
+        }
+        if let Some(night) = at_night {
+            let def = effects.get(night);
+            let key = voxmar_engine::lang::def_key("effect", &def.name);
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("bed.night_rest").with("name", Words::Own(key, def.title.clone())) });
         }
     }
 
