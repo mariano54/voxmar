@@ -46,6 +46,14 @@
         // Chimneys: cobbles in clay before brick, and a hood of brick to gather smoke.
         (pattern: [["cobblestone", "clay", "cobblestone"], ["cobblestone", "", "cobblestone"]], output: "stone_flue", count: 2, skill: "core:construction", level: 2, xp: 3.0),
         (pattern: [["stone_bricks", "stone_bricks", "stone_bricks"], ["stone_bricks", "", "stone_bricks"]], output: "chimney_hood", skill: "core:construction", level: 6, xp: 4.0),
+        // Stairs and upper floors: railings of beams over sticks, a corner from two runs,
+        // a newel capped with a slab, a landing of slabs on beams, and a balcony door from
+        // a door and a lattice window.
+        (pattern: [["{name}_beam", "{name}_beam", "{name}_beam"], ["stick", "stick", "stick"]], output: "{name}_railing", count: 3, skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["{name}_railing", "{name}_railing"]], output: "{name}_railing_corner", skill: "core:construction", level: 3, xp: 1.0),
+        (pattern: [["{name}_slab"], ["{name}_post"]], output: "{name}_newel_post", skill: "core:construction", level: 3, xp: 2.0),
+        (pattern: [["{name}_slab", "{name}_slab", "{name}_slab"], ["{name}_beam", "", "{name}_beam"]], output: "{name}_landing", count: 3, skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["{name}_lattice_window"], ["wooden_door"]], output: "balcony_door", skill: "core:construction", level: 4, xp: 3.0),
         // An arrow slit: two stone bricks either side of a gap and a slab over it.
         (pattern: [["", "stone_brick_slab", ""], ["stone_bricks", "", "stone_bricks"]], output: "stone_arrow_slit", count: 2, skill: "core:construction", level: 5, xp: 4.0),
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "", "fired_clay"]], output: "chimney_pot", count: 2, skill: "core:construction", level: 3, xp: 3.0),

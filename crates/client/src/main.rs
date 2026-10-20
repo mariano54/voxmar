@@ -33,6 +33,7 @@
 
 mod ambience;
 mod breaking;
+mod fx;
 mod butterflies;
 mod capture;
 mod creature_sounds;
@@ -366,6 +367,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         recorded.material_of(&content.blocks, id).map_or_else(|| ambience::defs::family(content.blocks.info(id).sound), |m| recorded.materials[m].name.clone())
     })?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
+    fx::ActionFx::load(&content.files)?.check(&content.actions)?;
     if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
         return Err(format!("effects.ron: the effect {effect} has no icon in any bundled texture pack").into());
     }
@@ -462,7 +464,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
-    app.add_plugins(emitters::EmittersPlugin);
+    app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);
     app.add_plugins(fight_fx::FightFxPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
@@ -730,11 +732,14 @@ fn setup(
     for id in 0..registry.len() {
         let block = voxmar_engine::block::BlockId(id as u16);
         let info = registry.info(block);
-        let variety = registry.def(block).texture_variety;
-        for layer in info.layers {
-            let layer = &mut layers[layer as usize];
+        let def = registry.def(block);
+        let variety = def.texture_variety;
+        for face in Face::ALL {
+            let layer = &mut layers[info.layers[face as usize] as usize];
             layer.glow = layer.glow.max(info.emission as f32 / 15.0);
-            layer.through |= registry.def(block).lit_through;
+            // Only a face drawn its own way glows by the light through it (one without a
+            // drawing takes the first layer), as the registry's load check counts them.
+            layer.through |= def.lit_through && def.textures.face(face).is_some();
             if info.render == RenderKind::Opaque {
                 layer.variety.turn |= variety.turn;
                 layer.variety.mirror |= variety.mirror;
