@@ -545,6 +545,7 @@ fn followers(content: &Content, quest: &QuestDef) -> usize {
     content.quests.iter().filter(|q| before(content, q).iter().any(|f| f.name == quest.name)).count()
 }
 
+/// The quests a quest comes after, each way it may (`a|b` is either).
 fn before<'a>(content: &'a Content, quest: &QuestDef) -> Vec<&'a QuestDef> {
     quest.after.iter().flat_map(|a| a.split('|')).filter_map(|name| content.quests.get(name)).collect()
 }
@@ -1242,9 +1243,6 @@ fn draw(
     }
 }
 
-/// A line's colour on the web: in the accent when it ends at the quest picked; faint when
-/// it runs from one path to another; else the look's `done` once what it comes from is
-/// done, `ahead` before.
 /// The scroll that keeps a quest at `at` on the canvas, `side` across, wholly in what the
 /// well shows beside the lanes' headers (the canvas from `scroll - margin`, `room` across),
 /// moving `scroll` no further than needed and never past the canvas.
@@ -1253,6 +1251,9 @@ fn kept_in_view(scroll: Vec2, at: Vec2, side: f32, margin: Vec2, room: Vec2, siz
     scroll.clamp(least.min(most), most.max(least)).clamp(Vec2::ZERO, (size + margin - room).max(Vec2::ZERO))
 }
 
+/// A line's colour on the web: in the accent when it ends at the quest picked; faint when
+/// it runs from one path to another; else the look's `done` once what it comes from is
+/// done, `ahead` before.
 fn line_colour(look: &QuestLook, picked: bool, across: bool, done: bool) -> Color {
     let colour = if done { look.lines.done.color() } else { look.lines.ahead.color().with_alpha(0.8) };
     if picked {
@@ -2175,10 +2176,6 @@ pub(crate) mod tests {
         }
     }
 
-    /// A path's header brings the first quest open along it, else the first not done, else
-    /// its last.
-    /// A line between paths is faint unless it ends at the quest picked; a line along a
-    /// path is not.
     #[test]
     fn a_picked_quest_stays_in_view_beside_its_card() {
         let (side, margin, size) = (40.0, Vec2::ZERO, Vec2::new(1200.0, 400.0));
@@ -2193,6 +2190,8 @@ pub(crate) mod tests {
         assert_eq!(kept_in_view(Vec2::ZERO, Vec2::new(1190.0, 100.0), side, margin, room, size), Vec2::new(600.0, 0.0));
     }
 
+    /// A line between paths is faint unless it ends at the quest picked; a line along a
+    /// path is not.
     #[test]
     fn lines_between_paths_are_faint() {
         let look = look();
@@ -2229,6 +2228,8 @@ pub(crate) mod tests {
         assert_eq!(zoom_of(&style, 0).1, 1.0);
     }
 
+    /// A path's header brings the first quest open along it, else the first not done, else
+    /// its last.
     #[test]
     fn a_path_head_is_its_next_quest() {
         use Standing::{Done, Open, Waiting};
