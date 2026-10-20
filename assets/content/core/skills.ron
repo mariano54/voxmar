@@ -102,7 +102,7 @@
                 (level: 1, text: "Crafting tables, sticks, torches and wooden and stone tools", icon: "crafting_table"),
                 (level: 1, text: "Shears for wool, pails for milk, campfires", icon: "shears"),
                 (level: 5, text: "Copper ingots and copper tools: faster work and better finds", icon: "copper_pickaxe"),
-                (level: 5, text: "Metal tools and weapons mended at a grindstone with their own metal", icon: "grindstone"),
+                (level: 5, text: "Copper tools and weapons mended with copper ingots at a grindstone", icon: "grindstone"),
                 (level: 10, text: "Tin, and the crucible at the heart of the kiln", icon: "tin_ore"),
                 (level: 12, text: "Bronze ingots and bronze tools: twice copper's life", icon: "bronze_pickaxe"),
                 (level: 15, text: "Iron ingots and iron tools", icon: "iron_pickaxe"),

@@ -155,11 +155,14 @@ impl Server {
 
     /// Turns what `core`'s structure chars into what it made: done, its share of the burn
     /// rained on spoiled (from the top down, where the rain came in) and the rest charred
-    /// well; opened, all part-burnt. A cell emptied by hand stays empty. The core burns out.
+    /// well; opened, all part-burnt. A cell emptied by hand, or with something else set in
+    /// it, is left as it is. The core burns out.
     fn end_smoulder(&mut self, core: IVec3, end: End) {
         let Some(s) = self.smoulders.remove(&core) else { return };
-        let Some(smoulder) = self.content.multiblocks.get(&s.structure).and_then(|m| m.smoulder.clone()) else { return };
-        let mut cells: Vec<IVec3> = smoulder.wood.iter().map(|&o| core + turned(o, s.turn)).filter(|&p| self.block(p).is_some_and(|b| !b.is_air())).collect();
+        let Some(structure) = self.content.multiblocks.get(&s.structure).cloned() else { return };
+        let Some(smoulder) = structure.smoulder.clone() else { return };
+        let wood = |o: IVec3, p: IVec3| self.block(p).is_some_and(|b| structure.takes(o).contains(&b));
+        let mut cells: Vec<IVec3> = smoulder.wood.iter().map(|&o| (o, core + turned(o, s.turn))).filter(|&(o, p)| wood(o, p)).map(|(_, p)| p).collect();
         cells.sort_by_key(|p| std::cmp::Reverse(p.y));
         let spoiled = match end {
             End::Opened => 0,
@@ -372,6 +375,19 @@ mod tests {
         server.set_block(CORNER, BlockId::AIR);
         assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 9)]);
         assert!(server.smoulders.is_empty() && server.block(FLUE) == Some(BlockId::AIR));
+    }
+
+    /// Its wood swapped for stone while it smoulders opens it, and the stone is left as it
+    /// is: only wood chars.
+    #[test]
+    fn what_was_set_in_its_woods_place_is_not_charred() {
+        let mut server = fixture("base:torch");
+        sky(&mut server, "clear");
+        build(&mut server);
+        light(&mut server);
+        server.set_block(CORNER + IVec3::new(1, 0, 1), id(&server, "base:stone"));
+        assert!(server.smoulders.is_empty(), "opened");
+        assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 8), ("base:stone".to_owned(), 1)]);
     }
 
     /// A piece broken while its land is not loaded opens it once all of it is loaded again,

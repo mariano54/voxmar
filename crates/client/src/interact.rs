@@ -887,6 +887,28 @@ mod tests {
         assert_eq!(proposed, [content.actions.expect("base:open_store")], "opened, and nothing laid against it");
     }
 
+    /// A block put into a hopper, the button held on: it goes in, and nothing is laid
+    /// against the hopper after.
+    #[test]
+    fn holding_on_after_using_a_machine_lays_nothing() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, content.blocks.expect("base:hopper"));
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(content.blocks.expect("base:cobblestone"), 4));
+        player.selected = 0;
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+        for _ in 0..20 {
+            app.update();
+        }
+        let proposed: Vec<ActionId> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect();
+        assert_eq!(proposed, [content.actions.expect("base:use_machine")], "put in, and nothing laid against it");
+    }
+
     /// Content that leaves `core:mine` out (a partial mod): holding the button does
     /// nothing, frame after frame, and proposes nothing.
     #[test]

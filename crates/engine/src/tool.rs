@@ -795,6 +795,23 @@ mod tests {
         assert_eq!(crate::inventory::max_stack(brand), 1, "what burns is carried one at a time");
     }
 
+    /// Metal tools and weapons mend with their own ingot at a grindstone, not at a
+    /// chopping block, where flint and stone ones mend.
+    #[test]
+    fn metal_mends_at_a_grindstone() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let (tools, id) = (&content.tools, |name: &str| content.blocks.expect(name));
+        for (tool, ingot) in [("base:copper_pickaxe", "base:copper_ingot"), ("base:bronze_axe", "base:bronze_ingot"), ("base:iron_sword", "base:iron_ingot")] {
+            let worn = crate::inventory::ItemStack { wear: tools.uses(id(tool)) / 2, ..crate::inventory::ItemStack::new(id(tool), 1) };
+            let mut grid = [None; crate::craft::GRID];
+            grid[0] = Some(worn);
+            grid[4] = Some(crate::inventory::ItemStack::new(id(ingot), 1));
+            assert!(tools.mended(&grid, |tag| tag == "grindstone").is_some(), "{tool} at a grindstone");
+            assert_eq!(tools.mended(&grid, |tag| tag == "chopping_block"), None, "{tool} at a chopping block");
+        }
+    }
+
     /// The game's tools wear, break to nothing and mend by what made them, at a
     /// chopping block and nowhere else, by half their uses, never past new; a grid with
     /// anything else in it, or a tool not worn, mends nothing.
