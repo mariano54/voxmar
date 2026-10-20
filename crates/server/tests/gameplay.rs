@@ -174,15 +174,18 @@ fn local_connection(accepted: crossbeam_channel::Sender<voxmar_protocol::ServerC
 
 impl Client {
     /// Joins a new server in-process, as singleplayer does.
+    #[track_caller]
     fn join() -> Self {
         Self::join_with(ServerConfig { view_distance: 2, ..Default::default() })
     }
 
+    #[track_caller]
     fn join_with(config: ServerConfig) -> Self {
         Self::join_named(config, "test")
     }
 
     /// Joins a new server on `config` as `name`.
+    #[track_caller]
     fn join_named(config: ServerConfig, name: &str) -> Self {
         let content = content();
         let server = spawn(config, content.clone()).unwrap();
@@ -221,6 +224,7 @@ impl Client {
     /// Prepares the content and Hello before opening a connection. Loading and hashing
     /// the fixture must not spend the server's pending-login deadline, especially when
     /// other tests keep this process off its cores. `prepare` can model that delay in ticks.
+    #[track_caller]
     fn greet_content(open: impl FnOnce() -> ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>, prepare: impl FnOnce() -> Content) -> Self {
         let content = prepare();
         let hello = ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: admin_token.map(str::to_owned) };
@@ -294,6 +298,7 @@ impl Client {
     /// is opening the world and generating where the player stands, never idle, so until
     /// then the time in all is the CPU time its thread had: at load 120 a server starting
     /// with a share of a core sent no welcome for 60 s while it worked all along.
+    #[track_caller]
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
         const AWAY: Duration = Duration::from_millis(500);
         let began = Instant::now();
@@ -470,6 +475,7 @@ impl Client {
     /// do about the messages sent before it is done, for checking that something did not
     /// happen without waiting a fixed time. Sound only for in-process clients, whose
     /// messages reach the server at once; over TCP a message may still be in flight.
+    #[track_caller]
     fn after_server_ticks(&mut self, ticks: u64) {
         let ran = |c: &Self| c._server.as_ref().expect("the first player holds the server").ticks();
         let until = ran(self) + ticks + 1;
@@ -488,6 +494,7 @@ impl Client {
     /// Applies what the server sends until it tells of a tick at least `ticks` past the
     /// last it told of, or `done`: a wait by the server's clock, which a busy machine
     /// slows with it.
+    #[track_caller]
     fn pump_ticks(&mut self, ticks: u64, done: impl Fn(&Self) -> bool) {
         let until = self.server_tick + ticks;
         self.pump_until(|c| c.server_tick >= until || done(c));
@@ -521,11 +528,13 @@ impl Client {
 
     /// Waits until the server's clock has run at least `seconds` on (it tells the time every
     /// second, so a little more).
+    #[track_caller]
     fn wait_server(&mut self, seconds: u64) {
         self.after_ticks(seconds * TICKS_PER_SECOND as u64);
     }
 
     /// Runs a command and returns the console lines it answers with.
+    #[track_caller]
     fn command(&mut self, line: &str) -> Vec<(ChatKind, String)> {
         self.chat.clear();
         self.connection.send(ClientMessage::Command { line: line.into() });
@@ -535,12 +544,29 @@ impl Client {
 
     /// Waits until the server has handled everything sent before (refused or instant
     /// actions included), by a command's answer coming back after them.
+    #[track_caller]
     fn settle(&mut self) {
         self.ok("/time");
     }
 
+    /// Waits until the land of the columns all round the player's is in, its own too. Tests
+    /// build within a few blocks of where the player stands, and the server judges a
+    /// structure (a kiln's cook, a machine's survey) only on land it holds; on a busy machine
+    /// a column beside the player's took many seconds more to load than the player's own, and
+    /// a check timed in the server's seconds ran out on land not yet there (a kiln across two
+    /// columns refused its cook; a turbine hall stayed incomplete for 17 server seconds). The
+    /// server sends only land it holds, so once the client has it, so has the server.
+    #[track_caller]
+    fn land_round(&mut self) {
+        self.pump_until(|c| {
+            let at = ColumnPos::of_block(c.position.floor().as_ivec3());
+            (-1..=1).all(|dx| (-1..=1).all(|dz| c.world.contains(at.offset(dx, dz))))
+        });
+    }
+
     /// Waits until at least `ticks` server ticks have passed from now, by the server's own
     /// clock (it tells it once a second).
+    #[track_caller]
     fn after_ticks(&mut self, ticks: u64) {
         let told = self.server_tick;
         self.pump_until(|c| c.server_tick > told);
@@ -550,6 +576,7 @@ impl Client {
 
     /// Waits until `count` holds still across 20 server ticks after everything sent was
     /// handled (drops still landing, pick-ups on the way), and returns it.
+    #[track_caller]
     fn quiet(&mut self, count: impl Fn(&Self) -> usize) -> usize {
         for _ in 0..30 {
             self.settle();
@@ -574,6 +601,7 @@ impl Client {
     }
 
     /// Runs a command that should succeed, returning its answer.
+    #[track_caller]
     fn ok(&mut self, line: &str) -> String {
         let lines = self.command(line);
         assert!(lines.iter().all(|(kind, _)| *kind == ChatKind::Info), "{line}: {lines:?}");
@@ -2236,6 +2264,7 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
 /// paid fire survive reload; taking out a brick and putting it back leaves it cold.
 #[test]
 fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
+    lockstep("a kiln's charge burns down by the server's ticks, so the cook after the reload finds it lit however long a busy machine takes by the clock");
     let dir = world_dir("kiln-fire");
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
@@ -2243,6 +2272,23 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     // The kiln lit, the quest's last part.
     let lit = |c: &Client| c.quests.iter().find(|q| q.name == "base:crucible_kiln").unwrap().tasks[0].last().unwrap().0;
     let light = |c: &Client| c.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    // A cook takes its seconds of the clock, judged by when messages arrive: proposed as if
+    // clicked now, with a command stamped just past its time, it is done at once, so no
+    // clock time passes in lockstep while the charge burns by ticks. The command's answer is
+    // read here, not taken for the next one's.
+    let cook = |c: &mut Client| {
+        let action = c.content.actions.expect("base:cook");
+        let seconds = match c.content.actions.get(action).expect("base:cook is defined").duration {
+            voxmar_engine::action::Duration::Seconds(s) => s,
+            other => panic!("a cook is timed in seconds, not {other:?}"),
+        };
+        let at = Instant::now();
+        c.propose_at("base:cook", ActionTarget::Block { block: core, face: Face::PosY }, at);
+        c.chat.clear();
+        c.connection.send_at(ClientMessage::Command { line: "/time".into() }, at + Duration::from_secs_f32(seconds + 0.1));
+        c.pump_until(|c| c.chat.iter().any(|(_, text)| text.contains("(tick ")));
+        c.chat.clear();
+    };
     let count = |c: &Client, name: &str| {
         let item = c.content.blocks.expect(name);
         c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
@@ -2277,13 +2323,15 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     let meta = voxmar_server::save::WorldSave::new(&dir).read_meta().unwrap();
     let fire = meta.lit.iter().find(|fire| fire.position == core.to_array()).expect("saved paid fire").clone();
     let mut client = Client::join_with(config());
+    // This kiln stands across two columns: a cook asked before the other is in is turned down.
+    client.land_round();
     client.pump_until(|c| !c.quests.is_empty() && c.world.block(core) == c.content.blocks.id("base:crucible"));
     assert_eq!(lit(&client), 1);
     light(&client);
     client.settle();
     client.ok("/give copper_ore 1");
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
-    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    cook(&mut client);
     client.pump_until(|c| count(c, "base:copper_ingot") == 1);
     // Two consecutive edits must quench it even before any cooking or quest check.
     for line in ["/setblock ~3 ~1 ~-1 air", "/setblock ~3 ~1 ~-1 kiln_bricks"] { client.ok(line); }
@@ -2291,7 +2339,7 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     client.ok("/give copper_ore 1");
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
     client.chat.clear();
-    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    cook(&mut client);
     client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, "base:copper_ore"), 1);
     assert_eq!(count(&client, "base:copper_ingot"), 0);
@@ -5232,8 +5280,10 @@ fn wait_server(client: &mut Client, seconds: u64) {
 }
 
 /// Asks `/machine` about a block until its answer contains `want`, or panics after `seconds`
-/// of the server's clock.
+/// of the server's clock, counted once the land round the player is in (a machine's survey
+/// looks only at land the server holds).
 fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> String {
+    client.land_round();
     let started = client.server_tick;
     loop {
         let said = client.ok(&format!("/machine {at}"));
@@ -5723,7 +5773,14 @@ fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
     let mut client = Client::join_with(config());
     machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
     let cobblestone = client.content.blocks.expect("base:cobblestone");
-    client.pump_until(|c| c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>() == 3 * 64);
+    // Out on the ground, or already picked up by the player standing beside it: the wait
+    // for the land round the player (`machine_says`) can outlast the pick-up delay.
+    let spilled = |c: &Client| {
+        let lying = c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>();
+        let held = c.inventory.slots.iter().flatten().filter(|s| s.item == cobblestone).map(|s| s.count as u32).sum::<u32>();
+        lying + held
+    };
+    client.pump_until(|c| spilled(c) == 3 * 64);
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
