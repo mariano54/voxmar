@@ -516,43 +516,59 @@ impl QuestRegistry {
         self.rewards_skip_no_lesson(blocks)
     }
 
-    /// A reward is a gift, never the lesson: refuses a reward that alone holds another
-    /// quest's `Have` goal while that quest may still be open when the reward is paid, so a
-    /// quest that asks the player to gather or make a stack is never finished by a gift
-    /// (the_potter's firewood under a clamp, Oct 20). A quest whose `after` makes it done
-    /// first is passed, and so is one of an earlier age (ages in the order the quests first
-    /// name them), whose lesson is learnt by the time a later age pays. A package answers for
-    /// its own book: a mod's quest asking for sticks is not refused for a base reward of them.
+    /// A reward is a gift, never the lesson: refuses rewards that alone hold another quest's
+    /// `Have` goal while that quest may still be open when they are paid, so a quest that asks
+    /// the player to gather or make a stack is never finished by a gift (the_potter's firewood
+    /// under a clamp, Oct 20). What a giver pays of every item the goal takes is added up. A
+    /// quest whose `after` makes it done first is passed, and so is one of an earlier age,
+    /// whose lesson is learnt by the time a later age pays, and a task that also asks to pick,
+    /// make or use the item, which still teaches it. An age is earlier than another when a
+    /// quest of the other comes after one of it. A package answers for its own book: a mod's
+    /// quest asking for sticks is not refused for a base reward of them.
     fn rewards_skip_no_lesson(&self, blocks: &BlockRegistry) -> Result<(), RegistryError> {
-        let mut ages: Vec<&str> = Vec::new();
+        let firsts: FxHashMap<&str, rustc_hash::FxHashSet<&str>> = self.quests.iter().map(|q| (q.name.as_str(), self.done_before(q))).collect();
+        let mut earlier: rustc_hash::FxHashSet<(&str, &str)> = rustc_hash::FxHashSet::default();
         for quest in &self.quests {
-            if !ages.contains(&quest.age.as_str()) {
-                ages.push(&quest.age);
+            for before in firsts[quest.name.as_str()].iter().filter_map(|name| self.get(name)) {
+                if before.age != quest.age {
+                    earlier.insert((before.age.as_str(), quest.age.as_str()));
+                }
             }
         }
-        let age = |quest: &QuestDef| ages.iter().position(|a| *a == quest.age);
         let package = |quest: &QuestDef| quest.name.split(':').next().unwrap_or("").to_owned();
         let holds = |want: &str, item: &str| match want.strip_prefix("tag:") {
             Some(tag) => blocks.item_named(item).is_some_and(|id| blocks.def(id).has_tag(tag)),
             None => want == item,
         };
         for giver in &self.quests {
-            let first = self.done_before(giver);
-            for (item, count) in giver.rewards.iter().filter_map(|r| match r {
-                Reward::Item(item, _) => Some((item, giver.rewards.iter().map(|r| if let Reward::Item(i, n) = r && i == item { u32::from(*n) } else { 0 }).sum::<u32>())),
-                Reward::Xp(..) => None,
-            }) {
-                let skipped = self.quests.iter().filter(|q| q.name != giver.name && package(q) == package(giver) && !first.contains(q.name.as_str()) && age(q) >= age(giver)).find_map(|q| {
-                    q.tasks.iter().flatten().find_map(|goal| match goal {
-                        Goal::Have(want, need) if count >= *need && holds(want, item) => Some((q, want, need)),
-                        _ => None,
-                    })
-                });
-                if let Some((quest, want, need)) = skipped {
-                    return Err(RegistryError(format!(
-                        "quest {} gives {count} {item}, which alone holds {}'s Have({want}, {need}) while that quest may still be open: give fewer, or put it after {}",
-                        giver.name, quest.name, quest.name
-                    )));
+            let first = &firsts[giver.name.as_str()];
+            let mut given: Vec<(&str, u32)> = Vec::new();
+            for reward in &giver.rewards {
+                if let Reward::Item(item, count) = reward {
+                    match given.iter_mut().find(|(i, _)| i == item) {
+                        Some((_, total)) => *total += u32::from(*count),
+                        None => given.push((item, u32::from(*count))),
+                    }
+                }
+            }
+            let open = self.quests.iter().filter(|q| q.name != giver.name && package(q) == package(giver) && !first.contains(q.name.as_str()) && !earlier.contains(&(q.age.as_str(), giver.age.as_str())));
+            for quest in open {
+                for task in &quest.tasks {
+                    for goal in task {
+                        let Goal::Have(want, need) = goal else { continue };
+                        let paid: Vec<&(&str, u32)> = given.iter().filter(|(item, _)| holds(want, item)).collect();
+                        if paid.iter().map(|(_, n)| n).sum::<u32>() < *need {
+                            continue;
+                        }
+                        let taught = task.iter().filter(|g| !matches!(g, Goal::Have(..))).filter_map(Goal::item).any(|w| w == want || paid.iter().any(|(item, _)| holds(w, item)));
+                        if !taught {
+                            let gifts = paid.iter().map(|(item, n)| format!("{n} {item}")).collect::<Vec<_>>().join(" and ");
+                            return Err(RegistryError(format!(
+                                "quest {} gives {gifts}, which alone holds {}'s Have({want}, {need}) while that quest may still be open: give fewer, or put it after {}",
+                                giver.name, quest.name, quest.name
+                            )));
+                        }
+                    }
                 }
             }
         }
@@ -921,6 +937,11 @@ mod tests {
     /// Content to check quests against: blocks (a log tagged, fish, a kiln's pieces), core
     /// skills and sky's own, a tameable rabbit and a wild wolf, trout to catch and a kiln.
     fn resolved(namespace: &str, quest: &str) -> Result<QuestRegistry, RegistryError> {
+        resolved_with(namespace, quest, &[])
+    }
+
+    /// `resolved`, with `more` blocks (name and tags) beside the usual ones.
+    fn resolved_with(namespace: &str, quest: &str, more: &[(&str, &[&str])]) -> Result<QuestRegistry, RegistryError> {
         let blocks: &[(&str, &[&str])] = &[
             ("base:torch", &[]),
             ("base:oak_log", &["log"]),
@@ -933,7 +954,7 @@ mod tests {
             ("sky:torch", &[]),
             ("sky:cloud", &[]),
         ];
-        let defs = blocks.iter().map(|(name, tags)| crate::block::BlockDef { name: name.to_string(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() }).collect();
+        let defs = blocks.iter().chain(more).map(|(name, tags)| crate::block::BlockDef { name: name.to_string(), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() }).collect();
         let blocks = BlockRegistry::new(defs).unwrap();
         let mut skills = SkillRegistry::default();
         let core = r#"(curve: RuneScape(max: 99), skills: [(name: "mining", title: "", description: ""), (name: "cooking", title: "", description: ""), (name: "fishing", title: "", description: ""), (name: "hunter", title: "", description: "")])"#;
@@ -963,11 +984,28 @@ mod tests {
         assert_eq!(book(&quest("gift", "nomad", "", "Home", r#"Item("torch", 4), Item("torch", 4)"#)).is_some(), true, "two rewards of one item add up");
         assert_eq!(book(&quest("gift", "nomad", "", "Home", r#"Item("torch", 7)"#)), None, "a share of the stack is a help, not the lesson");
         assert_eq!(book(&quest("gift", "nomad", r#""base:stack""#, "Home", r#"Item("torch", 8)"#)), None, "paid only once the stack quest is done");
-        assert_eq!(book(&quest("gift", "farm", "", "Home", r#"Item("torch", 8)"#)), None, "an earlier age's lesson is learnt by then");
         let wood = quest("wood", "nomad", "", r#"Have("tag:log", 4)"#, r#"Xp("mining", 1.0)"#);
         assert!(resolved("base", &format!("{wood}, {}", quest("gift", "nomad", "", "Home", r#"Item("oak_log", 4)"#))).is_err(), "a tagged goal is held by any item with the tag");
         let either = quest("either", "nomad", r#""base:stack|base:wood""#, "Home", r#"Item("torch", 8)"#);
         assert!(resolved("base", &format!("{stack}, {wood}, {either}")).is_err(), "of two ways in, the stack quest is done on only one");
+        let (stacked, wooded) = (quest("stacked", "nomad", r#""base:stack""#, "Home", ""), quest("wooded", "nomad", r#""base:stack""#, "Home", ""));
+        let both = quest("both", "nomad", r#""base:stacked|base:wooded""#, "Home", r#"Item("torch", 8)"#);
+        assert!(resolved("base", &format!("{stack}, {stacked}, {wooded}, {both}")).is_ok(), "both ways in come after the stack quest");
+        let logs = resolved_with("base", &format!("{wood}, {}", quest("gift", "nomad", "", "Home", r#"Item("oak_log", 2), Item("birch_log", 2)"#)), &[("base:birch_log", &["log"])]);
+        assert_eq!(
+            logs.err().map(|e| e.0),
+            Some("quest base:gift gives 2 base:oak_log and 2 base:birch_log, which alone holds base:wood's Have(tag:log, 4) while that quest may still be open: give fewer, or put it after base:wood".to_owned()),
+            "what a giver pays of every item a tag takes adds up"
+        );
+        let picked = quest("picked", "nomad", "", r#"Pick("poppy", 4), Have("poppy", 4)"#, r#"Xp("mining", 1.0)"#);
+        assert!(resolved("base", &format!("{picked}, {}", quest("gift", "nomad", "", "Home", r#"Item("poppy", 4)"#))).is_ok(), "a task that asks to pick the item still teaches it");
+        // A later age read first: the book's file order is no age order.
+        let (hearth, farm) = (quest("hearth", "nomad", "", "Home", ""), quest("farm", "farm", r#""base:hearth""#, r#"Have("torch", 8)"#, ""));
+        let farm_gift = quest("farm_gift", "farm", r#""base:hearth""#, "Home", r#"Item("torch", 8)"#);
+        let farm_first = quest("farm", "farm", r#""base:hearth""#, "Home", "");
+        assert!(resolved("base", &format!("{farm_first}, {hearth}, {stack}, {farm_gift}")).is_ok(), "a Farm reward meets a Nomad stack whose lesson is learnt");
+        let nomad_gift = quest("nomad_gift", "nomad", "", "Home", r#"Item("torch", 8)"#);
+        assert!(resolved("base", &format!("{farm}, {hearth}, {nomad_gift}")).is_err(), "a Nomad reward still meets a Farm stack, wherever its file sorts");
         let gift = quest("gift", "nomad", "", "Home", r#"Item("base:torch", 8)"#);
         let quests = QuestRegistry::new(vec![QuestRegistry::read("base", &format!("(quests: [{stack}])")).unwrap(), QuestRegistry::read("sky", &format!("(quests: [{gift}])")).unwrap()]).unwrap();
         assert!(quests.rewards_skip_no_lesson(&BlockRegistry::new(vec![crate::block::BlockDef { name: "base:torch".into(), ..Default::default() }]).unwrap()).is_ok(), "another package's book is its own");
