@@ -105,8 +105,8 @@ ten-block cliff takes 42 of his 60. A truffle in hand tempts him, to lead him wh
 want him (his `favourite`).
 
 Loot: a great tusk (with a stick, a tusk club: Attack 5, a mace, max hit 5), 3-5 raw pork,
-2-3 hide, 1-2 lard, 2-3 bone, 2-5 gold, and 1 in 9 a flint spear. Hunter XP 60. The
-design's charge charm waits for the charm slot.
+2-3 hide, 1-2 lard, 2-3 bone, 2-5 gold, 1 in 9 a flint spear, and 1 in 65 the Charge Charm
+(very rare): worn in the charm slot, Tusk Stride, 5% faster. Hunter XP 60.
 
 The flint spear (Crafting 2: a flint, two sticks) is the Nomad's spear: Attack 1, max hit 3,
 reach 3.8, and it braces.

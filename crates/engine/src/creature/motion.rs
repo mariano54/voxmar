@@ -93,7 +93,7 @@ impl Body {
         // gap from it (a trench, or a gap before a fence two high) is no stair up to what is
         // beyond.
         let front = self.position + forward * (half - 0.01);
-        if !world.solid(IVec3::new(front.x.floor() as i32, feet - 1, front.z.floor() as i32)) {
+        if !world.footing(IVec3::new(front.x.floor() as i32, feet - 1, front.z.floor() as i32)) {
             return false;
         }
         let mut met = None;
@@ -101,10 +101,14 @@ impl Body {
             let at = self.position + forward * out;
             let cell = IVec3::new(at.x.floor() as i32, feet, at.z.floor() as i32);
             if world.solid(cell) {
+                // A wall with no footing on it (a railing's) is no step.
+                if !world.footing(cell) {
+                    return false;
+                }
                 met = Some((out, cell));
                 break;
             }
-            if !world.solid(cell - IVec3::Y) {
+            if !world.footing(cell - IVec3::Y) {
                 return false;
             }
         }
@@ -147,6 +151,12 @@ pub struct Drive {
 pub trait Surroundings {
     fn solid(&self, cell: IVec3) -> bool;
     fn water(&self, cell: IVec3) -> bool;
+    /// Whether `cell` is something to stand on, as well as solid: a cell that is only a
+    /// wall (over a railing, which stands two high to a creature) or a railing's own narrow
+    /// top is no floor, no step to hop onto and no landing.
+    fn footing(&self, cell: IVec3) -> bool {
+        self.solid(cell)
+    }
 }
 
 /// The yaw that faces along `direction`.
@@ -244,13 +254,17 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // against what it stands on now: the drop between them, and water there, judged the
     // same on the ground or in the air. A wall along the way is ground to no one.
     let reach = SAFE_DROP + 4;
-    let landing = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.solid(c - IVec3::Y));
-    // What it stands on is the highest ground under any part of its box: at an edge, its
-    // middle may already be over the drop.
+    let ground = |from: IVec3| (0..=reach).map(|k| from - IVec3::Y * k).find(|&c| world.water(c) || world.solid(c - IVec3::Y));
+    // Ahead, a railing's top, or the wall over it, is no landing: what comes down there is
+    // off the way, as over a drop too deep.
+    let landing = |from: IVec3| ground(from).filter(|&c| world.water(c) || world.footing(c - IVec3::Y));
+    // What it stands on is the highest ground under any part of its box (at an edge, its
+    // middle may already be over the drop), whatever it is: one already up on a railing,
+    // or on the wall over it, still judges the drop beyond from there.
     let half = body.size.0 * 0.5 - 0.05;
     let Some(now) = [(0.0, 0.0), (half, half), (half, -half), (-half, half), (-half, -half)]
         .into_iter()
-        .filter_map(|(x, z)| landing((body.position + Vec3::new(x, 0.01, z)).floor().as_ivec3()))
+        .filter_map(|(x, z)| ground((body.position + Vec3::new(x, 0.01, z)).floor().as_ivec3()))
         .map(|c| c.y)
         .max()
     else {
@@ -450,8 +464,10 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
         // gap (a deer on a block beside a fence a block off) takes the fence for no step,
         // or it would leap onto a fence two high. Paddling, it hauls itself out of the water.
         let front = body.position + along * (body.size.0 * 0.5 - 0.01);
-        let footed = paddling || world.solid(IVec3::new(front.x.floor() as i32, (body.position.y - 0.01).floor() as i32, front.z.floor() as i32));
-        let boxed = footed && level.intersects(|p| world.solid(p));
+        let footed = paddling || world.footing(IVec3::new(front.x.floor() as i32, (body.position.y - 0.01).floor() as i32, front.z.floor() as i32));
+        // What it meets is a step only if all of it is footing: the wall over a railing
+        // beside it is no step up to walk on air over the railing.
+        let boxed = footed && level.intersects(|p| world.solid(p)) && !level.intersects(|p| world.solid(p) && !world.footing(p));
         // A long head (a boar's snout, a badger's) stops the body short of a step its box
         // never meets (`Body::head_step`): it hops all the same. Either hop springs on toward
         // the step at its pace, its way along having been stopped at the step: else it goes
