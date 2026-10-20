@@ -117,7 +117,7 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     assert_eq!(names(rest(&survey_of("camp"), true)), ["base:healing_sleep", "base:rested"], "a bed under the sky is a plain rest");
     assert_eq!(names(rest(&survey_of("cosy"), true)), ["base:healing_sleep", "base:rested", "base:well_rested"], "under the sky, its seats and lights are only a lit corner");
     // By day the same cosy home is only a nap: the better rests are a night's.
-    let nap = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey_of("cosy")), done: &[], held: &[], near: &[], seated: false, night: false };
+    let nap = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&survey_of("cosy")), done: &[], held: &[], near: &[], worn: &[], seated: false, night: false };
     assert_eq!(names(effects.given_by_sleep(&nap, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect()), ["base:healing_sleep", "base:rested"]);
 }
 
@@ -135,7 +135,7 @@ fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
     assert_eq!(rest(&survey(&[("bed", 1), ("light", 1)])), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)]);
     let corner = survey(&[("bed", 1), ("seat", 1), ("light", 2)]);
     assert_eq!(rest(&corner), [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0), ("base:well_rested".to_owned(), 900.0)]);
-    let noon = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&corner), done: &[], held: &[], near: &[], seated: false, night: false };
+    let noon = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&corner), done: &[], held: &[], near: &[], worn: &[], seated: false, night: false };
     let nap = effects.given_by_sleep(&noon, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
     assert_eq!(nap, [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a lit corner by day is a nap: the mend and Rested, not Well rested");
     assert_eq!(rooms_in(&[("bed", 1), ("seat", 1), ("light", 2)], &calm, true), ["base:bedside"]);
