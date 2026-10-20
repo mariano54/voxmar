@@ -1638,7 +1638,7 @@ impl Server {
     /// `LIT_REACH` of `cell`.
     pub(crate) fn lit_near(&self, cell: IVec3) -> bool {
         let r = LIT_REACH;
-        let held = self.players.values().filter(|p| p.joined && p.held().is_some_and(|item| self.content.tools.held_light(item) > 0));
+        let held = self.players.values().filter(|p| p.joined && p.health.alive() && p.held().is_some_and(|item| self.content.tools.held_light(item) > 0));
         if held.into_iter().any(|p| (p.position.floor().as_ivec3() - cell).abs().max_element() <= r) {
             return true;
         }
