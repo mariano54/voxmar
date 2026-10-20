@@ -62,6 +62,8 @@
         // A hearth or kiln that is cold, or lit with no fuel in hand; a clamp lit with
         // nothing that lights it in hand.
         "multiblock.fuel", "multiblock.cold", "multiblock.lit_by",
+        // A later age's recipe, crafted or laid before its rite.
+        "craft.age",
         // Home stations.
         "station.level", "station.too_few", "station.nothing_grows", "station.needs.sky", "station.needs.spot", "station.needs.water",
         // The land around a station or structure still loading: judged once it is there.

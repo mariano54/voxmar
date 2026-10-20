@@ -9,7 +9,9 @@
 // `blocks`: what breaking a block takes and teaches, the first rule whose tags the block
 // all has: a level in a skill (`level`, RuneScape-style), a tool of a kind and tier
 // (`tool`, `tier`), and the experience it gives. Only natural blocks teach, so breaking
-// what you placed teaches nothing.
+// what you placed teaches nothing. `instead` is sometimes something else in place of its
+// own drop (item, chance); `by` makes that wait on a kind of tool, whose yield adds to the
+// chance.
 //
 // `wear`: how tools and weapons with `uses:N` wear out (blocks_tools.ron). A block a tool is
 // made for takes `suited` uses, any other `unsuited` (a block that breaks at a touch none),
@@ -66,6 +68,9 @@
         // Leaves pulled from a tree give a stick one time in five: the hafts of the first tools.
         (tags: ["leaves", "natural"], instead: ("stick", 0.2)),
         (tags: ["clay", "natural"], skill: "core:mining", xp: 2.0),
+        // Tall grass cut with a knife gives twine one time in five, more with a better knife
+        // (its yield adds: stone 1 in 4, copper 3 in 10, iron 7 in 20); by hand, nothing.
+        (tags: ["fibre", "tall"], instead: ("twine", 0.2), by: "knife"),
         // Gravel breaks to flint one time in eight (arrowheads, spear points).
         (tags: ["gravel", "natural"], skill: "core:mining", xp: 1.0, instead: ("flint", 0.125)),
     ],

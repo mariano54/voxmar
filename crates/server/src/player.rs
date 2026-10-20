@@ -664,6 +664,7 @@ impl Server {
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
         self.kindle_home(id);
+        self.recount_placed(id);
         // An older save's stacked tools with no slot left fall at their feet, theirs and
         // lying as long as a grave does: the pack was full, so they wait for room.
         let feet = self.players[&id].position.floor().as_ivec3();

@@ -81,29 +81,31 @@
         // are the tools a refusal names (`Content::least_tool`).
         (template: "drop", name: "flint_pickaxe", tags: ["uses:50", "mend:flint", "pickaxe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
         (template: "drop", name: "flint_axe", tags: ["uses:50", "mend:flint", "axe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
-        // Wooden: tier 1.
-        (template: "drop", name: "wooden_pickaxe", tags: ["uses:50", "mend:#planks", "pickaxe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
-        (template: "drop", name: "wooden_axe", tags: ["uses:50", "mend:#planks", "axe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
-        (template: "drop", name: "wooden_shovel", tags: ["uses:50", "mend:#planks", "shovel", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
-        (template: "drop", name: "wooden_hoe", tags: ["uses:50", "mend:#planks", "hoe", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70), action: Some("base:till"))),
-        (template: "drop", name: "wooden_knife", tags: ["uses:50", "mend:#planks", "knife", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
+        // A flint knife (a flake on a stick) and a digging stick: the hunter's and the
+        // digger's first tools, hand-made as the axe is. There are no wooden tools: a plank's
+        // edge cuts nothing (older saves' come back as `renamed` says).
+        (template: "drop", name: "flint_knife", tags: ["uses:50", "mend:flint", "knife", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        (template: "drop", name: "digging_stick", tags: ["uses:50", "mend:stick", "shovel", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
         // Stone: tier 2.
-        (template: "drop", name: "stone_pickaxe", tags: ["uses:150", "mend:cobblestone", "pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
-        (template: "drop", name: "stone_axe", tags: ["uses:150", "mend:cobblestone", "axe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
-        (template: "drop", name: "stone_shovel", tags: ["uses:150", "mend:cobblestone", "shovel", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
-        (template: "drop", name: "stone_hoe", tags: ["uses:150", "mend:cobblestone", "hoe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125), action: Some("base:till"))),
-        (template: "drop", name: "stone_knife", tags: ["uses:150", "mend:cobblestone", "knife", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        // A stone head: toolstone ground to an edge at a grindstone (recipes.ron), what every
+        // stone tool is hafted from.
+        (template: "drop", name: "stone_head", tags: ["tool_head"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_pickaxe", tags: ["uses:150", "mend:stone_head", "pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_axe", tags: ["uses:150", "mend:stone_head", "axe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_shovel", tags: ["uses:150", "mend:stone_head", "shovel", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_hoe", tags: ["uses:150", "mend:stone_head", "hoe", "tool", "tier:2", "speed:4", "yield:0.05", "reap:1"], all: (color: (120, 120, 125), action: Some("base:till"))),
+        (template: "drop", name: "stone_knife", tags: ["uses:150", "mend:stone_head", "knife", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         // Copper: tier 3.
         (template: "drop", name: "copper_pickaxe", tags: ["uses:250", "mend:copper_ingot", "pickaxe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
         (template: "drop", name: "copper_axe", tags: ["uses:250", "mend:copper_ingot", "axe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
         (template: "drop", name: "copper_shovel", tags: ["uses:250", "mend:copper_ingot", "shovel", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
-        (template: "drop", name: "copper_hoe", tags: ["uses:250", "mend:copper_ingot", "hoe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70), action: Some("base:till"))),
+        (template: "drop", name: "copper_hoe", tags: ["uses:250", "mend:copper_ingot", "hoe", "tool", "tier:3", "speed:7", "yield:0.1", "reap:1"], all: (color: (190, 110, 70), action: Some("base:till"))),
         (template: "drop", name: "copper_knife", tags: ["uses:250", "mend:copper_ingot", "knife", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
         // Iron: tier 4.
         (template: "drop", name: "iron_pickaxe", tags: ["uses:600", "mend:iron_ingot", "pickaxe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
         (template: "drop", name: "iron_axe", tags: ["uses:600", "mend:iron_ingot", "axe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
         (template: "drop", name: "iron_shovel", tags: ["uses:600", "mend:iron_ingot", "shovel", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
-        (template: "drop", name: "iron_hoe", tags: ["uses:600", "mend:iron_ingot", "hoe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215), action: Some("base:till"))),
+        (template: "drop", name: "iron_hoe", tags: ["uses:600", "mend:iron_ingot", "hoe", "tool", "tier:4", "speed:14", "yield:0.15", "reap:2"], all: (color: (200, 205, 215), action: Some("base:till"))),
         (template: "drop", name: "iron_knife", tags: ["uses:600", "mend:iron_ingot", "knife", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
         // Fishing rods (fishing.ron): a better rod lands more and rarer fish.
         (template: "drop", name: "fishing_rod", tags: ["rod", "tool", "never_wears", "tier:1"], all: (color: (130, 95, 55), action: Some("base:fish"))),
@@ -148,5 +150,13 @@
     // back as the bronze it would have smelted into (Oct 14).
     renamed: {
         "bronze_blend": "bronze_ingot",
+        // The wooden tools, gone (Oct 15): each comes back as the tool that does its work
+        // now. Flint for the pickaxe, axe and knife; the digging stick for the shovel; and,
+        // as no hoe is made below stone, the stone hoe.
+        "wooden_pickaxe": "flint_pickaxe",
+        "wooden_axe": "flint_axe",
+        "wooden_knife": "flint_knife",
+        "wooden_shovel": "digging_stick",
+        "wooden_hoe": "stone_hoe",
     },
 )

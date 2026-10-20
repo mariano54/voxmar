@@ -635,9 +635,10 @@ impl Settlements {
             .collect();
         cells.sort_unstable_by_key(|&(bound, c)| (bound, c.x, c.y));
         let batch = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
-        let mut best: Option<(i64, Arc<Slot>)> = None;
+        // Ties go to the lower x, then z, of the middle, as a sorted scan would give.
+        let mut best: Option<((i64, i32, i32), Arc<Slot>)> = None;
         for group in cells.chunks(batch) {
-            if best.as_ref().is_some_and(|(d, _)| group[0].0 > *d) {
+            if best.as_ref().is_some_and(|(d, _)| group[0].0 > d.0) {
                 break;
             }
             let missing: Vec<IVec2> = group.iter().map(|&(_, c)| c).filter(|&c| !self.plans.has(c)).collect();
@@ -649,8 +650,9 @@ impl Settlements {
             for &(_, c) in group {
                 let slot = self.slot(world, c);
                 let Some(plan) = slot.0.as_ref() else { continue };
-                let d = away(plan.centre);
-                if d <= reach && keep(plan) && best.as_ref().is_none_or(|(b, _)| d < *b) {
+                let d = (away(plan.centre), plan.centre.x, plan.centre.y);
+                // The cheap checks before `keep`, which may look the plan over.
+                if d.0 <= reach && best.as_ref().is_none_or(|(b, _)| d < *b) && keep(plan) {
                     best = Some((d, slot.clone()));
                 }
             }

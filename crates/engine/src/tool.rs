@@ -132,7 +132,14 @@ pub struct RuleDef {
     /// eight (item name, chance).
     #[serde(default)]
     pub instead: Option<(String, f32)>,
+    /// The kind of tool `instead` waits on: tall grass gives twine only to a knife, and a
+    /// better one of the kind finds it more often (its `yield` adds to the chance).
+    #[serde(default)]
+    pub by: Option<String>,
 }
+
+/// The farthest a tool reaps round a crop (`reap:N`): 2 is a five by five patch.
+pub const MAX_REAP: u8 = 2;
 
 fn first_level() -> u8 {
     1
@@ -160,6 +167,8 @@ pub struct Rule {
     pub tier: u8,
     pub xp: f32,
     pub instead: Option<(BlockId, f32)>,
+    /// The kind of tool `instead` waits on, by index.
+    pub by: Option<usize>,
 }
 
 /// What a held item is as a tool.
@@ -170,6 +179,9 @@ pub struct Tool {
     pub tier: u8,
     pub speed: f32,
     pub yield_: f32,
+    /// How far round a ripe crop it cuts the ripe crops of the same kind with it
+    /// (`reap:N`: 1 is the eight about it), for a tool made for crops.
+    pub reap: u8,
     /// Uses it lasts (`uses:N`); 0 if it never wears.
     pub uses: u16,
     /// Seconds it burns, carried, before it is spent (`burns:N`); 0 if it never burns.
@@ -263,7 +275,12 @@ impl ToolRegistry {
                     }
                     None => None,
                 };
-                Ok(Rule { tags: def.tags, skill, level: def.level, tool, tier: def.tier, xp: def.xp, instead })
+                let by = match &def.by {
+                    Some(_) if instead.is_none() => return Err(RegistryError(format!("tools.ron: {:?} names a tool for `by` but nothing `instead`", def.tags))),
+                    Some(name) => Some(kind_of(name).ok_or_else(|| RegistryError(format!("tools.ron: no kind of tool `{name}`")))?),
+                    None => None,
+                };
+                Ok(Rule { tags: def.tags, skill, level: def.level, tool, tier: def.tier, xp: def.xp, instead, by })
             })
             .collect::<Result<Vec<_>, RegistryError>>()?;
         let number = |tags: &[String], prefix: &str| tags.iter().find_map(|t| t.strip_prefix(prefix)?.parse::<f32>().ok());
@@ -343,11 +360,17 @@ impl ToolRegistry {
             mended_near.push(near);
             let has = |tag: &String| tags.contains(tag);
             let kind = tags.iter().any(|t| t == "tool").then(|| kinds.iter().position(|k| has(&k.name))).flatten();
+            let reap = number(tags, "reap:").unwrap_or(0.0);
+            if !(0.0..=MAX_REAP as f32).contains(&reap) || reap.fract() != 0.0 {
+                return Err(RegistryError(format!("{}: `reap:{reap}` is not a whole number from 0 to {MAX_REAP}", blocks.def(id).name)));
+            }
+            let reap = reap as u8;
             tools.push(Tool {
                 kind,
                 tier: number(tags, "tier:").unwrap_or(0.0) as u8,
                 speed: number(tags, "speed:").unwrap_or(1.0).max(0.1),
                 yield_: number(tags, "yield:").unwrap_or(0.0).max(0.0),
+                reap,
                 uses,
                 burns,
                 held_light,
@@ -577,6 +600,13 @@ impl ToolRegistry {
         if self.suits(&tool, block) { tool.speed } else { 1.0 }
     }
 
+    /// How far round `block` (a ripe crop) `item` reaps the ripe crops like it: none for a
+    /// tool not made for it.
+    pub fn reap(&self, item: Option<BlockId>, block: BlockId) -> u8 {
+        let tool = self.tool(item);
+        if self.suits(&tool, block) { tool.reap } else { 0 }
+    }
+
     /// What `item` adds to the chance of an extra or rarer find from `block`.
     pub fn yield_bonus(&self, item: Option<BlockId>, block: BlockId) -> f32 {
         let tool = self.tool(item);
@@ -589,6 +619,20 @@ impl ToolRegistry {
         let Some(kind) = rule.tool else { return true };
         let tool = self.tool(item);
         tool.kind == Some(kind) && tool.tier >= rule.tier
+    }
+
+    /// The chance breaking `block` with `item` gives its rule's `instead`, and what: none
+    /// when the rule waits on another kind of tool.
+    pub fn instead(&self, item: Option<BlockId>, block: BlockId) -> Option<(BlockId, f32)> {
+        let rule = self.rule(block)?;
+        let (given, chance) = rule.instead?;
+        match rule.by {
+            None => Some((given, chance)),
+            Some(kind) => {
+                let tool = self.tool(item);
+                (tool.kind == Some(kind)).then(|| (given, chance + tool.yield_))
+            }
+        }
     }
 
     /// Every item that is a `kind` of at least `tier`, with its tier.
@@ -622,7 +666,7 @@ mod tests {
             block("stone", &["stone", "natural"]),
             block("iron_ore", &["ore", "metal:iron", "natural"]),
             block("log", &["log", "wood"]),
-            block("wooden_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2", "uses:50", "mend:log"]),
+            block("flint_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2", "uses:50", "mend:log"]),
             block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05", "uses:100", "mend:stone"]),
             block("stone_axe", &["axe", "tool", "tier:2", "speed:4", "uses:100", "mend:stone"]),
         ])
@@ -659,7 +703,7 @@ mod tests {
         let iron = tools.rule(id("iron_ore")).unwrap();
         assert_eq!((iron.skill, iron.level, iron.tier, iron.xp), (skills.id("core:mining"), 15, 2, 35.0));
         assert!(!tools.good_enough(None, id("iron_ore")));
-        assert!(!tools.good_enough(Some(id("wooden_pickaxe")), id("iron_ore")));
+        assert!(!tools.good_enough(Some(id("flint_pickaxe")), id("iron_ore")));
         assert!(tools.good_enough(Some(id("stone_pickaxe")), id("iron_ore")));
         assert!(tools.good_enough(None, id("stone")), "stone needs no tool");
         assert!(tools.rule(id("log")).is_none());
@@ -749,15 +793,15 @@ mod tests {
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
         let content = crate::content::Content::load(&assets).unwrap();
         let (tools, id) = (&content.tools, |name: &str| content.blocks.expect(name));
-        let pick = id("base:wooden_pickaxe");
+        let pick = id("base:flint_pickaxe");
         let uses = tools.uses(pick);
         assert!(uses > 0 && tools.head(pick).is_none(), "a break gives nothing of what made it back");
-        assert!(tools.mends(pick).contains(&id("base:oak_planks")), "mended with planks of any wood");
+        assert!(tools.mends(pick).contains(&id("base:flint")), "mended with flint");
         assert_eq!(crate::inventory::max_stack(pick), 1, "what wears stacks one at a time");
         let worn = crate::inventory::ItemStack { wear: uses - 3, ..crate::inventory::ItemStack::new(pick, 1) };
         let mut grid = [None; crate::craft::GRID];
         grid[0] = Some(worn);
-        grid[4] = Some(crate::inventory::ItemStack::new(id("base:oak_planks"), 5));
+        grid[4] = Some(crate::inventory::ItemStack::new(id("base:flint"), 5));
         let by_block = |tag: &str| tag == "chopping_block";
         let mended = tools.mended(&grid, by_block).expect("mended by a chopping block");
         assert_eq!((mended.item, mended.wear), (pick, uses - 3 - (uses as f32 * tools.wear().mend).round() as u16));
@@ -772,9 +816,9 @@ mod tests {
         grid[8] = None;
         grid[4] = Some(crate::inventory::ItemStack::new(id("base:cobblestone"), 1));
         assert_eq!(tools.mended(&grid, by_block), None, "not what mends it");
-        // One plank brings a wooden knife (one plank) back whole, a pickaxe (three) half;
+        // One flint brings a flint knife (one flint) back whole, a pickaxe (two) half;
         // mending an iron pickaxe asks the level making one does.
-        let knife = id("base:wooden_knife");
+        let knife = id("base:flint_knife");
         assert_eq!((tools.mend_share(pick), tools.mend_share(knife)), (0.5, 1.0));
         // A trophy is kept by care: the tusk club by its twine bindings, half at a time.
         let club = id("base:tusk_club");
@@ -785,7 +829,7 @@ mod tests {
         let lacks = |own: u8, boosted: u8| crate::level::lacks_for_mend(tools, id("base:iron_pickaxe"), |_| (own, boosted), &crate::inventory::Inventory::default(), &content.blocks);
         assert_eq!((lacks(14, 14), lacks(14, 15), lacks(15, 15)), (Some((engineering, 15)), None, None));
         grid[0] = Some(crate::inventory::ItemStack { wear: tools.uses(knife) - 1, ..crate::inventory::ItemStack::new(knife, 1) });
-        grid[4] = Some(crate::inventory::ItemStack::new(id("base:oak_planks"), 1));
+        grid[4] = Some(crate::inventory::ItemStack::new(id("base:flint"), 1));
         assert_eq!(tools.mended(&grid, by_block).map(|m| m.wear), Some(0));
         // Every tool and weapon wears (or says it never does) and has a mend that exists,
         // and tools last longer the better their tier.
@@ -803,8 +847,10 @@ mod tests {
                 assert!(lang.defines(&key), "{code} names {key}");
             }
         }
-        for kind in ["pickaxe", "axe", "shovel", "hoe", "knife"] {
-            let lasts: Vec<u16> = ["wooden", "stone", "copper", "iron"].iter().map(|tier| tools.uses(id(&format!("base:{tier}_{kind}")))).collect();
+        // Tier 1 is flint, or the digging stick; there is no tier-1 hoe.
+        for (kind, first) in [("pickaxe", Some("flint_pickaxe")), ("axe", Some("flint_axe")), ("shovel", Some("digging_stick")), ("hoe", None), ("knife", Some("flint_knife"))] {
+            let tiers = ["stone", "copper", "iron"].map(|tier| format!("{tier}_{kind}"));
+            let lasts: Vec<u16> = first.map(String::from).iter().chain(&tiers).map(|name| tools.uses(id(&format!("base:{name}")))).collect();
             assert!(lasts.windows(2).all(|w| w[0] < w[1]), "{kind}s last longer the better they are: {lasts:?}");
         }
     }
@@ -872,10 +918,101 @@ mod tests {
         assert!(refused.is_empty(), "cobble a bare hand cannot break: {refused:?}");
     }
 
+    /// Tall grass gives twine only to a knife, and a better knife finds it more often; by
+    /// hand or with another tool it gives nothing instead. A rule's `by` must name a kind
+    /// and come with an `instead`.
+    #[test]
+    fn tall_grass_gives_twine_to_a_knife() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        let twine = id("twine");
+        for grass in [id("tall_grass"), id("tall_grass_top")] {
+            assert_eq!(content.tools.instead(None, grass), None, "by hand");
+            assert_eq!(content.tools.instead(Some(id("stone_axe")), grass), None, "with an axe");
+            let chances: Vec<f32> = ["flint_knife", "stone_knife", "copper_knife", "iron_knife"]
+                .iter()
+                .map(|knife| content.tools.instead(Some(id(knife)), grass).filter(|&(given, _)| given == twine).expect("twine with a knife").1)
+                .collect();
+            assert!(chances.windows(2).all(|w| w[0] < w[1]) && chances[0] >= 0.2, "{chances:?}");
+        }
+        assert_eq!(content.tools.instead(None, id("short_grass")), None, "short grass gives no twine");
+        assert_eq!(content.tools.instead(None, id("wild_wheat")), None, "wild wheat forages as before");
+        assert_eq!(content.tools.instead(None, id("gravel")).map(|(given, _)| given), Some(id("flint")), "gravel's flint needs no tool");
+
+        let (blocks, skills, _) = setup();
+        for (source, error) in [
+            (r#"(kinds: [(name: "knife", mines: [])], blocks: [(tags: ["log"], by: "knife")])"#, "nothing `instead`"),
+            (r#"(kinds: [], blocks: [(tags: ["log"], instead: ("t:stone", 0.5), by: "sickle")])"#, "no kind of tool `sickle`"),
+        ] {
+            let err = ToolRegistry::new(vec![ToolRegistry::read("t", source).unwrap()], &blocks, &skills).unwrap_err();
+            assert!(err.0.contains(error), "{}", err.0);
+        }
+    }
+
+    /// A stone or better hoe reaps the ripe crops about the one it cuts, an iron one a
+    /// wider patch; a bare hand and other tools (a knife) reap only the one.
+    #[test]
+    fn better_hoes_reap_round_a_crop() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        let wheat = id("wheat_crop");
+        let reaps: Vec<u8> = ["flint_knife", "stone_hoe", "copper_hoe", "iron_hoe"].iter().map(|hoe| content.tools.reap(Some(id(hoe)), wheat)).collect();
+        assert_eq!(reaps, [0, 1, 1, 2]);
+        assert_eq!(content.tools.reap(None, wheat), 0, "by hand");
+        assert_eq!(content.tools.reap(Some(id("iron_hoe")), id("stone")), 0, "a hoe reaps only what it is made for");
+        assert_eq!(content.tools.reap(Some(id("iron_axe")), wheat), 0, "an axe reaps nothing");
+        assert!(content.blocks.ids().all(|b| content.tools.tool(Some(b)).reap <= MAX_REAP));
+
+        // Wider than MAX_REAP, or a fraction, is refused at load.
+        let (_, skills, _) = setup();
+        for tag in ["reap:3", "reap:1.5"] {
+            let hoe = BlockDef { name: "t:hoe".into(), tags: ["hoe", "tool", "uses:50", tag].iter().map(|t| t.to_string()).collect(), ..Default::default() };
+            let blocks = BlockRegistry::new(vec![BlockDef { name: "t:air".into(), ..Default::default() }, hoe]).unwrap();
+            let file = ToolRegistry::read("t", r#"(kinds: [(name: "hoe", mines: ["crop"])])"#).unwrap();
+            let err = ToolRegistry::new(vec![file], &blocks, &skills).unwrap_err();
+            assert!(err.0.contains("not a whole number"), "{tag}: {}", err.0);
+        }
+    }
+
+    /// Stone tools want hard rock (Mariano, Oct 15: stone should take searching): every
+    /// recipe of a tier-2 tool asks for something made only near a workshop block from
+    /// toolstone, never plain cobble; that block is made in the hand's grid; and toolstone is
+    /// found as natural rock, deepslate among it so mining down reaches it anywhere, while the
+    /// commonest stone is not.
+    #[test]
+    fn stone_tools_take_toolstone_ground_at_a_workshop() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let blocks = &content.blocks;
+        let toolstone = |item: BlockId| blocks.def(item).has_tag("toolstone");
+        let natural: Vec<&str> = blocks.tagged("toolstone").filter(|&b| blocks.def(b).has_tag("natural")).map(|b| blocks.def(b).name.as_str()).collect();
+        assert!(natural.contains(&"base:deepslate"), "deepslate, under every province, is no toolstone: {natural:?}");
+        assert!(!toolstone(blocks.expect("base:stone")) && !toolstone(blocks.expect("base:cobblestone")), "plain stone takes an edge");
+        let tools: Vec<BlockId> = blocks.tagged("tool").filter(|&t| blocks.def(t).has_tag("tier:2")).collect();
+        assert!(!tools.is_empty(), "no tier-2 tools");
+        for tool in tools {
+            let name = &blocks.def(tool).name;
+            let recipes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == tool).collect();
+            assert!(!recipes.is_empty(), "{name} has no recipe");
+            for recipe in recipes {
+                let ground: Vec<BlockId> = recipe.alternatives().into_iter().flatten().flatten().copied().filter(|&i| {
+                    let makes: Vec<&crate::craft::Recipe> = content.recipes.iter().filter(|r| r.output == i).collect();
+                    !makes.is_empty() && makes.iter().all(|r| r.near.is_some() && r.alternatives().into_iter().flatten().all(|cell| cell.iter().all(|&c| toolstone(c))))
+                }).collect();
+                let head = ground.first().unwrap_or_else(|| panic!("{name} is made without a head ground from toolstone"));
+                let near = content.recipes.iter().find(|r| r.output == *head).and_then(|r| r.near.clone()).unwrap();
+                let workshop = blocks.tagged(&near).find(|&b| content.recipes.iter().any(|r| r.output == b && !r.needs_table()));
+                assert!(workshop.is_some(), "no block tagged {near} is made in the hand's grid, for {name}");
+            }
+        }
+    }
+
     /// Each tier of each kind is felt (Oct 14 tier audit, docs/tools-and-crafting.md): on
     /// the blocks tools are for (a log, cobblestone, an ore), a block with the next tier
     /// takes at most 1/1.35 of the time with the one before, counting the quarter second the
-    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to wood, wood to
+    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to flint, flint to
     /// stone, stone to copper, copper to iron.
     #[test]
     fn every_tool_tier_is_felt() {
@@ -886,7 +1023,7 @@ mod tests {
         for (kind, blocks) in [("axe", ["oak_log"].as_slice()), ("pickaxe", ["cobblestone", "coal_ore"].as_slice())] {
             for block in blocks {
                 let hardness = content.blocks.info(id(block)).hardness;
-                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["wooden", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
+                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["flint", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
                 let seconds: Vec<f32> = held.iter().map(|&item| hardness / content.tools.speed(item, id(block)) + BREAK_WAIT).collect();
                 for (step, pair) in seconds.windows(2).enumerate() {
                     assert!(pair[0] / pair[1] >= 1.35, "{block}: tier {step} to {} with a {kind} is only {:.2}x ({seconds:?})", step + 1, pair[0] / pair[1]);

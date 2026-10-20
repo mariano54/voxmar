@@ -28,6 +28,7 @@
 //   tag a block has must be in `roofs.shelter` or here, or the game does not start.
 // sounds: one-shots, played `per_minute` times a minute while their conditions fully hold,
 //   then not again for `cooldown` seconds. `at` is Block(group) (a block the scan found),
+//   OpenBlock(group) (one of those with nothing over it but the sky; none, not heard),
 //   Around(distance, height) or Listener. `reach` is the distance (blocks) at which they
 //   are half as loud; `pitch` the range of playback speed.
 //
@@ -289,6 +290,12 @@
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},
         ),
+        // By the hearth on a stormy night: the wind moaning low over the chimney, louder
+        // in the gusts.
+        (
+            name: "flue", sound: Flue, volume: 0.14, fade: 4,
+            when: {"fire": (min: 0.6, fade: 0.55), "shelter": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 6), "sun": (max: 0.05, fade: 0.15)},
+        ),
         // Thatch about to catch: a soft, close sizzle, the warning before the flame (with
         // `smoulder_crackle`'s spits). Only while the server says it smoulders.
         (
@@ -490,6 +497,13 @@
             pitch: (0.85, 1.2), reach: 5,
             when: {"fire": (min: 0.25, fade: 0.2)},
         ),
+        // Rain falling into a fire with the sky over it: drops hissing on the embers, from
+        // that fire, wherever the player stands; a hearth under its roof never.
+        (
+            name: "fire_sizzle", sound: Sizzle, volume: 0.24, at: OpenBlock("fire"), per_minute: 6, cooldown: 4,
+            pitch: (0.9, 1.15), reach: 6,
+            when: {"fire": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2)},
+        ),
         // A log settling in a fire now and then: a soft fall, sparks and a hiss, so a hearth
         // sat by for a while is never one loop.
         (
@@ -560,9 +574,10 @@
             duck: {"rain": 0.8},
         ),
         // The shrine's bell at dawn and again at dusk, heard across the whole place and a
-        // way beyond it.
+        // way beyond it. Dawn and dusk last a minute or so: rung soon in it, and only once,
+        // as it waits out the rest (`cooldown`).
         (
-            name: "shrine_bell", sound: Bell, volume: 0.28, at: Building(buildings: ["shrine"]), per_minute: 0.6, cooldown: 90,
+            name: "shrine_bell", sound: Bell, volume: 0.28, at: Building(buildings: ["shrine"]), per_minute: 8, cooldown: 240,
             pitch: (0.97, 1.03), reach: 48,
             when: {"settlement_edge": (max: 24, fade: 60), "sun": (min: -0.15, max: 0.15, fade: 0.05), "depth": (max: 2, fade: 4)},
         ),

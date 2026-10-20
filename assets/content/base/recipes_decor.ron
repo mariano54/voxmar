@@ -27,6 +27,11 @@
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["{name}_planks", "", "{name}_planks"], ["{name}_planks", "", "{name}_planks"]], output: "{name}_desk", skill: "core:construction", level: 7, xp: 6.0),
         // Books are bound in hide until the Farm age brings paper.
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["hide", "hide", "hide"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_bookshelf", skill: "core:construction", level: 8, xp: 8.0),
+        // Built in for a cosier home: a bench boxed in under a wool cushion, a slab on a
+        // stick for a sill, a shelf stood with two clay pots.
+        (ingredients: ["{name}_bench", "{name}_planks", "{name}_planks", "wool"], output: "{name}_window_seat", skill: "core:construction", level: 5, xp: 5.0),
+        (ingredients: ["{name}_slab", "stick"], output: "{name}_sill", count: 2, skill: "core:construction", level: 3, xp: 2.0),
+        (ingredients: ["{name}_shelf", "clay_pot", "clay_pot"], output: "{name}_pantry_shelf", skill: "core:construction", level: 5, xp: 4.0),
         (ingredients: ["{name}_cupboard", "{name}_planks", "{name}_planks", "{name}_planks"], output: "{name}_wardrobe", skill: "core:construction", level: 10, xp: 6.0),
 
         // A cloth is a wool and a flower that dyes it, until the loom (one line a dye: each
@@ -74,17 +79,17 @@
         // a right click, it is lit (blocks_furnishings.ron).
         (pattern: [["", "twine"], ["fired_clay", "fired_clay"]], output: "clay_oil_lamp_empty", skill: "core:crafting", level: 4, xp: 4.0),
         // A skep: wheat straw coiled into a dome, bound with twine; a swarm is taken into it.
-        (pattern: [["wheat", "wheat", "wheat"], ["wheat", "twine", "wheat"], ["twine", "", "twine"]], output: "skep", skill: "core:crafting", level: 6, xp: 10.0),
+        (pattern: [["wheat", "wheat", "wheat"], ["wheat", "twine", "wheat"], ["twine", "", "twine"]], output: "skep", age: "farm", skill: "core:crafting", level: 6, xp: 10.0),
         // A drying rack (stations.ron): two sticks a side and a row of twine to hang meat on.
         (pattern: [["stick", "", "stick"], ["twine", "twine", "twine"], ["stick", "", "stick"]], output: "drying_rack", skill: "core:crafting", level: 1, xp: 8.0),
         // A snare (traps.ron): a loop of twine on two pegs.
         (pattern: [["twine", "twine"], ["stick", "stick"]], output: "snare", skill: "core:hunter", level: 1, xp: 4.0),
         // A compost heap (stations.ron): boards round three sides and the bottom.
-        (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "compost_heap", skill: "core:construction", level: 5, xp: 12.0),
+        (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "compost_heap", age: "farm", skill: "core:construction", level: 5, xp: 12.0),
         // A cooking pot: fired clay about a clay pot (Nomad, Crafting 3).
-        (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "clay_pot", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "cooking_pot", skill: "core:crafting", level: 3, xp: 14.0),
+        (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "clay_pot", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "cooking_pot", age: "farm", skill: "core:crafting", level: 3, xp: 14.0),
         // A well: a ring of cobbles about a pail, under a beam (Farm, Construction 8).
-        (pattern: [["stick", "tag:planks", "stick"], ["tag:cobbled", "pail", "tag:cobbled"], ["tag:cobbled", "tag:cobbled", "tag:cobbled"]], output: "well", skill: "core:construction", level: 8, xp: 16.0),
+        (pattern: [["stick", "tag:planks", "stick"], ["tag:cobbled", "pail", "tag:cobbled"], ["tag:cobbled", "tag:cobbled", "tag:cobbled"]], output: "well", age: "farm", skill: "core:construction", level: 8, xp: 16.0),
         // A feed trough: planks in a low U.
         (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "feed_trough", skill: "core:construction", level: 4, xp: 8.0),
         // Two herbs tied up with twine, to hang and dry: a home's herb nook.
@@ -95,7 +100,7 @@
         (pattern: [["{name}"], ["{name}"], ["{name}"]], output: "{name}_column", count: 2, skill: "core:construction", level: 12, xp: 8.0),
         (pattern: [["cobblestone", "charcoal", "cobblestone"], ["", "cobblestone", ""]], output: "brazier", skill: "core:construction", level: 8, xp: 6.0),
         (pattern: [["iron_ingot", "", "iron_ingot"], ["iron_ingot", "", "iron_ingot"], ["iron_ingot", "iron_ingot", "iron_ingot"]], output: "cauldron", skill: "core:engineering", level: 15, xp: 20.0),
-        (pattern: [["cobblestone", "cobblestone", "cobblestone"], ["cobblestone", "campfire", "cobblestone"]], output: "cottage_stove", skill: "core:construction", level: 5, xp: 6.0),
+        (pattern: [["cobblestone", "cobblestone", "cobblestone"], ["cobblestone", "campfire", "cobblestone"]], output: "cottage_stove", age: "farm", skill: "core:construction", level: 5, xp: 6.0),
         // A weaver's and a miller's room, until the Farm age's machines.
         (pattern: [["oak_planks", "stick", "oak_planks"], ["stick", "twine", "stick"], ["oak_planks", "", "oak_planks"]], output: "loom_frame", skill: "core:crafting", level: 8, xp: 8.0),
         (pattern: [["oak_planks", "stick"], ["stick", "twine"]], output: "spindle_stand", skill: "core:crafting", level: 6, xp: 5.0),

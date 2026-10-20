@@ -44,15 +44,16 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
-Seats are stools, chairs, benches and cushions; tables include desks and counters; storage is
-whatever a home keeps things in or on: chests, cupboards and wardrobes, shelves (pot shelves
-and bookshelves too), crate stacks, barrel racks, jars and baskets, and a village's barrels
-and crates (every store a player opens counts but the feed trough, which is the pen's: test
+Seats are stools, chairs, benches, cushions and window seats; tables include desks and
+counters; storage is whatever a home keeps things in or on: chests, cupboards and wardrobes,
+stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves too),
+crate stacks, barrel racks, jars and baskets, and a village's barrels and crates (every
+store a player opens counts but the feed trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
-of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage stove and cauldron;
-workshop is the loom frame, spindle stand and quern. All are craftable in the first two ages
-(Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
-crafting, not a grind.
+of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage stove and
+cauldron; workshop is the loom frame, spindle stand and quern. All are craftable in the
+first two ages (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of
+gathering and crafting, not a grind.
 
 ## Walls (how well a home is built)
 

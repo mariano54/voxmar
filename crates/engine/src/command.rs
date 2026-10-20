@@ -78,6 +78,8 @@ pub enum Run {
     Creatures,
     /// Sets a player's level in a skill.
     Skill,
+    /// Marks a quest done for the player, its rewards waiting to be claimed.
+    Quest,
     /// Tells how the machine at a block is doing.
     Machine,
     /// Lists, starts and ends wandering parties (`wandering.ron`).
