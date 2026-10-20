@@ -1070,6 +1070,39 @@ fn a_village_rug_gives_nothing_but_a_players_comes_back_whole_across_restarts() 
     furnishing_drops_across_restarts("rug", "red_rug", "red_rug", 1);
 }
 
+#[test]
+fn a_players_door_or_curtain_opened_still_gives_itself_back() {
+    swapped_furnishing_gives_itself_back("door", "wooden_door", "wooden_door_open");
+    swapped_furnishing_gives_itself_back("curtain", "red_curtain", "red_curtain_open");
+}
+
+/// A swap (opening a door, drawing a curtain back) is the same thing in another state: the
+/// player's piece, opened and broken, still drops itself.
+fn swapped_furnishing_gives_itself_back(label: &str, name: &str, open: &str) {
+    let dir = world_dir(label);
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let feet = client.position.floor().as_ivec3();
+    let own = feet + IVec3::new(-1, 0, 1);
+    for line in ["/clear".to_owned(), format!("/give {name} 1"), "/fill ~-1 ~ ~1 ~-1 ~1 ~1 air".to_owned(), "/fill ~-1 ~-1 ~1 ~-1 ~-1 ~1 stone".to_owned()] {
+        client.ok(&line);
+    }
+    let (shut, opened) = (client.content.blocks.expect(&format!("base:{name}")), client.content.blocks.expect(&format!("base:{open}")));
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == shut));
+    client.propose("core:place", ActionTarget::Block { block: own - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(shut));
+    client.propose("base:open", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(opened));
+    client.propose("core:mine", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(BlockId::AIR));
+    let back = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == shut).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == shut).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    assert_eq!(client.quiet(back), 1, "a player's {name}, opened and broken, gave nothing back");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 fn furnishing_drops_across_restarts(label: &str, name: &str, material: &str, count: usize) {
     let dir = world_dir(label);
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
@@ -3276,8 +3309,11 @@ fn a_bare_hand_fells_no_tree_and_a_flint_axe_does() {
 // Keeping the locate radius small avoids planning hundreds of squares on the server.
 const VILLAGE_SEED: u64 = 3;
 
+/// The settlement tests' view distance, in columns.
+const SETTLEMENT_VIEW: i32 = 2;
+
 fn settlement_client() -> Client {
-    Client::join_with(ServerConfig { seed: VILLAGE_SEED, view_distance: 2, ..Default::default() })
+    Client::join_with(ServerConfig { seed: VILLAGE_SEED, view_distance: SETTLEMENT_VIEW, ..Default::default() })
 }
 
 /// Goes to the nearby test village within 2000 blocks at `time`, as a creative admin:
@@ -3342,7 +3378,8 @@ fn villagers_sleep_at_night_and_go_about_their_day() {
     let asleep = |c: &Client| villagers(c).iter().filter(|v| v.pose == Pose::Resting).count();
     client.pump_until(|c| asleep(c) * 3 >= villagers(c).len() * 2);
     let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
-    let overworld = voxmar_worldgen::Overworld::with_content(VILLAGE_SEED, client.content.blocks.clone(), &world_content);
+    // The server's own generator (`Overworld::shared`), the village round it already planned.
+    let overworld = voxmar_worldgen::Overworld::shared(VILLAGE_SEED, &client.content, &world_content);
     let towns = overworld.settlements_near(client.position.floor().as_ivec3().xz(), 256);
     let mut resting: Vec<_> = villagers(&client).into_iter().filter(|v| v.pose == Pose::Resting)
         .map(|v| (v.seed, species_name(&client, &v), v.position)).collect();
@@ -3383,7 +3420,7 @@ fn a_settlement_come_back_to_holds_its_people_once() {
     client.ok("/time freeze");
     // A person comes out only onto land the server holds, so on a busy machine they kept
     // coming as the land came in, past twenty looks: the looks begin once it is all in.
-    client.land_within(2);
+    client.land_within(SETTLEMENT_VIEW);
     // Settled: the same people two looks running. On a loaded machine the server can still
     // be bringing them in after three looks, so it looks until they hold still.
     let mut before = census(&client);
@@ -9544,7 +9581,8 @@ fn a_village_bed_is_someones() {
     let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
     let refused = |c: &Client| c.refused.iter().any(|t| t.contains("belongs to someone"));
     let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
-    let overworld = voxmar_worldgen::Overworld::with_content(VILLAGE_SEED, client.content.blocks.clone(), &world_content);
+    // The server's own generator (`Overworld::shared`), the village round it already planned.
+    let overworld = voxmar_worldgen::Overworld::shared(VILLAGE_SEED, &client.content, &world_content);
     let towns = overworld.settlements_near(client.position.floor().as_ivec3().xz(), 256);
     // A ground-floor bed, by the floor its home stands on.
     let (home, bed) = towns.iter().flat_map(|t| &t.buildings).find_map(|b| b.beds.iter().find(|p| p.y == b.floor + 1).map(|&p| (b.clone(), p))).expect("a village home with a bed on its ground floor");
@@ -9588,6 +9626,34 @@ fn a_village_bed_is_someones() {
     assert!(!refused(&client), "a bag set in a village bed's place was refused");
 }
 
+/// Soft things count at home (docs/home.md Rooms): a rug and a wall hanging by a slept-in
+/// bag under a roof make Soft furnishings, announced; the hanging taken down, it goes.
+#[test]
+fn a_rug_and_a_hanging_make_soft_furnishings() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let bag = feet + IVec3::new(2, 0, 0);
+    let (rug, hanging) = (feet + IVec3::new(1, 0, 2), feet + IVec3::new(3, 1, -2));
+    for line in [
+        format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 3, feet.z - 3, feet.x + 6, feet.y + 3, feet.z + 3),
+        format!("/setblock {} {} {} red_rug", rug.x, rug.y, rug.z),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(rug) == c.content.blocks.id("base:red_rug"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested"));
+    assert!(!has(&client, "base:soft_furnishings"), "a rug alone is not soft furnishings");
+    client.chat.clear();
+    client.ok(&format!("/setblock {} {} {} red_wall_hanging", hanging.x, hanging.y, hanging.z));
+    client.pump_until(|c| has(c, "base:soft_furnishings") && told(c, "Soft furnishings:"));
+    client.ok(&format!("/setblock {} {} {} air", hanging.x, hanging.y, hanging.z));
+    client.pump_until(|c| !has(c, "base:soft_furnishings"));
+}
+
 /// A bed in a town's farthest house, over 64 blocks from its middle, is as much the
 /// town's as one by its well: sleep there is refused, as the bed's settlement is the one
 /// whose square holds it, not one found within a reach of it.
@@ -9597,7 +9663,8 @@ fn a_bed_far_out_in_a_town_is_someones() {
     let mut client = Client::join_with(ServerConfig { seed, view_distance: 2, allow_flight: false, ..Default::default() });
     client.admin = true;
     let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
-    let overworld = voxmar_worldgen::Overworld::with_content(seed, client.content.blocks.clone(), &world_content);
+    // The server's own generator (`Overworld::shared`): the town is planned once, for both.
+    let overworld = voxmar_worldgen::Overworld::shared(seed, &client.content, &world_content);
     let town = overworld.nearest_settlement(client.position.floor().as_ivec3().xz(), 10000, |s| s.size == "town").expect("a town");
     // Its farthest ground-floor bed from the middle, and the home it stands in.
     let (far, home, bed) = town

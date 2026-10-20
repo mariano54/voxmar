@@ -116,7 +116,8 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
 | Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
-| Bright room | a roof, 2 windows (`window`: hide window, glass) | heal x1.05, learn x1.05 |
+| Bright room | a roof, 2 windows (`window`: hide window, glass, lattice window, open shuttered window) | heal x1.05, learn x1.05 |
+| Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging or a curtain) | 1° warmer |
 | Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
@@ -127,6 +128,11 @@ The herb nook is the Farm age's: two herbs tied with twine hang to dry (Crafting
 bunches); two bunches and a jar, basket or crate make it. Its farming level counts where it
 is felt, sowing the kitchen garden at the door (a crop a level early) and harvesting it, and
 its alchemy level at the bench.
+Soft furnishings keep the draught off: a rug underfoot and cloth hung on a wall or at a window
+(`drape`: a wall hanging, two cloths over two sticks, Crafting 4, any dye, or a curtain) under the home's roof, 1°
+warmer; two rugs are not enough
+(`a_rug_and_a_hanging_under_a_roof_are_soft_furnishings`, the server's
+`a_rug_and_a_hanging_make_soft_furnishings`, the gate's walls step: "home: soft furnishings").
 The dooryard is the Farm age's too, the home's outside (home audit 2, item 10: outdoor decor
 used to count for nothing): an awning at the door and two more things set out under the sky
 about it. A yard piece counts only where it stands under the open sky (effects.ron
@@ -633,9 +639,11 @@ again when its player joins.
 A home shows its lit rooms at night: a window glows warm by the light of the room behind it.
 Before glass there is the Hide Window (Farm, Construction 3: a hide in a frame of eight sticks,
 two windows), oiled hide in a stick frame. Every block tagged `window` (the hide window, glass,
-settlements' old glass) passes block light as air does (a `Cutout` cube), so a candle or the
-hearth behind it lights the ground outside, and is `lit_through` (a block field, any mod's
-window can say it): its bright texels glow by the block light reaching its face, which came
+settlements' old glass, and the lattice window and open shuttered window, which are shapes,
+not cubes) passes block light as air does (a `Cutout` cube, or light through a lattice's
+squares), so a candle or the hearth behind it lights the ground outside, and is
+`lit_through` (a block field, any mod's window can say it): its bright texels glow by the
+block light reaching its face, which came
 through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
 glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
 stands out after dark. Two windows in a home's walls under its roof make it a **Bright
@@ -643,7 +651,13 @@ room** (Rooms above; home audit 2, item 10: windows used to count for nothing), 
 a package tags `window` (`two_windows_at_home_make_a_bright_room`, the server's
 `windows_at_home_make_a_bright_room`, the gate's walls step: "home: bright room"). A dark
 room's window stays dark; a wall keeps the light in
-(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). A curtain hung inside a
+window draws across and back with a right click (`swaps`, as a door; drawn back it is
+`{name}_curtain_open` and gives the curtain): drawn across, it keeps most of the room's
+light in (`light_filter: 8`), so a lit home's window glows low at night, and drawn back
+the light goes through as air (`a_drawn_curtain_keeps_the_light_in`; the gate's walls step
+hangs one inside a pane and draws it back: "home: curtain"). Either way it is a curtain for
+the ladder's steps and a drape (`drape`, which Soft furnishings asks beside a rug). The gate's Door step then
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).
 

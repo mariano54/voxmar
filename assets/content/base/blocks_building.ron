@@ -9,17 +9,19 @@
 // room is dark until it is lit; its faces take the light of the open side they face
 // (`light_filter: 14`, see mesh.rs `emit_model`). Placed, a roof's eave and a lattice's face
 // turn to whoever set them; a beam runs away from them, and set against a block's
-// underside it hangs at the top of its cell, a joist under a floor (`flips`). A lattice lets
-// light through the squares between its laths, so it is no `window` (a pane that glows by
-// the light through it, `lit_through`): its laths share the timber's drawing, which glowing
-// would light every oak post and chair leg.
+// underside it hangs at the top of its cell, a joist under a floor (`flips`). A lattice is a
+// `window`, open or with its shutters open: light comes through the squares between its
+// laths, and its frame and laths glow by a lit room's light (`lit_through`). Glow is a
+// drawing's, not a block's, so a lattice draws with its own `lattice_grain`, never the
+// `furniture_grain` every post, beam and chair leg shares (block.rs refuses a glowing face
+// drawn as a block that does not glow); shut, or the leaves of open shutters, it is plain timber.
 (
     templates: {
         // Timber in one wood (`{name}`).
         "timber": [
             (name: "{name}_post", render: Model, shape: "post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "post", "wood", "building", "fuel", "shelter:sound"]),
             (name: "{name}_beam", render: Model, shape: "beam", facing: true, flips: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "beam", "wood", "building", "fuel", "shelter:sound"]),
-            (name: "{name}_lattice_window", render: Model, shape: "lattice_window", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "wood", "building", "shelter:draughty", "draught"]),
+            (name: "{name}_lattice_window", render: Model, shape: "lattice_window", facing: true, sound: Wood, textures: All("lattice_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "window", "wood", "building", "shelter:draughty", "draught"], lit_through: true),
             (name: "{name}_shingles", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "wood", "building", "fuel", "shelter:sound"]),
             // A jetty: a joist run out past the wall below to carry a floor over the street,
             // a brace under it back to the wall. Its overhang faces whoever set it.
@@ -47,8 +49,9 @@
             // come through. A right click shuts them across it (`swaps`, as a door), and it
             // is a sound wall that keeps the light out.
             (
-                name: "{name}_shuttered_window", render: Model, shape: "lattice_shutters_open", facing: true, sound: Wood, textures: All("furniture_grain"),
-                swaps: "{name}_shuttered_window_shut", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "shutters", "shutters_open", "wood", "building", "fuel", "shelter:draughty", "draught"],
+                name: "{name}_shuttered_window", render: Model, shape: "lattice_shutters_open", facing: true, sound: Wood, textures: All("lattice_grain"),
+                swaps: "{name}_shuttered_window_shut", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "window", "shutters", "shutters_open", "wood", "building", "fuel", "shelter:draughty", "draught"],
+                lit_through: true,
             ),
             (
                 name: "{name}_shuttered_window_shut", render: Model, shape: "lattice_shutters_shut", facing: true, light_filter: 14, sound: Wood, textures: All("furniture_grain"),
@@ -63,6 +66,21 @@
             // and a railed balcony is open air.
             (name: "{name}_railing", render: Model, shape: "railing", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "wood", "building", "fuel"]),
             (name: "{name}_railing_corner", render: Model, shape: "railing_corner", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "wood", "building", "fuel"]),
+            // A field fence and its gate, to pen a farm's animals: posts and two rails across
+            // the middle of the cell, a block high. A fence is a railing to everyone (`railing`:
+            // a creature takes it as two high and only a boss or a wild fighter on a chase
+            // climbs it; a home's survey looks past it). The gate shut is one too; a right
+            // click swings it open (`swaps`, as a door), and open it stops nobody.
+            (name: "{name}_fence", render: Model, shape: "fence", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "wood", "building", "fuel"]),
+            (name: "{name}_fence_corner", render: Model, shape: "fence_corner", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "wood", "building", "fuel"]),
+            (
+                name: "{name}_fence_gate", render: Model, shape: "fence_gate", facing: true, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_fence_gate_open", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "gate", "wood", "building", "fuel"],
+            ),
+            (
+                name: "{name}_fence_gate_open", render: Model, shape: "fence_gate_open", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_fence_gate", drops: "{name}_fence_gate", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "fence", "gate", "wood", "building", "fuel"],
+            ),
             // A newel post: a stout post with a cap, at the foot or the turn of a stair.
             (name: "{name}_newel_post", render: Model, shape: "newel_post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "newel", "wood", "building", "fuel", "shelter:sound"]),
             // A landing: boards on two joists, its top level with a stair's, for the turn of a
