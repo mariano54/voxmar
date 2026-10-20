@@ -87,12 +87,12 @@
             // loft or up onto a roof.
             (name: "{name}_ladder", render: Model, shape: "ladder", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["timber", "climbable", "ladder", "wood", "building", "fuel"]),
             // A hatch for a loft: set in a hole in the floor, boards level with the floor round
-            // it, a sound bit of ceiling to the room below. A right click swings it open
+            // it, a sound bit of ceiling to the room below that keeps the light out as a roof does. A right click swings it open
             // (`swaps`) to hang against the back of its cell, and open it is climbed as a ladder
             // is (`climbable`), so a ladder under it climbs on up through it into the loft;
             // it lets a draught down. Set it with its back over the ladder's.
             (
-                name: "{name}_hatch", render: Model, shape: "hatch", facing: true, sound: Wood, textures: All("furniture_grain"),
+                name: "{name}_hatch", render: Model, shape: "hatch", facing: true, light_filter: 14, sound: Wood, textures: All("furniture_grain"),
                 swaps: "{name}_hatch_open", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "hatch", "wood", "building", "fuel", "shelter:sound"],
             ),
             (

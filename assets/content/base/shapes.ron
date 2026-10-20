@@ -609,14 +609,14 @@
         // from whoever set it) against the back of the cell, no deeper than a ladder's rungs, so a
         // ladder under it climbs on up through it.
         "hatch": (boxes: [
-            (from: (0, 13, 0), to: (16, 16, 16)),
-            (from: (1, 11.5, 2), to: (15, 13, 4)),
-            (from: (1, 11.5, 12), to: (15, 13, 14)),
+            (from: (0, 13, 0), to: (16, 16, 16), cull: true),
+            (from: (1, 11.5, 2), to: (15, 13, 4), cull: true),
+            (from: (1, 11.5, 12), to: (15, 13, 14), cull: true),
         ]),
         "hatch_open": (boxes: [
-            (from: (0, 0, 15), to: (16, 16, 16)),
-            (from: (2, 1, 14.5), to: (4, 15, 15)),
-            (from: (12, 1, 14.5), to: (14, 15, 15)),
+            (from: (0, 0, 15), to: (16, 16, 16), cull: true),
+            (from: (2, 1, 14.5), to: (4, 15, 15), cull: true),
+            (from: (12, 1, 14.5), to: (14, 15, 15), cull: true),
         ]),
         "railing_corner": (boxes: [
             (from: (0, 0, 13.5), to: (16, 2, 16), cull: true),
