@@ -6407,10 +6407,18 @@ fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_i
     }
     let start = client.position.floor().as_ivec3();
     let wheel = format!("{} {} {}", start.x + 3, start.y, start.z);
+    // The kept one, by its keeper: a wild aurochs can come by (the land's own, by the draw),
+    // and turns down food held out to it, so feeding whichever aurochs was in view hung the
+    // test. One stands well off, held, so feeding the wrong one cannot pass by luck.
+    client.ok("/summon aurochs 1 ~-12 ~ ~-12 held");
+    let me = client.id;
+    let mine = |c: &Client| c.creatures.iter().find(|(_, v)| v.species == aurochs && v.owner == Some(me)).map(|(&id, _)| id);
+    client.pump_until(|c| mine(c).is_some() && c.creatures.values().filter(|v| v.species == aurochs).count() >= 2);
+    let kept = mine(&client).expect("seen");
     let turns = |client: &mut Client| !client.ok(&format!("/machine {wheel}")).contains("needs a kept animal");
     let started = client.server_tick;
     while !turns(&mut client) {
-        assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel");
+        assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel: {:?} {:?}", client.ok(&format!("/machine {wheel}")), client.creatures.iter().filter(|(_, v)| v.species == aurochs).map(|(id, v)| (*id, v.position)).collect::<Vec<_>>());
         client.after_ticks(6);
     }
     // Three days on, unfed, it will not walk.
@@ -6420,16 +6428,15 @@ fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_i
     // Fed its wheat, it walks again.
     client.ok("/give wheat 1");
     let wheat = client.content.blocks.expect("base:wheat");
-    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == wheat) && c.creatures.values().any(|v| v.species == aurochs));
-    let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == aurochs).unwrap();
-    let at = view.position;
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == wheat) && c.creatures.contains_key(&kept));
+    let at = client.creatures[&kept].position;
     client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
-    client.propose("base:tend", ActionTarget::Creature(id));
+    client.propose("base:tend", ActionTarget::Creature(kept));
     client.pump_until(|c| c.inventory.get(0).is_none());
     let started = client.server_tick;
     while !turns(&mut client) {
-        assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel");
+        assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel: {:?} {:?}", client.ok(&format!("/machine {wheel}")), client.creatures.iter().filter(|(_, v)| v.species == aurochs).map(|(id, v)| (*id, v.position)).collect::<Vec<_>>());
         client.after_ticks(6);
     }
 }
