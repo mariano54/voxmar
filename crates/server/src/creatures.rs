@@ -936,7 +936,7 @@ impl Server {
         motion::step(&mut body, &Ground::climbing(self, climbs), movement, water, drive, dt);
         // Standing at what it wants, whether its blow has a way through the air there.
         // Only in a chase: a grazer at its grass traces nothing.
-        let (phase, doing) = (self.creatures.live[&id].phase, self.creatures.live[&id].mind.doing);
+        let phase = self.creatures.live[&id].phase;
         let chasing = doing_any(species, &self.creatures.live[&id].mind, &["hunt", "defend"]);
         // A charge it would make from here is no blow from here (`strikes_from`).
         let scale = self.creatures.live[&id].scale;

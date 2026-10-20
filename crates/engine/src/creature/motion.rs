@@ -324,6 +324,9 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     let feet = (body.position.y + 0.01).floor() as i32;
     // `pit`: judged for a pit too (below); never from under its own middle, or one whose
     // middle is over a pit's lip would find no way at all, back onto the bank either.
+    // The first landing deeper than its climb is judged for a pit, once: a dip it would
+    // step back up from, or a crack too narrow to come down in, leaves the next for it.
+    let pit_judged = std::cell::Cell::new(false);
     let held = |middle: Vec3, then: IVec3, trench: bool, pit: bool| {
         if then.y >= feet {
             return false;
@@ -341,6 +344,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         // out of only if its top is in reach.
         let climb = (movement.jump > 0.0) as i32;
         if pit && !body.bold && feet - then.y > climb {
+            pit_judged.set(true);
             let walker = Walker {
                 height: body.size.1.ceil() as i32,
                 climbs: climb > 0,
@@ -382,7 +386,6 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     let samples = (ahead / 0.4).ceil().max(1.0) as i32;
     let step = heading * (ahead / samples as f32);
     let mut aabb = Aabb::standing(to, body.size.0, body.size.1);
-    let mut pit_judged = false;
     (0..=samples).all(|i| {
         if i > 0 {
             move_and_slide(&mut aabb, step, solid);
@@ -396,7 +399,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
             None => false,
             Some(then) => {
                 let first_down = then.y < feet && !std::mem::replace(&mut judged, true);
-                let first_pit = then.y < feet && !std::mem::replace(&mut pit_judged, true);
+                let first_pit = then.y < feet && !pit_judged.get();
                 now - then.y <= SAFE_DROP
                     && !(wary && world.water(then) && world.water(then - IVec3::Y))
                     && !(burns && world.lava(then))
@@ -1059,6 +1062,24 @@ mod tests {
         let mut swimming = Body::new(Vec3::new(3.5, -2.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
         swimming.in_water = true;
         assert!(open_way(&swimming, &Shelf, &movement, Water::Land, Vec3::X, 3.0, 0.05), "out of its depth, deeper water was a wall");
+        // A step down a block, then a pit three deep and walled all round, both within its look ahead:
+        // the step it would climb back up leaves the pit still judged, and shut.
+        struct Dip;
+        impl Surroundings for Dip {
+            fn solid(&self, cell: IVec3) -> bool {
+                match (cell.x, cell.z) {
+                    (1, _) => cell.y < -1,
+                    (2..=3, -1..=1) => cell.y < -3,
+                    _ => cell.y < 0,
+                }
+            }
+            fn water(&self, _: IVec3) -> bool {
+                false
+            }
+        }
+        let mut walker = Body::new(Vec3::new(1.2, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 0.8));
+        walker.on_ground = true;
+        assert!(!open_way(&walker, &Dip, &movement, Water::Land, Vec3::X, 3.0, 0.05), "a step down a block left the pit past it open");
         // Steered at the edge, it goes along it; boxed in by cliffs, it stands.
         let cliff = Edge { drop: 8, wet: 0 };
         let (heading, side) = steer(&body, &cliff, &movement, Water::Land, Vec3::X, 0.0, 2.0, 0.05);
