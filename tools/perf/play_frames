@@ -71,7 +71,7 @@ while ! claim; do
   # Stale (a run that died holding it): looked at and removed by one command, which leaves
   # a far smaller window than a look and a later rm for removing a claim made in between;
   # claimed on the next turn.
-  find "$quiet" -mmin +20 -delete 2>/dev/null
+  find "$quiet" -maxdepth 0 -type f -mmin +20 -delete 2>/dev/null
   if [[ -e $quiet ]]; then
     echo "play_frames: another timing run holds QUIET ($(cat "$quiet" 2>/dev/null)), waiting"
     sleep 10

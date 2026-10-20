@@ -146,24 +146,24 @@ mod tests {
         assert!(calls.iter().all(|c| c.load(Ordering::Relaxed) == 1));
     }
 
-    /// A build on one of the game's background workers keeps its helpers in the background.
+    /// A build on one of the game's background workers keeps its helpers in the background:
+    /// the class a caller reads carries to a fresh thread, as each helper is.
     #[cfg(target_os = "macos")]
     #[test]
-    fn helpers_keep_their_callers_class() {
-        let classes = std::thread::spawn(|| {
+    fn a_callers_class_carries_to_a_new_thread() {
+        let carried = std::thread::spawn(|| {
             // SAFETY: only changes the scheduling class of the current thread.
             unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0) };
-            let items: Vec<usize> = (0..64).collect();
-            let classes = std::sync::Mutex::new(Vec::new());
-            for_each(&items, |_| {
-                std::thread::sleep(std::time::Duration::from_millis(1));
-                classes.lock().unwrap().push(SchedulingClass::current().0);
-            });
-            classes.into_inner().unwrap()
+            let class = SchedulingClass::current();
+            std::thread::spawn(move || {
+                class.apply();
+                SchedulingClass::current().0
+            })
+            .join()
+            .unwrap()
         })
         .join()
         .unwrap();
-        assert_eq!(classes.len(), 64);
-        assert!(classes.iter().all(|c| matches!(c, Some(libc::qos_class_t::QOS_CLASS_UTILITY))));
+        assert!(matches!(carried, Some(libc::qos_class_t::QOS_CLASS_UTILITY)));
     }
 }

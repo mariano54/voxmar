@@ -37,6 +37,20 @@ pub fn frame_thread() {
     }
 }
 
+/// Puts the calling thread at the default class, between the two: work a frame does not
+/// wait for but that should not queue behind streaming either. Said outright, since on
+/// macOS whether a new thread takes its creator's class is not promised.
+pub fn default_thread() {
+    if !enabled() {
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    // SAFETY: only changes the scheduling class of the current thread.
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_DEFAULT, 0);
+    }
+}
+
 /// Lowers the calling thread below the game's frame threads.
 pub fn background_thread() {
     if !enabled() {

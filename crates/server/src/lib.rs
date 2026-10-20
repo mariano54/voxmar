@@ -535,6 +535,7 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
         std::thread::Builder::new()
             .name("server".into())
             .spawn(move || {
+                default_class();
                 let mut server = Server::new(config, meta, save, state, content, incoming, lines);
                 server.generation_changed = generation_changed;
                 server.lagging = lagging;
@@ -544,6 +545,18 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
             })?
     };
     Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks, lagging, hurried, leash })
+}
+
+/// Puts the server's thread at the default scheduling class on macOS: below a game
+/// client's frame threads, above its streaming workers (the client's `priority.rs`), and
+/// said outright, since whether a new thread takes its creator's class is not promised.
+/// `VOXMAR_THREAD_PRIORITY=off` leaves it as it starts, as it does the client's threads.
+fn default_class() {
+    #[cfg(target_os = "macos")]
+    if std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off") {
+        // SAFETY: only changes the scheduling class of the current thread.
+        unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_DEFAULT, 0) };
+    }
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
