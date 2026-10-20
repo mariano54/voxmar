@@ -339,18 +339,14 @@ impl Server {
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
-                    // What a player put there teaches, counts and forages nothing: taken
-                    // before `picked` and `reward_break` clear the mark.
-                    let plants = supported_by(&Context { server: self, agent, held: None }, block);
-                    let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
-                    if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
-                        self.discover_broken(agent, broken);
+                    // A hoe that reaps takes the ripe crops like this one about it too, each
+                    // as if broken on its own; found before this one is gone.
+                    let reaped = self.reaped(agent, block, held);
+                    self.break_loot(agent, block, held);
+                    for cell in reaped {
+                        self.break_loot(agent, cell, held);
+                        self.set_block(cell, BlockId::AIR);
                     }
-                    self.picked(agent, block);
-                    let instead = self.reward_break(agent, block, held);
-                    // A block that gave something else instead (gravel's flint) drops nothing of its own.
-                    let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
-                    self.drop_loot(agent, &cells, &placed);
                 }
                 (Effect::Throw, ActionTarget::Stack { slot, count }) => self.throw(agent, slot as usize, count),
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
@@ -387,7 +383,9 @@ impl Server {
                     }
                     self.placed_plant(item, cell);
                     self.placed_machine(agent, cell);
+                    self.placed_trap(agent, cell);
                     self.placed_by_field(agent, item, cell);
+                    self.placed_for_quests(agent, item, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     // An open store's slots as it holds them now, and what moved written back.
@@ -621,21 +619,30 @@ impl Server {
         let allowed = self.allowed_recipes(agent);
         let near = self.near_tags(agent);
         let near = |tag: &str| near.iter().any(|t| t == tag);
+        // A later age's recipe, before its rite, is refused out loud.
+        let grid = self.players[&agent].inventory.grid();
+        if let Some(age) = recipes.find_near(&grid, near).and_then(|r| self.age_closed(agent, r)) {
+            self.refuse_age(agent, &age);
+        }
         let player = self.players.get_mut(&agent).unwrap();
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
         let first = recipes.find_near(&player.inventory.grid(), near).filter(|r| allowed(r));
-        let found = first.map(|r| (r.skill, r.xp, r.output, r.count));
+        let found = first.map(|r| (r.skill, r.xp, r.output, r.count, r.near.clone()));
         let made = player.inventory.craft(recipes.while_making(first, near), all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);
-        if let Some((skill, xp, output, count)) = found.filter(|_| made > 0) {
+        if let Some((skill, xp, output, count, made_near)) = found.filter(|_| made > 0) {
             if let Some(skill) = skill {
                 self.grant_xp(agent, skill, xp * made as f32);
             }
             // For quests that ask for things made.
             let name = self.content.blocks.def(output).name.clone();
             self.tally(agent, "crafted", &name, made * count as u32);
+            // And by the block it was made near, for a quest's `CraftNear`.
+            if let Some(tag) = made_near {
+                self.tally(agent, &format!("crafted_near:{tag}"), &name, made * count as u32);
+            }
         }
     }
 
@@ -644,7 +651,39 @@ impl Server {
     /// gives itself back (where the world placed one, it does not). (By the block placed: a
     /// held item may place as another, as a torch does.)
     pub(crate) fn marks_placed(&self, item: BlockId, placed: BlockId) -> bool {
-        self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0 || rule.instead.is_some()) || self.content.blocks.def(placed).has_tag("furnishing")
+        self.content.tools.rule(item).is_some_and(|rule| rule.xp > 0.0 || rule.prospect > 0.0 || rule.instead.is_some()) || self.content.blocks.def(placed).has_tag("furnishing")
+    }
+
+    /// What breaking the block at `block` gives and teaches: its drop or harvest, the
+    /// plants it held up, the journal, the regrowth. `held`, if given, is the tool it was
+    /// broken with (`reward_break`).
+    fn break_loot(&mut self, agent: PlayerId, block: IVec3, held: Option<Option<BlockId>>) {
+        // What a player put there teaches, counts and forages nothing: taken before
+        // `picked` and `reward_break` clear the mark.
+        let plants = supported_by(&Context { server: self, agent, held: None }, block);
+        let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
+        if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
+            self.discover_broken(agent, broken);
+            self.prospect(agent, block, broken);
+        }
+        self.picked(agent, block);
+        let instead = self.reward_break(agent, block, held);
+        // A block that gave something else instead (gravel's flint) drops nothing of its own.
+        let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
+        self.drop_loot(agent, &cells, &placed);
+    }
+
+    /// The ripe crops of the same kind and stage round the ripe crop at `at`, on its level,
+    /// that `agent`'s held tool reaps with it (`reap:N`, tools.ron): none for anything else.
+    /// Fruit on trees is picked back to bare leaves one at a time, never reaped. `held`, if
+    /// given, is the tool in place of what is in hand now.
+    fn reaped(&self, agent: PlayerId, at: IVec3, held: Option<Option<BlockId>>) -> Vec<IVec3> {
+        let field_crop = |b: BlockId| self.ripe_crop(b).is_some_and(|crop| !self.content.crops.get(crop).def.fruit);
+        let Some(crop) = self.block(at).filter(|&b| field_crop(b)) else { return Vec::new() };
+        let held = held.unwrap_or_else(|| self.players.get(&agent).and_then(|p| p.held()));
+        let reach = self.content.tools.reap(held, crop) as i32;
+        let around = (-reach..=reach).flat_map(|dx| (-reach..=reach).map(move |dz| IVec3::new(dx, 0, dz)));
+        around.filter(|&d| d != IVec3::ZERO).map(|d| at + d).filter(|&cell| self.block(cell) == Some(crop)).collect()
     }
 
     /// What breaking the block at `pos` teaches (`tools.ron`), and sometimes an extra drop:
@@ -678,7 +717,7 @@ impl Server {
         if let Some(skill) = rule.skill.filter(|_| rule.xp > 0.0) {
             self.grant_xp(agent, skill, rule.xp);
         }
-        match rule.instead {
+        match tools.instead(held, block) {
             Some((item, chance)) if other < chance => {
                 let body = voxmar_engine::dropped::popped(pos, [b, c, a]);
                 self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
@@ -818,6 +857,50 @@ mod tests {
             .count();
         assert_eq!(sticks, 0, "placed leaves gave a stick");
         assert!(!server.placed.contains(&pos), "the mark goes with the break");
+    }
+
+    /// A coal sample a player sets down where the world laid one, over its seam, and mines
+    /// again teaches no prospecting: the place action marks the cell as theirs, and the mine
+    /// action's break skips what a player put there.
+    #[test]
+    fn a_placed_sample_over_its_seam_teaches_no_prospecting() {
+        use std::time::{Duration, Instant};
+        use voxmar_engine::action::ActionTarget;
+        use voxmar_engine::block::BlockId;
+        use voxmar_engine::coords::{ColumnPos, Face};
+        use voxmar_engine::world::Column;
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let coal = server.content.blocks.expect("base:coal_ore_sample");
+        let (at, _) = server.overworld.locate_ore(Some("coal_seam"), voxmar_engine::glam::IVec2::new(server.spawn.x as i32, server.spawn.z as i32), 1500).expect("a coal seam near spawn");
+        assert!(server.overworld.vein_of_sample(at, coal).is_some(), "the world's sample lies over a seam");
+        // The sample's own ground, with the world's sample taken up.
+        server.world.insert(ColumnPos::of_block(at), std::sync::Arc::new(Column::default()));
+        server.set_block(at - IVec3::Y, server.content.blocks.expect("base:stone"));
+        let player = server.players.get_mut(&1).unwrap();
+        player.position = at.as_vec3() + voxmar_engine::glam::Vec3::new(1.5, 0.0, 0.5);
+        player.selected = 0;
+        player.inventory.clear(|_| true);
+        assert_eq!(player.inventory.add(coal, 1), 0);
+        let (place, mine) = (server.content.actions.expect("core:place"), server.content.actions.expect("core:mine"));
+        let now = Instant::now();
+        server.propose(1, place, ActionTarget::Block { block: at - IVec3::Y, face: Face::PosY }, now);
+        assert_eq!(server.block(at), Some(coal), "the sample set down");
+        assert!(server.placed.contains(&at), "and marked as the player's");
+        let pickaxe = server.content.blocks.expect("base:flint_pickaxe");
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.clear(|_| true);
+        assert_eq!(player.inventory.add(pickaxe, 1), 0);
+        let mining = server.content.skills.id("core:mining").unwrap();
+        let before = server.players[&1].skills.xp(mining);
+        server.propose(1, mine, ActionTarget::Block { block: at, face: Face::PosY }, now);
+        server.complete_actions(now + Duration::from_secs(30));
+        assert_eq!(server.block(at), Some(BlockId::AIR), "the sample mined");
+        assert_eq!(server.players[&1].skills.xp(mining), before, "a placed sample taught Mining");
+        assert!(!server.players[&1].tallies.keys().any(|k| k.starts_with("prospected:")), "a placed sample prospected its seam");
     }
 }
 

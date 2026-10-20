@@ -67,7 +67,7 @@ use voxmar_engine::fluid::Fluids;
 use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::world::{Column, VoxelWorld};
 use voxmar_protocol::{KEEPALIVE, PlayerId, ServerConnection, ServerMessage, TICKS_PER_SECOND};
-use voxmar_worldgen::{Generator, Overworld, WorldContent};
+use voxmar_worldgen::{ContentError, Generator, Overworld, WorldContent};
 
 use crate::actions::Executor;
 use crate::player::Player;
@@ -157,11 +157,16 @@ pub struct Limits {
     /// before the same name from the same address replaces it: a game that froze or lost
     /// its network. Over the client's keepalive, so a playing session is never ended so.
     pub rejoin_silence: f32,
+    /// Blocks from a player within which they are told of others (`ServerMessage::Players`).
+    pub players_seen: f32,
+    /// Blocks past `players_seen` a player already told of must go before they are told
+    /// gone, so one hovering at the edge is not told of and gone again on alternate ticks.
+    pub players_seen_margin: f32,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32, ipv6_prefix: 64, rejoin_silence: KEEPALIVE.as_secs_f32() + 1.0 }
+        Self { messages_per_tick: 64, chat_burst: 8.0, chat_per_second: 2.0, hello_seconds: 3.0, max_pending: 16, max_pending_per_address: 4, name_length: 32, ipv6_prefix: 64, rejoin_silence: KEEPALIVE.as_secs_f32() + 1.0, players_seen: 160.0, players_seen_margin: 8.0 }
     }
 }
 
@@ -170,7 +175,7 @@ impl Limits {
     /// one connection hold the server up.
     pub fn from_ron(source: &str) -> Result<Self, String> {
         let limits: Limits = ron::from_str(source).map_err(|e| e.to_string())?;
-        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length, ipv6_prefix, rejoin_silence } = limits;
+        let Limits { messages_per_tick, chat_burst, chat_per_second, hello_seconds, max_pending, max_pending_per_address, name_length, ipv6_prefix, rejoin_silence, players_seen, players_seen_margin } = limits;
         let rates = [chat_burst, chat_per_second, hello_seconds];
         if rates.iter().any(|n| !n.is_finite() || *n < 0.0) {
             Err("chat_burst, chat_per_second and hello_seconds must be zero or more".into())
@@ -186,6 +191,10 @@ impl Limits {
             Err("ipv6_prefix must be from 16 to 128".into())
         } else if !(rejoin_silence > KEEPALIVE.as_secs_f32() && rejoin_silence <= 3600.0) {
             Err(format!("rejoin_silence must be over the client's keepalive ({} s), or a playing session could be ended, and at most 3600", KEEPALIVE.as_secs()))
+        } else if !(8.0..=2048.0).contains(&players_seen) {
+            Err("players_seen must be from 8 to 2048 blocks".into())
+        } else if !(0.0..=64.0).contains(&players_seen_margin) {
+            Err("players_seen_margin must be from 0 to 64 blocks".into())
         } else {
             Ok(limits)
         }
@@ -329,6 +338,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
         return Err(format!("no package defines the action {missing}, which the game needs").into());
     }
     WorldContent::load(&content)?;
+    sources_known(&content)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
     spawn_kit::SpawnKit::load(&content.files, &content.blocks)?;
     let mut notes = Vec::new();
@@ -340,6 +350,41 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
         tracing::warn!("the fluid {} is neither swum in (swim: true) nor burns (tagged \"lava\"): players wade through it unharmed", fluid.name);
     }
     Ok(content)
+}
+
+/// The recipe book: every way the content gives to get each item, what the world lays
+/// among them (found, broken loose).
+pub fn recipe_book(content: &Content) -> Result<voxmar_engine::recipe_book::RecipeBook, ContentError> {
+    let mut book = voxmar_engine::recipe_book::RecipeBook::new(content);
+    book.found(content, WorldContent::placed(content.files.iter(), &content.blocks)?);
+    Ok(book)
+}
+
+/// Every item a player could hold has a way to get it in the recipe book, or is tagged
+/// `creative_only`: a package that adds an item nothing gives fails here, naming it and the
+/// package, rather than shipping a dead entry. A tag on an item that has a way is noted.
+fn sources_known(content: &Content) -> Result<(), String> {
+    let (dead, stale) = recipe_book(content).map_err(|e| e.to_string())?.unsourced(&content.blocks);
+    let named = |ids: &[voxmar_engine::block::BlockId]| {
+        ids.iter()
+            .map(|&id| {
+                let name = &content.blocks.def(id).name;
+                format!("`{name}` (package {})", name.split(':').next().unwrap_or(name))
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    for &id in &stale {
+        tracing::info!("{} is tagged {} but the recipe book has a way to it", content.blocks.def(id).name, voxmar_engine::recipe_book::CREATIVE_ONLY);
+    }
+    if dead.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "no way in survival gives {}: give each a recipe, a drop or a place in the world, or tag it \"{}\"",
+        named(&dead),
+        voxmar_engine::recipe_book::CREATIVE_ONLY
+    ))
 }
 
 /// Whether players swim in `fluid` or are burned by it: one that does neither (a mod's
@@ -535,6 +580,7 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
         std::thread::Builder::new()
             .name("server".into())
             .spawn(move || {
+                frame_class();
                 let mut server = Server::new(config, meta, save, state, content, incoming, lines);
                 server.generation_changed = generation_changed;
                 server.lagging = lagging;
@@ -544,6 +590,20 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
             })?
     };
     Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks, lagging, hurried, leash })
+}
+
+/// Puts the server's thread in the class of a game client's frame threads on macOS (the
+/// client's `priority.rs`), said outright, since whether a new thread takes its creator's
+/// class is not promised. Never below them: in a single-player game the server runs the
+/// world, and at the default class, on a machine at a load of 70-90, the gate's creatures
+/// stood still for seconds while the frames went on. `VOXMAR_THREAD_PRIORITY=off` leaves it
+/// as it starts, as it does the client's threads.
+fn frame_class() {
+    #[cfg(target_os = "macos")]
+    if std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off") {
+        // SAFETY: only changes the scheduling class of the current thread.
+        unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0) };
+    }
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -667,6 +727,10 @@ pub(crate) struct Server {
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
+    /// Blocks set down that an unfinished quest's `Placed` counts, by cell: whose (their
+    /// name in lower case) and what item. Each counts on their tally while the block in the
+    /// cell still drops that item (`WorldMeta::quest_placed`).
+    quest_placed: FxHashMap<IVec3, (String, String)>,
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
@@ -701,9 +765,6 @@ pub(crate) struct Server {
     /// once it has landed by then (`fight`).
     /// None until messages are first taken in (unit tests tick without them).
     heard: Option<Instant>,
-    /// How many players were told of others last tick: alone, a player is told once that
-    /// nobody else is there (`broadcast_players`).
-    shown_players: usize,
     /// Animals and monsters about.
     creatures: creatures::Creatures,
     /// The people of settlements near players.
@@ -805,13 +866,14 @@ impl Server {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
+        let quest_placed = quests::restore_placed(&meta.quest_placed, &content.blocks, &content.quests);
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let blazes = blaze::restore(&meta.blazes);
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
         let apiary = apiary::Apiary::restore(&meta.hives);
         let stations = stations::Loads::restore(&meta.stations, |name| content.blocks.item_named(name));
-        let catches = traps::Catches::restore(&meta.catches, |name| content.creatures.id(name));
+        let catches = traps::Catches::restore(&meta.catches, &meta.standing_traps, meta.trap_serials, |name| content.creatures.id(name));
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect::<FxHashMap<_, _>>();
         let hearth_owners = hearth::HearthOwner::restore(&meta.hearth_owners, &lit, |name| content.multiblocks.get(name).is_some_and(|m| m.home));
@@ -835,6 +897,7 @@ impl Server {
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
+            quest_placed,
             regrowing,
             blazes,
             blaze_risked: Vec::new(),
@@ -847,7 +910,6 @@ impl Server {
             catches,
             arrival: Instant::now(),
             heard: None,
-            shown_players: 0,
             creatures: creatures::Creatures::default(),
             villagers: villagers::Villagers::restore(state.villagers),
             wandering: Default::default(),
@@ -1211,6 +1273,9 @@ impl Server {
         let mut meta = self.meta.clone();
         meta.time = self.tick;
         meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
+        let mut quest_placed: Vec<([i32; 3], String, String)> = self.quest_placed.iter().map(|(cell, (owner, item))| (cell.to_array(), owner.clone(), item.clone())).collect();
+        quest_placed.sort();
+        meta.quest_placed = quest_placed;
         meta.regrowing = self.saved_regrowing();
         meta.blazes = self.saved_blazes();
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
@@ -1220,6 +1285,7 @@ impl Server {
         meta.hives = self.apiary.saved();
         meta.stations = self.stations.saved(|item| self.content.blocks.def(item).name.clone());
         meta.catches = self.catches.saved(|species| self.content.creatures.get(species).def.name.clone());
+        (meta.standing_traps, meta.trap_serials) = self.catches.saved_traps();
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
         meta.hearth_owners = hearth::HearthOwner::saved(&self.hearth_owners);
@@ -1251,17 +1317,56 @@ impl Server {
         }
     }
 
+    /// Tells each player of the others near enough to see (`Limits::players_seen`), only
+    /// as they change: a view sent again only once it differs from the last one sent them, a
+    /// name only the first time (near or far: those out of sight are named in `names`, so
+    /// a creature they keep shows its keeper), and those gone or out of sight named once as
+    /// gone. One already told of goes out of sight only past `players_seen_margin` more.
     fn broadcast_players(&mut self) {
-        // Alone, a player is told others are gone once (none left to draw), then nothing.
-        let joined = self.players.values().filter(|p| p.joined).count();
-        let was = std::mem::replace(&mut self.shown_players, joined);
-        if joined < 2 && was < 2 {
-            return;
-        }
-        let views: Vec<_> = self.players.values().filter(|p| p.joined).map(Player::view).collect();
-        for player in self.players.values().filter(|p| p.joined) {
-            let others = views.iter().filter(|v| v.id != player.id).cloned().collect();
-            player.connection.send(ServerMessage::Players { players: others });
+        let views: Vec<voxmar_protocol::PlayerView> = self.players.values().filter(|p| p.joined).map(|p| voxmar_protocol::PlayerView { fight: self.fight_view(p.id), ..p.view() }).collect();
+        let (seen, margin) = (self.config.limits.players_seen, self.config.limits.players_seen_margin);
+        for player in self.players.values_mut().filter(|p| p.joined) {
+            let near: Vec<&voxmar_protocol::PlayerView> = views
+                .iter()
+                .filter(|v| v.id != player.id && v.position.distance(player.position) <= if player.told.contains_key(&v.id) { seen + margin } else { seen })
+                .collect();
+            let mut told = Vec::new();
+            for &view in &near {
+                let last = player.told.get(&view.id);
+                if last == Some(view) {
+                    continue;
+                }
+                let name = view.name.as_deref().unwrap_or_default();
+                let named = player.named.get(&view.id).map(String::as_str) != Some(name);
+                if named {
+                    player.named.insert(view.id, name.to_owned());
+                }
+                told.push(voxmar_protocol::PlayerView { name: if named { view.name.clone() } else { None }, ..view.clone() });
+                player.told.insert(view.id, view.clone());
+            }
+            let mut names = Vec::new();
+            for view in views.iter().filter(|v| v.id != player.id && !near.iter().any(|n| n.id == v.id)) {
+                let name = view.name.as_deref().unwrap_or_default();
+                if player.named.get(&view.id).map(String::as_str) != Some(name) {
+                    player.named.insert(view.id, name.to_owned());
+                    names.push((view.id, name.to_owned()));
+                }
+            }
+            // Those who left the server are named once more, with no name, to be forgotten.
+            player.named.retain(|id, _| {
+                let here = views.iter().any(|v| v.id == *id);
+                if !here {
+                    names.push((*id, String::new()));
+                }
+                here
+            });
+            let gone: Vec<PlayerId> = player.told.keys().copied().filter(|id| !near.iter().any(|v| v.id == *id)).collect();
+            for id in &gone {
+                player.told.remove(id);
+            }
+            if !(told.is_empty() && gone.is_empty() && names.is_empty()) {
+                player.connection.send(ServerMessage::Players { seen: told, gone, names });
+            }
         }
     }
 
@@ -1363,6 +1468,7 @@ impl Server {
             if let Some(old) = self.world.set_block(pos, block) {
                 self.dirty.insert(ColumnPos::of_block(pos));
                 self.forget_placed(pos);
+                self.unplaced(pos, block);
                 done.push((pos, block));
                 self.machine_changed(pos, old, block);
                 self.hive_changed(pos, old, block);
@@ -1403,6 +1509,7 @@ impl Server {
         if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
             self.forget_placed(pos);
+            self.unplaced(pos, block);
             self.machine_changed(pos, old, block);
             self.hive_changed(pos, old, block);
             self.station_changed(pos, old, block);
@@ -1667,6 +1774,52 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Every item a player could hold has a way in the recipe book or is tagged
+    /// creative_only; a package adding an item nothing gives fails to load, named with its
+    /// package, until it is given a way or the tag.
+    #[cfg(unix)]
+    #[test]
+    fn an_item_no_way_gives_fails_to_load_named_with_its_package() {
+        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = load_content(&assets).unwrap();
+        let named = |ids: Vec<voxmar_engine::block::BlockId>| ids.into_iter().map(|id| content.blocks.def(id).name.clone()).collect::<Vec<_>>();
+        let (dead, stale) = recipe_book(&content).unwrap().unsourced(&content.blocks);
+        assert_eq!((named(dead), named(stale)), (Vec::new(), Vec::new()), "the game's own items each have a way, and no creative_only tag is stale");
+        // Found where a village builds with it, named with its style's wood ("stripped_{wood}_log"),
+        // and foraged from a ripe crop the world grows wild.
+        let book = recipe_book(&content).unwrap();
+        let id = |name: &str| content.blocks.id(name).unwrap();
+        let spruce = book.making(id("base:stripped_spruce_log"));
+        assert!(spruce.iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Found { .. })), "{spruce:?}");
+        // A village's bed is no find: broken where the world placed it, it gives nothing.
+        let bed = book.making(id("base:oak_bed"));
+        assert!(!bed.iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Found { .. })), "{bed:?}");
+        let tomato = book.making(id("base:tomato_seeds"));
+        assert!(tomato.iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Harvest { forage: true, from, .. } if from == id("base:tomato_crop"))), "{tomato:?}");
+        let dir = std::env::temp_dir().join(format!("voxmar-no-way-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mods = dir.join("content");
+        std::fs::create_dir_all(mods.join("moonmod")).unwrap();
+        for package in ["base", "core"] {
+            std::os::unix::fs::symlink(assets.join("content").join(package).canonicalize().unwrap(), mods.join(package)).unwrap();
+        }
+        let block = |tags: &str| format!(r#"(blocks: [(name: "moon_rock", textures: All("stone"), hardness: 1.0, color: (90, 90, 110){tags})])"#);
+        std::fs::write(mods.join("moonmod/blocks.ron"), block("")).unwrap();
+        let Err(error) = load_content(&dir).map(|_| ()) else { panic!("a moon rock nothing gives loaded") };
+        let error = error.to_string();
+        assert!(error.contains("`moonmod:moon_rock` (package moonmod)") && error.contains("creative_only"), "{error}");
+        // A recipe for it is a way: it loads.
+        std::fs::write(mods.join("moonmod/recipes.ron"), r#"(recipes: [(ingredients: ["base:cobblestone", "base:flint"], output: "moon_rock")])"#).unwrap();
+        let content = load_content(&dir).unwrap();
+        let rock = content.blocks.expect("moonmod:moon_rock");
+        assert!(recipe_book(&content).unwrap().making(rock).iter().any(|e| matches!(e.method, voxmar_engine::recipe_book::Method::Craft { .. })));
+        // So does the tag, without one.
+        std::fs::remove_file(mods.join("moonmod/recipes.ron")).unwrap();
+        std::fs::write(mods.join("moonmod/blocks.ron"), block(r#", tags: ["creative_only"]"#)).unwrap();
+        load_content(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn every_shipped_fluid_is_swum_in_or_burns() {
         let content = load_content(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
@@ -1718,7 +1871,7 @@ mod tests {
         assert_eq!(limits, Limits { chat_burst: 4.0, max_pending_per_address: 2, ..Limits::default() });
         assert_eq!(Limits::from_ron("()").unwrap(), Limits::default());
         assert_eq!(Limits::default().rejoin_silence, 6.0, "a keepalive and a second");
-        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(ipv6_prefix: 8)", "(ipv6_prefix: 129)", "(rejoin_silence: 5.0)", "(rejoin_silence: 4000.0)", "(chat_brust: 4.0)"] {
+        for bad in ["(max_pending: 0)", "(max_pending_per_address: 0)", "(messages_per_tick: 1)", "(hello_seconds: 0.0)", "(chat_per_second: -1.0)", "(name_length: 0)", "(ipv6_prefix: 8)", "(ipv6_prefix: 129)", "(rejoin_silence: 5.0)", "(rejoin_silence: 4000.0)", "(chat_brust: 4.0)", "(players_seen: 2.0)", "(players_seen: 5000.0)", "(players_seen_margin: -1.0)", "(players_seen_margin: 100.0)"] {
             assert!(Limits::from_ron(bad).is_err(), "{bad} is accepted");
         }
     }

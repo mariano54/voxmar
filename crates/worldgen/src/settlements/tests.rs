@@ -1605,9 +1605,11 @@ fn a_settlement_stands_near_spawn() {
     let (mut far, mut excused) = (Vec::new(), Vec::new());
     // 0x5eed: the world a new game makes unless told otherwise.
     let seeds: Vec<u64> = (0..20).chain([42, 99, 0x5eed]).collect();
+    // Seeds no other test reads: their worlds are let go with each, not held for the run.
+    const ONLY_HERE: [u64; 5] = [10, 15, 17, 18, 19];
     // Each world on its own core, its outcome kept in seed order.
     let outcomes: Vec<(u64, Option<Result<(), String>>)> = seeds.par_iter().map(|&seed| {
-        let world = shared_world(seed);
+        let world = if ONLY_HERE.contains(&seed) { std::sync::Arc::new(base_world(seed)) } else { shared_world(seed) };
         let within = world.settlements.def.rules.spawn_settlement_within as f32;
         let spawn = world.spawn_point();
         let at = IVec2::new(spawn.x, spawn.z);

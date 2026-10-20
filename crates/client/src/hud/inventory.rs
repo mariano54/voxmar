@@ -476,15 +476,22 @@ fn craft(
             !voxmar_engine::level::meets_recipe(r, skills.level(player.skills.xp(s)), boosted, &player.inventory, blocks)
         })
     };
-    let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
+    // And a later age's only once its rite is done.
+    let closed = |r: &voxmar_engine::craft::Recipe| super::makeable::closed(&launch.content, &player, r);
+    let allowed = |r: &voxmar_engine::craft::Recipe| closed(r).is_none() && (at_table || !r.needs_table()) && short(r).is_none();
     let near = |tag: &str| near.has(tag);
     let found = recipes.find_near(&player.inventory.grid(), near);
+    let locked = found.and_then(closed);
     let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
     let made = found.filter(|r| allowed(r)).map(|r| (r.output, r.count));
     let filled = player.inventory.grid().iter().any(Option::is_some);
     // How to look a recipe up is in the key row under the screen, where no item's name
     // reaches it; here only what to do with what the grid makes.
     let (title, how) = match made {
+        _ if let Some(age) = &locked => {
+            let age = locale.get(&format!("quest.age.{age}")).to_owned();
+            (locale.format("inventory.craft.age", &[("age", &age)]), String::new())
+        }
         _ if let Some((skill, level)) = lacking => {
             let skill = locale.skill(skills.get(skill));
             (locale.format("skills.needs", &[("skill", &skill), ("level", &level)]), String::new())
@@ -987,6 +994,12 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             Method::Harvest { .. } => add(locale.get("tooltip.from.harvest").to_owned()),
             Method::Break { .. } => add(locale.get("tooltip.from.break").to_owned()),
             Method::Catch { .. } => add(locale.get("tooltip.from.fishing").to_owned()),
+            Method::Trap { .. } => add(locale.get("tooltip.from.trap").to_owned()),
+            Method::Bees { .. } => add(locale.get("tooltip.from.bees").to_owned()),
+            Method::Chest { .. } => add(locale.get("tooltip.from.chest").to_owned()),
+            Method::Trade { .. } => add(locale.get("tooltip.from.trade").to_owned()),
+            Method::Reward { .. } => add(locale.get("tooltip.from.quest").to_owned()),
+            Method::Found { .. } => add(locale.get("tooltip.from.found").to_owned()),
         }
     }
     let mut into: Vec<String> = Vec::new();
@@ -1018,6 +1031,13 @@ fn seed_line(
     let ready = content.skills.level(player.skills.xp(crop.skill)) >= crop.def.level;
     let words = locale.format("item.plants", &[("crop", &locale.block_named(&content.blocks, &crop.def.name)), ("skill", &skill), ("level", &crop.def.level)]);
     Some((words, if ready { SOFT } else { ERROR }))
+}
+
+/// A reaping hoe's patch: the ripe crops it takes with the one it cuts (`reap:N`).
+pub(crate) fn reap_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
+    let reach = content.tools.tool(Some(item)).reap;
+    let side = 2 * reach as u32 + 1;
+    (reach > 0).then(|| (locale.format("item.reaps", &[("side", &side)]), SOFT))
 }
 
 /// How much faster a tool works than a bare hand, on what it is made for (`speed:X`): none
@@ -1270,6 +1290,7 @@ fn tooltip(
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
                 .chain(armour_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
+                .chain(reap_line(&locale, &launch.content, item))
                 .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
@@ -1357,7 +1378,7 @@ mod tests {
             let locale = Locale::load(&assets.join("content"), code);
             let line = |name: &str| tool_line(&locale, &content, content.blocks.id(name).unwrap()).map(|(line, _)| line);
             assert_eq!(line("base:copper_pickaxe"), Some(locale.format("item.tool_speed", &[("speed", &"7")])), "{code}");
-            assert_eq!(line("base:wooden_axe"), Some(locale.format("item.tool_speed", &[("speed", &"2")])), "{code}");
+            assert_eq!(line("base:flint_axe"), Some(locale.format("item.tool_speed", &[("speed", &"2")])), "{code}");
             assert_eq!(line("base:oak_log"), None, "{code}: a log is no tool");
             assert_eq!(line("base:fishing_rod"), None, "{code}: a rod mines nothing, so claims no speed");
         }
