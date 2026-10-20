@@ -95,14 +95,23 @@ train Engineering, bread and animal feed Cooking. A recipe whose level is above 
 shows "Needs Engineering 15" where its result would be. The viewer's **Lay** button fills
 the grid with a recipe from the pack, and at home from its stores too (docs/home.md).
 
-Smelting is by hand for now (ore over coal at the grid makes an ingot); a furnace comes
-with Engineering 30.
+Metal comes only from fire: no grid recipe makes an ingot of ore. Copper ore smelts in
+a lit Crucible Kiln one ingot an ore, iron ore too from Engineering 15 (the bloomery of
+the Bronze age gets half again as much). Crushed first on a stone anvil while you carry a
+hammer (a recipe at a station may name a `tool` tag that must be in the pack; it wears a
+use a go), ore goes half again as far: two crushed copper smelt to three ingots, and two
+tin ores crush to three grains.
 
 ## Farming, taming and breeding with tools
 
 - A **hoe** tills soil into **farmland** (right click); crops are sown on farmland only
   (`ground` in crops.ron says otherwise for a crop that wants something else). A hoe over a
-  ripe crop adds its yield to rarer finds.
+  ripe crop adds its yield to rarer finds. A stone or copper hoe also **reaps**: cutting a
+  ripe crop takes every ripe crop of the same kind in the three by three patch about it, an
+  iron hoe the five by five (`reap:N` on the tool, at most 2, checked at load); fruit on
+  trees is still picked one leaf at a time. Each crop
+  reaped gives its harvest and experience as if cut on its own, so a field goes faster, not
+  richer. The tooltip says so ("Reaps ripe crops in a 3×3 patch").
 - A **taming treat** (Cooking 27) is taken by any animal you are skilled enough to tame,
   and wins its trust twice as fast as its own food (`taming_treat`, `trust:2`).
 - **Seed mix** (Cooking 8) readies any kept animal to breed (`breeding_feed`).
@@ -169,8 +178,9 @@ you wake after dying until a hearth gives you a home: right click it to sleep
 vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
 corner. A crucible smelts only in a standing kiln with an unexpired paid fire:
-copper ore into ingots, and three copper ingots held with a tin ore carried into four
-bronze (a station recipe may take several of what is held, `uses`, and other items
+copper ore into ingots (two crushed copper into three), iron ore at Engineering 15, and
+three copper ingots held with a tin ore or a grain of crushed tin carried into four bronze
+(a grain held with three ingots carried does the same) (a station recipe may take several of what is held, `uses`, and other items
 besides, `with`, and make several, `count`), all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,
 hold 32 charcoal or 24 coal and right-click the crucible. Lighting consumes the charge
 and quests count it (`Lit("crucible_kiln", 1)`). Its fire uses the fuel times in
@@ -190,7 +200,11 @@ thing. Every warm pelt is fur (a bear gives two), rabbit hide is hide, duck eggs
 bear fat is lard, bright feathers are feathers, claws are fangs, glimmer dust is moon dust;
 fired clay replaces unfired pots, unfired vials and fired bricks, and tin ore goes straight
 into bronze at the crucible (Oct 14: the bronze blend between them is gone). Flint comes from gravel, one break in eight (tools.ron's `instead`;
-gravel a player placed gives none).
+gravel a player placed gives none). Twine comes from tall grass cut with a knife, one cut in
+five, and a better knife finds more (`by: "knife"`: the knife's yield adds to the chance, so
+a stone knife is 1 in 4, copper 3 in 10, iron 7 in 20); by hand, tall grass gives nothing.
+The recipe book shows both: each `instead` is a way to get its item ("Cut from Tall Grass
+with a Wooden Knife or better (20%+)"), and each knife lists twine among its uses.
 
 Raw and cooked rabbit and chicken were the same meat (Cooking 1, the same experience and
 healing) and are **small game** now (Oct 14). A package's blocks file lists what it renamed

@@ -382,7 +382,7 @@ mod tests {
         // Logs in the pack change what each way still wants: the cards are drawn again,
         // the quest links are not.
         let log = app.world().resource::<Launch>().content.blocks.id("base:oak_log").unwrap();
-        app.world_mut().resource_mut::<crate::player::LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack { item: log, count: 8 });
+        app.world_mut().resource_mut::<crate::player::LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(log, 8));
         app.update();
         assert_ne!(cards(&mut app), first_cards, "what the pack holds redraws the cards");
         assert_eq!(links(&mut app), first_links, "and leaves the quest links");
@@ -562,17 +562,19 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
                 item_cell(card, font, images, Some(block), None);
             }
         }
-        Method::Cook { input, uses, with, station, .. } => {
-            // What is held, then what else it takes, each with how many if more than one.
+        Method::Cook { input, uses, with, station, tool, .. } => {
+            // What is held, then what else it takes (the first of what will do), each with
+            // how many if more than one, the station, and a tool carried if it asks.
             let count = |n: u8| (n > 1).then(|| n.to_string());
             item_cell(card, font, images, Some(*input), count(*uses));
-            for &(item, n) in with {
+            for (items, n) in with {
                 card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(item), count(n));
+                item_cell(card, font, images, items.first().copied(), count(*n));
             }
-            if let Some(fire) = content.blocks.tagged(station).next() {
+            let tool = tool.as_deref().and_then(|tag| content.blocks.tagged(tag).next());
+            for block in [content.blocks.tagged(station).next(), tool].into_iter().flatten() {
                 card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(fire), None);
+                item_cell(card, font, images, Some(block), None);
             }
         }
         Method::Product { tool, .. } => {
@@ -656,10 +658,13 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
             [(line, MUTED)].into_iter().chain(chance(*odds)).chain(level(*skill, *at)).collect()
         }
         Method::Catch { skill, level: at } => [(locale.get("recipes.catch").to_owned(), MUTED)].into_iter().chain(level(*skill, *at)).collect(),
-        Method::Cook { station, skill, level, burnt, .. } => {
+        Method::Cook { station, tool, skill, level, burnt, .. } => {
             let station = content.blocks.tagged(station).next().map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
             let mut lines = vec![(locale.format("recipes.cook", &[("station", &station)]), MUTED)];
             lines.push((locale.get("recipes.cook.use").to_owned(), SOFT));
+            if let Some(tool) = tool.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
+                lines.push((locale.format("recipes.cook.tool", &[("tool", &locale.block(content.blocks.def(tool)))]), SOFT));
+            }
             let skill = skill.map(|id| locale.skill(content.skills.get(id)));
             if let Some(skill) = skill {
                 lines.push((locale.format("recipes.level", &[("skill", &skill), ("level", level)]), SOFT));

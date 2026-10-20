@@ -68,7 +68,7 @@ mod tests {
         server.set_block(at + IVec3::X, torch);
         assert!(server.blazes.contains_key(&at), "the panel by the torch smoulders");
         server.players.get_mut(&1).unwrap().position = at.as_vec3() + Vec3::new(0.5, 0.0, -1.5);
-        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: clay, count: 3 });
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(clay, 3));
         let construction = server.content.skills.id("core:construction").expect("construction");
         let level = server.content.recipes.iter().filter(|r| r.output == daub).map(|r| r.level).min().expect("a daub recipe");
         assert!(level > 1, "the daub recipe asks a level");
@@ -110,7 +110,7 @@ mod tests {
         server.set_block(at, dirt);
         let player = server.players.get_mut(&1).unwrap();
         player.position = at.as_vec3() + Vec3::new(0.5, 0.0, -1.5);
-        player.inventory.slots[0] = Some(ItemStack { item: clay, count: 3 });
+        player.inventory.slots[0] = Some(ItemStack::new(clay, 3));
         player.selected = 0;
         let construction = server.content.skills.id("core:construction").expect("construction");
         let level = server.content.recipes.iter().filter(|r| r.output == daub).map(|r| r.level).min().expect("a daub recipe");

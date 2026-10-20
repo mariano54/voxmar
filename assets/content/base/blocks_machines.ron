@@ -170,6 +170,10 @@
         (template: "drop", name: "coke", tags: ["coke", "fuel"], all: (color: (70, 70, 75))),
         // An iron bloom from the bloomery: spongy iron and slag, hammered into ingots.
         (template: "drop", name: "iron_bloom", tags: ["bloom", "metal:iron"], all: (color: (110, 90, 80))),
+        // Ore crushed on a stone anvil with a hammer (cooking.ron): half again the metal of
+        // the ore in the crucible. Tin shows as its own grey grains.
+        (template: "drop", name: "crushed_copper", tags: ["crushed", "metal:copper"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "crushed_tin", tags: ["crushed", "metal:tin"], all: (color: (175, 182, 186))),
         // Crushed ore: twice the metal from an ore, smelted like the ore.
         (template: "drop", name: "copper_dust", tags: ["dust", "metal:copper"], all: (color: (200, 120, 80))),
         (template: "drop", name: "iron_dust", tags: ["dust", "metal:iron"], all: (color: (150, 140, 135))),

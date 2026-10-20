@@ -40,8 +40,9 @@ paying Farming, Mining and Fishing experience and two bread.
 **Days 3 to 5, Farm: sustain yourself, then fire.** Plant wheat (First Harvest), keep hens
 (Hens in a Row, Fresh Eggs), cook (Camp Cook, level 5), a flock (A Woolly Flock). The main line
 is clay work: Clay Banks, A Pit Kiln, Fire the Clay (twelve fired clay), The Potter, Brick by
-Brick (nineteen kiln bricks, about 40 fired clay: four make two), and Red Metal for the copper the crucible
-needs. The Crucible then The Crucible Kiln: **lighting it ends Farm**. Everything else
+Brick (nineteen kiln bricks, about 40 fired clay: four make two), Charcoal from a clamp, Hammer
+and Anvil (copper ore crushed for the crucible), The Crucible then The Crucible Kiln: **lighting
+it ends Farm**. Red Metal follows, smelting the crushed copper in the lit kiln. Everything else
 (husbandry, hunting, mail, home furnishings, ores, exploring) is optional breadth with its
 own rewards, so a player can always see two or three things worth doing.
 
@@ -58,6 +59,40 @@ Mostly yes, with these checks:
 - **Sizes are honest**: the Hearth needs about 28 cobblestone and 4 clay; the Kiln about
   91 fired clay between the Potter and the Kiln. That is a long clay session; Clay Banks and
   Fire the Clay split it into steps with rewards so it reads as progress.
+
+## The first day of each age, read as a newcomer (Oct 14)
+
+The first in-game day of each age, followed using only quest text, recipes and what is on
+screen, stopped at these points; each is fixed in the words (en and ja):
+
+| Where | What stopped a newcomer | Now |
+|---|---|---|
+| First tip | Nothing named the inventory key, and Look It Up starts "Open the inventory" | `tip.quests` also names `{inventory}` (bound key) |
+| Timber | "Hold the attack button" names no button | the left mouse button, on the trunk |
+| Crafting Table | "Set it down" did not say how a block is placed | hold it and right-click the ground, then right-click the table |
+| First Night | "Swing the stone axe", while a fresh player has none | swing an axe; a stone one hits three times a fist |
+| A Bed of Your Own | made a bag but never said to place and use it, which is what sets where you wake | set it down where you mean to stay and right-click it |
+| Homestead Hearth | "a shovel" with no recipe on the main line; "a ring of eight stone" read as smooth stone only | shovel recipe given; stone or cobblestone, level with the hearthstone |
+| A Chopping Block | flint from gravel, but not where gravel is | stony slopes, game trails, dry stream beds |
+| First Harvest | "keep water within four blocks", with no way yet to carry water | farm beside a river, pond or lake |
+| First Harvest | seeds named without a source | wild wheat gives them |
+| Bigger Game | asks for red deer and wild boar, while its words said "deer and boar" | names them as the game does |
+| Copper Kit | "six times as fast", where the tool tiers now give seven | seven, and a tool's tooltip says how fast it works |
+| A Varied Table (pacing audit) | 12 cooked meat, 8 fish, 6 bread: about 11 min of the same few actions | 6 meat, 4 fish, 3 bread, about 4 min |
+| Trail Rations (pacing audit) | 12 jerky | 8 jerky |
+| A Handful of Grain (pacing audit) | "the odd ear of wheat" | "often an ear of wheat" (wild wheat now gives an ear 6 times in 10) |
+
+A check keeps it so: `gate::newcomer_misses` walks every quest before the lit hearth and the
+Farm quests that open with it, and lists any item or creature a goal asks for that has no
+recipe in the book and is not named in that quest's words or an earlier one's (a crop picked
+counts by what it gives). The client test `a_newcomer_finds_what_the_opening_quests_ask_for`
+runs it in English and Japanese, and the gate's Quests step runs it on the live words
+("quests: a newcomer's way"). It found First Harvest's wheat crop (now counted by its wheat)
+and Bigger Game's deer and boar.
+
+Checked and fine: the start pins (Timber, Look It Up, First Night) are reachable bare-handed
+(stone breaks to cobblestone by hand, `tools.ron`); every main step names its recipe; the
+Farm's first steps (Pit Kiln, Clay Banks, Fire the Clay) say where clay is and how to fire it.
 
 ## Gaps found, and where each stands
 
@@ -139,11 +174,11 @@ stalled.
 `a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln` (crates/server/tests/gameplay.rs)
 runs in every test run and guards the loop. A scripted player starts with nothing and follows
 the main line in the book's order: Look It Up, the Nomad quests to the lit Homestead Hearth,
-then A Pit Kiln, Fire the Clay, The Potter, Charcoal, Red Metal, Brick by Brick, The Crucible
-and the lit Crucible Kiln. It gathers, crafts with the recipes it has unlocked, fires clay,
-burns charcoal, hunts, and claims each quest's rewards in the book as it finishes, since the
-levels later steps need come from those (Red Metal's copper takes Mining 5, and all the
-mining before it gives Mining 2; Charcoal's reward brings the rest). Nothing is given: the plot
+then A Pit Kiln, Fire the Clay, The Potter, Charcoal (a clamp lit while Brick by Brick's clay
+is fired), Brick by Brick, Hammer and Anvil, The Crucible, the lit Crucible Kiln and Red Metal.
+It gathers, crafts with the recipes it has unlocked, fires clay, chars a clamp, hunts, and claims each quest's rewards in the book as it finishes, since the
+levels later steps need come from those (Hammer and Anvil's copper takes Mining 5, and all
+the mining before it gives Mining 2; Charcoal's reward brings the rest). Nothing is given: the plot
 is laid out with /fill and /summon, standing in for terrain, and the only other shortcut is
 a /tp across the plot. Each quest must show done at its step, so a step whose text and
 recipes cannot be followed fails here.
@@ -217,7 +252,8 @@ Mining time is the block's hardness over the tool's speed (tools.ron), so a tool
 | Stone (1.5) | 1.5 s | Wooden pickaxe (13 s) | 3 planks, 2 sticks | x2 | Stone pickaxe at 44 s, x4; copper at 233 s, x7 |
 | Clay (0.6) | 0.6 s | Stone shovel (Dig In, about 100 s) | 1 cobblestone, 2 sticks | x4 | Copper shovel, x7 |
 | Coal ore (3.0) | none | Wooden pickaxe (13 s) | as above | needs a pickaxe | Stone pickaxe, x2 more |
-| Fibre (wild wheat, grass) | instant | none needed | | | Sown wheat in the Farm age; wild wheat gives an ear 6 in 10 |
+| Twine (wild wheat) | 3 wheat for 2; wild wheat gives an ear 6 times in 10, a tuft in about 400 columns | Any knife on tall grass (Oct 14) | a plank or cobblestone over a stick | 10 twine (Twine and Thong) from about 50 tufts to about 40 cuts with a stone knife | Sown wheat in the Farm age |
+| Wheat (a sown field) | a cut each | Stone hoe reaps 3×3 (Oct 14) | 1 cobblestone, 2 sticks | up to x9 cuts | Iron hoe, 5×5 |
 | Meat (hunting) | max hit 1 | Stone axe or sword (44 s) | 3 or 2 cobblestone, sticks | x3 max hit | Copper sword, max hit 5 |
 | Charcoal (a log in the fire) | 2 s each | none: coal ore instead (Charcoal's other route) | | | The Crucible pays 16 |
 
@@ -396,6 +432,24 @@ What the report shows, and is left for the books' owners:
 - Nothing past the first window is a place or a creature: the plot is one or two biomes
   and a lane of two kinds. In a real world the walks add both, so the second and third
   windows are a floor too.
+
+### One charcoal route (Oct 20)
+
+Charcoal comes only from the charcoal clamp now: the earth clamp is retired (its blocks load
+as oak logs) and the campfire no longer chars logs. The quest-book bot builds the clamp as
+Charcoal says: eight logs, a flint dug from the gravel bank for the chopping block, ten
+firewood split on it (nine laid), kindling, twenty-four dirt for the walls and roof, lit
+from a torch. The bot's clock runs about 75 s a game hour.
+
+At eight game hours the clamp failed the pacing check above: about 600 s of the bot's time
+with nothing new and the bot idle (0 new things in three windows, one stretch of 440 s). It
+smoulders two game hours now (`smoulder.hours` in multiblocks.ron), and while it does the
+bot works on Brick by Brick, open since The Potter: clay fired to A Kiln Load's forty, then
+kiln bricks crafted between firings. Once the clamp is spent it digs out the charcoal and
+does Red Metal, then finishes the bricks. Seven runs: the lit Crucible Kiln at 465 to 520 s;
+the window from 360 s brings 7 new things (kiln bricks, charcoal, copper ore, ingot and
+pickaxe, the crucible and its station); the longest wait with nothing new is about 150 s
+(firing clay); the longest single-action stretch is 39 to 40 s (17 firings in a row).
 
 ## Measured pacing
 

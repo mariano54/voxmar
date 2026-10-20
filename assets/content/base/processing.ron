@@ -25,6 +25,8 @@
         (kind: "smelt", inputs: [("copper_dust", 1)], outputs: [("copper_ingot", 1)], seconds: 4.0),
         (kind: "smelt", inputs: [("iron_dust", 1)], outputs: [("iron_ingot", 1)], seconds: 5.0),
         (kind: "smelt", inputs: [("copper_ore", 1)], outputs: [("copper_ingot", 1)], seconds: 4.0),
+        // Ore crushed on a stone anvil smelts as in the Crucible Kiln: two to three ingots.
+        (kind: "smelt", inputs: [("crushed_copper", 2)], outputs: [("copper_ingot", 3)], seconds: 6.0),
         (kind: "smelt", inputs: [("iron_ore", 1)], outputs: [("iron_ingot", 1)], seconds: 5.0),
     ],
 )

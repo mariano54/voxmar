@@ -32,6 +32,9 @@
     water_chill: 8.0,
     // How far up a roof is looked for, to tell whether a player is out in the weather.
     roof_scan: 48,
+    // Rain at least this heavy (0 to 1) puts out a light that rain douses (a torch) with
+    // open sky over it; it is lit again from any flame.
+    douse_rain: 0.2,
     // A home (the lit hearth, else the bed last slept in) reaches this many blocks out on each
     // side, up and down. Its furnishings are counted in that box and a player feels it
     // standing in it (effects.ron's AtHome and HomeHas).

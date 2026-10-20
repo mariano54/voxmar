@@ -326,7 +326,7 @@ pub(crate) fn quest_icon(content: &Content, images: &HudImages, quest: &QuestDef
     let given = quest.rewards.iter().find_map(|r| if let Reward::Item(name, _) = r { item(name) } else { None });
     let asked = || {
         quest.tasks.iter().flatten().find_map(|goal| match goal {
-            Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item(name),
+            Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item(name),
             _ => None,
         })
     };
@@ -388,6 +388,10 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Ate(food, _) => locale.format("quest.goal.ate", &[("item", &item_words(locale, content, package, food))]),
         Goal::Laid(item, _) => locale.format("quest.goal.laid", &[("item", &item_words(locale, content, package, item))]),
         Goal::Watering(block, _) => locale.format("quest.goal.watering", &[("item", &item_words(locale, content, package, block))]),
+        Goal::Placed(block, _) => locale.format("quest.goal.placed", &[("item", &item_words(locale, content, package, block))]),
+        Goal::Stocked(item, store, _) => locale.format("quest.goal.stocked", &[("item", &item_words(locale, content, package, item)), ("store", &item_words(locale, content, package, store))]),
+        Goal::CraftNear(item, near, _) => locale.format("quest.goal.craft_near", &[("item", &item_words(locale, content, package, item)), ("near", &item_words(locale, content, package, near))]),
+        Goal::Trapped(creature, _) => locale.format("quest.goal.trapped", &[("creature", &creature_words(locale, content, package, creature))]),
         Goal::Felt(effect) => {
             let words = qualified(package, effect).iter().find_map(|name| content.effects.find(name)).map(|id| content.effects.get(id)).map_or_else(|| title_from_id(effect), |def| locale.get_or(&def_key("effect", &def.name), &def.title).to_owned());
             return locale.format("quest.goal.felt", &[("effect", &words)]);
@@ -1075,7 +1079,11 @@ fn draw(
                 }
                 for (g, goal) in task.iter().enumerate() {
                     let progress = state.and_then(|s| s.tasks.get(t)?.get(g).copied()).unwrap_or((0, 1));
-                    let met = progress.0 >= progress.1 || standing == Standing::Done;
+                    // Done, its goals read as met, though what they counted has since gone
+                    // (a trough set down, broken after; a carried item, used).
+                    let done = standing == Standing::Done;
+                    let progress = if done { (progress.1, progress.1) } else { progress };
+                    let met = progress.0 >= progress.1 || done;
                     // Waiting, its goals are what is ahead, not progress under way.
                     let color = match (standing, met) {
                         (Standing::Waiting, _) => MUTED,
@@ -1085,7 +1093,7 @@ fn draw(
                     let line = text(font, goal_line(&locale, content, quest, goal, progress, met), BODY, color);
                     // The item it asks for, to click for its recipes (a right click, its uses).
                     let asked = match goal {
-                        Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item_id(content, package(quest), name),
+                        Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item_id(content, package(quest), name),
                         _ => None,
                     };
                     let Some(item) = asked else {
@@ -1098,7 +1106,7 @@ fn draw(
                     });
                     // How to make it, the way the recipe viewer draws it, for what a goal
                     // makes.
-                    if matches!(goal, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::Have(..))
+                    if matches!(goal, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::CraftNear(..) | Goal::Placed(..) | Goal::Have(..))
                         && let Some(book) = viewer.book()
                     {
                         let ways = book.making(item);
@@ -1685,14 +1693,14 @@ mod tests {
             let item = |name: &str| name == "any" || name.starts_with("tag:") || item_id(&content, package, name).is_some();
             for goal in quest.tasks.iter().flatten() {
                 let known = match goal {
-                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
+                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Stocked(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
                     Goal::Catch(name, _) => name == "Kinds" || item(name),
                     Goal::Kinds(page, name, _) => match page {
                         voxmar_engine::journal::Page::Animals | voxmar_engine::journal::Page::Monsters => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                         voxmar_engine::journal::Page::Plants | voxmar_engine::journal::Page::Ores | voxmar_engine::journal::Page::Fish => item(name),
                         _ => name == "any",
                     },
-                    Goal::Kill(name, _) | Goal::Tame(name, _) | Goal::Lured(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
+                    Goal::Kill(name, _) | Goal::Tame(name, _) | Goal::Lured(name, _) | Goal::Trapped(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                     Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some() || content.effects.step(name).is_some()),
                     Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
                     Goal::Level(skill, _) => skill_id(&content, skill).is_some(),
@@ -1712,7 +1720,7 @@ mod tests {
                 }
             }
             let pictured = quest.rewards.iter().any(|r| matches!(r, Reward::Item(..) | Reward::Xp(..)))
-                || quest.tasks.iter().flatten().any(|g| matches!(g, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::Have(..) | Goal::Pick(..) | Goal::Mine(..) | Goal::Catch(..) | Goal::Level(..)));
+                || quest.tasks.iter().flatten().any(|g| matches!(g, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::CraftNear(..) | Goal::Placed(..) | Goal::Have(..) | Goal::Pick(..) | Goal::Mine(..) | Goal::Catch(..) | Goal::Level(..)));
             if !pictured {
                 wrong.push(format!("{}: nothing to draw it with", quest.name));
             }

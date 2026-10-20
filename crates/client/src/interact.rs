@@ -197,6 +197,10 @@ impl ActionContext for ClientContext<'_> {
         self.player.inventory.pouched.iter().map(|&(item, _)| item).collect()
     }
 
+    fn actor_carried(&self) -> Vec<BlockId> {
+        self.player.inventory.slots.iter().flatten().map(|s| s.item).collect()
+    }
+
     fn actor_hurt(&self) -> bool {
         self.player.health < self.player.max_health
     }
@@ -435,7 +439,10 @@ fn break_and_place(
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
                     return;
                 }
-                Some(Err(Rejection::Unmet(need @ Requirement::CookingLevel))) => {
+                // Below its level, or with no tool about (a hammer for the anvil, an axe for the
+                // chopping block): it says why, and what is held is not set down on the station
+                // instead.
+                Some(Err(Rejection::Unmet(need @ (Requirement::CookingLevel | Requirement::CookingTool)))) => {
                     if let Some(words) = refusal(&context, &locale, Some(hit.block), need) {
                         toasts.refused(words, time.elapsed_secs());
                     }
@@ -687,6 +694,14 @@ fn refusal(context: &ClientContext, locale: &Locale, block: Option<IVec3>, need:
         Requirement::SkillLevel => {
             let crop = context.actor_seed().and_then(|seed| content.crops.planted_by(seed)).map(|id| content.crops.get(id))?;
             level(crop.skill, crop.def.level)
+        }
+        // The tool the held item's recipe at the station aimed at asks for: the first item
+        // that is one.
+        Requirement::CookingTool => {
+            let station = world.block(block?).map(|b| world.registry.def(b).tags.clone()).unwrap_or_default();
+            let tag = content.cooking.for_item(context.actor_held()?, &station)?.def.tool.clone()?;
+            let tool = content.blocks.tagged(&tag).next()?;
+            Some(locale.format(key, &[("tool", &locale.block(world.registry.def(tool)))]))
         }
         // The held item's recipe at the station aimed at.
         Requirement::CookingLevel => {

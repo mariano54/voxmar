@@ -309,8 +309,8 @@
         (name: "cactus", sound: Wood, textures: Sides(top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side"), hardness: 0.4, color: (80, 130, 40), tags: ["plant", "desert", "hot", "dry", "natural", "thorny"]),
         // Plants
         (name: "short_grass", render: Plant, solid: false, sound: Grass, textures: All("fine_grass"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["plant", "grass", "meadow"]),
-        (name: "tall_grass", render: Plant, solid: false, sound: Grass, textures: All("tall_fine_grass_bottom"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["plant", "grass", "meadow", "tall"]),
-        (name: "tall_grass_top", render: Plant, solid: false, sound: Grass, textures: All("tall_fine_grass_top"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150)),
+        (name: "tall_grass", render: Plant, solid: false, sound: Grass, textures: All("tall_fine_grass_bottom"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["plant", "grass", "meadow", "tall", "fibre"]),
+        (name: "tall_grass_top", render: Plant, solid: false, sound: Grass, textures: All("tall_fine_grass_top"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["tall", "fibre"]),
         (name: "fern", render: Plant, solid: false, sound: Grass, textures: All("fern"), tint: Grass, hardness: 0.0, drops: "core:air", color: (130, 130, 130), tags: ["plant", "fern", "forest_floor", "shade"]),
         (name: "large_fern", render: Plant, solid: false, sound: Grass, textures: All("large_fern_bottom"), tint: Grass, hardness: 0.0, drops: "core:air", color: (130, 130, 130), tags: ["plant", "fern", "forest_floor", "shade", "tall"]),
         (name: "large_fern_top", render: Plant, solid: false, sound: Grass, textures: All("large_fern_top"), tint: Grass, hardness: 0.0, drops: "core:air", color: (130, 130, 130)),

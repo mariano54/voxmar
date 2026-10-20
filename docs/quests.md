@@ -303,6 +303,38 @@ does not know.
 These counts come from the quest data and twelve logs of the kiln bot; along the bot's run
 a Farm count includes every quest open since the hearth was lit.
 
+## Hooks for the new features (Oct 14)
+
+Each new feature has a quest that teaches it, in two parts the book counts one by one:
+
+| Quest | Age, path, after | Parts |
+|---|---|---|
+| A Chopping Block | Nomad, start; An Axe to It and A Bed of Your Own (Crafting 2 by then) | one set down; twelve planks split by it |
+| Set a Snare | Nomad, hunter; Twine and Thong | one set down; a catch taken from a trap |
+| Old Tusk | Nomad, hunter; Hide and Seek and Raise Your Guard | a flint spear made; Old Tusk killed |
+| Light in the Window | Farm, home; A Homely Home | two hide windows made; two set down |
+| A Trough for the Pen | Farm, husbandry; Hens in a Row | a feed trough set down; eight items put in it |
+| A Full Granary | Farm, farming; A Well by the Field | 64 wheat plants harvested; 32 wheat kept |
+
+Twine and Thong also takes ten twine carried, since a knife cuts twine from tall grass, and
+its text and A Sharp Edge's say so. First Harvest says a stone hoe reaps the ripe crops around the one cut, and A Full Granary is the harvest that pays for it. Four goals came with them, each reading a tally:
+`Placed(block, n)` (blocks set from the hand that still stand, by the item: `placed`,
+tallied only for a block a `Placed` of a quest the player has not finished names; the world
+keeps each such cell with its owner and item (`WorldMeta::quest_placed`), and the block
+counts while the one in its cell still drops that item, so a sprung snare still stands and
+a snare set over itself counts once; broken, built over or washed away, it comes off,
+straight away if its owner is playing, else as they join, when their `placed` tallies are
+counted again from the world's cells; a quest finished drops the cells no open quest still
+counts),
+`Stocked(item, store, n)` (that item put in a store of that block and left there:
+`stocked:STORE:ITEM`, in `push_store`, net of what is taken back out), `CraftNear(item,
+near, n)` (made by a recipe with `near`, by that tag: `crafted_near:TAG`, beside `crafted`)
+and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever empties
+the snare gets the credit and the catch, as with a shared lit fire, until traps have
+owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` tag no
+recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
+full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 63 quests, Farm 98.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text
@@ -393,8 +425,8 @@ that quest needs.
 | Milk | 5 min | The Milk Pail | A Full Pen |
 | A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
 | Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
-| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole; An Earth Clamp smoulders beside it |
-| An earth clamp smouldering | 1 min a load | An Earth Clamp | Firing clay by hand at the pit kiln, digging the next load, Red Metal |
+| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+| A charcoal clamp smouldering | 2 game hours (about 150 s of the quest-book bot's time, which runs about 75 s a game hour) | Charcoal | Brick by Brick: firing clay at the pit kiln to A Kiln Load's forty and crafting kiln bricks; A Second Clamp |
 | A drying rack drying | 10 min (5 by a fire) | Hung to Dry | Hunting for the next load; Trail Rations |
 | A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed, the compost's next part |
 

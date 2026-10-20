@@ -81,7 +81,7 @@ impl Plugin for SfxPlugin {
             .init_resource::<MaterialsAsked>()
             .configure_sets(Update, Audible.run_if(sound_on))
             .add_systems(Startup, synthesize)
-            .add_systems(Update, ((footsteps, (play_cues.in_set(Audible), ask_materials)).chain(), thunder.in_set(Audible), play_catches.in_set(Audible), (play_actions, play_brought).chain()));
+            .add_systems(Update, ((footsteps, (play_cues.in_set(Audible), ask_materials)).chain(), thunder.in_set(Audible), play_catches.in_set(Audible), (play_actions, play_brought).chain(), play_wear));
     }
 }
 
@@ -222,6 +222,8 @@ struct Sfx {
     thunder: [Vec<Handle<AudioSource>>; 3],
     /// What actions sound like as the player does them.
     actions: FxHashMap<voxmar_engine::action::ActionId, Vec<Clip>>,
+    /// A tool nearly worn out, and one that broke.
+    wore: [Vec<Clip>; 2],
     /// Something catching fire.
     catch: Vec<Clip>,
     /// What their results sound like landing in the pack, by their tags.
@@ -409,6 +411,9 @@ fn synthesize(
             Some((launch.content.actions.id(name)?, load(&sound.sounds).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect()))
         })
         .collect();
+    // A tool's warning and break, about as loud as breaking a block.
+    let gain = Cue::Break.gain() * level(&target, Cue::Break) / ACTION_LOUDNESS;
+    let wore = [&recorded.tool_worn, &recorded.tool_break].map(|paths| load(paths).into_iter().map(|source| Clip { source, gain, speed: 1.0 }).collect());
     let ways = recorded
         .actions
         .iter()
@@ -440,7 +445,7 @@ fn synthesize(
             Some((launch.content.actions.id(name)?, rules.collect()))
         })
         .collect();
-    commands.insert_resource(Sfx { clips, materials, material, thunder, actions, brings, awaiting: Vec::new(), catch, ways, counter: 0 });
+    commands.insert_resource(Sfx { clips, materials, material, thunder, actions, brings, awaiting: Vec::new(), catch, ways, wore, counter: 0 });
 }
 
 /// How loud a synthesized cue's clips are on average.
@@ -478,6 +483,10 @@ pub(crate) struct Recordings {
     /// An item picked up off the ground, played when the player's Minecraft sounds are not.
     /// A later package that lists any replaces these.
     pickup: Vec<String>,
+    /// A tool in hand nearly worn out (`tools.ron`'s `wear.warn`), and one that broke. A
+    /// later package that lists any replaces these.
+    tool_worn: Vec<String>,
+    tool_break: Vec<String>,
     /// What the player does, heard as they do it, by the action's name (`core:eat`): the
     /// clips take turns at random. A later package that names an action replaces its sound.
     pub(crate) actions: std::collections::BTreeMap<String, ActionSound>,
@@ -694,6 +703,8 @@ impl Recordings {
             replace(&mut all.level_up, def.level_up);
             replace(&mut all.level_milestone, def.level_milestone);
             replace(&mut all.pickup, def.pickup);
+            replace(&mut all.tool_worn, def.tool_worn);
+            replace(&mut all.tool_break, def.tool_break);
             for (name, sound) in def.actions {
                 let brings = sound.brings.into_iter().map(|b| Brought { sounds: path(b.sounds).collect(), ..b }).collect();
                 // A bare name is the package's own item, as in its other files.
@@ -777,6 +788,16 @@ impl Recordings {
         }
         if !(self.fire.volume > 0.0 && self.fire.volume <= 2.0) {
             return Err(format!("{RECORDINGS}: `fire` has volume {}, not above 0 and up to 2", self.fire.volume));
+        }
+        Ok(())
+    }
+
+    /// Whether a tool nearly worn out, and one breaking, have sounds: they are always heard.
+    pub(crate) fn check_wear(&self) -> Result<(), String> {
+        for (name, clips) in [("tool_worn", &self.tool_worn), ("tool_break", &self.tool_break)] {
+            if clips.is_empty() {
+                return Err(format!("{RECORDINGS}: no `{name}` sounds"));
+            }
         }
         Ok(())
     }
@@ -1178,6 +1199,30 @@ fn play_brought(
         if let Some(clip) = clips.get((pick * clips.len() as f32) as usize) {
             play_clip(&mut commands, clip, master, jitter);
         }
+    }
+}
+
+/// Plays a tool's warning as it nears worn out, and its break (`sounds.ron`'s `tool_worn`
+/// and `tool_break`), when the server says so.
+fn play_wear(
+    mut commands: Commands,
+    mut wore: MessageReader<crate::breaking::ToolWore>,
+    sfx: Option<ResMut<Sfx>>,
+    settings: Res<Settings>,
+    global: Option<Res<GlobalVolume>>,
+) {
+    let (Some(mut sfx), true) = (sfx, sound_on(global)) else {
+        wore.clear();
+        return;
+    };
+    let master = MASTER * settings.sound_volume as f32 / 100.0;
+    for worn in wore.read() {
+        let (pick, jitter) = (sfx.random(), sfx.random());
+        let clips = &sfx.wore[usize::from(worn.broke)];
+        let Some(clip) = clips.get((pick * clips.len() as f32) as usize) else { continue };
+        let speed = clip.speed * (0.96 + 0.08 * jitter);
+        let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(clip.gain * master)) };
+        commands.spawn((AudioPlayer(clip.source.clone()), playback, Voice::of(Category::Everyday)));
     }
 }
 
@@ -1604,7 +1649,7 @@ mod tests {
             let rolls = [vec![Handle::default()], vec![Handle::default()], vec![Handle::default()]];
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips, materials: Vec::new(), material: Vec::new(), thunder: rolls, actions: FxHashMap::default(), brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), catch: Vec::new(), counter: 0 })
+                .insert_resource(Sfx { clips, materials: Vec::new(), material: Vec::new(), thunder: rolls, actions: FxHashMap::default(), brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), catch: Vec::new(), wore: Default::default(), counter: 0 })
                 .add_message::<SoundCue>()
                 .add_message::<Thunder>()
                 .configure_sets(Update, Audible.run_if(sound_on))
@@ -1717,6 +1762,7 @@ mod tests {
         assert_eq!(recorded.actions["core:eat"], ActionSound { sounds: vec!["content/mod/x.ogg".into()], volume: 1.5, ..Default::default() });
         assert_eq!(recorded.actions["core:craft"], ActionSound { sounds: vec!["content/base/c.ogg".into()], volume: 0.5, ..Default::default() });
         assert_eq!(recorded.check(&content.actions), Ok(()));
+        assert!(recorded.check_wear().is_err(), "no tool wear sounds");
         for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], silent: true)})"#, r#"(actions: {"core:eat": (silent: true, heard: Some(Block))})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: ["x"], sounds: [])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: [""], sounds: ["b.ogg"])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(sounds: ["b.ogg"])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: ["x"], sounds: ["b.ogg"], volume: 3.0)])})"#] {
             assert!(Recordings::load(&[file("mod", wrong)]).unwrap().check(&content.actions).is_err(), "{wrong}");
         }
@@ -1725,6 +1771,7 @@ mod tests {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base/sounds.ron");
         let base = file("base", &std::fs::read_to_string(path).unwrap());
         assert_eq!(Recordings::load(&[base.clone()]).unwrap().covers(&content.actions), Ok(()));
+        assert_eq!(Recordings::load(&[base.clone()]).unwrap().check_wear(), Ok(()), "the base package's tools are heard wearing");
         let mut more = voxmar_engine::action::ActionRegistry::default();
         for (namespace, source) in [("core", "core/actions.ron"), ("base", "base/actions.ron")] {
             let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
@@ -2083,8 +2130,8 @@ mod tests {
         assert_eq!(gained(&counts(&[(5, 2), (6, 1)]), &counts(&[(5, 3), (6, 1), (7, 1)])), [BlockId(5), BlockId(7)]);
         assert!(gained(&counts(&[(5, 2)]), &counts(&[(5, 1)])).is_empty());
         let mut inventory = voxmar_engine::inventory::Inventory::default();
-        inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack { item: BlockId(5), count: 2 });
-        inventory.cursor = Some(voxmar_engine::inventory::ItemStack { item: BlockId(5), count: 1 });
+        inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(BlockId(5), 2));
+        inventory.cursor = Some(voxmar_engine::inventory::ItemStack::new(BlockId(5), 1));
         inventory.pouched.push((BlockId(8), 40));
         assert_eq!(carried(&inventory), counts(&[(5, 3), (8, 40)]));
     }
@@ -2104,7 +2151,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), catch: Vec::new(), counter: 0 })
+                .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), catch: Vec::new(), wore: Default::default(), counter: 0 })
                 .insert_resource(net)
                 .add_systems(Update, play_actions);
             // Crafting has no sound here: nothing plays for it.

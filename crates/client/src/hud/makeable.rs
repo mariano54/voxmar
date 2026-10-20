@@ -140,12 +140,13 @@ pub(crate) fn plan_cooking_from(content: &Content, book: &RecipeBook, have: &FxH
                 .min_by_key(Reach::rank)
                 .map(|reach| Makeable { output: entry.output, recipes: Some((*first, variants.len())), reach }),
             // Cooked: from what is in hand, as many as one go takes, with what else it takes
-            // (three copper ingots and a tin ore make bronze), or short of those.
+            // (three copper ingots and a tin ore make bronze), or short of those. Any one of
+            // a list of what goes with it will do; short of one, the list's first is named.
             Method::Cook { input, uses, with, station, .. } if cooks.get(input).is_some_and(|&n| n > 0) => {
                 let count = |item: &BlockId| cooks.get(item).copied().unwrap_or(0);
-                let short: Vec<(BlockId, u32)> = std::iter::once((*input, *uses))
-                    .chain(with.iter().copied())
-                    .filter_map(|(item, n)| (count(&item) < n as u32).then(|| (item, n as u32 - count(&item))))
+                let short: Vec<(BlockId, u32)> = std::iter::once((*input, *uses as u32, count(input)))
+                    .chain(with.iter().filter_map(|(items, n)| Some((*items.first()?, *n as u32, items.iter().map(count).sum::<u32>()))))
+                    .filter_map(|(item, n, have)| (have < n).then(|| (item, n - have)))
                     .collect();
                 let reach = if short.is_empty() { Reach::Station(station.clone()) } else { Reach::Short(short) };
                 Some(Makeable { output: entry.output, recipes: None, reach })
@@ -363,7 +364,7 @@ mod tests {
         let mut player = LocalPlayer::default();
         let planks = content.blocks.id("base:oak_planks").unwrap();
         player.vitals.home_stores = vec![(planks, 4)];
-        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack { item: planks, count: 1 });
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(planks, 1));
         assert_eq!(within_reach(&player).get(&planks), Some(&5), "the pack's and the stores' together");
         let made = plan(&content, &book, &within_reach(&player), false, &none);
         assert_eq!(find(&made, &content, "base:crafting_table").map(|m| &m.reach), Some(&Reach::Ready));

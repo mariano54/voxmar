@@ -9,15 +9,27 @@
 // `blocks`: what breaking a block takes and teaches, the first rule whose tags the block
 // all has: a level in a skill (`level`, RuneScape-style), a tool of a kind and tier
 // (`tool`, `tier`), and the experience it gives. Only natural blocks teach, so breaking
-// what you placed teaches nothing.
+// what you placed teaches nothing. `instead` is sometimes something else in place of its
+// own drop (item, chance); `by` makes that wait on a kind of tool, whose yield adds to the
+// chance.
+//
+// `wear`: how tools and weapons with `uses:N` wear out (blocks_tools.ron). A block a tool is
+// made for takes `suited` uses, any other `unsuited` (a block that breaks at a touch none),
+// tilling `till`, a blow that lands `hit`. Each kind's `skill` (a weapon's own, else
+// `weapon_skill`) saves a use `save_per_level` times its level: 1 in 2 at 99. At `warn` of
+// its uses left a tool creaks and reddens; worn out it breaks with a snap. Mending, at a
+// block tagged `mend_near` unless the tool names its own, gives back `mend` of its uses a
+// piece (more where its recipe takes fewer pieces), and making a new one must never be
+// cheaper than mending (checked at load).
 (
+    wear: (suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.005, weapon_skill: "core:attack", warn: 0.1, mend: 0.5, mend_near: "chopping_block"),
     kinds: [
-        (name: "pickaxe", mines: ["stone", "ore", "cobbled", "bricks", "crystal", "ice"]),
-        (name: "axe", mines: ["log", "wood", "planks", "bush"]),
-        (name: "shovel", mines: ["soil", "sand", "gravel", "clay", "snow", "silt"]),
-        (name: "hoe", mines: ["crop", "leaves", "moss", "hay"]),
-        (name: "shears", mines: ["leaves", "wool", "vine"]),
-        (name: "knife", mines: ["plant", "vine", "flower"]),
+        (name: "pickaxe", mines: ["stone", "ore", "cobbled", "bricks", "crystal", "ice"], skill: "core:mining"),
+        (name: "axe", mines: ["log", "wood", "planks", "bush"], skill: "core:crafting"),
+        (name: "shovel", mines: ["soil", "sand", "gravel", "clay", "snow", "silt"], skill: "core:mining"),
+        (name: "hoe", mines: ["crop", "leaves", "moss", "hay"], skill: "core:farming"),
+        (name: "shears", mines: ["leaves", "wool", "vine"], skill: "core:farming"),
+        (name: "knife", mines: ["plant", "vine", "flower"], skill: "core:crafting"),
         // A rod mines nothing; it fishes (fishing.ron).
         (name: "rod", mines: []),
     ],
@@ -56,6 +68,9 @@
         // Leaves pulled from a tree give a stick one time in five: the hafts of the first tools.
         (tags: ["leaves", "natural"], instead: ("stick", 0.2)),
         (tags: ["clay", "natural"], skill: "core:mining", xp: 2.0),
+        // Tall grass cut with a knife gives twine one time in five, more with a better knife
+        // (its yield adds: stone 1 in 4, copper 3 in 10, iron 7 in 20); by hand, nothing.
+        (tags: ["fibre", "tall"], instead: ("twine", 0.2), by: "knife"),
         // Gravel breaks to flint one time in eight (arrowheads, spear points).
         (tags: ["gravel", "natural"], skill: "core:mining", xp: 1.0, instead: ("flint", 0.125)),
     ],

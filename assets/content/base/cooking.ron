@@ -41,11 +41,24 @@
         // altar, lanterns and graves are cut from. It never cracks.
         (input: "cobblestone", output: "stone", station: "pit_kiln", skill: "core:construction", level: 1, xp: 1.0, stop_burning: 0),
         // Smelted in the Crucible Kiln (Engineering), which must stand round its crucible:
-        // copper ingots from ore, and bronze from three copper ingots held and a tin ore
-        // carried, four at a time (one step, no blend). Metal never burns.
+        // copper ingots from ore, iron too once Engineering 15 (the bloomery does it better),
+        // and bronze from three copper ingots held and a tin ore (or a grain of crushed tin,
+        // anything of tin) carried, four at a time (one step, no blend). Metal never burns.
         (input: "copper_ore", output: "copper_ingot", station: "crucible", skill: "core:engineering", level: 5, xp: 8.0, stop_burning: 0),
-        (input: "copper_ingot", uses: 3, with: [("tin_ore", 1)], output: "bronze_ingot", count: 4, station: "crucible", skill: "core:engineering", level: 12, xp: 88.0, stop_burning: 0),
-        // A log left in the fire burns down to charcoal, for torches; it never fails.
-        (input: "tag:log", output: "charcoal", level: 1, xp: 5.0, stop_burning: 0),
+        (input: "iron_ore", output: "iron_ingot", station: "crucible", skill: "core:engineering", level: 15, xp: 12.0, stop_burning: 0),
+        (input: "copper_ingot", uses: 3, with: [("tag:metal:tin", 1)], output: "bronze_ingot", count: 4, station: "crucible", skill: "core:engineering", level: 12, xp: 88.0, stop_burning: 0),
+        // Ore crushed on a stone anvil with a hammer carried (kept), at the level its metal
+        // smelts at, gives half again as much: two crushed copper smelt to three ingots, and
+        // two tin ores crush to three grains, each held with three copper ingots carried
+        // making four bronze as an ore does. The xp a smelted ore teaches is split between
+        // its crushing and its smelting.
+        (input: "copper_ore", output: "crushed_copper", station: "anvil", tool: "hammer", skill: "core:engineering", level: 5, xp: 2.0, stop_burning: 0),
+        (input: "tin_ore", uses: 2, output: "crushed_tin", count: 3, station: "anvil", tool: "hammer", skill: "core:engineering", level: 12, xp: 4.0, stop_burning: 0),
+        (input: "crushed_copper", uses: 2, output: "copper_ingot", count: 3, station: "crucible", skill: "core:engineering", level: 5, xp: 12.0, stop_burning: 0),
+        (input: "crushed_tin", with: [("copper_ingot", 3)], output: "bronze_ingot", count: 4, station: "crucible", skill: "core:engineering", level: 12, xp: 88.0, stop_burning: 0),
+        // A log split on a chopping block (Construction), with an axe about you: two
+        // firewood, which burn hotter and longer than the log (machines.ron) and stack into
+        // a charcoal clamp (multiblocks.ron). The axe is not taken.
+        (input: "tag:log", output: "firewood", count: 2, station: "chopping_block", skill: "core:construction", level: 1, xp: 2.0, stop_burning: 0, tool: "axe"),
     ],
 )

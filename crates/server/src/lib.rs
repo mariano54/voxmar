@@ -37,6 +37,7 @@ mod prayers;
 mod process;
 mod rules;
 mod laying;
+mod smoulder;
 mod stations;
 mod traps;
 mod stores;
@@ -47,6 +48,7 @@ mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
+mod tool_wear;
 mod wear;
 
 use std::collections::VecDeque;
@@ -655,6 +657,8 @@ pub(crate) struct Server {
     /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
     /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
+    smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
     /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
     /// kept by owner), by core cell: set when it is first lit, kept while its fire is out or
     /// a piece of it is broken, forgotten only when its owner breaks its hearthstone or lights
@@ -667,6 +671,10 @@ pub(crate) struct Server {
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
+    /// Blocks set down that an unfinished quest's `Placed` counts, by cell: whose (their
+    /// name in lower case) and what item. Each counts on their tally while the block in the
+    /// cell still drops that item (`WorldMeta::quest_placed`).
+    quest_placed: FxHashMap<IVec3, (String, String)>,
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
@@ -805,6 +813,7 @@ impl Server {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
+        let quest_placed = quests::restore_placed(&meta.quest_placed, &content.blocks, &content.quests);
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let blazes = blaze::restore(&meta.blazes);
         let lairs = lairs::Lairs::restore(&meta.lairs);
@@ -815,6 +824,7 @@ impl Server {
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect::<FxHashMap<_, _>>();
         let hearth_owners = hearth::HearthOwner::restore(&meta.hearth_owners, &lit, |name| content.multiblocks.get(name).is_some_and(|m| m.home));
+        let smoulders = smoulder::restore(&meta.smoulders, |name| content.multiblocks.get(name).is_some_and(|m| m.smoulder.is_some()));
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
@@ -832,9 +842,11 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            smoulders,
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
+            quest_placed,
             regrowing,
             blazes,
             blaze_risked: Vec::new(),
@@ -1083,6 +1095,7 @@ impl Server {
             age: 0.0,
             owner: None,
             lifetime: None,
+            wear: stack.wear,
         }));
         saved
     }
@@ -1211,6 +1224,9 @@ impl Server {
         let mut meta = self.meta.clone();
         meta.time = self.tick;
         meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
+        let mut quest_placed: Vec<([i32; 3], String, String)> = self.quest_placed.iter().map(|(cell, (owner, item))| (cell.to_array(), owner.clone(), item.clone())).collect();
+        quest_placed.sort();
+        meta.quest_placed = quest_placed;
         meta.regrowing = self.saved_regrowing();
         meta.blazes = self.saved_blazes();
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
@@ -1222,6 +1238,7 @@ impl Server {
         meta.catches = self.catches.saved(|species| self.content.creatures.get(species).def.name.clone());
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
+        meta.smoulders = self.saved_smoulders();
         meta.hearth_owners = hearth::HearthOwner::saved(&self.hearth_owners);
         meta.day = Some(self.day as u64);
         meta.day_speed = self.day_speed;
@@ -1363,12 +1380,14 @@ impl Server {
             if let Some(old) = self.world.set_block(pos, block) {
                 self.dirty.insert(ColumnPos::of_block(pos));
                 self.forget_placed(pos);
+                self.unplaced(pos, block);
                 done.push((pos, block));
                 self.machine_changed(pos, old, block);
                 self.hive_changed(pos, old, block);
                 self.station_changed(pos, old, block);
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.smoulder_changed(pos);
                 self.home_changed(pos, block);
                 self.blaze_changed(pos, block);
             }
@@ -1403,11 +1422,13 @@ impl Server {
         if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
             self.forget_placed(pos);
+            self.unplaced(pos, block);
             self.machine_changed(pos, old, block);
             self.hive_changed(pos, old, block);
             self.station_changed(pos, old, block);
             self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.smoulder_changed(pos);
             self.home_changed(pos, block);
             self.blaze_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
@@ -1657,7 +1678,7 @@ mod tests {
         let mut server = Server::new(config, meta, Some(save), save::WorldState::default(), content.clone(), incoming, console);
         let slime = content.blocks.expect("base:lumen_slime");
         let at = Vec3::new(3.5, 70.0, -2.5);
-        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack { item: slime, count: 2 }, voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
+        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack::new(slime, 2), voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
         server.save();
         let saved = WorldSave::new(&dir).read_items().unwrap();
         assert_eq!(saved.len(), 1, "{saved:?}");

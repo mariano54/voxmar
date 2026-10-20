@@ -47,12 +47,17 @@ struct Timed {
     due: Instant,
     /// The player's client shows it done: nothing cancels it now.
     finished: bool,
+    /// The hotbar slot in hand when it began and what was in it: what the work wears.
+    tool: Tool,
     /// For a break, what the player held when their client showed it done: what it is
     /// judged by at its time, and draws its tool's bonus with, whatever they take in hand
     /// meanwhile (the next block's tool). Anything else (a bite, a cook, a cast) uses what
     /// is in hand when it completes, so it is judged by that.
     held: Option<Option<BlockId>>,
 }
+
+/// A hotbar slot and what was in it when an action began.
+pub(crate) type Tool = (usize, Option<voxmar_engine::block::BlockId>);
 
 impl Timed {
     fn mostly_done(&self, at: Instant) -> bool {
@@ -148,6 +153,10 @@ impl ActionContext for Context<'_> {
         self.server.players[&self.agent].inventory.pouched.iter().map(|&(item, _)| item).collect()
     }
 
+    fn actor_carried(&self) -> Vec<BlockId> {
+        self.server.players[&self.agent].inventory.slots.iter().flatten().map(|s| s.item).collect()
+    }
+
     fn actor_hurt(&self) -> bool {
         let health = self.server.players[&self.agent].health;
         health.current < health.max
@@ -227,13 +236,15 @@ impl Server {
             tracing::debug!("player {agent}: {} refused at {target:?}: {why:?}", def.name);
             self.reject(agent, target);
         } else if !timed {
-            self.commit(agent, &def, target, None);
+            let tool = self.tool_in_hand(agent);
+            self.commit(agent, &def, target, tool, None);
         } else {
             if def.effects.contains(&Effect::EatHeld) {
                 self.bite_started(agent);
             }
             let due = at + Duration::from_secs_f32(seconds);
-            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false, held: None });
+            let tool = self.tool_in_hand(agent);
+            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false, tool, held: None });
         }
     }
 
@@ -272,6 +283,7 @@ impl Server {
 
     /// Commits an action whose time is up, if its requirements still hold: a break with
     /// what the player held when their client showed it done, if it did (`Timed::held`).
+    /// What it wears is the slot in hand when it began (`Timed::tool`).
     fn finish(&mut self, timed: &Timed) {
         let (agent, target) = (timed.agent, timed.target);
         if !self.players.contains_key(&agent) {
@@ -280,7 +292,7 @@ impl Server {
         let Some(def) = self.action_def(timed.action) else { return };
         let held = timed.held;
         if def.validate(&Context { server: self, agent, held }, target).is_ok() {
-            self.commit(agent, &def, target, held);
+            self.commit(agent, &def, target, timed.tool, held);
         } else {
             self.reject(agent, target);
         }
@@ -311,20 +323,26 @@ impl Server {
         }
     }
 
+    /// The hotbar slot `agent` has in hand and what is in it.
+    pub(crate) fn tool_in_hand(&self, agent: PlayerId) -> Tool {
+        self.players.get(&agent).map_or((0, None), |p| (p.selected, p.held()))
+    }
+
     /// Applies an action's effects, as `agent`'s doing (`fire_origin`, `changed_by`) whenever
     /// it commits: as their message arrives or later, when it falls due in the run loop.
-    /// `held`, if given, is what the agent is taken to hold (`Timed::held`).
-    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>) {
+    /// `tool` is the slot in hand when it began and what was in it; `held`, if given, is
+    /// what the agent is taken to hold (`Timed::held`).
+    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, tool: Tool, held: Option<Option<BlockId>>) {
         let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
         let fire_was = std::mem::replace(&mut self.fire_origin, by.clone());
         let changed_was = std::mem::replace(&mut self.changed_by, by);
-        self.commit_effects(agent, def, target, held);
+        self.commit_effects(agent, def, target, tool, held);
         self.fire_origin = fire_was;
         self.changed_by = changed_was;
     }
 
     /// Applies an action's effects. Validation already guaranteed they can all apply.
-    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>) {
+    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, tool: Tool, held: Option<Option<BlockId>>) {
         for &effect in &def.effects {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
@@ -339,18 +357,14 @@ impl Server {
                     player.changed(traits::INVENTORY);
                 }
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
-                    // What a player put there teaches, counts and forages nothing: taken
-                    // before `picked` and `reward_break` clear the mark.
-                    let plants = supported_by(&Context { server: self, agent, held: None }, block);
-                    let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
-                    if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
-                        self.discover_broken(agent, broken);
+                    // A hoe that reaps takes the ripe crops like this one about it too, each
+                    // as if broken on its own; found before this one is gone.
+                    let reaped = self.reaped(agent, block, held);
+                    self.break_loot(agent, block, held);
+                    for cell in reaped {
+                        self.break_loot(agent, cell, held);
+                        self.set_block(cell, BlockId::AIR);
                     }
-                    self.picked(agent, block);
-                    let instead = self.reward_break(agent, block, held);
-                    // A block that gave something else instead (gravel's flint) drops nothing of its own.
-                    let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
-                    self.drop_loot(agent, &cells, &placed);
                 }
                 (Effect::Throw, ActionTarget::Stack { slot, count }) => self.throw(agent, slot as usize, count),
                 (Effect::Plant, ActionTarget::Block { block, .. }) => self.plant(agent, block),
@@ -388,6 +402,7 @@ impl Server {
                     self.placed_plant(item, cell);
                     self.placed_machine(agent, cell);
                     self.placed_by_field(agent, item, cell);
+                    self.placed_for_quests(agent, item, cell);
                 }
                 (Effect::MoveItems, ActionTarget::Slots { from, to, count }) => {
                     // An open store's slots as it holds them now, and what moved written back.
@@ -449,6 +464,7 @@ impl Server {
                     self.set_blocks(&changes);
                     self.placed.extend(placed);
                 }
+                (Effect::WearHeld, ActionTarget::Block { block, .. }) => self.wear_on_block(agent, block, def.effects.contains(&Effect::Till), tool),
                 (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
@@ -622,21 +638,72 @@ impl Server {
         let near = self.near_tags(agent);
         let near = |tag: &str| near.iter().any(|t| t == tag);
         let player = self.players.get_mut(&agent).unwrap();
+        // A worn tool and what mends it, by the block it is mended at, mend it, at the level
+        // its recipe asks.
+        if let Some(mended) = self.content.tools.mended(&player.inventory.craft, near) {
+            let item = mended.item;
+            let content = &self.content;
+            let level = |skill| {
+                let boosted = voxmar_engine::level::check_level(&content.skills, &content.effects, &player.skills, &player.vitals.effects, skill);
+                (content.skills.level(player.skills.xp(skill)), boosted)
+            };
+            let able = voxmar_engine::level::lacks_for_mend(&content.tools, item, level, &player.inventory, &content.blocks).is_none();
+            if able && player.inventory.mend(mended, all) {
+                let name = self.content.blocks.def(item).name.clone();
+                self.tally(agent, "mended", &name, 1);
+            }
+            self.players.get_mut(&agent).unwrap().changed(traits::INVENTORY);
+            return;
+        }
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
         let first = recipes.find_near(&player.inventory.grid(), near).filter(|r| allowed(r));
-        let found = first.map(|r| (r.skill, r.xp, r.output, r.count));
+        let found = first.map(|r| (r.skill, r.xp, r.output, r.count, r.near.clone()));
         let made = player.inventory.craft(recipes.while_making(first, near), all);
         // Always: a refused craft the client predicted is undone.
         player.changed(traits::INVENTORY);
-        if let Some((skill, xp, output, count)) = found.filter(|_| made > 0) {
+        if let Some((skill, xp, output, count, made_near)) = found.filter(|_| made > 0) {
             if let Some(skill) = skill {
                 self.grant_xp(agent, skill, xp * made as f32);
             }
             // For quests that ask for things made.
             let name = self.content.blocks.def(output).name.clone();
             self.tally(agent, "crafted", &name, made * count as u32);
+            // And by the block it was made near, for a quest's `CraftNear`.
+            if let Some(tag) = made_near {
+                self.tally(agent, &format!("crafted_near:{tag}"), &name, made * count as u32);
+            }
         }
+    }
+
+    /// What breaking the block at `block` gives and teaches: its drop or harvest, the
+    /// plants it held up, the journal, the regrowth.
+    fn break_loot(&mut self, agent: PlayerId, block: IVec3, held: Option<Option<BlockId>>) {
+        // What a player put there teaches, counts and forages nothing: taken before
+        // `picked` and `reward_break` clear the mark.
+        let plants = supported_by(&Context { server: self, agent, held: None }, block);
+        let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
+        if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
+            self.discover_broken(agent, broken);
+        }
+        self.picked(agent, block);
+        let instead = self.reward_break(agent, block, held);
+        // A block that gave something else instead (gravel's flint) drops nothing of its own.
+        let cells: Vec<IVec3> = std::iter::once(block).filter(|_| !instead).chain(plants).collect();
+        self.drop_loot(agent, &cells, &placed);
+    }
+
+    /// The ripe crops of the same kind and stage round the ripe crop at `at`, on its level,
+    /// that `agent`'s held tool reaps with it (`reap:N`, tools.ron): none for anything else.
+    /// Fruit on trees is picked back to bare leaves one at a time, never reaped. `held`, if
+    /// given, is the tool in place of what is in hand now.
+    fn reaped(&self, agent: PlayerId, at: IVec3, held: Option<Option<BlockId>>) -> Vec<IVec3> {
+        let field_crop = |b: BlockId| self.ripe_crop(b).is_some_and(|crop| !self.content.crops.get(crop).def.fruit);
+        let Some(crop) = self.block(at).filter(|&b| field_crop(b)) else { return Vec::new() };
+        let held = held.unwrap_or_else(|| self.players.get(&agent).and_then(|p| p.held()));
+        let reach = self.content.tools.reap(held, crop) as i32;
+        let around = (-reach..=reach).flat_map(|dx| (-reach..=reach).map(move |dz| IVec3::new(dx, 0, dz)));
+        around.filter(|&d| d != IVec3::ZERO).map(|d| at + d).filter(|&cell| self.block(cell) == Some(crop)).collect()
     }
 
     /// Whether a cell a player set `item` down in, as `placed`, is marked as theirs: an ore
@@ -671,17 +738,17 @@ impl Server {
         let [a, b, c] = self.meta.next_pop(pos, agent ^ 0xd1ce);
         // Never a furnishing's: it gives itself back only where a player placed it.
         if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
-            let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };
+            let stack = voxmar_engine::inventory::ItemStack::new(info.drops, 1);
             let body = voxmar_engine::dropped::popped(pos, [a, b, c]);
             self.items.spawn(stack, body, voxmar_engine::dropped::PICKUP_DELAY);
         }
         if let Some(skill) = rule.skill.filter(|_| rule.xp > 0.0) {
             self.grant_xp(agent, skill, rule.xp);
         }
-        match rule.instead {
+        match tools.instead(held, block) {
             Some((item, chance)) if other < chance => {
                 let body = voxmar_engine::dropped::popped(pos, [b, c, a]);
-                self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+                self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, 1), body, voxmar_engine::dropped::PICKUP_DELAY);
                 true
             }
             _ => false,
@@ -699,7 +766,7 @@ impl Server {
     /// reach has.
     pub(crate) fn near_tags(&self, agent: PlayerId) -> Vec<String> {
         let Some(player) = self.players.get(&agent) else { return Vec::new() };
-        let tags = self.content.recipes.near_tags();
+        let tags = self.content.near_tags();
         voxmar_engine::craft::tags_near(&tags, &self.content.blocks, player.eye(), |pos| self.block(pos))
     }
 
@@ -852,7 +919,7 @@ mod finished_tests {
         let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
         player.joined = true;
         let pick = server.content.blocks.expect("base:stone_pickaxe");
-        player.inventory.slots[0] = Some(ItemStack { item: pick, count: 1 });
+        player.inventory.slots[0] = Some(ItemStack::new(pick, 1));
         player.selected = 0;
         server.players.insert(1, player);
         server
@@ -933,8 +1000,8 @@ mod finished_tests {
         let mut server = fixture();
         let (stew, stone) = (server.content.blocks.expect("base:stew"), server.content.blocks.expect("base:stone"));
         let player = server.players.get_mut(&1).unwrap();
-        player.inventory.slots[0] = Some(ItemStack { item: stew, count: 1 });
-        player.inventory.slots[1] = Some(ItemStack { item: stone, count: 1 });
+        player.inventory.slots[0] = Some(ItemStack::new(stew, 1));
+        player.inventory.slots[1] = Some(ItemStack::new(stone, 1));
         // Hurt, or a bite is refused.
         player.health.current = 1;
         let eat = server.content.actions.expect("core:eat");
@@ -945,7 +1012,7 @@ mod finished_tests {
         server.players.get_mut(&1).unwrap().selected = 1;
         server.complete_actions(due);
         let slots = &server.players[&1].inventory.slots;
-        assert_eq!((slots[0], slots[1]), (Some(ItemStack { item: stew, count: 1 }), Some(ItemStack { item: stone, count: 1 })), "a bite swapped for stone ate something");
+        assert_eq!((slots[0], slots[1]), (Some(ItemStack::new(stew, 1)), Some(ItemStack::new(stone, 1))), "a bite swapped for stone ate something");
         assert_eq!(server.players[&1].health.current, 1, "a bite swapped for stone healed");
     }
 }

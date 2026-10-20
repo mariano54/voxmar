@@ -15,6 +15,8 @@
         // with a flint wedge in it.
         (ingredients: ["{name}_log"], output: "{name}_planks", count: 6, xp: 1.0, near: "chopping_block"),
         (pattern: [["flint"], ["tag:log"]], output: "chopping_block", skill: "core:crafting", level: 2, xp: 6.0),
+        // Kindling: three sticks bundled, a clamp's flue (multiblocks.ron).
+        (ingredients: ["stick", "stick", "stick"], output: "kindling", xp: 1.0),
         (pattern: [["{name}_planks"], ["{name}_planks"]], output: "stick", count: 4, xp: 1.0),
         // Four planks make a crafting table, for the bigger recipes.
         (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks"]], output: "crafting_table", skill: "core:engineering", xp: 8.0),
@@ -38,9 +40,11 @@
         (pattern: [["feather", "feather"], ["raw_hide|hide", "raw_hide|hide"]], output: "sleeping_bag", level: 1, xp: 30.0),
         // A herb planter: a box of soil herbs grow back in.
         (pattern: [["{name}_planks", "dirt", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "herb_planter", skill: "core:construction", level: 3, xp: 10.0),
-        // Ore smelted with coal or charcoal, by hand for now (a furnace comes later).
-        (pattern: [["copper_ore"], ["coal_ore|charcoal"]], output: "copper_ingot", skill: "core:engineering", level: 5, xp: 6.0),
-        (pattern: [["iron_ore"], ["coal_ore|charcoal"]], output: "iron_ingot", skill: "core:engineering", level: 15, xp: 12.0),
+        // Metal comes only from fire: ore smelts in the Crucible Kiln (iron at Engineering
+        // 15) or the bloomery. Ore crushed first on a stone anvil with a hammer (cooking.ron's
+        // `anvil`) goes half again as far: the hammer and the anvil that does it.
+        (pattern: [["cobblestone", "cobblestone"], ["", "stick"]], output: "stone_hammer", skill: "core:crafting", level: 3, xp: 8.0),
+        (pattern: [["stone", "stone", "stone"], ["", "cobblestone", ""], ["cobblestone", "cobblestone", "cobblestone"]], output: "stone_anvil", skill: "core:crafting", level: 5, xp: 20.0),
         // Flint tools (tier 1), Engineering 1, in the hand's grid: what bare hands make first,
         // since breaking stone or felling a tree needs a pickaxe or an axe (tools.ron). Flint
         // from gravel, sticks from leaves.
