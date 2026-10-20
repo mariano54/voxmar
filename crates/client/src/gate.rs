@@ -10005,24 +10005,26 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// The building pieces the pieces step sets (blocks_building.ron), in a facing or two.
-const PIECES: [&str; 14] = [
+const PIECES: [&str; 17] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
-    "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot",
+    "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood",
 ];
 /// The home's whole-block walls, set in the row after the shaped pieces.
 const WALLS: [&str; 2] = ["daub", "half_timber"];
+/// Pieces that frame a way through and stop nothing, set in the row after the walls.
+const WAYS: [&str; 1] = ["birch_door_frame"];
 /// The building pieces in a row in the air three blocks behind the shapes step's, seen
 /// against the sky: they must reach the client and the server alike and change the view.
 /// Then each in turn, from a stone ledge laid along the row two blocks before it (the row
 /// runs past reach from where the player stood), the crosshair turned to its middle names it, and what it stops
 /// movement with is its shape's boxes, filling some of its cell but not all (a whole cube
 /// would be a block that only looks shaped), or for the home's walls (daub, half-timber)
-/// the whole cell. A right click on the shutters folds them back, open on client and
+/// the whole cell, or for a door frame nothing at all. A right click on the shutters folds them back, open on client and
 /// server and stopping nothing. Last, a three-by-three thatch canopy set beside the row
 /// leaves the cell under its middle darker to the sky than it was open.
 fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     let row = gate.shapes_row + IVec3::new(0, 0, 3);
-    let names: Vec<&str> = PIECES.iter().chain(&WALLS).copied().collect();
+    let names: Vec<&str> = PIECES.iter().chain(&WALLS).chain(&WAYS).copied().collect();
     let cells: Vec<IVec3> = (0..names.len() as i32).map(|i| row + IVec3::X * i).collect();
     let canopy = row + IVec3::new(names.len() as i32 + 2, 0, 0);
     let shutters = cells[PIECES.iter().position(|&name| name == "wooden_shutters").expect("shutters among the pieces")];
@@ -10105,10 +10107,15 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let boxes = client.block(cell).map(|b| client.registry.collision(b).to_vec()).unwrap_or_default();
             let filled: f32 = boxes.iter().map(|b| (b.max - b.min).element_product()).sum();
             let shaped = i < PIECES.len();
+            let way = i >= PIECES.len() + WALLS.len();
             let result = if !stood(world, cell) {
                 Err(format!("sent to stand before {name} at {}, the player is at {}", stand(cell), world.resource::<LocalPlayer>().position))
             } else if on != Some(cell) {
                 Err(format!("aimed at {name}, the crosshair is on {on:?}, not {cell}"))
+            } else if way && !boxes.is_empty() {
+                Err(format!("{name}, a frame round a way through, stops movement with {} boxes filling {:.0}% of its cell", boxes.len(), filled * 100.0))
+            } else if way {
+                Ok("under the crosshair, on client and server, stopping nothing: the way through it is open".to_owned())
             } else if shaped && (boxes.is_empty() || filled >= 0.999) {
                 Err(format!("{name} stops movement with {} boxes filling {:.0}% of its cell: not its shape", boxes.len(), filled * 100.0))
             } else if !shaped && boxes != voxmar_engine::physics::CUBE {
