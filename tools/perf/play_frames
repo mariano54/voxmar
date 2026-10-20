@@ -152,13 +152,19 @@ for scene in $scenes; do
       while [[ $root != / && ! -d $root/assets ]]; do root=$(dirname "$root"); done
       [[ -d $root/assets ]] || { echo "$scene: no assets/ above $binary"; continue; }
       trace=$out/trace.json
+      # Any one file the game writes, the trace above all, stops at 30 GB: the game is then
+      # killed (SIGXFSZ) with the disk's last 20 GB untouched.
+      # (bash's ulimit -f counts kilobytes outside POSIX mode.)
+      limit=unlimited
       if traced "$binary"; then
         free=$(df -Pk "$out" | awk 'NR == 2 { print int($4 / 1048576) }')
         ((free >= 50)) || { echo "play_frames: ${free} GB free where traces go; a traced run wants 50" >&2; exit 1; }
+        limit=$((30 * 1024 * 1024))
       fi
-      log=$(cd "$root" && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority VOXMAR_WORKERS=$workers TRACE_CHROME=$trace \
+      log=$(cd "$root" && ulimit -f "$limit" && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority VOXMAR_WORKERS=$workers TRACE_CHROME=$trace \
         "$binary" --capture "$out/$scene.png" --size 2268x1473 "${args[@]}" 2>&1 </dev/null | sed 's/\x1b\[[0-9;]*m//g')
       stats=$(grep -oE '(steady|flight): [0-9]+ frames.*' <<<"$log" | tail -1)
+      [[ $limit != unlimited && -z $stats ]] && echo "$scene: no statistics; a trace past 30 GB stops the game"
       gpu=$(grep -m1 -oE 'AdapterInfo \{ name: "[^"]*"' <<<"$log" | sed 's/.*name: //')
       # A worker count the game turned down (more than it has threads): its default ran.
       grep -m1 '^VOXMAR_WORKERS=' <<<"$log"

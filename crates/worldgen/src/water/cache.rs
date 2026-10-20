@@ -6,8 +6,15 @@
 //! budget, the least recently used are dropped. A dropped value is computed again,
 //! identically, when next needed, because everything cached here is a pure function of
 //! its key.
+//!
+//! The exception to computing once: a thread of a class above the default (the server's
+//! tick, see `parallel::urgent`) asking for a value another thread is making makes its own
+//! copy rather than wait. The maker is usually a streaming worker at a background class,
+//! which on a busy machine the scheduler serves last, so waiting on it held the tick (and
+//! the world's creatures) for as long as the build took at that class.
 
 use std::hash::Hash;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rustc_hash::FxHashMap;
@@ -36,7 +43,7 @@ pub struct Cache<K, V> {
 }
 
 struct Slot<V> {
-    cell: Arc<OnceLock<V>>,
+    cell: Arc<Cell<V>>,
     used: u64,
     /// Bytes of the value, once made.
     bytes: usize,
@@ -46,6 +53,12 @@ struct Inner<K, V> {
     clock: u64,
     bytes: usize,
     slots: FxHashMap<K, Slot<V>>,
+}
+
+/// A value, and whether a thread has begun making it.
+struct Cell<V> {
+    value: OnceLock<V>,
+    making: AtomicBool,
 }
 
 /// Bookkeeping per entry besides the value itself.
@@ -80,13 +93,21 @@ impl<K: Copy + Eq + Hash, V: Clone + Weigh> Cache<K, V> {
             let mut inner = self.lock();
             inner.clock += 1;
             let clock = inner.clock;
-            let slot = inner.slots.entry(key).or_insert_with(|| Slot { cell: Arc::new(OnceLock::new()), used: clock, bytes: 0 });
+            let slot = inner.slots.entry(key).or_insert_with(|| Slot { cell: Arc::new(Cell { value: OnceLock::new(), making: AtomicBool::new(false) }), used: clock, bytes: 0 });
             slot.used = clock;
             slot.cell.clone()
         };
+        if let Some(value) = cell.value.get() {
+            return value.clone();
+        }
+        if cell.making.load(Ordering::Acquire) && crate::parallel::urgent() {
+            return make();
+        }
         let mut made = false;
         let value = cell
+            .value
             .get_or_init(|| {
+                cell.making.store(true, Ordering::Release);
                 made = true;
                 make()
             })
@@ -163,6 +184,39 @@ mod tests {
         assert!(cache.inner.lock().unwrap().bytes <= 800);
         assert_eq!(cache.get(0, || { made += 1; 0 }), 0);
         assert_eq!(made, 7);
+    }
+
+    /// The server's tick, asking for a value a background worker is still making, makes its
+    /// own: here the maker holds off until the urgent thread has its answer.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_urgent_thread_makes_its_own_rather_than_wait() {
+        let cache: Cache<u32, Arc<u8>> = Cache::new(1 << 20);
+        let (started_tx, started) = std::sync::mpsc::channel();
+        let (answered_tx, answered) = std::sync::mpsc::channel::<()>();
+        std::thread::scope(|scope| {
+            let cache = &cache;
+            let maker = scope.spawn(move || {
+                cache.get(1, || {
+                    started_tx.send(()).unwrap();
+                    // Released once the urgent thread has its own value, or after a while if
+                    // it waited after all (and then the assertion below fails).
+                    let _ = answered.recv_timeout(std::time::Duration::from_secs(5));
+                    Arc::new(1)
+                })
+            });
+            started.recv().unwrap();
+            let urgent = scope.spawn(move || {
+                // SAFETY: only changes the scheduling class of the current thread.
+                unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0) };
+                let value = cache.get(1, || Arc::new(2));
+                answered_tx.send(()).unwrap();
+                value
+            });
+            assert_eq!(*urgent.join().unwrap(), 2, "made its own");
+            assert_eq!(*maker.join().unwrap(), 1);
+        });
+        assert_eq!(*cache.get(1, || Arc::new(3)), 1, "the maker's value is the one kept");
     }
 
     #[test]
