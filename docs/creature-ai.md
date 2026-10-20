@@ -131,18 +131,22 @@ curse spread, aura, molt rebirth, dream walk.
 - **Warnings** (Oct 20): a creature whose kind has a `warn` (creatures.ron) warns a
   player before it attacks them, so they can back away: it stands its ground facing them
   in its warning stance (a pose, `Pose::Warning`, protocol 58: its `stance` of nod, crouch
-  and rear, drawn as a tell is) and makes its `warn` sound (its `alert` unless its voice
-  has one). If they stay its `seconds`, or come within its `near` blocks, it is provoked
+  and rear, drawn as a tell is) and makes its `warn` sound (the wolf's snarls slowed
+  into a low growl, the bear's deep roar, the badger's alarm lowered to a hiss; a kind
+  whose voice has none uses its `alert`, and every kind that warns in the base game has
+  one). If they stay its `seconds`, or come within its `near` blocks, it is provoked
   (`Mind::provoked`) and goes for them as if they had struck it, its hunt or defence
-  taking over in that same decision. A warning never changes whom a hunter goes for: it
-  warns those its hunt would go for, as far off, in place of going straight in. One that
+  taking over in that same decision. A warning only tells a hunt before it comes, and
+  never changes whom a hunter goes for or when: it warns the one its hunt would go for (the
+  nearest it would hunt, as far off, kept, frightened or on an errand as much as not) if
+  it sees them, and goes for one it does not see unwarned, as it always did. One that
   only defends itself (a badger, a bear) warns those it sees (a clear line from its eyes
   to their head or middle, the server's `in_sight`) within its `radius`, and then defends
   its ground. No warning goes to a player holding the food that tempts it unless it hunts
   (a hunter's chase outranked the food before, and still does): a lured bear or badger
   follows the food as before. It warns no one creative, of more than twice its level or
-  settled long in one place, and not while frightened, kept, on an errand or having given
-  up a chase; struck, it fights at once. One clock runs for the creature, whoever it warns
+  settled long in one place, nor having given up a chase, and one that only defends
+  itself not while frightened, kept or on an errand; struck, it fights at once. One clock runs for the creature, whoever it warns
   (a second player stepping nearer does not start it over), and a warning holds over
   decisions spent on anything else for `WARN_LAPSE` (0.5 s); a player must go `WARN_EXIT`
   (1.5) blocks past where it began to warn to be let be, so the edge does not flicker.

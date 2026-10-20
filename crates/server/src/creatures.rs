@@ -687,10 +687,9 @@ impl Server {
     /// past its edge, has a way through the air (`blow_open`) to each `strikes` says it
     /// would strike at (in its reach and strike band), and its charge a way along the
     /// ground (`charge_open`) to each `charges` says only its charge fits: to no other is
-    /// it close to striking. Whether it sees each (`in_sight`) is judged only if it `sights`
-    /// (a kind that warns).
-    #[allow(clippy::too_many_arguments)]
-    fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, charges: impl Fn(Vec3) -> bool, range: f32, tempts: &[BlockId], owner: Option<&str>, sights: bool) -> Vec<Seen> {
+    /// it close to striking. Each is taken as in its sight (`in_sight`): the caller judges
+    /// that for a kind that warns.
+    fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, charges: impl Fn(Vec3) -> bool, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
         let at = body.position;
         let mut seen: Vec<Seen> = self
             .players
@@ -709,7 +708,7 @@ impl Server {
                 } else {
                     !charges(p.position) || self.charge_open(body, p.position)
                 },
-                in_sight: !sights || self.in_sight(body, p.position),
+                in_sight: true,
             })
             .collect();
         seen.sort_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)));
@@ -767,7 +766,11 @@ impl Server {
                 let (phase, scale) = (creature.phase, creature.scale);
                 let strikes = |to: Vec3| strikes_from(species, phase, scale, position, to);
                 let charges = |to: Vec3| charges_from(species, phase, scale, position, to);
-                let players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, charges, range, &species.favourite, creature.owner.as_deref(), species.def.warn.is_some());
+                let mut players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, charges, range, &species.favourite, creature.owner.as_deref());
+                // Whether it sees each matters only to its warning (`Warn`).
+                if species.def.warn.is_some() {
+                    players.iter_mut().for_each(|p| p.in_sight = self.in_sight(&creature.body, p.position));
+                }
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
                 // What it grazes, else, kept and hungry, a trough of its food by home.
@@ -5763,8 +5766,8 @@ mod fight_tests {
         }
     }
 
-    /// A badger warns only one it sees: behind a wall three high it lets a player be, with
-    /// the wall gone it warns them.
+    /// A badger warns only one it sees: behind a wall three high and thirteen long it lets
+    /// a player be, with the wall gone it warns them.
     #[test]
     fn a_badger_warns_only_one_it_sees() {
         for walled in [true, false] {
@@ -5773,7 +5776,7 @@ mod fight_tests {
             let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
             let _player = join(&mut server, stand);
             if walled {
-                set(&mut server, "base:stone", (-3..=3).flat_map(|z| (0..3).map(move |y| c + IVec3::new(-1, y, z))));
+                set(&mut server, "base:stone", (-6..=6).flat_map(|z| (0..3).map(move |y| c + IVec3::new(-1, y, z))));
             }
             // Within its radius at its least lively (a badger is about by night), outside its
             // `near`.

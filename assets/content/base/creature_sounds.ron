@@ -127,6 +127,8 @@
             call: (clips: ["sounds/creatures/wolf/call_1.ogg", "sounds/creatures/wolf/call_2.ogg"], range: 96.0),
             ready: (clips: ["sounds/creatures/wolf/ready_1.ogg", "sounds/creatures/wolf/ready_2.ogg"]),
             attack: (clips: ["sounds/creatures/wolf/attack_1.ogg", "sounds/creatures/wolf/attack_2.ogg", "sounds/creatures/wolf/attack_3.ogg"]),
+            // Warning a player off: its snarls slowed into a low growl.
+            warn: (clips: ["sounds/creatures/wolf/attack_1.ogg", "sounds/creatures/wolf/attack_2.ogg", "sounds/creatures/wolf/attack_3.ogg"], pitch: (0.74, 0.82), gain: 0.65, range: 24.0),
             hurt: (clips: ["sounds/creatures/wolf/hurt_1.ogg", "sounds/creatures/wolf/hurt_2.ogg", "sounds/creatures/wolf/hurt_3.ogg"]),
             death: (clips: ["sounds/creatures/wolf/death_1.ogg", "sounds/creatures/wolf/death_2.ogg"]),
         ),
@@ -147,6 +149,8 @@
             alert: (clips: ["sounds/creatures/bear/alert_1.ogg", "sounds/creatures/bear/alert_2.ogg", "sounds/creatures/bear/alert_3.ogg"]),
             call: (clips: ["sounds/creatures/bear/call_1.ogg", "sounds/creatures/bear/call_2.ogg"]),
             attack: (clips: ["sounds/creatures/bear/attack_1.ogg", "sounds/creatures/bear/attack_2.ogg", "sounds/creatures/bear/attack_3.ogg"]),
+            // Standing up at a player too close: a deep, carrying roar.
+            warn: (clips: ["sounds/creatures/bear/attack_1.ogg", "sounds/creatures/bear/attack_2.ogg", "sounds/creatures/bear/attack_3.ogg"], pitch: (0.82, 0.9), gain: 0.85, range: 40.0),
             hurt: (clips: ["sounds/creatures/bear/hurt_1.ogg", "sounds/creatures/bear/hurt_2.ogg"]),
             death: (clips: ["sounds/creatures/bear/death_1.ogg"]),
         ),
@@ -168,6 +172,8 @@
             idle: (clips: ["sounds/creatures/badger/idle_1.ogg", "sounds/creatures/badger/idle_2.ogg"]),
             graze: (clips: ["sounds/creatures/badger/graze_1.ogg", "sounds/creatures/badger/graze_2.ogg", "sounds/creatures/badger/graze_3.ogg", "sounds/creatures/badger/graze_4.ogg", "sounds/creatures/badger/graze_5.ogg", "sounds/creatures/badger/graze_6.ogg"]),
             alert: (clips: ["sounds/creatures/badger/alert_1.ogg", "sounds/creatures/badger/alert_2.ogg", "sounds/creatures/badger/alert_3.ogg", "sounds/creatures/badger/alert_4.ogg"]),
+            // Hunched at a player too close: its alarm, lower and harsher, a hiss.
+            warn: (clips: ["sounds/creatures/badger/alert_1.ogg", "sounds/creatures/badger/alert_2.ogg", "sounds/creatures/badger/alert_3.ogg", "sounds/creatures/badger/alert_4.ogg"], pitch: (0.84, 0.92), gain: 0.7, range: 16.0),
             attack: (clips: ["sounds/creatures/badger/attack_1.ogg", "sounds/creatures/badger/attack_2.ogg", "sounds/creatures/badger/attack_3.ogg"]),
             hurt: (clips: ["sounds/creatures/badger/hurt_1.ogg", "sounds/creatures/badger/hurt_2.ogg"]),
         ),

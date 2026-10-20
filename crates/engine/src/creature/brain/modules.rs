@@ -568,11 +568,13 @@ impl Module for Hunt {
         if let Some(p) = ctx.attacker().filter(|_| ctx.mind.anger > 0.0) {
             return Want::at(2.5 * ctx.mind.anger.max(personality.aggression), *p);
         }
-        // One that warns first goes for a player only once it is provoked (`Warn`).
-        if def.warn.is_some() {
+        // Whom it goes for is as ever; one that warns (`Warn`) warns them first if it sees
+        // them, and goes for them once provoked. One it does not see it goes for unwarned.
+        let prey = hunted(ctx, self.radius, 0.0)?;
+        if def.warn.is_some() && prey.in_sight {
             return None;
         }
-        Want::at(2.5 * personality.aggression, *hunted(ctx, self.radius, 0.0)?)
+        Want::at(2.5 * personality.aggression, *prey)
     }
 
     fn act(&self, ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, _: bool) -> Decision {
@@ -587,11 +589,13 @@ impl Module for Hunt {
 /// decision (`think`). One who backs off `WARN_EXIT` blocks past where it began to warn,
 /// or out of its sight, is let be once it has not warned for `WARN_LAPSE` seconds.
 ///
-/// A warning never changes whom a hunter goes for: it warns those its hunt would go for
-/// (`hunted`), as far off. One that only defends itself warns those who come within its
-/// `radius` in plain sight (`Seen::in_sight`). Neither warns a player holding the food that
-/// tempts it unless it hunts (a hunter's chase outranked the food before), nor warns while
-/// frightened, kept, on an errand or having given up a chase.
+/// A warning only tells a hunt before it comes, and never changes whom a hunter goes for or
+/// when: it warns the one its hunt would go for (`hunted`, the nearest it would hunt), as
+/// far off, if it sees them (`Seen::in_sight`); one it does not see its hunt goes for
+/// unwarned, as before. It warns on the hunt's own terms (kept, frightened or on an errand
+/// as much as not). One that only defends itself warns those who come within its `radius`
+/// in plain sight, but no one holding the food that tempts it, and not while frightened,
+/// kept, on an errand or having given up a chase.
 #[derive(Debug)]
 struct Warn;
 
@@ -611,7 +615,7 @@ impl Module for Warn {
     fn want(&self, ctx: &Ctx) -> Option<Want> {
         let def = &ctx.creature.def;
         let warn = def.warn?;
-        if def.boss || ctx.at.kept || ctx.at.errand.is_some() || ctx.mind.fear > 0.2 || ctx.mind.recalls(Memory::GaveUp) {
+        if def.boss || ctx.mind.recalls(Memory::GaveUp) {
             return None;
         }
         if ctx.attacker().is_some() && ctx.mind.anger > 0.0 {
@@ -622,6 +626,9 @@ impl Module for Warn {
             Behaviour::Hunt { radius } => Some(radius),
             _ => None,
         });
+        if hunt.is_none() && (ctx.at.kept || ctx.at.errand.is_some() || ctx.mind.fear > 0.2) {
+            return None;
+        }
         let p = match (hunt, warn.radius) {
             (Some(radius), _) => hunted(ctx, radius, slack).filter(|p| p.in_sight)?,
             (None, Some(radius)) => {
