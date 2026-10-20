@@ -894,6 +894,16 @@ fn eye_inside(parts: &[Part], eye: Vec3, position: Vec3, yaw: f32, scale: f32, h
 }
 
 /// A sound a creature makes now.
+/// How an animal answers being tended with `held`: a call (a bleat, a low) for a tool that
+/// takes its product, a munch for anything it is fed.
+fn tended(species: &creature::Creature, held: Option<voxmar_engine::block::BlockId>, blocks: &voxmar_engine::block::BlockRegistry) -> Sound {
+    let tool = held.is_some_and(|item| {
+        let tags = &blocks.def(item).tags;
+        species.def.products.iter().any(|p| p.tool.as_ref().is_some_and(|t| tags.contains(t)))
+    });
+    if tool { Sound::Idle } else { Sound::Graze }
+}
+
 fn sound(kind: Sound, id: u32, view: &CreatureView, position: Vec3, speed: f32) -> CreatureSound {
     CreatureSound { kind, id, species: view.species, position, speed, scale: view.scale, young: view.young }
 }
@@ -1809,6 +1819,7 @@ pub fn aim(
     creatures: Res<Creatures>,
     mut target: ResMut<Target>,
     mut fighting: ResMut<crate::fight::Fighting>,
+    mut sounds: ResMut<CreatureSounds>,
 ) {
     // What the right button did this frame, if anything, is said afresh: here, then in
     // `interact::break_and_place`; `fight::guard` raises no guard if it did something.
@@ -1867,8 +1878,16 @@ pub fn aim(
             None
         };
         if let Some(action) = action.and_then(|a| actions.0.id(a)) {
-            net.propose_from(&player, action, ActionTarget::Creature(id));
+            // Tending is heard by what is in hand: shears, a pail, food (`sounds.ron`'s ways).
+            net.propose_from_with(&player, action, ActionTarget::Creature(id), held.into_iter().collect());
             target.used_right = true;
+            // The animal answers the hand: it munches what it is fed, and bleats or lows
+            // as it is shorn or milked.
+            if Some(action) == actions.0.id("base:tend")
+                && let Some(shown) = creatures.shown.get(&id)
+            {
+                sounds.push(sound(tended(species, held, &launch.content.blocks), id, &view, shown.position, 0.0));
+            }
         }
     }
     // A left click swings: at once, or held for the beat (the server keeps the same
@@ -1937,6 +1956,19 @@ fn in_fight(view: &CreatureView, fought_at: Option<f32>, now: f32, calm_after: f
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A ewe shorn and a cow milked call out; fed, they munch.
+    #[test]
+    fn a_tended_animal_answers_the_hand() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (blocks, creatures) = (&content.blocks, &content.creatures);
+        let species = |name: &str| creatures.get(creatures.id(name).unwrap_or_else(|| panic!("{name}")));
+        let item = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
+        assert_eq!(tended(species("base:mouflon"), Some(item("base:shears")), blocks), Sound::Idle);
+        assert_eq!(tended(species("base:aurochs"), Some(item("base:pail")), blocks), Sound::Idle);
+        assert_eq!(tended(species("base:aurochs"), Some(item("base:shears")), blocks), Sound::Graze, "an aurochs gives no wool");
+        assert_eq!(tended(species("base:mouflon"), Some(item("base:wheat")), blocks), Sound::Graze);
+    }
 
     /// A roaming boss nicked once is in a fight, and out of it once it has gone back to
     /// grazing for `calm_after`, though it never mends: its fight music ends.

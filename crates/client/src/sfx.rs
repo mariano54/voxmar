@@ -1751,7 +1751,8 @@ mod tests {
     }
 
     /// The work of the first two ages is heard by what it is done with: a craft by its
-    /// hardest ingredient, a light, a station loaded or a kiln fed by the block worked. Every
+    /// hardest ingredient, a light, a station loaded or a kiln fed by the block worked, an
+    /// animal tended by what is in hand, bees by the hive, a door or gate by what swings. Every
     /// home station loads with a sound of its own, and both age gates kindle. A way that is
     /// unnamed, named twice, done with nothing or with what the content lacks, without clips
     /// or volume, or on an action with no clips of its own fails the launch check.
@@ -1781,6 +1782,17 @@ mod tests {
         assert_eq!(way("base:cook", &["pit_kiln", "clay"]), Some("fire_in_kiln".into()));
         assert_eq!(way("base:cook", &["crucible", "copper_ore"]), Some("smelt".into()));
         assert_eq!(way("base:cook", &["campfire", "raw_beef"]), None);
+        // An animal tended by what is in hand: shorn, milked, or fed as ever; bees smoked
+        // for a swarm, and a full skep's honey cut.
+        assert_eq!(way("base:tend", &["shears"]), Some("shear".into()));
+        assert_eq!(way("base:tend", &["pail"]), Some("milk".into()));
+        assert_eq!(way("base:tend", &["wheat"]), None);
+        assert_eq!(way("base:tend_bees", &["honey_skep"]), Some("honey".into()));
+        assert_eq!(way("base:tend_bees", &["bee_nest"]), None);
+        // What is swung: a door as ever, a gate, shutters, a hatch, a curtain each its own.
+        for (block, heard) in [("wooden_door", None), ("balcony_door_open", None), ("oak_fence_gate", Some("gate")), ("oak_fence_gate_open", Some("gate")), ("wooden_shutters", Some("shutters")), ("oak_shuttered_window", Some("shutters")), ("oak_hatch", Some("hatch")), ("red_curtain", Some("curtain"))] {
+            assert_eq!(way("base:open", &[block]), heard.map(str::to_owned), "{block}");
+        }
         // Each station loaded at its empty block sounds of its own; emptied, as before.
         for station in &content.stations.stations {
             let name = &blocks.def(station.empty).name;
@@ -2007,6 +2019,7 @@ mod tests {
             "base:cook",
             "base:sleep",
             "base:tend",
+            "base:tend_bees",
             "base:empty_pouch",
             "base:use_machine",
             "base:pick_lock",
