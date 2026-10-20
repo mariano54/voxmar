@@ -522,7 +522,7 @@ impl QuestRegistry {
     /// under a clamp, Oct 20). What a giver pays of every item the goal takes is added up. A
     /// quest whose `after` makes it done first is passed, and so is one of an earlier age,
     /// whose lesson is learnt by the time a later age pays, and a task that also asks to pick,
-    /// make or use the item, which still teaches it. An age is earlier than another when a
+    /// mine, make or catch the item (or a block that drops it), which still teaches it. An age is earlier than another when a
     /// quest of the other comes after one of it. A package answers for its own book: a mod's
     /// quest asking for sticks is not refused for a base reward of them.
     fn rewards_skip_no_lesson(&self, blocks: &BlockRegistry) -> Result<(), RegistryError> {
@@ -535,10 +535,28 @@ impl QuestRegistry {
                 }
             }
         }
+        if let Some((a, b)) = earlier.iter().find(|(a, b)| earlier.contains(&(*b, *a))) {
+            return Err(RegistryError(format!("the {a} and {b} ages each have a quest that comes after one of the other's: an age's quests come after its own or an earlier age's")));
+        }
         let package = |quest: &QuestDef| quest.name.split(':').next().unwrap_or("").to_owned();
         let holds = |want: &str, item: &str| match want.strip_prefix("tag:") {
             Some(tag) => blocks.item_named(item).is_some_and(|id| blocks.def(id).has_tag(tag)),
             None => want == item,
+        };
+        // The goals that have the player pick, mine, make or catch the item, which teach it as
+        // a stack in hand does not; a block picked or mined teaches what it drops too.
+        fn teaches(goal: &Goal) -> Option<&str> {
+            match goal {
+                Goal::Pick(w, _) | Goal::Mine(w, _) | Goal::Craft(w, _) | Goal::Cook(w, _) | Goal::CookAt(w, _, _) | Goal::Catch(w, _) => Some(w),
+                _ => None,
+            }
+        }
+        let dropped = |goal: &Goal, want: &str, item: &str| {
+            matches!(goal, Goal::Pick(..) | Goal::Mine(..))
+                && blocks.item_named(item).is_some_and(|item| match want.strip_prefix("tag:") {
+                    Some(tag) => blocks.tagged(tag).any(|b| blocks.info(b).drops == item),
+                    None => blocks.item_named(want).is_some_and(|b| blocks.info(b).drops == item),
+                })
         };
         for giver in &self.quests {
             let first = &firsts[giver.name.as_str()];
@@ -560,7 +578,7 @@ impl QuestRegistry {
                         if paid.iter().map(|(_, n)| n).sum::<u32>() < *need {
                             continue;
                         }
-                        let taught = task.iter().filter(|g| !matches!(g, Goal::Have(..))).filter_map(Goal::item).any(|w| w == want || paid.iter().any(|(item, _)| holds(w, item)));
+                        let taught = task.iter().any(|g| teaches(g).is_some_and(|w| w == want || paid.iter().any(|(item, _)| holds(w, item) || dropped(g, w, item))));
                         if !taught {
                             let gifts = paid.iter().map(|(item, n)| format!("{n} {item}")).collect::<Vec<_>>().join(" and ");
                             return Err(RegistryError(format!(
@@ -999,6 +1017,30 @@ mod tests {
         );
         let picked = quest("picked", "nomad", "", r#"Pick("poppy", 4), Have("poppy", 4)"#, r#"Xp("mining", 1.0)"#);
         assert!(resolved("base", &format!("{picked}, {}", quest("gift", "nomad", "", "Home", r#"Item("poppy", 4)"#))).is_ok(), "a task that asks to pick the item still teaches it");
+        let patch = quest("patch", "nomad", "", r#"Pick("carrot_crop", 4), Have("carrot", 4)"#, r#"Xp("mining", 1.0)"#);
+        let garden = quest("garden", "nomad", "", "Home", r#"Item("carrot", 4)"#);
+        let with_drop = |drops: Option<&str>| {
+            let mut defs: Vec<crate::block::BlockDef> = ["base:carrot", "base:carrot_crop"].iter().map(|name| crate::block::BlockDef { name: name.to_string(), ..Default::default() }).collect();
+            defs[1].drops = drops.map(str::to_owned);
+            let blocks = BlockRegistry::new(defs).unwrap();
+            let mut book = QuestRegistry::new(vec![QuestRegistry::read("base", &format!("(quests: [{patch}, {garden}])")).unwrap()]).unwrap();
+            // Full names, as `resolve` writes them.
+            for goal in book.quests.iter_mut().flat_map(|q| q.tasks.iter_mut().flatten()) {
+                if let Goal::Pick(name, _) | Goal::Have(name, _) = goal {
+                    *name = format!("base:{name}");
+                }
+            }
+            for reward in book.quests.iter_mut().flat_map(|q| q.rewards.iter_mut()) {
+                if let Reward::Item(name, _) = reward && !name.contains(':') {
+                    *name = format!("base:{name}");
+                }
+            }
+            book.rewards_skip_no_lesson(&blocks)
+        };
+        assert!(with_drop(Some("base:carrot")).is_ok(), "picking the crop that drops the carrots teaches them");
+        assert!(with_drop(None).is_err(), "a crop that drops itself teaches no carrots");
+        let looked = quest("looked", "nomad", "", r#"LookUp("poppy"), Have("poppy", 4)"#, r#"Xp("mining", 1.0)"#);
+        assert!(resolved("base", &format!("{looked}, {}", quest("gift", "nomad", "", "Home", r#"Item("poppy", 4)"#))).is_err(), "looking the item up teaches no stack");
         // A later age read first: the book's file order is no age order.
         let (hearth, farm) = (quest("hearth", "nomad", "", "Home", ""), quest("farm", "farm", r#""base:hearth""#, r#"Have("torch", 8)"#, ""));
         let farm_gift = quest("farm_gift", "farm", r#""base:hearth""#, "Home", r#"Item("torch", 8)"#);
@@ -1006,6 +1048,8 @@ mod tests {
         assert!(resolved("base", &format!("{farm_first}, {hearth}, {stack}, {farm_gift}")).is_ok(), "a Farm reward meets a Nomad stack whose lesson is learnt");
         let nomad_gift = quest("nomad_gift", "nomad", "", "Home", r#"Item("torch", 8)"#);
         assert!(resolved("base", &format!("{farm}, {hearth}, {nomad_gift}")).is_err(), "a Nomad reward still meets a Farm stack, wherever its file sorts");
+        let back = quest("back", "nomad", r#""base:farm""#, "Home", "");
+        assert!(resolved("base", &format!("{farm}, {hearth}, {back}")).unwrap_err().0.contains("each have a quest that comes after one of the other's"), "two ages after each other have no order");
         let gift = quest("gift", "nomad", "", "Home", r#"Item("base:torch", 8)"#);
         let quests = QuestRegistry::new(vec![QuestRegistry::read("base", &format!("(quests: [{stack}])")).unwrap(), QuestRegistry::read("sky", &format!("(quests: [{gift}])")).unwrap()]).unwrap();
         assert!(quests.rewards_skip_no_lesson(&BlockRegistry::new(vec![crate::block::BlockDef { name: "base:torch".into(), ..Default::default() }]).unwrap()).is_ok(), "another package's book is its own");
