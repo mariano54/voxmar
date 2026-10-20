@@ -26,6 +26,9 @@ order. A quest may come `after` one in any file. A quest name written twice, in 
 two, fails the load naming both files, across packages too: a mod cannot replace a quest by
 writing its name. Quests that come after each other (one after itself, or a loop of them
 with no choice out) would never open, so the load refuses them, naming the loop.
+A file no part of the game reads (a misspelt `quest.ron`) still loads, and
+the load notes it with the likeliest name meant (`zz_mod/quest.ron is read by nothing (meant
+quests.ron?)`); the names other crates read are `content::READ_ELSEWHERE`.
 Goals:
 
 | Goal | Reads |
