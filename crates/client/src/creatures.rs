@@ -993,7 +993,10 @@ fn answer_tended(waiting: &mut Vec<Tended>, now: f32, meanwhile: impl Fn(&Tended
             continue;
         }
         seen.push(watched);
-        let (held, had) = (count(watched), waiting[i].had);
+        // Judged from the latest snapshot of it: one taken since the earlier tends counts
+        // whatever came or went in between (wheat picked up) that the server did not do.
+        let latest = waiting.iter().rev().find(|t| t.watched == watched).map_or(0, |t| t.had);
+        let (held, had) = (count(watched), latest);
         let answers = match waiting[i].answer {
             Sound::Idle if held > had => (held - had).div_ceil(waiting[i].most) as usize,
             Sound::Idle => 0,
@@ -2190,6 +2193,11 @@ mod tests {
         let mut shorn = vec![ewe(10, 0), ewe(11, 0), ewe(12, 0)];
         assert_eq!(answer_tended(&mut shorn, 0.5, |_| 4).iter().map(|t| t.id).collect::<Vec<_>>(), [10, 11]);
         assert_eq!(shorn, [ewe(12, 4)]);
+        // Fed at 6, then two wheat picked up and another fed at 8: the first meal eaten
+        // (7) answers the first, though the count is still above its own snapshot.
+        let mut fed_twice = vec![Tended { had: 6, ..ewe_fed(13) }, Tended { had: 8, ..ewe_fed(14) }];
+        assert_eq!(answer_tended(&mut fed_twice, 0.5, |_| 7).iter().map(|t| t.id).collect::<Vec<_>>(), [13]);
+        assert_eq!(fed_twice, [Tended { had: 7, ..ewe_fed(14) }]);
         // Counted since: two more harmless (tends, a look) is nothing else; a sowing among them is. Counts from
         // before a rejoin (larger than now) never underflow.
         assert!(!fed.something_else_since(3, 3) && fed.something_else_since(4, 3));
