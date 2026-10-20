@@ -105,6 +105,9 @@ pub struct WorldMeta {
     pub regrowing: Vec<SavedRegrowing>,
     #[serde(default)]
     pub planter_grown: Vec<[i32; 3]>,
+    /// Blocks waiting to catch fire or to burn out (`blaze`). Older worlds have none.
+    #[serde(default)]
+    pub blazes: Vec<crate::blaze::Blaze>,
     /// Kept hives with bees and the seconds each has foraged (`apiary`). Older worlds
     /// have none: their skeps start over.
     #[serde(default)]
@@ -120,6 +123,11 @@ pub struct WorldMeta {
     /// open cold; completed quests stay completed in the player's own file.
     #[serde(default)]
     pub lit: Vec<crate::hearth::Lit>,
+    /// Whose each home hearth is, lit or cold, until its hearthstone is broken
+    /// (`hearth::HearthOwner`). Older worlds have none: their lit hearths keep the owner
+    /// saved with the fire.
+    #[serde(default)]
+    pub hearth_owners: Vec<crate::hearth::HearthOwner>,
     /// The last whole save: files of a later one were cut short and are not used.
     #[serde(default)]
     pub generation: u64,
@@ -258,10 +266,12 @@ impl WorldMeta {
             placed: Vec::new(),
             regrowing: Vec::new(),
             planter_grown: Vec::new(),
+            blazes: Vec::new(),
             hives: Vec::new(),
             stations: Vec::new(),
             catches: Vec::new(),
             lit: Vec::new(),
+            hearth_owners: Vec::new(),
             generation: 0,
             worldgen_content: None,
             lairs: Vec::new(),
