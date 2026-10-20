@@ -4562,8 +4562,9 @@ mod fight_tests {
             if t % TICKS_PER_SECOND as u64 == 0 && d < 3.5 {
                 server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
             }
+            // As `Server::tick` runs them: the creatures think and move, then the fights.
             server.think_and_move();
-            server.land_windups_by_ticks();
+            server.tick_fights();
             server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
             let ground = Ground::of(&server);
             let wolf = &server.creatures.live[&id];
