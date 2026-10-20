@@ -9505,7 +9505,8 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // (a claim on the way can be refused, a full pack turning A Kiln Load's bricks away),
     // is marked and claimed now, before the crucible needs its Engineering.
     for quest in ["a_kiln_load", "brick_by_brick"] {
-        if !f.c.claimed(&format!("base:{quest}")) {
+        let name = format!("base:{quest}");
+        if !f.waited(2.0, |c| c.claimed(&name)) {
             f.mark(quest);
         }
     }
