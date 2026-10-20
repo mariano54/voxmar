@@ -791,6 +791,11 @@ pub struct CreatureRegistry {
 }
 
 impl CreatureRegistry {
+    /// A species' data to change in place, by a tool or a test (what a package would set).
+    pub fn get_mut(&mut self, id: CreatureId) -> &mut Creature {
+        &mut self.creatures[id.0 as usize]
+    }
+
     /// Reads a package's `creatures.ron`, qualifying names with its namespace: its species,
     /// and what it sets of the world's rules.
     pub fn read(namespace: &str, source: &str) -> Result<CreaturePackage, RegistryError> {

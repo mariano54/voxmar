@@ -475,8 +475,9 @@ impl Server {
 
     /// The players a creature at `at` can sense, nearest first.
     /// The players a creature with `body` sees within `range`; whether its blow, `reach`
-    /// past its edge, has a way through the air to each near enough for one (`blow_open`).
-    fn seen_from(&self, body: &Body, reach: f32, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
+    /// past its edge, has a way through the air (`blow_open`) to each `strikes` says it
+    /// would strike at (in its reach and strike band): to no other is it close to striking.
+    fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
         let at = body.position;
         let mut seen: Vec<Seen> = self
             .players
@@ -490,7 +491,7 @@ impl Server {
                 creative: p.allow_flight,
                 tolerated: self.creatures.settled.get(&p.id).is_some_and(|&(_, since)| self.tick - since > TOLERANCE),
                 friend: owner.is_some_and(|name| name == p.name),
-                open: p.position.distance(at) > body.size.0 + body.size.1 + reach + 2.0 || self.blow_open(body, reach, p.position),
+                open: !strikes(p.position) || self.blow_open(body, reach, p.position),
             })
             .collect();
         seen.sort_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)));
@@ -543,7 +544,13 @@ impl Server {
             let every = if nearest < NEAR { NEAR_THINK } else { FAR_THINK } + creature.seed % 3;
             if (self.tick + id as u64).is_multiple_of(every) {
                 let range = species.def.senses.sight.max(species.def.senses.hearing).max(16.0) * 1.5;
-                let players = self.seen_from(&creature.body, species.longest_reach(creature.phase), range, &species.favourite, creature.owner.as_deref());
+                // Whom it would strike at from here, as its brain judges close (`strike`).
+                let (phase, scale) = (creature.phase, creature.scale);
+                let strikes = |to: Vec3| {
+                    let edge = species.edge((to - position).with_y(0.0).length(), scale);
+                    species.reaches(phase, edge, species.level(position.y, to.y, scale)) && species.in_band(position.y, to.y, voxmar_engine::physics::player::HEIGHT, scale)
+                };
+                let players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, range, &species.favourite, creature.owner.as_deref());
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
                 // What it grazes, else, kept and hungry, a trough of its food by home.
@@ -808,8 +815,10 @@ impl Server {
         };
         motion::step(&mut body, &Ground::of(self), movement, water, drive, dt);
         // Standing at what it wants, whether its blow has a way through the air there.
-        let phase = self.creatures.live[&id].phase;
-        let shut_off = wanted == Vec3::ZERO && decision.goal.is_some_and(|g| !self.blow_open(&body, species.longest_reach(phase), g));
+        // Only in a chase: a grazer at its grass traces nothing.
+        let (phase, doing) = (self.creatures.live[&id].phase, self.creatures.live[&id].mind.doing);
+        let chasing = doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
+        let shut_off = chasing && wanted == Vec3::ZERO && decision.goal.is_some_and(|g| !self.blow_open(&body, species.longest_reach(phase), g));
         let creature = self.creatures.live.get_mut(&id).expect("still there");
         // What a search found holds for a second, bobbing at the surface or not; out on dry
         // ground it is done with.
@@ -829,7 +838,6 @@ impl Server {
             }
         }
         let (mut balked, mut no_way) = (false, false);
-        let chasing = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
         // Over or under what it chases, out of its reach up or down (`moves::Strike`: a
         // player down a hole too deep for it), or standing at them with no way through the
         // air for its blow (`blow_open`: a roof between them), it can come no nearer: it has
@@ -3891,6 +3899,24 @@ mod fight_tests {
                 assert!(f.pinned < 1.0 && f.last > 2.0, "{name}: {f:?}");
             }
         }
+    }
+
+    /// A wolf given a deep strike band (`strike: (below: 4)`) over a player five down a
+    /// hole roofed at its top: the player is in its band and its reach, so its blow is
+    /// traced however far that is, finds the roof, lands nothing, and it gives up. Before:
+    /// a blow was traced only within its size, reach and two blocks, so the wolf took them
+    /// for open, its brain held it close, wind-ups were refused, and it stood there for good.
+    #[test]
+    fn a_deep_strike_band_strikes_nothing_through_a_roof() {
+        let deep: Scene = |s, c| {
+            let wolf = s.content.creatures.id("base:wolf").expect("a wolf");
+            std::sync::Arc::get_mut(&mut s.content.creatures).expect("the test server owns its creatures").get_mut(wolf).def.strike.below = 4.0;
+            let at = hole(s, c, 5);
+            set(s, "base:stone", [c + IVec3::new(2, 4, 0)]);
+            at
+        };
+        let f = fight_timed("base:wolf", deep, 8.0, true);
+        assert!(f.hits == 0 && f.pinned < 1.0 && f.last > 2.0, "{f:?}");
     }
 
     /// With the player down a hole a block across and four deep, out of their reach down
