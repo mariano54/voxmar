@@ -15577,14 +15577,25 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
         // reach the client and draw. Then the player goes back to the test ground.
         3 => {
             let content = world.resource::<Launch>().content.clone();
-            let people = world.resource::<crate::creatures::Creatures>().views().filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager).count();
+            let feet = world.resource::<LocalPlayer>().position;
+            let villagers: Vec<f32> = world
+                .resource::<crate::creatures::Creatures>()
+                .views()
+                .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager)
+                .map(|v| v.position.distance(feet))
+                .collect();
+            let people = villagers.len();
+            // The greeting asked below is of the nearest within the command's reach (less a
+            // little, as the client sees them a moment behind): someone drawn farther off
+            // has to walk in first.
+            let near = villagers.iter().filter(|&&d| d <= voxmar_server::BARK_COMMAND_REACH - 2.0).count();
             // The ambience surveys the place about once a second, so it may not yet have
             // heard the settlement the player was just sent to: waited on with the people.
             let heard = settlement_heard(world, gate.settlement);
-            if (people == 0 || heard.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
+            if (near == 0 || heard.is_err()) && gate.server_in_phase() < SETTLEMENT_PEOPLE {
                 return;
             }
-            gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
+            gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn, {near} within a greeting's reach")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
             gate.check("settlement sounds", heard);
             // The nearest of them greets the player (`Server::bark`, by its command).
             world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
