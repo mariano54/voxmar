@@ -53,6 +53,23 @@ impl Charge {
     }
 }
 
+/// How far up and down from where it stands it strikes (`Creature::in_band`): a target's
+/// feet no more than its height and `above` over its own, and the top of the target no
+/// more than `below` under its feet, as a wolf at the rim of a pit bites down at a player
+/// in it. A player deeper than that is out of its reach.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Strike {
+    pub above: f32,
+    pub below: f32,
+}
+
+impl Default for Strike {
+    fn default() -> Self {
+        Self { above: 1.5, below: 1.5 }
+    }
+}
+
 /// How a creature's body shows a wind-up: it nods its head down, crouches and rears up
 /// (each 0 ..= 1, as the client draws a pose).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
@@ -149,6 +166,16 @@ impl super::Creature {
         self.def.moves.iter().enumerate().map(|(i, m)| (i as u8 + 1, m)).filter(move |(_, m)| m.phases.is_empty() || m.phases.contains(&phase))
     }
 
+    /// Whether a target `height` tall with its feet at `target` is in its reach up and down
+    /// from its feet at `feet`, at its individual `scale` (`Strike`): never less than its
+    /// own height, less a little, under its feet, as tall as it is. As its brain judges it
+    /// close enough to strike, so the fight judges the blow.
+    pub fn in_band(&self, feet: f32, target: f32, height: f32, scale: f32) -> bool {
+        let tall = self.def.body.size.1 * scale;
+        let dy = target - feet;
+        dy < tall + self.def.strike.above && dy + height > -self.def.strike.below.max(tall - 0.3)
+    }
+
     /// The furthest it strikes from in `phase`, from its body's edge.
     pub fn longest_reach(&self, phase: u8) -> f32 {
         self.moves_in(phase).map(|(_, m)| m.attack.reach).fold(self.def.attack.map_or(1.0, |a| a.reach), f32::max)
@@ -165,8 +192,29 @@ impl super::Creature {
     /// one of its moves fits (`choose`), so a boss whose moves leave a gap between their
     /// reaches (a lash up close, a volley from afar) closes in across it rather than stand
     /// where nothing fits; one with no moves, within its plain attack's reach.
-    pub fn reaches(&self, phase: u8, edge: f32) -> bool {
-        if self.def.moves.is_empty() { edge <= self.longest_reach(phase) } else { self.choose(phase, edge, 0).is_some() }
+    pub fn reaches(&self, phase: u8, edge: f32, level: bool) -> bool {
+        if self.def.moves.is_empty() { edge <= self.longest_reach(phase) } else { self.choose(phase, edge, 0, level).is_some() }
+    }
+
+    /// Whether a blow it would strike a target `edge` blocks from its body's edge with, in
+    /// `phase`, is struck from where it stands: any that fits but a charge, which runs at
+    /// the target first, so what is in the air between them now is no bar to it (the hit
+    /// is traced where it lands).
+    pub fn strikes_from_here(&self, phase: u8, edge: f32, level: bool) -> bool {
+        if self.def.moves.is_empty() {
+            return self.reaches(phase, edge, level);
+        }
+        let edge = edge.max(0.0);
+        self.moves_in(phase).any(|(_, m)| edge >= m.least && edge <= m.attack.reach && m.attack.charge.is_none()) || self.def.attack.is_some_and(|a| edge <= a.reach)
+    }
+
+    /// Whether a target with its feet at `target` is level with it, its feet at `feet` at
+    /// its individual `scale`: where a charge along the ground runs into them, from a block
+    /// below its feet (down a step) to below the top of its body. Two blocks down a hole,
+    /// a charge runs over them, however tall the charger.
+    pub fn level(&self, feet: f32, target: f32, scale: f32) -> bool {
+        let dy = target - feet;
+        dy >= -1.0 - 1e-3 && dy < self.def.body.size.1 * scale
     }
 
     /// The attack it winds up at a target `edge` blocks from its body's edge, in `phase`,
@@ -174,7 +222,9 @@ impl super::Creature {
     /// has a pattern to learn; its plain attack if none does and the target is in its
     /// reach; none if the target is out of reach of everything. A creature with no moves
     /// always uses its plain attack, as it did before moves: its brain judged the reach.
-    pub fn choose(&self, phase: u8, edge: f32, last: u8) -> Option<u8> {
+    /// A charge fits only a target `level` with it (`Creature::level`): one it runs over,
+    /// down a hole, it never meets.
+    pub fn choose(&self, phase: u8, edge: f32, last: u8, level: bool) -> Option<u8> {
         if self.def.moves.is_empty() {
             return self.def.attack.map(|_| 0);
         }
@@ -182,7 +232,7 @@ impl super::Creature {
         // close moves fit, rather than a plain blow with no tell (`moves` are what a boss
         // tells).
         let edge = edge.max(0.0);
-        let fits: Vec<u8> = self.moves_in(phase).filter(|(_, m)| edge >= m.least && edge <= m.attack.reach).map(|(i, _)| i).collect();
+        let fits: Vec<u8> = self.moves_in(phase).filter(|(_, m)| edge >= m.least && edge <= m.attack.reach && (level || m.attack.charge.is_none())).map(|(i, _)| i).collect();
         if let Some(&next) = fits.iter().find(|&&i| i > last).or(fits.first()) {
             return Some(next);
         }
@@ -199,6 +249,10 @@ pub(super) fn check(def: &super::CreatureDef) -> Result<(), String> {
     }
     if !def.moves.is_empty() && def.attack.is_none() {
         return Err("has moves but no plain `attack`".into());
+    }
+    let strike = def.strike;
+    if !(strike.above.is_finite() && strike.below.is_finite() && (0.0..=8.0).contains(&strike.above) && (0.0..=8.0).contains(&strike.below)) {
+        return Err(format!("`strike` needs `above` and `below` from 0 to 8 blocks, not {} and {}", strike.above, strike.below));
     }
     let mut last = 1.0f32;
     for phase in &def.phases {
@@ -274,19 +328,19 @@ mod tests {
         let [lash, thrash, grasp, volley] = ["lash", "thrash", "grasp", "volley"].map(|m| index(her, m));
         assert_eq!((her.phase(1.0), her.phase(0.51), her.phase(0.5), her.phase(0.1)), (0, 0, 1, 1));
         // Beside her, the pattern to learn: lash, grasp, lash.
-        assert_eq!(her.choose(0, 1.0, 0), Some(lash));
-        assert_eq!(her.choose(0, 1.0, lash), Some(grasp));
-        assert_eq!(her.choose(0, 1.0, grasp), Some(lash));
+        assert_eq!(her.choose(0, 1.0, 0, true), Some(lash));
+        assert_eq!(her.choose(0, 1.0, lash, true), Some(grasp));
+        assert_eq!(her.choose(0, 1.0, grasp, true), Some(lash));
         // Pressed against her, or inside her edge, her close moves still fit, never a plain
         // blow with no tell.
-        assert_eq!(her.choose(0, 0.0, 0), Some(lash));
-        assert_eq!(her.choose(0, -0.4, lash), Some(grasp));
-        assert!(her.reaches(0, -0.4));
+        assert_eq!(her.choose(0, 0.0, 0, true), Some(lash));
+        assert_eq!(her.choose(0, -0.4, lash, true), Some(grasp));
+        assert!(her.reaches(0, -0.4, true));
         // Past her reach in the first phase, nothing reaches; in the second, the volley.
-        assert_eq!(her.choose(0, 6.0, lash), None);
-        assert_eq!(her.choose(1, 6.0, lash), Some(volley));
-        assert_eq!(her.choose(1, 1.0, grasp), Some(thrash));
-        assert_eq!(her.choose(1, 1.0, thrash), Some(grasp));
+        assert_eq!(her.choose(0, 6.0, lash, true), None);
+        assert_eq!(her.choose(1, 6.0, lash, true), Some(volley));
+        assert_eq!(her.choose(1, 1.0, grasp, true), Some(thrash));
+        assert_eq!(her.choose(1, 1.0, thrash, true), Some(grasp));
         assert!(her.longest_reach(1) > 10.0 && her.longest_reach(0) < 3.0, "she strikes from afar only once awake");
         // The grasp goes through any guard: dodge it.
         assert!(her.attack_at(grasp).is_some_and(|a| a.heavy) && her.attack_at(lash).is_some_and(|a| !a.heavy));
@@ -304,10 +358,13 @@ mod tests {
         let content = content();
         let tusk = content.creatures.get(content.creatures.id("base:old_tusk").expect("Old Tusk"));
         let [gore, charge, frenzy] = ["gore", "charge", "frenzy"].map(|m| index(tusk, m));
-        assert_eq!(tusk.choose(0, 0.5, 0), Some(gore));
-        assert_eq!(tusk.choose(0, 6.0, 0), Some(charge));
-        assert_eq!(tusk.choose(1, 6.0, 0), Some(frenzy));
-        assert_eq!(tusk.choose(1, 0.5, frenzy), Some(gore));
+        assert_eq!(tusk.choose(0, 0.5, 0, true), Some(gore));
+        assert_eq!(tusk.choose(0, 6.0, 0, true), Some(charge));
+        // Down a hole under him, he never charges at them: nothing fits from afar.
+        assert_eq!(tusk.choose(0, 6.0, 0, false), None);
+        assert_eq!(tusk.choose(0, 0.5, 0, false), Some(gore));
+        assert_eq!(tusk.choose(1, 6.0, 0, true), Some(frenzy));
+        assert_eq!(tusk.choose(1, 0.5, frenzy, true), Some(gore));
         for i in [charge, frenzy] {
             let attack = tusk.attack_at(i).unwrap();
             assert!(attack.heavy && attack.charge.is_some(), "a charge goes through any guard");
@@ -391,5 +448,26 @@ mod tests {
         assert!(!many(253).is_err_and(|e| e.contains("too many")));
         def.mend.as_mut().unwrap().fire.clear();
         assert!(check(&def).unwrap_err().contains("mend"));
+    }
+
+    /// A wolf strikes a player whose head is down to 1.5 blocks under its feet (at the foot
+    /// of a hole three deep) and no deeper, and one whose feet are up to its height and 1.5
+    /// over its own; a creature taller than that reach down still strikes as far as its own
+    /// height. `strike` outside 0 to 8 blocks fails the load.
+    #[test]
+    fn a_strike_reaches_down_a_hole_three_deep_and_no_deeper() {
+        let content = content();
+        let wolf = content.creatures.get(content.creatures.id("base:wolf").expect("the wolf"));
+        let (tall, height) = (wolf.def.body.size.1, crate::physics::player::HEIGHT);
+        assert!(wolf.in_band(3.0, 0.0, height, 1.0) && !wolf.in_band(4.0, 0.0, height, 1.0));
+        assert!(wolf.in_band(0.0, tall + 1.4, height, 1.0) && !wolf.in_band(0.0, tall + 1.6, height, 1.0));
+        let mut giant = wolf.clone();
+        giant.def.body.size.1 = 4.0;
+        assert!(giant.in_band(0.0, -1.8 - 3.6, height, 1.0) && !giant.in_band(0.0, -1.8 - 3.8, height, 1.0));
+        let mut def = wolf.def.clone();
+        def.strike.below = 9.0;
+        assert!(check(&def).unwrap_err().contains("strike"));
+        def.strike.below = f32::NAN;
+        assert!(check(&def).unwrap_err().contains("strike"));
     }
 }

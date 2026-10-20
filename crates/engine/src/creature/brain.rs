@@ -93,6 +93,10 @@ pub struct Seen {
     pub tolerated: bool,
     /// Its owner, whom a kept creature neither fears nor hunts.
     pub friend: bool,
+    /// Whether a blow from where the creature stands has a way through the air to them
+    /// (the server's `blow_open`): none through a roof or a wall, so it is not close enough
+    /// to strike however near.
+    pub open: bool,
 }
 
 /// Where someone with a routine (villagers) is to be now, as the server's schedule and
@@ -531,7 +535,7 @@ pub(super) mod tests {
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
-        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false }
+        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true }
     }
 
     fn doing<'a>(creature: &'a Creature, mind: &Mind) -> &'a str {
