@@ -258,6 +258,47 @@
                 "....k....",
             ]),
         ]),
+        // The quest book's marks on a quest's corner: a tick once it is done, a gold "!"
+        // while its rewards wait, a padlock while it waits on those before it. Drawn whole.
+        "ui/quest/done": (size: (9, 9), layers: [
+            Grid(legend: {'g': "#76d678", 'G': "#c8f5b4"}, rows: [
+                "......kkk",
+                ".....kGgk",
+                "kkk.kGgk.",
+                "kGgkkGgk.",
+                ".kGgGgk..",
+                "..kGgk...",
+                "...kk....",
+                ".........",
+                ".........",
+            ]),
+        ]),
+        "ui/quest/ready": (size: (9, 9), palettes: {"frame": "ui_gold"}, layers: [
+            Grid(rows: [
+                "..kkkkk..",
+                ".kWGGGGk.",
+                "kWGGkGGgk",
+                "kGGGkGGgk",
+                "kGGGkGGgk",
+                "kGGGGGGgk",
+                "kGGGkGGgk",
+                ".kgGGGgk.",
+                "..kkkkk..",
+            ]),
+        ]),
+        "ui/quest/locked": (size: (9, 9), layers: [
+            Grid(legend: {'m': "#8a90a8", 'M': "#b8bdd0", 'd': "#4c5068"}, rows: [
+                "..kkkkk..",
+                ".kMkkkdk.",
+                ".kMk.kdk.",
+                "kkkkkkkkk",
+                "kMMMMMMmk",
+                "kMmmkmmdk",
+                "kMmmkmmdk",
+                "kmddddddk",
+                "kkkkkkkkk",
+            ]),
+        ]),
         // Skill icons, by skill name (`ui/skill/<name>`; `unknown` for one without its own).
         "ui/skill/farming": (size: (16, 16), layers: [Grid(legend: {'L': "#8cd44e", 'W': "#f6f2e8", 'S': "#c9ced8", 's': "#8a92a6", 'D': "#2a2c38", 'd': "#3c3f50", 'G': "#e8c164", 'w': "#8a5a2c", 'l': "#d8d0b8", 'g': "#4e9a2e", 'R': "#d8263b", 'r': "#8c1022", 'b': "#1d6b64", 'B': "#3fb3a5", 'o': "#e05a1a", 'O': "#ffd04a"}, rows: [
             "................",

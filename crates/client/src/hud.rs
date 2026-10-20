@@ -15,6 +15,7 @@ pub mod journal;
 pub mod levels;
 pub mod makeable;
 pub mod prayers;
+pub mod quest_look;
 pub mod quests;
 pub mod screens;
 pub mod recipes;
