@@ -6291,8 +6291,12 @@ fn reap(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         2 => {
-            // Just under the middle crop's top, looking down over the near row.
-            aim_at(world, centre.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            // Into the middle crop's top, past the near row: a crop is hit as its whole cell,
+            // and from the eye (1.62 up, 1.5 cells back of the near row's far side) a ray to
+            // the middle's y 0.6 crossed that side at y 0.86, inside the near crop's cell.
+            // Aimed at y 0.95, 0.8 into the middle cell, it crosses there at 1.18 and comes
+            // down into the middle crop's top 0.63 in.
+            aim_at(world, centre.as_vec3() + Vec3::new(0.5, 0.95, 0.8));
             let aimed = world.resource::<crate::interact::Target>().hit.as_ref().map(|hit| hit.block);
             if world.resource::<ClientWorld>().block(centre).is_some_and(|b| b.is_air()) {
                 mouse(world, MouseButton::Left, false);
