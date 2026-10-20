@@ -10800,8 +10800,9 @@ const FEEL_LAG_SETTLE: u32 = 9;
 const FEEL_BEARS: u32 = 3;
 
 /// Where the fight-feel step stands: when the bear's wind-up was first seen (by the wall's
-/// clock, as the server times blows), how long after that the answer comes, and what has
-/// been tried.
+/// clock, the players' clock the server judges blows by: a blow lands on its due tick, and
+/// is judged a wind-up after it began on that clock, or sooner), how long after that the
+/// answer comes, and what has been tried.
 #[derive(Default)]
 struct FeelRun {
     seen: Option<Instant>,

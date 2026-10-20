@@ -497,7 +497,7 @@ impl Server {
         }
     }
 
-    fn think_and_move(&mut self) {
+    pub(crate) fn think_and_move(&mut self) {
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ids: Vec<u32> = self.creatures.live.keys().copied().collect();
         let neighbours = Neighbours::of(&self.creatures.live);
@@ -718,7 +718,7 @@ impl Server {
             _ if held => tracking.unwrap_or_default(),
             Some(goal) if goal.with_y(0.0).distance(body.position.with_y(0.0)) > 0.4 => {
                 let wish = (goal - body.position).with_y(if species.def.habitat.water == Water::Swim { goal.y - body.position.y } else { 0.0 });
-                Drive { wish: wish.normalize_or_zero(), speed: decision.speed * (1.0 - self.fights.slow(id)), face: decision.face.map(|f| f - body.position) }
+                Drive { wish: wish.normalize_or_zero(), speed: decision.speed * (1.0 - self.fights.slow(id, self.game_secs())), face: decision.face.map(|f| f - body.position) }
             }
             _ => Drive { wish: Vec3::ZERO, speed: 0.0, face: decision.face.map(|f| f - body.position) },
         };
@@ -1028,7 +1028,7 @@ impl Server {
         let book = &self.content.prayers;
         let (accurate, strong) = (1.0 + book.boost(on, voxmar_engine::prayer::Stat::Accuracy), 1.0 + book.boost(on, voxmar_engine::prayer::Stat::Strength));
         let level = self.level(player, weapon.skill);
-        let sunder = self.fights.sunder(id);
+        let sunder = self.fights.sunder(id, self.game_secs());
         let defence = voxmar_engine::combat::defence_against(species.def.defence, species.def.weak, weapon.style);
         // By the count of blows they have struck, not the tick it lands on.
         let [hit, amount] = self.players.get_mut(&player)?.draw(Draw::Strike);
@@ -2561,14 +2561,14 @@ mod density_tests {
 /// Creatures hurt beside walls, in corners and by trees: they run clear, round what is in
 /// their way, and their bodies (heads too) never go into a block.
 #[cfg(test)]
-mod cornered_tests {
+pub(crate) mod cornered_tests {
     use super::*;
 
     const SPECIES: [&str; 4] = ["base:red_deer", "base:rabbit", "base:mouflon", "base:wild_boar"];
 
     /// A stone pen over empty columns, high over spawn: a floor `half` blocks each way from
     /// its centre, walled three high round its edge. Returns the centre, at feet level.
-    pub(super) fn pen(server: &mut Server, half: i32) -> IVec3 {
+    pub(crate) fn pen(server: &mut Server, half: i32) -> IVec3 {
         let centre = server.spawn.floor().as_ivec3() + IVec3::Y * 40;
         let (from, to) = (ColumnPos::of_block(centre - IVec3::splat(half)), ColumnPos::of_block(centre + IVec3::splat(half)));
         for z in from.0.y..=to.0.y {
@@ -2597,7 +2597,7 @@ mod cornered_tests {
         }
     }
 
-    pub(super) fn join(server: &mut Server, at: Vec3) -> PlayerId {
+    pub(crate) fn join(server: &mut Server, at: Vec3) -> PlayerId {
         let (_client, connection) = voxmar_protocol::local_pair();
         let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
         player.joined = true;
@@ -2606,7 +2606,7 @@ mod cornered_tests {
     }
 
     /// A creature of `name` at `at`, facing along `facing`.
-    pub(super) fn put(server: &mut Server, name: &str, at: Vec3, facing: Vec3) -> u32 {
+    pub(crate) fn put(server: &mut Server, name: &str, at: Vec3, facing: Vec3) -> u32 {
         let species = server.content.creatures.id(name).expect("species");
         let id = server.spawn_creature(species, at, 7).expect("room");
         server.creatures.live.get_mut(&id).unwrap().body.yaw = motion::yaw_of(facing);
