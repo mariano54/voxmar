@@ -1718,8 +1718,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 75.0,
-        // Four answers waited on (Hearthside, Snug, the evening in, the dooryard), each up
-        // to `WALLS_WAIT` server seconds only while it does not come.
+        // Four answers waited on (Hearthside, Snug with its rooms, the curtain drawn back with
+        // the evening in, the dooryard), each up to `WALLS_WAIT` server seconds only while it
+        // does not come.
         Step::HomeWalls => STEP_LIMIT + 10.0,
         // A smoulder waited on up to fire.ron's catching time and 4 s (a panel daubed in
         // that wait); then the catch and the burning out, up to their times and 4 s each from
@@ -6834,10 +6835,11 @@ const WALLS_WAIT: f32 = 8.0;
 /// Walls make the home. About the camp the Home step left (the bag home, a torch beside it),
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
 /// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound), two
-/// of them hide windows, it turns Snug and is a bright room. Then, set to midnight (`/time`,
-/// no waiting for dark), indoors by the hearth it is an evening in, and noon again after;
-/// with the roof off, an awning, a bench and a hay bale set out about it, a dooryard. All of
-/// it goes again after, the camp left for the way home.
+/// of them hide windows, a rug and a hanging within, it turns Snug, a bright room and soft
+/// furnishings. Then a curtain hung inside a pane is drawn back by a right click; set to
+/// midnight (`/time`, no waiting for dark), indoors by the hearth it is an evening in, and
+/// noon again after; with the roof off, an awning, a bench and a hay bale set out about it, a
+/// dooryard. All of it goes again after, the camp left for the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase();
     let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
@@ -6850,6 +6852,10 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let (low, high) = (bag + IVec3::new(-5, 0, -3), bag + IVec3::new(3, 3, 3));
     let (hearth, light) = (bag + IVec3::new(0, 0, 2), bag + IVec3::new(-3, 0, -2));
     let panes = [IVec3::new(bag.x - 1, bag.y + 1, low.z), IVec3::new(bag.x + 1, bag.y + 1, low.z)];
+    // A rug by the hearth and a hanging inside the west wall: soft furnishings.
+    let soft = [(bag + IVec3::new(-1, 0, 1), "red_rug"), (bag + IVec3::new(-4, 1, 0), "red_wall_hanging")];
+    // A curtain hung inside the first pane, drawn across, then drawn back by a right click.
+    let curtain = panes[0] + IVec3::Z;
     // The yard, set out in the room once its roof is off: an awning over the stand's corner,
     // a bench and a hay bale under the open sky.
     let yard = [(bag + IVec3::new(-2, 2, -2), "red_awning"), (bag + IVec3::new(1, 0, -2), "oak_bench"), (bag + IVec3::new(2, 0, 1), "hay_bale")];
@@ -6868,11 +6874,20 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         walls(net, "air");
         roof(net, "air");
-        for at in [hearth, light].into_iter().chain(yard.map(|(at, _)| at)) {
+        for at in [hearth, light, curtain].into_iter().chain(soft.map(|(at, _)| at)).chain(yard.map(|(at, _)| at)) {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("effect clear");
         gate.next(Step::WayHome, now);
+    };
+    // Midnight, and the curtain hung drawn across the pane with a right click to draw it
+    // back: the server swaps it, as a door.
+    let to_midnight = |world: &mut World| {
+        world.resource::<Net>().command("time set midnight");
+        world.resource::<Net>().command(&format!("setblock {} {} {} red_curtain", curtain.x, curtain.y, curtain.z));
+        aim_at(world, curtain.as_vec3() + Vec3::splat(0.5));
+        let actions = world.resource::<crate::Actions>().0.clone();
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: curtain, face: voxmar_engine::coords::Face::PosZ });
     };
     let has = |world: &World, name: &str| {
         let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -6909,38 +6924,50 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
                 for pane in panes {
                     net.command(&format!("setblock {} {} {} hide_window", pane.x, pane.y, pane.z));
                 }
+                for (at, block) in soft {
+                    net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
+                }
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", Err(format!("{waited:.1} server s on, roofed but open to the outside: Hearthside {hearthside}, Snug {snug} (want Hearthside alone), /home asked for \"{wanted}\" walls {asked}; lines since: {lines:?}")));
                 leave(world, gate);
             }
         }
-        // Walled in with planks, two of them hide windows: Snug, and a bright room.
+        // Walled in with planks, two of them hide windows, a rug and a hanging within: Snug, a
+        // bright room and soft furnishings.
         2 => {
-            let (snug, bright) = (has(world, "base:snug"), has(world, "base:bright_room"));
-            if snug && bright {
+            let (snug, bright, cushioned) = (has(world, "base:snug"), has(world, "base:bright_room"), has(world, "base:soft_furnishings"));
+            if snug && bright && cushioned {
                 gate.check("home: walls", Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()));
                 gate.check("home: bright room", Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()));
-                world.resource::<Net>().command("time set midnight");
+                gate.check("home: soft furnishings", Ok("a rug and a wall hanging in the walled room showed the Soft furnishings chip".into()));
+                to_midnight(world);
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", if snug { Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()) } else { Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))) });
-                gate.check("home: bright room", Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")));
-                leave(world, gate);
+                gate.check("home: bright room", if bright { Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()) } else { Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")) });
+                gate.check("home: soft furnishings", if cushioned { Ok("a rug and a wall hanging in the walled room showed the Soft furnishings chip".into()) } else { Err(format!("{waited:.1} server s after a rug and a hanging at {soft:?} in the walled room: Soft furnishings chip {cushioned}")) });
+                if snug {
+                    // The rest still judged: on to the curtain, midnight and the evening in.
+                    to_midnight(world);
+                    gate.advance(now);
+                } else {
+                    leave(world, gate);
+                }
             }
         }
-        // At midnight, indoors at home by the hearth: an evening in, its chip, and its line
-        // (told once a session, so seen at any point in the run). Then noon, the roof off, and
-        // the yard set out.
+        // The curtain drawn back, as the server turned it, and at midnight, indoors at home
+        // by the hearth, an evening in, its chip, and its line (told once a session, so seen
+        // at any point in the run): one wait for both, so the step keeps its headroom. Then
+        // noon, the roof off, and the yard set out.
         3 => {
+            let client = world.resource::<ClientWorld>();
+            let shown = client.block(curtain).map(|b| client.registry.def(b).name.clone());
+            let drawn = shown.as_deref() == Some("base:red_curtain_open");
             let (evening, told) = (has(world, "base:evening_in"), gate.evening_told);
-            let done = evening && told;
-            if done {
-                gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()));
-            } else if gate.waited_out(WALLS_WAIT) {
-                gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")));
-            }
-            if done || gate.waited_out(WALLS_WAIT) {
+            if (drawn && evening && told) || gate.waited_out(WALLS_WAIT) {
+                gate.check("home: curtain", if drawn { Ok("a curtain hung drawn across a window inside the room was drawn back by a right click, as the server turned it".into()) } else { Err(format!("{waited:.1} server s after hanging a curtain at {curtain} and a right click on it, the client shows {shown:?}")) });
+                gate.check("home: evening in", if evening && told { Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()) } else { Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")) });
                 let net = world.resource::<Net>();
                 net.command("time set noon");
                 roof(net, "air");
