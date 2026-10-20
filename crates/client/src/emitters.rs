@@ -21,7 +21,7 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use voxmar_engine::block::{BlockId, BlockRegistry, Emission, ParticleBlend, ParticleStyle};
+use voxmar_engine::block::{BlockId, BlockRegistry, CHIMNEY_PIECE_TAG, Emission, ParticleBlend, ParticleStyle};
 use voxmar_engine::coords::{CHUNK_BITS, CHUNK_SIZE, ColumnPos, WORLD_HEIGHT, local_index};
 
 use crate::breaking::sky_light;
@@ -167,17 +167,25 @@ impl Emitters {
             }
             let far = ((scaled as f32).sqrt() - NEAR) / (RANGE as f32 - NEAR);
             let share = 1.0 - (1.0 - FAR_SHARE) * far.clamp(0.0, 1.0);
-            // What a block gives off comes out of the top of the flue over it (judged, as
-            // to what it is `over`, from where the block stands).
-            let top = flue_top(world, pos);
-            let above = top + IVec3::Y;
-            let headroom = (1..=HEADROOM)
-                .find(|&dy| world.block(top + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid))
-                .unwrap_or(HEADROOM + 1)
-                - 1;
-            let giving = giving(world, &self.cores, pos, block, distance, headroom);
-            if giving != 0 {
-                self.near.push(Emitter { pos: top, block, from: pos, sky: sky_light(world, above), headroom: headroom as f32 + 0.5, share, giving });
+            // A block's smoke comes out of the top of the flue over it, its flames, embers and
+            // sparks where it stands (what it is `over` is judged from there either way). A
+            // flue taller than `FLUE` smokes from its last counted piece, as if open above.
+            let (top, capped) = flue_top(world, pos);
+            let smoke = world.registry.def(block).particles.iter().take(8).enumerate().filter(|(_, e)| e.style == ParticleStyle::Smoke).fold(0u8, |bits, (i, _)| bits | 1 << i);
+            let places = if top == pos { [(pos, u8::MAX), (pos, 0)] } else { [(pos, !smoke), (top, smoke)] };
+            for (at, emissions) in places {
+                if emissions == 0 || self.near.len() == MAX_EMITTERS {
+                    continue;
+                }
+                let headroom = if capped && at == top {
+                    HEADROOM
+                } else {
+                    (1..=HEADROOM).find(|&dy| world.block(at + IVec3::Y * dy).is_none_or(|b| world.registry.info(b).solid)).unwrap_or(HEADROOM + 1) - 1
+                };
+                let giving = giving(world, &self.cores, pos, block, distance, headroom) & emissions;
+                if giving != 0 {
+                    self.near.push(Emitter { pos: at, block, from: pos, sky: sky_light(world, at + IVec3::Y), headroom: headroom as f32 + 0.5, share, giving });
+                }
             }
         }
     }
@@ -302,10 +310,12 @@ fn emit(
 }
 
 /// The top of the chimney pieces stacked straight over `pos` (up to `FLUE` of them), or
-/// `pos` itself with none over it: where what it gives off comes out.
-fn flue_top(world: &ClientWorld, pos: IVec3) -> IVec3 {
-    let piece = |at: IVec3| world.block(at).is_some_and(|b| world.registry.def(b).has_tag("chimney_piece"));
-    (1..=FLUE).take_while(|&dy| piece(pos + IVec3::Y * dy)).last().map_or(pos, |dy| pos + IVec3::Y * dy)
+/// `pos` itself with none over it: where its smoke comes out; and whether the stack goes
+/// on past `FLUE`.
+fn flue_top(world: &ClientWorld, pos: IVec3) -> (IVec3, bool) {
+    let piece = |at: IVec3| world.block(at).is_some_and(|b| world.registry.def(b).has_tag(CHIMNEY_PIECE_TAG));
+    let top = (1..=FLUE).take_while(|&dy| piece(pos + IVec3::Y * dy)).last().map_or(pos, |dy| pos + IVec3::Y * dy);
+    (top, top == pos + IVec3::Y * FLUE && piece(top + IVec3::Y))
 }
 
 /// Per block id, whether some structure has it as its core.
@@ -531,6 +541,39 @@ mod tests {
         world.set_block(flue, BlockId::AIR);
         world.set_block(pot, block("base:chimney_pot"));
         assert_eq!(found(&mut emitters, &world), vec![top], "a pot a block over the chimney carried its smoke");
+        // Nine flues over the chimney: the smoke comes out of the eighth, the last counted.
+        world.set_block(pot, BlockId::AIR);
+        for dy in 1..=9 {
+            world.set_block(top + IVec3::Y * dy, block("base:chimney_stack"));
+        }
+        assert_eq!(found(&mut emitters, &world), vec![top + IVec3::Y * FLUE], "a flue taller than FLUE gave no smoke at its last counted piece");
+    }
+
+    /// Under a hood only a campfire's smoke goes up the flue: its flames, embers and sparks
+    /// stay at the fire.
+    #[test]
+    fn only_smoke_goes_up_a_flue() {
+        use voxmar_engine::world::Column;
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let block = |name: &str| content.blocks.expect(name);
+        let mut world = ClientWorld::new(content.blocks.clone(), 2, crate::render::terrain::Terrain::detached());
+        world.insert_column(ColumnPos::of_block(IVec3::ZERO), Arc::new(Column::default()));
+        let (fire, hood) = (IVec3::new(5, 100, 5), IVec3::new(5, 101, 5));
+        world.set_block(fire, block("base:campfire"));
+        world.set_block(hood, block("base:chimney_hood"));
+        let mut emitters = Emitters::default();
+        emitters.emits = (0..world.registry.len()).map(|id| world.registry.def(BlockId(id as u16)).particles.iter().map(reach).max().unwrap_or(0)).collect();
+        emitters.far = emitters.emits.iter().copied().max().unwrap_or(0);
+        emitters.cores = cores(&world.registry, &content.multiblocks);
+        emitters.search(&world, IVec3::new(8, 100, 8));
+        let styles = |at: IVec3| -> Vec<ParticleStyle> {
+            let emitter = emitters.near.iter().find(|e| e.pos == at && e.standing(&world));
+            let def = world.registry.def(block("base:campfire"));
+            emitter.map_or(Vec::new(), |e| def.particles.iter().take(8).enumerate().filter(|&(i, _)| e.giving & 1 << i != 0).map(|(_, p)| p.style).collect())
+        };
+        let (at_fire, at_hood) = (styles(fire), styles(hood));
+        assert!(!at_fire.is_empty() && at_fire.iter().all(|&s| s != ParticleStyle::Smoke), "the fire gives off {at_fire:?}");
+        assert!(!at_hood.is_empty() && at_hood.iter().all(|&s| s == ParticleStyle::Smoke), "the hood gives off {at_hood:?}");
     }
 
     #[test]
