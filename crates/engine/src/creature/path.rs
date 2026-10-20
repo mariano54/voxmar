@@ -130,7 +130,7 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         }
         let wet = self.world.water(cell);
         let deep = wet && (self.world.water(cell - IVec3::Y) || self.world.water(cell + IVec3::Y));
-        let bits = if self.world.solid(cell - IVec3::Y) { FLOOR } else { 0 } | if wet { WET } else { 0 } | if deep { DEEP } else { 0 };
+        let bits = if self.world.footing(cell - IVec3::Y) { FLOOR } else { 0 } | if wet { WET } else { 0 } | if deep { DEEP } else { 0 };
         if let Some(slot) = slot {
             slot.set(slot.get() | GROUND_KNOWN | bits);
         }
@@ -448,6 +448,10 @@ mod cost {
         fn water(&self, c: IVec3) -> bool {
             self.1.set(self.1.get() + 1);
             self.0.water(c)
+        }
+        fn footing(&self, c: IVec3) -> bool {
+            self.1.set(self.1.get() + 1);
+            self.0.footing(c)
         }
     }
 
