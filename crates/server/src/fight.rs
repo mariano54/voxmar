@@ -607,7 +607,7 @@ impl Server {
         while flown > 0.0 && body(flown).aabb().intersects(|cell| self.is_solid(cell)) {
             flown -= 0.05;
         }
-        self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body(flown.max(0.0)), voxmar_engine::dropped::PICKUP_DELAY);
+        self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, 1), body(flown.max(0.0)), voxmar_engine::dropped::PICKUP_DELAY);
     }
 
     /// A hit taken spoils a shot being drawn with a weapon whose class says so
