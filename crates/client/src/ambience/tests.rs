@@ -489,7 +489,7 @@ fn shipped_roofs_patter_by_their_material() {
     }
 }
 
-/// Inside a home the weather outside is muffled: in a doorway under a sound roof in a gale
+/// Inside a home the weather outside is muffled: in a doorway under a thatched roof in a gale
 /// and a blizzard, the wind and the snow are turned well down from out in the open, by the
 /// `sheltered` axis the roof overhead raises.
 #[test]
@@ -497,7 +497,12 @@ fn a_home_muffles_the_weather_outside() {
     let ambience = base();
     let weather = [("air", 0.5), ("sky", 0.4), ("wind", 16.0), ("snow", 0.8), ("storm", 0.8), ("temperature", -5.0), ("cover", 1.0)];
     let open = scene(&ambience, "open", &["taiga", "cold"], &weather);
-    let inside = scene(&ambience, "doorway", &["taiga", "cold"], &[weather.as_slice(), &[("sheltered", ambience.roofs.sheltered(|t| t == "shelter:sound"))]].concat());
+    // Under thatch, the commonest roof of a home, which carries no shelter tag of its own:
+    // what it is made of muffles it, as a lean-to of hide, open at its sides, does not.
+    let soft = ambience.roofs.patters.iter().position(|p| p == "roof_soft");
+    let thatch = ambience.roofs.sheltered(|_| false, soft);
+    assert!(thatch > ambience.roofs.sheltered(|t| t == "shelter:draughty", soft) + 0.1, "thatch muffles no more than a hide lean-to");
+    let inside = scene(&ambience, "doorway", &["taiga", "cold"], &[weather.as_slice(), &[("sheltered", thatch)]].concat());
     let (open, inside) = (run(&ambience, &open, 30.0).1, run(&ambience, &inside, 30.0).1);
     for name in ["storm_wind", "blizzard"] {
         let bed = ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap();

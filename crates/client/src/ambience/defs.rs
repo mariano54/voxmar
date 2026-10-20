@@ -345,6 +345,11 @@ pub struct Roofs {
     pub muffle: f32,
     /// How much more a roof block with each shelter tag muffles it, of what is left.
     pub shelter: Vec<(String, f32)>,
+    /// How much more a roof of each patter muffles it, of what is left (by `patters`'
+    /// index): thatch hushes, stone and brick shut it out. None for a roof with one of the
+    /// `draughty` tags (a lean-to open at its sides).
+    pub patter_shelter: Vec<f32>,
+    pub draughty: Vec<String>,
     /// Each roof material's patter (an index into `patters`), or silence.
     pub patter: Vec<(String, Option<usize>)>,
     /// The patters, each an axis.
@@ -352,11 +357,13 @@ pub struct Roofs {
 }
 
 impl Roofs {
-    /// The `sheltered` axis under a roof block with `tags`: the muffle, and more for its
-    /// shelter.
-    pub fn sheltered(&self, has_tag: impl Fn(&str) -> bool) -> f32 {
+    /// The `sheltered` axis under a roof block with `tags` that patters `patter`: the
+    /// muffle, more for its shelter tags, and more for what it is made of unless draughty.
+    pub fn sheltered(&self, has_tag: impl Fn(&str) -> bool, patter: Option<usize>) -> f32 {
         let left = self.shelter.iter().filter(|(tag, _)| has_tag(tag)).fold(1.0 - self.muffle, |left, (_, more)| left * (1.0 - more));
-        (1.0 - left).clamp(0.0, 1.0)
+        let draughty = self.draughty.iter().any(|tag| has_tag(tag));
+        let made = patter.filter(|_| !draughty).and_then(|p| self.patter_shelter.get(p)).copied().unwrap_or(0.0);
+        (1.0 - left * (1.0 - made)).clamp(0.0, 1.0)
     }
 }
 
@@ -398,6 +405,10 @@ struct RoofsDef {
     shelter: BTreeMap<String, f32>,
     #[serde(default)]
     patter: BTreeMap<String, Option<String>>,
+    #[serde(default)]
+    patter_shelter: BTreeMap<String, f32>,
+    #[serde(default)]
+    draughty: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -505,7 +516,7 @@ impl Ambience {
             }
         }
         // Roofs next, as each patter is an axis.
-        let (mut shelter, mut patter) = (BTreeMap::new(), BTreeMap::new());
+        let (mut shelter, mut patter, mut patter_shelter) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
         for (package, def) in &mut parsed {
             let Some(roofs) = def.roofs.take() else { continue };
             if let Some(height) = roofs.height {
@@ -519,6 +530,10 @@ impl Ambience {
             }
             shelter.extend(roofs.shelter.into_iter().map(|(tag, more)| (tag, more.clamp(0.0, 1.0))));
             patter.extend(roofs.patter);
+            patter_shelter.extend(roofs.patter_shelter.into_iter().map(|(kind, more)| (kind, more.clamp(0.0, 1.0))));
+            if let Some(draughty) = roofs.draughty {
+                ambience.roofs.draughty = draughty;
+            }
         }
         let mut patters: Vec<String> = patter.values().flatten().cloned().collect();
         patters.sort();
@@ -529,6 +544,10 @@ impl Ambience {
             }
         }
         ambience.roofs.patter = patter.into_iter().map(|(material, kind)| (material, kind.map(|k| patters.iter().position(|p| *p == k).expect("listed")))).collect();
+        if let Some(kind) = patter_shelter.keys().find(|kind| !patters.contains(kind)) {
+            return Err(format!("{FILE}: roofs: patter_shelter names {kind}, which no roof material patters"));
+        }
+        ambience.roofs.patter_shelter = patters.iter().map(|p| patter_shelter.get(p).copied().unwrap_or(0.0)).collect();
         ambience.roofs.patters = patters;
         ambience.roofs.shelter = shelter.into_iter().collect();
         // Beds next, so sounds and beds can be ducked by any bed.
@@ -763,7 +782,7 @@ mod tests {
         let files = |extra: &str| {
             let mut all = file(
                 r#"(
-                    roofs: (height: 10, muffle: 0.4, shelter: {"shelter:fine": 0.5}, patter: {"stone": "dull", "wood": "tap", "glass": "tap"}),
+                    roofs: (height: 10, muffle: 0.4, shelter: {"shelter:fine": 0.5}, patter: {"stone": "dull", "wood": "tap", "glass": "tap"}, patter_shelter: {"dull": 0.5}, draughty: ["open"]),
                     beds: [(name: "drum", sound: Hail, volume: 0.3, when: {"dull": (min: 0.3)}), (name: "tick", sound: Sleet, volume: 0.3, when: {"tap": (min: 0.3)})],
                 )"#,
             );
@@ -774,7 +793,11 @@ mod tests {
         assert_eq!(ambience.roofs.patters, ["dull", "tap"]);
         assert_eq!((ambience.roofs.height, ambience.roofs.muffle), (10, 0.4));
         assert!(ambience.beds[0].when.uses_axis(ambience.patter_axis(0)));
-        assert!((ambience.roofs.sheltered(|t| t == "shelter:fine") - 0.7).abs() < 1e-6 && (ambience.roofs.sheltered(|_| false) - 0.4).abs() < 1e-6);
+        assert!((ambience.roofs.sheltered(|t| t == "shelter:fine", None) - 0.7).abs() < 1e-6 && (ambience.roofs.sheltered(|_| false, None) - 0.4).abs() < 1e-6);
+        // What the roof is made of muffles too: a dull (stone) roof more, unless draughty.
+        assert!((ambience.roofs.sheltered(|_| false, Some(0)) - 0.7).abs() < 1e-6, "{}", ambience.roofs.sheltered(|_| false, Some(0)));
+        assert!((ambience.roofs.sheltered(|t| t == "open", Some(0)) - 0.4).abs() < 1e-6 && (ambience.roofs.sheltered(|_| false, Some(1)) - 0.4).abs() < 1e-6);
+        assert!(Ambience::load(&files(r#"(roofs: (patter_shelter: {"thud": 0.2}))"#)).unwrap_err().contains("thud"));
         let family = |id| family(blocks.info(id).sound);
         let listed: Vec<String> = ambience.roofs.patter.iter().map(|(m, _)| m.clone()).collect();
         // Every other family a roof can be made of silent, for this test.

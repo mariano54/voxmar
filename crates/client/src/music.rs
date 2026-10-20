@@ -599,6 +599,15 @@ fn inside_home(rules: &rules::HomeMotif, feet: Vec3, home: Option<IVec3>, fires:
     off.max_element() <= rules.reach && crate::ambience::roof_over(block, feet, feet, rules.roof, is_roof).is_some()
 }
 
+/// Whether the home motif may look yet: not before the server has said the player's state
+/// (the home comes with it, after the welcome), nor before the ground under the player and
+/// the hearth have loaded (`loaded`). A home or a roof not yet known is not a step out.
+fn home_known(player: &LocalPlayer, loaded: impl Fn(Vec3) -> bool) -> bool {
+    let half = voxmar_engine::physics::player::WIDTH / 2.0;
+    let corners = [Vec3::new(-half, 0.0, -half), Vec3::new(half, 0.0, -half), Vec3::new(-half, 0.0, half), Vec3::new(half, 0.0, half)];
+    player.states > 0 && corners.iter().all(|&c| loaded(player.position + c)) && player.vitals.home.is_none_or(|home| loaded(home.as_vec3()))
+}
+
 /// The home motif: on stepping inside the lit home at night, the first time that night and
 /// outside a boss fight, a `Home` track starts, the one playing fading for it.
 #[allow(clippy::too_many_arguments)]
@@ -617,7 +626,11 @@ fn home_motif(
         music.home.inside = None;
         return;
     }
-    let inside = inside_home(&music.rules.home, player.position, player.vitals.home, &world.fires, |p| world.voxels.block(p), |b| crate::ambience::defs::is_roof(&world.registry, b));
+    let feet = player.position;
+    if !home_known(&player, |at| world.voxels.contains(voxmar_engine::coords::ColumnPos::of_block(at.floor().as_ivec3()))) {
+        return;
+    }
+    let inside = inside_home(&music.rules.home, feet, player.vitals.home, &world.fires, |p| world.voxels.block(p), |b| crate::ambience::defs::is_roof(&world.registry, b));
     // Only a step in: the first look in a world, or after dying, finds the player where
     // they are.
     if music.home.inside.replace(inside) != Some(false) || !inside {
@@ -693,7 +706,8 @@ fn start_game(mut commands: Commands, time: Res<Time>, music: Option<ResMut<Musi
     music.fade_out(&mut commands);
     music.next_at = Some(time.elapsed() + music.gap(&time, false));
     music.fighting = false;
-    music.home.inside = None;
+    // Another world counts its nights afresh.
+    (music.home.inside, music.home.night) = (None, None);
 }
 
 /// Back in the menus, the game's music fades out and the menu's starts again soon.
@@ -855,6 +869,22 @@ mod tests {
         let wide = |p: IVec3| Some(if p.y == 14 { roof } else { BlockId::AIR });
         assert!(inside_home(&rules, at(7.0, -7.0), Some(hearth), &lit, wide, is_roof));
         assert!(!inside_home(&rules, at(8.0, 0.0), Some(hearth), &lit, wide, is_roof), "past its reach, under another roof");
+    }
+
+    /// The motif waits for the server's word on the player (which brings the home) and for
+    /// the ground under them and under the hearth.
+    #[test]
+    fn the_home_motif_waits_for_the_home_and_its_ground() {
+        let mut player = LocalPlayer::default();
+        player.position = Vec3::new(0.5, 10.0, 0.5);
+        let everywhere = |_: Vec3| true;
+        assert!(!home_known(&player, everywhere), "before the first PlayerState the home is not known");
+        player.states = 1;
+        assert!(home_known(&player, everywhere));
+        player.vitals.home = Some(IVec3::new(40, 10, 0));
+        assert!(!home_known(&player, |at: Vec3| at.x < 20.0), "the hearth's column has not loaded");
+        assert!(!home_known(&player, |at: Vec3| at.x > 0.5), "part of the ground underfoot has not loaded");
+        assert!(home_known(&player, everywhere));
     }
 
     #[test]
