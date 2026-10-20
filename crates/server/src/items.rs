@@ -11,11 +11,11 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
-use voxmar_engine::dropped::{self, LIFETIME, Loose, MAGNET};
+use voxmar_engine::dropped::{self, LIFETIME, Loose, Pull};
 use voxmar_engine::glam::{IVec3, Vec2, Vec3};
 use voxmar_engine::inventory::{ItemStack, MAX_STACK, max_stack};
 use voxmar_engine::movement::{self, Surroundings};
-use voxmar_engine::physics::{Aabb, player as dims};
+use voxmar_engine::physics::Aabb;
 use voxmar_engine::traits;
 use voxmar_protocol::{ItemGone, ItemView, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
@@ -27,9 +27,6 @@ use crate::save::SavedItem;
 const SEEN_WITHIN: f32 = 48.0;
 /// How fast a drawn-in item flies at the player, in blocks per second.
 const MAGNET_SPEED: f32 = 7.0;
-/// How far a player's box reaches for items, across and up and down (Minecraft's 1 and
-/// 0.5).
-const REACH: Vec3 = Vec3::new(1.0, 0.5, 1.0);
 /// Stacks of the same item this close together merge.
 const MERGE_WITHIN: f32 = 0.6;
 /// Ticks between merges of resting stacks; moving ones try every few ticks.
@@ -297,16 +294,11 @@ impl Server {
 
     /// Draws items towards players near them who have room, and picks up those in reach.
     fn collect_items(&mut self, items: &mut Items, dt: f32) {
-        let collectors: Vec<(PlayerId, Vec3, Aabb, u64)> = self
+        let collectors: Vec<(PlayerId, Vec3, Vec3, u64)> = self
             .players
             .values()
             .filter(|p| p.joined && p.health.alive())
-            .map(|p| {
-                let mut reach = p.aabb();
-                reach.min -= REACH;
-                reach.max += REACH;
-                (p.id, p.position + Vec3::Y * dims::HEIGHT * 0.5, reach, owner_of(&p.name))
-            })
+            .map(|p| (p.id, p.position, dropped::middle(p.position), owner_of(&p.name)))
             .collect();
         if collectors.is_empty() {
             return;
@@ -317,19 +309,19 @@ impl Server {
             if item.pickup_in > 0 {
                 continue;
             }
-            let centre = item.body.position + Vec3::Y * dropped::SIZE / 2.0;
+            let centre = item.body.centre();
             let nearest = collectors
                 .iter()
-                .filter(|(pid, middle, _, name)| {
+                .filter(|(pid, _, middle, name)| {
                     // What a player left where they died is theirs alone.
                     item.owner.is_none_or(|owner| owner == *name)
-                        && middle.distance(centre) < MAGNET + 1.0
+                        && middle.distance(centre) < dropped::CLAIM
                         && self.players[pid].inventory.has_room_for(item.stack)
                 })
-                .min_by(|a, b| a.1.distance(centre).total_cmp(&b.1.distance(centre)));
-            let Some(&(collector, middle, reach, _)) = nearest else { continue };
-            let inside = item.body.aabb().min.cmple(reach.max).all() && item.body.aabb().max.cmpge(reach.min).all();
-            if inside {
+                .min_by(|a, b| a.2.distance(centre).total_cmp(&b.2.distance(centre)));
+            let Some(&(collector, feet, middle, _)) = nearest else { continue };
+            let pull = item.body.pull(feet);
+            if pull == Pull::Taken {
                 let player = self.players.get_mut(&collector).expect("a collector");
                 let left = player.inventory.add_stack(item.stack);
                 if left == item.stack.count {
@@ -342,11 +334,11 @@ impl Server {
                     items.all.get_mut(&id).expect("still there").stack.count = left;
                     items.changed.insert(id);
                 }
-            } else if middle.distance(centre) < MAGNET {
+            } else if pull == Pull::Drawn {
                 // Drawn in, faster the closer it gets, still stopped by walls.
                 let item = items.all.get_mut(&id).expect("still there");
-                let pull = (middle - centre).normalize_or_zero() * MAGNET_SPEED;
-                item.body.velocity = item.body.velocity.lerp(pull, (12.0 * dt).min(1.0));
+                let towards = (middle - centre).normalize_or_zero() * MAGNET_SPEED;
+                item.body.velocity = item.body.velocity.lerp(towards, (12.0 * dt).min(1.0));
                 item.body.on_ground = false;
                 items.changed.insert(id);
             }

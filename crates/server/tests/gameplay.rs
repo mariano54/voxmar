@@ -3450,13 +3450,16 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         lying + c.inventory.slots.iter().flatten().filter(|s| s.item == wheat || s.item == seeds).map(|s| s.count as u32).sum::<u32>()
     };
     for (hoe, reaped) in [("bare hand", 1), ("flint_knife", 1), ("stone_hoe", 9)] {
-        // The last round's harvest lying in the player's pull is drawn in once its pickup
+        // The last round's harvest the player would take or draw in comes in once its pickup
         // delay is out, which on a loaded server lands after the /clear and fills a slot the
-        // wait below wants empty: let it come in first. What lies beyond the pull (the
-        // server's own reach) stays where it is.
+        // wait below wants empty: let it come in first, by the server's own rule. What came
+        // to rest beyond the magnet stays where it is.
         client.pump_until(|c| {
-            let middle = c.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT * 0.5;
-            c.items.values().all(|i| (i.position + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle) >= voxmar_engine::dropped::MAGNET + 1.0)
+            c.items.values().all(|i| {
+                let item = voxmar_engine::dropped::Loose::new(i.position, i.velocity);
+                let settled = i.velocity.length() < 0.1 || voxmar_engine::dropped::middle(c.position).distance(item.centre()) >= voxmar_engine::dropped::CLAIM;
+                settled && item.pull(c.position) == voxmar_engine::dropped::Pull::Left
+            })
         });
         client.ok("/clear");
         client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
