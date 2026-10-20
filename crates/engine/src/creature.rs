@@ -158,10 +158,41 @@ pub struct Attack {
     /// level), as a weapon's accuracy does a player's.
     #[serde(default)]
     pub accuracy: Option<u16>,
+    /// Between blows it circles its target rather than standing nose to nose (unset, it
+    /// closes at once): once it has recovered it backs off and moves round them, facing
+    /// them, then comes in for its next blow (`Circle`).
+    #[serde(default)]
+    pub circle: Option<Circle>,
     /// A charge: once wound up it runs straight at where its target stood, blind to walls,
     /// holes and cliff edges (`moves::Charge`, docs/bosses.md).
     #[serde(default)]
     pub charge: Option<moves::Charge>,
+}
+
+/// How a creature circles its target between blows (a wolf): for `seconds` after its
+/// recovery it backs off to `away` blocks beyond its reach and moves round the target at
+/// `pace` of its run, swinging round by up to `round` degrees, facing them all the while;
+/// then it closes and strikes. Those seconds come on top of its `every`.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Circle {
+    pub seconds: f32,
+    pub away: f32,
+    pub pace: f32,
+    pub round: f32,
+}
+
+impl Circle {
+    /// The least and most of each: long enough to show, short enough that a fight keeps
+    /// its beat; off to a side, not out of the fight.
+    pub fn check(&self) -> Result<(), String> {
+        if !(0.3..=2.0).contains(&self.seconds) || !(0.3..=2.5).contains(&self.away) || !(0.2..=1.0).contains(&self.pace) || !(15.0..=120.0).contains(&self.round) {
+            return Err(format!(
+                "`circle` needs seconds 0.3 to 2, away 0.3 to 2.5 blocks, pace 0.2 to 1 of its run and round 15 to 120 degrees, not {self:?}"
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn reach() -> f32 {
@@ -948,6 +979,9 @@ impl CreatureRegistry {
                 return Err(error("needs health, a size and at least one colour".into()));
             }
             moves::check(&def).map_err(error)?;
+            for circle in def.attack.iter().chain(def.moves.iter().map(|m| &m.attack)).filter_map(|a| a.circle) {
+                circle.check().map_err(error)?;
+            }
             def.death.check().map_err(error)?;
             if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
                 return Err(error(format!("`flees_below` is a share of its health, 0 to 1, not {:?}", def.flees_below)));
@@ -1156,6 +1190,28 @@ mod tests {
     use super::*;
     use crate::block::BlockDef;
     use crate::content::Settable;
+
+    /// A circle in range passes; each number out of its range on either side is refused,
+    /// naming `circle`.
+    #[test]
+    fn a_circle_out_of_range_is_refused() {
+        let good = Circle { seconds: 0.8, away: 0.6, pace: 0.55, round: 50.0 };
+        assert!(good.check().is_ok());
+        let broken = [
+            Circle { seconds: 0.2, ..good },
+            Circle { seconds: 2.1, ..good },
+            Circle { away: 0.2, ..good },
+            Circle { away: 2.6, ..good },
+            Circle { pace: 0.1, ..good },
+            Circle { pace: 1.1, ..good },
+            Circle { round: 14.0, ..good },
+            Circle { round: 121.0, ..good },
+            Circle { seconds: f32::NAN, ..good },
+        ];
+        for circle in broken {
+            assert!(circle.check().is_err_and(|e| e.contains("`circle`")), "{circle:?} passed");
+        }
+    }
 
     const RABBIT: &str = r#"(creatures: [(
         name: "rabbit", health: 6, level: 1,

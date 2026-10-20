@@ -97,6 +97,18 @@ impl QuestPaths {
     pub fn iter(&self) -> impl Iterator<Item = &QuestPath> {
         self.paths.iter()
     }
+
+    /// The ages, in the order their paths are first written: the book's chapters. Never by
+    /// the quests' order, which follows file names (`quests.ron` before `quests_nomad.ron`).
+    pub fn ages(&self) -> Vec<&str> {
+        let mut ages: Vec<&str> = Vec::new();
+        for path in &self.paths {
+            if !ages.contains(&path.age.as_str()) {
+                ages.push(&path.age);
+            }
+        }
+        ages
+    }
 }
 
 #[cfg(test)]
@@ -122,6 +134,10 @@ mod tests {
         assert!(err(r#"(paths: [(age: "farm", branch: "sailing", title: "Sailing", icon: "base:clay")])"#).contains("no quest on it"));
         assert!(err(r#"(paths: [(age: "farm", branch: "main", title: "Fire", icon: "nothing")])"#).contains("mod:nothing"));
         assert!(err(r#"(paths: [(age: "farm", branch: "main", title: " ", icon: "base:clay")])"#).contains("no title"));
+        assert_eq!(paths.ages(), ["nomad", "farm"], "the ages as the paths list them, though the Farm book's file is read first");
+        assert_eq!(quests.iter().next().map(|q| q.age.as_str()), Some("farm"), "quests.ron, the Farm book, is read before quests_nomad.ron");
+        let renamed_nomad = QuestPaths::new(vec![shipped(), file(r#"(paths: [(age: "nomad", branch: "main", title: "Fire", icon: "base:clay")])"#)], quests, blocks).unwrap();
+        assert_eq!(renamed_nomad.ages(), ["nomad", "farm"], "a later package's path keeps its age's place");
         let without_farm_main = QuestPaths::new(vec![("base".to_owned(), QuestPaths::read("base", r#"(paths: [])"#).unwrap())], quests, blocks).unwrap_err().0;
         assert!(without_farm_main.contains("has no path"), "{without_farm_main}");
     }
