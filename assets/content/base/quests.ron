@@ -26,7 +26,7 @@
         ),
         (
             name: "first_night", age: "nomad", branch: "main", title: "First Night",
-            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and bare hands can break it slowly. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
+            why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed; cobblestone comes from stone, a few blocks under the dirt or bare on hillsides, and a flint pickaxe breaks it. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
@@ -126,7 +126,7 @@
         ),
         (
             name: "an_axe_to_it", age: "nomad", branch: "start", title: "An Axe to It",
-            why: "Punching trees is slow. At the crafting table, three planks and two sticks make a wooden axe (the recipe viewer shows the shape): a log takes half the time it takes a fist, and a stone axe halves that again. Make one and chop eight logs; the campfire, planks and sticks ahead all want them.",
+            why: "A second axe, of wood: at the crafting table, three planks and two sticks make one (the recipe viewer shows the shape). Make it and chop eight logs; the campfire, planks and sticks ahead all want them. A stone axe, later, chops twice as fast.",
             tasks: [[Craft("wooden_axe", 1), Have("tag:log", 8)]],
             after: ["crafting_table"],
             rewards: [Xp("engineering", 20.0), Item("stick", 4)],
@@ -148,7 +148,7 @@
         ),
         (
             name: "timber", age: "nomad", branch: "start", title: "Timber",
-            why: "You start with nothing, and every tool starts as wood. Punch a tree trunk (hold the left mouse button on it: bare hands are slow, but they work) and gather four logs; woods have the most trees, and plains have a few in groves. Four are enough to start: a log splits into four planks at the crafting grid; four planks make a crafting table, and with sticks (two planks make four) the table makes a wooden pickaxe and a wooden axe. Chop the rest with the axe, in half the time a fist takes.",
+            why: "You start with nothing, and bare hands cannot fell a tree. Flint lies loose on the ground near where you wake, and a dead grey snag breaks by hand to a stick a block. Leaves give sticks too (one break in five), and gravel gives flint (one in eight). In the 2×2 grid, two flint over a stick make a flint axe, and two flint over two sticks a flint pickaxe. Fell four logs with the axe; woods have the most trees, and plains have a few in groves. A log splits into four planks; four planks make a crafting table, and two planks four sticks.",
             tasks: [[Have("tag:log", 4)]],
             rewards: [Xp("engineering", 30.0)],
         ),
@@ -189,8 +189,8 @@
         ),
         (
             name: "hide_and_seek", age: "nomad", branch: "hunter", title: "Hide and Seek",
-            why: "Hide makes armour, pouches and bedding. Rabbits on grassland drop it, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
-            tasks: [[Have("hide", 4), Have("bone", 2)]],
+            why: "Hide makes armour, pouches and bedding once it has hung a minute on a drying rack. Rabbits on grassland drop raw hide, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four raw hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
+            tasks: [[Have("raw_hide", 4), Have("bone", 2)]],
             after: ["small_game", "a_sharp_edge"],
             rewards: [Xp("hunter", 60.0), Xp("crafting", 30.0)],
         ),
@@ -1048,7 +1048,7 @@
         ),
         (
             name: "a_lit_corner", age: "nomad", branch: "home", title: "A Lit Corner",
-            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and sleeping in it you wake well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
+            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and a night's sleep in it wakes you well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
             tasks: [[Built("home_bedside", 1)]],
             after: ["make_camp"],
             rewards: [Xp("construction", 40.0), Xp("crafting", 20.0)],

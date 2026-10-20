@@ -23,7 +23,7 @@ use super::widgets::Disabled;
 use crate::mix::{Category, Voice};
 use crate::settings::Settings;
 use crate::session::Launch;
-use crate::sfx::{Audible, MASTER, RATE, Recordings, wav};
+use crate::sfx::{Audible, InterfaceSound, MASTER, RATE, Recordings, Tap, wav};
 
 pub struct UiSoundPlugin;
 
@@ -33,23 +33,33 @@ impl Plugin for UiSoundPlugin {
             .init_resource::<JinglesAsked>()
             .add_systems(Startup, (synthesize, jingle_clips))
             .add_systems(Update, ask_jingles)
-            .add_systems(Update, ((click_buttons, hear_screens), play.in_set(Audible)).chain())
+            .add_systems(Update, ((click_buttons, hover_buttons, hear_screens, hear_refusals), play.in_set(Audible)).chain())
             .add_systems(Update, play_jingles.in_set(Audible));
     }
 }
 
-/// A sound the interface makes.
+/// A sound the interface makes. What each sounds like is `sounds.ron`'s (`interface`, by
+/// [`UiSound::name`]): the chosen set's click or tap, clips of its own, a jingle, or
+/// nothing.
 #[derive(Message, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UiSound {
     /// A button pressed.
     Click,
+    /// The pointer over a button.
+    Hover,
     /// An item picked up or put down.
     Item,
-    /// A screen opened (the inventory, the quest book, the character screen, the journal):
-    /// the set's item tap, a little higher.
+    /// Half a stack picked up (a right click).
+    Split,
+    /// A screen opened (the inventory, the quest book, the character screen, the journal,
+    /// the recipes, the menu).
     Open,
-    /// The last such screen closed: the same tap, a little lower.
+    /// A screen closed, with none opening.
     Close,
+    /// A quest picked in the book.
+    QuestPick,
+    /// Something the player tried was refused, and the HUD says why.
+    Refuse,
     /// A quest finished.
     QuestDone,
     /// A finished quest's rewards claimed: coins.
@@ -58,6 +68,50 @@ pub enum UiSound {
     LevelUp,
     /// A skill reached a milestone level (`hud::celebrate`).
     Milestone,
+}
+
+impl UiSound {
+    pub const ALL: [UiSound; 12] = [
+        UiSound::Click,
+        UiSound::Hover,
+        UiSound::Item,
+        UiSound::Split,
+        UiSound::Open,
+        UiSound::Close,
+        UiSound::QuestPick,
+        UiSound::Refuse,
+        UiSound::QuestDone,
+        UiSound::QuestClaim,
+        UiSound::LevelUp,
+        UiSound::Milestone,
+    ];
+
+    /// Its name in `sounds.ron`'s `interface`.
+    pub fn name(self) -> &'static str {
+        match self {
+            UiSound::Click => "click",
+            UiSound::Hover => "hover",
+            UiSound::Item => "item",
+            UiSound::Split => "split",
+            UiSound::Open => "open",
+            UiSound::Close => "close",
+            UiSound::QuestPick => "quest_pick",
+            UiSound::Refuse => "refuse",
+            UiSound::QuestDone => "quest_done",
+            UiSound::QuestClaim => "quest_claim",
+            UiSound::LevelUp => "level_up",
+            UiSound::Milestone => "level_milestone",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<UiSound> {
+        UiSound::ALL.into_iter().find(|sound| sound.name() == name)
+    }
+
+    /// Whether its tune is one of the events' jingles, which sound whatever the set chosen.
+    pub fn is_jingle(self) -> bool {
+        matches!(self, UiSound::QuestDone | UiSound::QuestClaim | UiSound::LevelUp | UiSound::Milestone)
+    }
 }
 
 /// Buttons that make no click of their own, such as inventory slots, which tap instead.
@@ -263,7 +317,7 @@ impl Jingles {
             UiSound::QuestClaim => &self.claim,
             UiSound::Milestone if !self.milestone.is_empty() => &self.milestone,
             UiSound::LevelUp | UiSound::Milestone => &self.level,
-            UiSound::Click | UiSound::Item | UiSound::Open | UiSound::Close => return None,
+            _ => return None,
         };
         (!list.is_empty()).then_some((list.as_slice(), jingle_gain(sound)))
     }
@@ -274,16 +328,42 @@ pub(crate) fn jingle_gain(sound: UiSound) -> f32 {
     if sound == UiSound::QuestClaim { 0.3 } else { 0.5 }
 }
 
-/// Which of a set's two clips a sound plays (the click or the item tap), how loud and how
-/// fast; `None` for the jingles.
-pub(crate) fn tap(sound: UiSound) -> Option<(usize, f32, f32)> {
-    Some(match sound {
-        UiSound::Click => (0, 0.4, 1.0),
-        UiSound::Item => (1, 0.32, 1.0),
-        UiSound::Open => (1, 0.3, 1.15),
-        UiSound::Close => (1, 0.24, 0.85),
-        UiSound::QuestDone | UiSound::QuestClaim | UiSound::LevelUp | UiSound::Milestone => return None,
-    })
+/// How an interface sound is heard, from `sounds.ron`'s `interface`.
+#[derive(Clone, Debug, PartialEq)]
+enum Heard {
+    /// The chosen set's click (0) or item tap (1), at a volume and a speed.
+    Tap(usize, f32, f32),
+    /// Clips of its own, taking turns, at a volume and a speed.
+    Clips(Vec<Handle<AudioSource>>, f32, f32),
+    /// A jingle, or nothing.
+    Not,
+}
+
+/// What every interface sound plays.
+#[derive(Resource, Default)]
+struct Interface(Vec<(UiSound, Heard)>);
+
+impl Interface {
+    fn of(&self, sound: UiSound) -> &Heard {
+        self.0.iter().find(|(s, _)| *s == sound).map_or(&Heard::Not, |(_, heard)| heard)
+    }
+}
+
+/// How each interface sound is heard, as `recorded` says, loading its own clips with `load`.
+fn heard(recorded: &Recordings, mut load: impl FnMut(&str) -> Handle<AudioSource>) -> Interface {
+    Interface(
+        UiSound::ALL
+            .into_iter()
+            .map(|sound| {
+                let heard = match recorded.interface.get(sound.name()) {
+                    Some(InterfaceSound { tap: Some(tap), volume, pitch, .. }) => Heard::Tap(if *tap == Tap::Click { 0 } else { 1 }, *volume, *pitch),
+                    Some(def) if !def.sounds.is_empty() => Heard::Clips(def.sounds.iter().map(|path| load(path)).collect(), def.volume, def.pitch),
+                    _ => Heard::Not,
+                };
+                (sound, heard)
+            })
+            .collect(),
+    )
 }
 
 fn jingle_clips(mut commands: Commands, assets: Res<AssetServer>, launch: Res<Launch>) {
@@ -291,6 +371,7 @@ fn jingle_clips(mut commands: Commands, assets: Res<AssetServer>, launch: Res<La
         error!("no jingles: {e}");
         Recordings::default()
     });
+    commands.insert_resource(heard(&recorded, |path| assets.load(path.to_string())));
     let load = |paths: &[String]| paths.iter().map(|path| assets.load::<AudioSource>(path.clone())).collect();
     commands.insert_resource(Jingles {
         done: load(&recorded.quest_done),
@@ -331,37 +412,72 @@ fn play_jingles(mut commands: Commands, mut sounds: MessageReader<UiSound>, jing
 
 #[allow(clippy::type_complexity)]
 fn click_buttons(
-    buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, Without<Disabled>, Without<Silent>)>,
+    buttons: Query<(&Interaction, Has<crate::hud::quests::QuestNode>), (Changed<Interaction>, With<Button>, Without<Disabled>, Without<Silent>)>,
     mut sounds: MessageWriter<UiSound>,
 ) {
-    if buttons.iter().any(|interaction| *interaction == Interaction::Pressed) {
-        sounds.write(UiSound::Click);
+    for (interaction, quest) in &buttons {
+        if *interaction == Interaction::Pressed {
+            sounds.write(if quest { UiSound::QuestPick } else { UiSound::Click });
+        }
     }
 }
 
-fn play(mut commands: Commands, mut sounds: MessageReader<UiSound>, clips: Option<Res<Clips>>, settings: Res<Settings>) {
-    let Some(clips) = clips else { return };
+#[allow(clippy::type_complexity)]
+fn hover_buttons(buttons: Query<&Interaction, (Changed<Interaction>, With<Button>, Without<Disabled>)>, mut sounds: MessageWriter<UiSound>) {
+    if buttons.iter().any(|interaction| *interaction == Interaction::Hovered) {
+        sounds.write(UiSound::Hover);
+    }
+}
+
+fn play(mut commands: Commands, mut sounds: MessageReader<UiSound>, clips: Option<Res<Clips>>, interface: Option<Res<Interface>>, settings: Res<Settings>, mut turn: Local<usize>) {
+    let (Some(clips), Some(interface)) = (clips, interface) else { return };
     let volume = MASTER * settings.sound_volume as f32 / 100.0;
     let set = clips.0.iter().find(|(set, _)| *set == settings.ui_sounds).map(|(_, clips)| clips);
     let mut played = Vec::new();
     for &sound in sounds.read() {
-        // One of each a frame, however many buttons or moves asked.
+        // One of each a frame, however many buttons or moves asked; none with the
+        // interface's sounds off.
         let Some(set) = set.filter(|_| !played.contains(&sound) && volume > 0.0) else { continue };
         played.push(sound);
-        let Some((clip, gain, speed)) = tap(sound) else { continue };
+        let (clip, gain, speed) = match interface.of(sound) {
+            Heard::Tap(clip, gain, speed) => (set[*clip].clone(), *gain, *speed),
+            Heard::Clips(list, gain, speed) if !list.is_empty() => {
+                *turn += 1;
+                (list[*turn % list.len()].clone(), *gain, *speed)
+            }
+            _ => continue,
+        };
         let playback = PlaybackSettings { speed, ..PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * volume)) };
-        commands.spawn((AudioPlayer(set[clip].clone()), playback, Voice::of(Category::Ui)));
+        commands.spawn((AudioPlayer(clip), playback, Voice::of(Category::Ui)));
     }
 }
 
-/// A screen opening sounds `Open`; the last one closing, `Close`. Switching from one screen
-/// to another in a frame is an opening.
-fn hear_screens(ui: Option<Res<crate::player::UiState>>, mut was: Local<[bool; 4]>, mut sounds: MessageWriter<UiSound>) {
+/// A refusal newly shown, or shown again, by the HUD (`hud::skills`) sounds `Refuse`, at most
+/// every [`REFUSE_EVERY`] seconds however fast the player keeps trying.
+fn hear_refusals(toasts: Option<Res<crate::hud::skills::SkillToasts>>, time: Res<Time>, mut last: Local<(f32, f32)>, mut sounds: MessageWriter<UiSound>) {
+    let Some(newest) = toasts.and_then(|t| t.newest_refusal()) else { return };
+    let now = time.elapsed_secs();
+    let (seen, heard) = *last;
+    if newest > seen {
+        if now - heard >= REFUSE_EVERY || heard == 0.0 {
+            sounds.write(UiSound::Refuse);
+            last.1 = now;
+        }
+        last.0 = newest;
+    }
+}
+
+const REFUSE_EVERY: f32 = 0.35;
+
+/// A screen opening sounds `Open`; one closing with none opening, `Close` (the recipes
+/// closing back onto the inventory, the last screen shut). Switching from one screen to
+/// another in a frame is an opening.
+fn hear_screens(ui: Option<Res<crate::player::UiState>>, mut was: Local<[bool; 6]>, mut sounds: MessageWriter<UiSound>) {
     let Some(ui) = ui else { return };
-    let now = [ui.inventory_open, ui.quests_open, ui.character_open, ui.journal_open];
+    let now = [ui.inventory_open, ui.quests_open, ui.character_open, ui.journal_open, ui.recipes_open, ui.menu_open];
     if now.iter().zip(was.iter()).any(|(now, was)| *now && !was) {
         sounds.write(UiSound::Open);
-    } else if was.iter().any(|w| *w) && !now.iter().any(|n| *n) {
+    } else if now.iter().zip(was.iter()).any(|(now, was)| !now && *was) {
         sounds.write(UiSound::Close);
     }
     *was = now;
@@ -371,12 +487,14 @@ fn hear_screens(ui: Option<Res<crate::player::UiState>>, mut was: Local<[bool; 4
 mod tests {
     use super::*;
 
-    /// Every set's clicks and taps, as played, are heard within the interface's band, and
-    /// every jingle within the jingles'.
+    /// Every set's clicks and taps and the interface's own clips, as `sounds.ron` plays them,
+    /// are heard within the interface's band, and every jingle within the jingles'.
     #[test]
     fn interface_sounds_and_jingles_are_heard_within_their_bands() {
         use crate::mix::tests::{all, measure, within};
         use crate::sfx::loudness;
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let recorded = Recordings::load(&content.files).unwrap();
         let mut taps = Vec::new();
         for set in UiSounds::ALL {
             let levels: [f32; 2] = match (set.files(), set.recipe()) {
@@ -384,13 +502,18 @@ mod tests {
                 (None, Some([click, item])) => [loudness(&click.render(7), 1), loudness(&item.render(11), 1)],
                 (None, None) => continue,
             };
-            for sound in [UiSound::Click, UiSound::Item, UiSound::Open, UiSound::Close] {
-                let (clip, gain, _) = tap(sound).unwrap();
-                taps.push((format!("{set:?} {sound:?}"), levels[clip] * gain));
+            for sound in UiSound::ALL {
+                let def = &recorded.interface[sound.name()];
+                if let Some(tap) = def.tap {
+                    taps.push((format!("{set:?} {sound:?}"), levels[if tap == Tap::Click { 0 } else { 1 }] * def.volume));
+                }
             }
         }
-        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
-        let recorded = Recordings::load(&content.files).unwrap();
+        for sound in UiSound::ALL {
+            let def = &recorded.interface[sound.name()];
+            taps.extend(def.sounds.iter().map(|path| (path.clone(), measure(path)[0] * def.volume)));
+        }
+        assert!(taps.iter().any(|(name, _)| name.contains("refuse")), "the refusal's clips are measured");
         let events = [
             (UiSound::QuestDone, &recorded.quest_done),
             (UiSound::QuestClaim, &recorded.quest_claim),
@@ -418,6 +541,84 @@ mod tests {
         assert_eq!(step(&mut app, |ui| (ui.inventory_open, ui.quests_open) = (false, true)), [UiSound::Open]);
         assert_eq!(step(&mut app, |ui| ui.quests_open = false), [UiSound::Close]);
         assert_eq!(step(&mut app, |_| {}), []);
+        // The recipes over the inventory open, and close back onto it; so does the menu.
+        assert_eq!(step(&mut app, |ui| ui.inventory_open = true), [UiSound::Open]);
+        assert_eq!(step(&mut app, |ui| ui.recipes_open = true), [UiSound::Open]);
+        assert_eq!(step(&mut app, |ui| ui.recipes_open = false), [UiSound::Close]);
+        assert_eq!(step(&mut app, |ui| ui.inventory_open = false), [UiSound::Close]);
+        assert_eq!(step(&mut app, |ui| ui.menu_open = true), [UiSound::Open]);
+        assert_eq!(step(&mut app, |ui| ui.menu_open = false), [UiSound::Close]);
+    }
+
+    /// A refusal shown sounds once; the same one again soon after does not chatter, but
+    /// later it is heard again.
+    #[test]
+    fn refusals_are_heard_without_chattering() {
+        use crate::hud::skills::SkillToasts;
+        let mut app = App::new();
+        app.add_message::<UiSound>().init_resource::<SkillToasts>().init_resource::<Time>().add_systems(Update, hear_refusals);
+        let mut step = |at: f32, refuse: Option<&str>| -> usize {
+            app.world_mut().resource_mut::<Time>().advance_to(std::time::Duration::from_secs_f32(at));
+            if let Some(why) = refuse {
+                app.world_mut().resource_mut::<SkillToasts>().refused(why.into(), at);
+            }
+            app.update();
+            app.world_mut().resource_mut::<Messages<UiSound>>().drain().filter(|s| *s == UiSound::Refuse).count()
+        };
+        assert_eq!(step(0.5, None), 0);
+        assert_eq!(step(1.0, Some("Needs Mining 5")), 1);
+        assert_eq!(step(1.1, None), 0);
+        assert_eq!(step(1.2, Some("Needs Mining 5")), 0, "kept trying, it does not chatter");
+        assert_eq!(step(2.0, Some("Needs Mining 5")), 1, "tried again later, it is heard again");
+        assert_eq!(step(2.1, Some("Cannot make that here")), 0);
+        assert_eq!(step(3.0, Some("Cannot make that here")), 1);
+    }
+
+    /// Everything the interface does says how it sounds in the base package, and a package
+    /// naming one the interface never makes, or saying two things of one, fails to load;
+    /// one leaving any out fails too.
+    #[test]
+    fn every_interface_sound_is_named_both_ways() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let recorded = Recordings::load(&content.files).unwrap();
+        assert_eq!((recorded.check(&content.actions), recorded.covers(&content.actions)), (Ok(()), Ok(())));
+        let file = |source: &str| voxmar_engine::content::ContentFile { package: "zmod".into(), name: "sounds.ron".into(), source: source.into() };
+        let base = content.files.iter().find(|f| f.package == "base" && f.name == "sounds.ron").unwrap().clone();
+        for wrong in [
+            r#"(interface: {"whistle": (silent: true)})"#,
+            r#"(interface: {"click": (silent: true, tap: Some(Click))})"#,
+            r#"(interface: {"click": ()})"#,
+            r#"(interface: {"click": (jingle: true)})"#,
+            r#"(interface: {"quest_done": (silent: true)})"#,
+            r#"(interface: {"refuse": (sounds: ["a.ogg"], volume: 0.0)})"#,
+            r#"(interface: {"refuse": (sounds: ["a.ogg"], pitch: 3.0)})"#,
+        ] {
+            let more = Recordings::load(&[base.clone(), file(wrong)]).unwrap();
+            assert!(more.check(&content.actions).is_err(), "{wrong}");
+        }
+        // A package may make a sound silent, or give the hover a tick.
+        let quiet = Recordings::load(&[base.clone(), file(r#"(interface: {"refuse": (silent: true), "hover": (tap: Some(Click), volume: 0.1)})"#)]).unwrap();
+        assert_eq!(quiet.check(&content.actions), Ok(()));
+        // Leaving one out, as a package with only its own sounds.ron would, fails at launch.
+        let alone = Recordings::load(&[file(r#"(interface: {"click": (tap: Some(Click))})"#)]).unwrap();
+        assert!(alone.covers(&voxmar_engine::action::ActionRegistry::default()).is_err_and(|e| e.contains("refuse") && e.contains("quest_pick")));
+    }
+
+    /// Each sound is heard as `sounds.ron` says: a tap of the set, its own clips, or not.
+    #[test]
+    fn interface_sounds_are_heard_as_named() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let recorded = Recordings::load(&content.files).unwrap();
+        let mut loaded = Vec::new();
+        let interface = heard(&recorded, |path| {
+            loaded.push(path.to_string());
+            Handle::default()
+        });
+        assert_eq!(interface.of(UiSound::Click), &Heard::Tap(0, 0.4, 1.0));
+        assert!(matches!(interface.of(UiSound::Split), Heard::Tap(1, _, pitch) if *pitch > 1.0));
+        assert!(matches!(interface.of(UiSound::Refuse), Heard::Clips(list, ..) if list.len() == 2));
+        assert_eq!([interface.of(UiSound::Hover), interface.of(UiSound::QuestDone)], [&Heard::Not, &Heard::Not]);
+        assert!(loaded.iter().any(|p| p == "content/base/sounds/page_1.ogg"), "{loaded:?}");
     }
 
     #[test]
@@ -438,7 +639,7 @@ mod tests {
         let jingles = Jingles { done: clip(1), claim: clip(3), level: clip(1), milestone: clip(2) };
         let count = |sound| jingles.of(sound).map(|(list, _)| list.len());
         assert_eq!([count(UiSound::QuestDone), count(UiSound::QuestClaim), count(UiSound::LevelUp), count(UiSound::Milestone)], [Some(1), Some(3), Some(1), Some(2)]);
-        assert_eq!(count(UiSound::Click), None);
+        assert_eq!([count(UiSound::Click), count(UiSound::Refuse), count(UiSound::QuestPick)], [None, None, None]);
         let plain = Jingles { milestone: Vec::new(), ..jingles };
         assert_eq!(plain.of(UiSound::Milestone).map(|(list, _)| list.len()), Some(1));
     }

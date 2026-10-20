@@ -15,7 +15,7 @@ use crate::block::{BlockRegistry, RegistryError};
 use crate::command::CommandRegistry;
 use crate::cooking::CookingRegistry;
 use crate::creature::condition::ConditionRules;
-use crate::creature::{CreatureRegistry, DefenceTraining, Limits, Rules};
+use crate::creature::{Climbing, CreatureRegistry, DefenceTraining, Limits, Rules};
 use crate::craft::RecipeRegistry;
 use crate::crop::CropRegistry;
 use crate::effect::EffectRegistry;
@@ -63,6 +63,8 @@ pub struct Content {
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
+    /// What catches fire from a flame beside it, and how it burns (`fire.ron`).
+    pub fire: Arc<crate::fire::Fire>,
     /// Wild nests, skeps and what bees do (`bees.ron`).
     pub bees: Arc<crate::bees::Bees>,
     /// Home stations left to work, and fertilisers (`stations.ron`).
@@ -199,6 +201,14 @@ pub struct ContentFile {
 }
 
 impl Content {
+    /// The least tool that is a `kind` of at least `tier`, by property: the lowest tier, then
+    /// the lowest worth (value.rs), then the first in registry order. What a refusal names
+    /// ("Needs a Flint Pickaxe or better").
+    pub fn least_tool(&self, kind: usize, tier: u8) -> Option<crate::block::BlockId> {
+        let mut known = std::collections::HashMap::new();
+        self.tools.all_of(kind, tier).map(|(t, id)| (t, crate::value::worth_in(self, id, &mut known), id)).min().map(|(_, _, id)| id)
+    }
+
     /// Loads every package in `dir`, in name order so ids are the same everywhere.
     pub fn load(dir: &Path) -> Result<Self, RegistryError> {
         let read_error = |path: &Path, e: std::io::Error| RegistryError(format!("{}: {e}", path.display()));
@@ -221,6 +231,7 @@ impl Content {
         let mut creature_limits = Setting::<Limits>::default();
         let mut defence = Setting::<DefenceTraining>::default();
         let mut condition = Setting::<ConditionRules>::default();
+        let mut climbing = Setting::<Climbing>::default();
         let mut fishing_rules = Setting::<crate::fishing::FishingRules>::default();
         let mut notes = Vec::new();
         let mut cooking = Vec::new();
@@ -233,6 +244,7 @@ impl Content {
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
+        let mut fire = Vec::new();
         let mut bees = Vec::new();
         let mut stations = Vec::new();
         let mut traps = Vec::new();
@@ -298,6 +310,7 @@ impl Content {
                         creature_limits.set(package, &name, "creature limits", read.limits, &mut notes);
                         defence.set(package, &name, "Defence training", read.defence, &mut notes);
                         condition.set(package, &name, "condition rules", read.condition, &mut notes);
+                        climbing.set(package, &name, "climbing", read.climbing, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons, machines).
@@ -312,8 +325,10 @@ impl Content {
                         fishing.push(file);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
-                    "quests.ron" => {
-                        quests.push(crate::quest::QuestRegistry::read(package, &source)?);
+                    // `quests.ron`, and `quests_<topic>.ron` for a book of its own (the Nomad's,
+                    // the Farm's), read in name order like every file of a package.
+                    topic if topic == "quests.ron" || topic.strip_prefix("quests_").is_some_and(|t| t != ".ron") => {
+                        quests.push(crate::quest::QuestRegistry::read_named(package, &name, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     crate::quest_path::QuestPaths::FILE => {
@@ -339,6 +354,10 @@ impl Content {
                     }
                     "regrowth.ron" => {
                         regrowth.push(crate::regrowth::Regrowth::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
+                    "fire.ron" => {
+                        fire.push(crate::fire::Fire::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     "bees.ron" => {
@@ -416,7 +435,7 @@ impl Content {
         let mut blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
         blocks.rename(renames)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
-        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value };
+        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value, climbing: climbing.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
@@ -437,6 +456,7 @@ impl Content {
         let prayers = crate::prayer::PrayerRegistry::new(prayers, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
+        let fire = crate::fire::Fire::new(fire, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
         for structure in multiblocks.iter() {
@@ -451,6 +471,10 @@ impl Content {
         }
         let value = crate::value::Value::merge(value, &mut notes);
         value.check()?;
+        // A price or level set for a thing no package has would price nothing.
+        if let Some(name) = value.fixed.keys().chain(value.levels.keys()).find(|name| blocks.id(name).is_none()) {
+            return Err(RegistryError(format!("value.ron: a worth is set for `{name}`, which no package has")));
+        }
         let limits = stack_limits(&blocks, &stacking)?;
         for structure in multiblocks.iter() {
             for &(fuel, count) in &structure.fuels {
@@ -486,7 +510,27 @@ impl Content {
         }
         crate::inventory::set_stack_limits(limits);
         crate::inventory::set_pouches(pouches(&blocks)?);
-        crate::inventory::set_worn_slots(combat.worn_slots());
+        // A charm is worn in the charm slot, and is nothing else that is worn.
+        let mut worn = combat.worn_slots();
+        for id in blocks.ids().filter(|&id| blocks.def(id).has_tag("charm")) {
+            let at = &mut worn[id.0 as usize];
+            if at.is_some() {
+                return Err(RegistryError(format!("blocks: `{}` is a charm and armour or a shield too: it is worn in one slot", blocks.def(id).name)));
+            }
+            *at = Some(crate::combat::Slot::Charm.index() as u8);
+        }
+        // `Wearing` asks of the charm worn: a tag no charm carries (a torch's `fire`, a
+        // helmet's) would be an effect that can never hold, or two at once.
+        let charm = Some(crate::combat::Slot::Charm.index() as u8);
+        let charms: Vec<_> = blocks.ids().filter(|&id| worn[id.0 as usize] == charm).collect();
+        if let Some(tag) = effects.worn_tags().iter().find(|tag| !charms.iter().any(|&id| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("effects.ron: an effect asks for a charm tagged `{tag}`, which nothing worn carries")));
+        }
+        // And a charm that no effect asks for would be worn for nothing.
+        if let Some(&id) = charms.iter().find(|&&id| !effects.worn_tags().iter().any(|tag| blocks.def(id).has_tag(tag))) {
+            return Err(RegistryError(format!("blocks: `{}` is a charm, but no effect asks for it worn (effects.ron's `Wearing`)", blocks.def(id).name)));
+        }
+        crate::inventory::set_worn_slots(worn);
         // A store's slots follow the player's own in a slot number of a byte.
         let mut holds = vec![None; blocks.len()];
         for machine in machines.iter().filter(|m| m.is_store()) {
@@ -539,6 +583,7 @@ impl Content {
             prayers: Arc::new(prayers),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            fire: Arc::new(fire),
             bees: Arc::new(bees),
             stations: Arc::new(stations),
             traps: Arc::new(traps),

@@ -322,3 +322,38 @@ fn a_quest_names_only_quests_open_beside_it() {
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
+
+/// Hunting gets a felt step before copper: the short bow (twenty blocks of reach, no chase)
+/// is wielded at a Ranged level the Nomad quests already ask for, and it and its arrows are
+/// made at a Crafting level no higher than the Nomad's own makes ask (the gathering-upgrades
+/// audit, Oct 14: the stone sword's hunt ran ten minutes and more before copper arms).
+#[test]
+fn the_short_bow_comes_within_the_nomad_age() {
+    let content = content();
+    let skill = |name: &str| content.skills.id(name).unwrap_or_else(|| panic!("no skill {name}"));
+    let (ranged, crafting) = (skill("core:ranged"), skill("core:crafting"));
+    let nomad: Vec<_> = content.quests.iter().filter(|q| q.age == "nomad").collect();
+    let asked = nomad.iter().flat_map(|q| q.tasks.iter().flatten()).filter_map(|goal| match goal {
+        Goal::Level(name, n) if content.skills.id(&qualified("core", name)[0]) == Some(ranged) => Some(*n),
+        _ => None,
+    });
+    let ranged_asked = asked.max().expect("a Nomad quest asks for a Ranged level");
+    let made: Vec<_> = nomad
+        .iter()
+        .flat_map(|q| q.tasks.iter().flatten())
+        .filter_map(|goal| match goal {
+            Goal::Craft(item, _) => content.blocks.id(&qualified("base", item)[0]),
+            _ => None,
+        })
+        .collect();
+    let crafting_asked = content.recipes.iter().filter(|r| made.contains(&r.output) && r.skill == Some(crafting)).map(|r| r.level).max().expect("Nomad quests make things");
+    let bow = content.blocks.expect("base:short_bow");
+    let weapon = content.combat.weapon(bow).expect("the short bow is a weapon");
+    assert!(weapon.level <= ranged_asked, "the short bow needs Ranged {}, the Nomad quests reach {ranged_asked}", weapon.level);
+    for item in ["base:short_bow", "base:arrow"] {
+        let item = content.blocks.expect(item);
+        for recipe in content.recipes.iter().filter(|r| r.output == item) {
+            assert!(recipe.level <= crafting_asked, "{} takes Crafting {}, the Nomad's makes ask {crafting_asked}", content.blocks.def(item).name, recipe.level);
+        }
+    }
+}

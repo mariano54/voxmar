@@ -3,7 +3,7 @@
 //! three at a crafting table.
 //!
 //! A recipe is shaped (a pattern of up to three rows of three, which may sit anywhere in
-//! the grid) or shapeless (ingredients in any arrangement). One bigger than two by two, or
+//! the grid, as written or mirrored left to right) or shapeless (ingredients in any arrangement). One bigger than two by two, or
 //! with more than four ingredients, needs a table. A name with `{name}` in it makes a
 //! family of recipes, one for every name that fits all of the recipe's blocks: one line
 //! turns every wood's log into its planks. A cell or ingredient may also accept several
@@ -192,18 +192,23 @@ impl Recipe {
         needed
     }
 
+    /// Whether the grid holds it: a pattern as written or mirrored left to right, wherever it
+    /// sits; ingredients in any arrangement.
     fn matches(&self, grid: &[Option<BlockId>; GRID]) -> bool {
         match &self.pattern {
             Some(pattern) => shape_of(grid).is_some_and(|shape| {
-                shape.len() == pattern.len()
-                    && shape.iter().zip(pattern).all(|(row, want)| {
-                        row.len() == want.len()
-                            && row.iter().zip(want).all(|(item, accepts)| match (item, accepts) {
-                                (None, None) => true,
-                                (Some(item), Some(accepts)) => accepts.binary_search(item).is_ok(),
-                                _ => false,
-                            })
-                    })
+                let fits = |shape: &[Vec<Option<BlockId>>]| {
+                    shape.len() == pattern.len()
+                        && shape.iter().zip(pattern).all(|(row, want)| {
+                            row.len() == want.len()
+                                && row.iter().zip(want).all(|(item, accepts)| match (item, accepts) {
+                                    (None, None) => true,
+                                    (Some(item), Some(accepts)) => accepts.binary_search(item).is_ok(),
+                                    _ => false,
+                                })
+                        })
+                };
+                fits(&shape) || fits(&mirrored(&shape))
             }),
             None => {
                 let items: Vec<BlockId> = grid.iter().flatten().copied().collect();
@@ -226,6 +231,25 @@ fn assign(items: &[BlockId], ingredients: &[Accepts], used: &mut Vec<bool>) -> b
         }
     }
     false
+}
+
+/// Rows mirrored left to right.
+fn mirrored<T: Clone>(rows: &[Vec<T>]) -> Vec<Vec<T>> {
+    rows.iter().map(|row| row.iter().rev().cloned().collect()).collect()
+}
+
+/// Whether some grid would hold both patterns: the same size, and every cell empty in both
+/// or with an item both accept.
+fn overlap(a: &[Vec<Option<Accepts>>], b: &[Vec<Option<Accepts>>]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            a.len() == b.len()
+                && a.iter().zip(b).all(|(a, b)| match (a, b) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => a.iter().any(|item| b.binary_search(item).is_ok()),
+                    _ => false,
+                })
+        })
 }
 
 /// The grid's filled cells cut down to their bounding rows and columns, so a pattern
@@ -360,7 +384,34 @@ impl RecipeRegistry {
                 recipes.push(Recipe { pattern, ingredients, output, count: def.count.max(1), skill, level: def.level, xp: def.xp, firm: def.firm, near: def.near.clone(), age: def.age.clone() });
             }
         }
+        Self::mirrors_collide(&recipes, blocks)?;
         Ok(Self { recipes })
+    }
+
+    /// A pattern matches mirrored too, so its mirror image must not be some other recipe's
+    /// pattern: the grid would make whichever is listed first. Refused where the two do not
+    /// already overlap as written (that is the order of `find`, as before) and make
+    /// something different, made near the same thing.
+    fn mirrors_collide(recipes: &[Recipe], blocks: &BlockRegistry) -> Result<(), RegistryError> {
+        let shaped: Vec<(&Recipe, &Vec<Vec<Option<Accepts>>>)> = recipes.iter().filter_map(|r| Some((r, r.pattern.as_ref()?))).collect();
+        for (i, &(a, pa)) in shaped.iter().enumerate() {
+            let flipped = mirrored(pa);
+            if flipped == *pa {
+                continue;
+            }
+            for &(b, pb) in &shaped[i + 1..] {
+                if a.near != b.near || (a.output, a.count) == (b.output, b.count) || !overlap(&flipped, pb) || overlap(pa, pb) {
+                    continue;
+                }
+                let name = |r: &Recipe| blocks.def(r.output).name.clone();
+                return Err(RegistryError(format!(
+                    "recipe for {}: mirrored, its pattern is the recipe for {}'s; recipes match their mirror image, so change one",
+                    name(a),
+                    name(b)
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// The recipe the grid holds away from anything: none made only near a block.
@@ -537,6 +588,51 @@ mod tests {
         assert_eq!(registry.find(&items(laid)).map(|r| r.output), Some(id("stone")));
         // No more than a stack in a cell.
         assert!(recipe("stone").lay(2, &have(&[("wheat", 4), ("oak_planks", 2)]), |_| 1).is_none());
+    }
+
+    #[test]
+    fn a_pattern_matches_its_mirror_image() {
+        let blocks = blocks();
+        let id = |n: &str| blocks.id(&format!("test:{n}"));
+        let recipes = registry(&blocks, r#"(recipes: [(pattern: [["stone", "stone"], ["", "oak_log"]], output: "bread")])"#);
+        let (stone, log) = (id("stone"), id("oak_log"));
+        assert_eq!(recipes.find(&grid(&[&[stone, stone], &[None, log]])).map(|r| r.output), id("bread"));
+        assert_eq!(recipes.find(&grid(&[&[None, stone, stone], &[None, log, None]])).map(|r| r.output), id("bread"));
+        // Turned over is not mirrored.
+        assert!(recipes.find(&grid(&[&[None, log], &[stone, stone]])).is_none());
+    }
+
+    #[test]
+    fn a_mirror_image_may_not_be_another_recipe() {
+        let blocks = blocks();
+        let mut skills = SkillRegistry::default();
+        skills.extend("core", r#"(curve: RuneScape(max: 99), skills: [(name: "crafting", title: "", description: "")])"#).unwrap();
+        let load = |source: &str| RecipeRegistry::new(RecipeRegistry::read("test", source).unwrap(), &blocks, &skills).map(|r| r.len());
+        let error = load(r#"(recipes: [
+            (pattern: [["stone", ""], ["stone", "stone"]], output: "bread"),
+            (pattern: [["", "stone"], ["stone", "stone"]], output: "stone_bricks"),
+        ])"#)
+        .unwrap_err();
+        assert!(error.0.contains("test:bread") && error.0.contains("test:stone_bricks"), "{}", error.0);
+        // Through a tag or `a|b` as well.
+        assert!(load(r#"(recipes: [
+            (pattern: [["oak_log", ""], ["stone", "stone"]], output: "bread"),
+            (pattern: [["", "birch_log|oak_log"], ["stone", "stone"]], output: "stone_bricks"),
+        ])"#)
+        .is_err());
+        // The same thing both ways, a pattern that is its own mirror, recipes that already
+        // overlap as written all load.
+        assert_eq!(
+            load(r#"(recipes: [
+            (pattern: [["stone", ""], ["stone", "stone"]], output: "bread"),
+            (pattern: [["", "stone"], ["stone", "stone"]], output: "bread"),
+            (pattern: [["wheat", "wheat"]], output: "bread"),
+            (pattern: [["oak_log", "fir_log"]], output: "stone_bricks"),
+            (pattern: [["oak_log|fir_log", "fir_log|oak_log"]], output: "oak_planks"),
+        ])"#)
+            .ok(),
+            Some(5)
+        );
     }
 
     #[test]

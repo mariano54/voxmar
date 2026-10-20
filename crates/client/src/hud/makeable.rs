@@ -146,7 +146,17 @@ pub(crate) fn plan_cooking_from(content: &Content, book: &RecipeBook, have: &FxH
                 .filter_map(|recipe| reach(recipe, have, at_table, lacks))
                 .min_by_key(Reach::rank)
                 .map(|reach| Makeable { output: entry.output, recipes: Some((*first, variants.len())), reach }),
-            Method::Cook { input, station, .. } if cooks.get(input).is_some_and(|&n| n > 0) => Some(Makeable { output: entry.output, recipes: None, reach: Reach::Station(station.clone()) }),
+            // Cooked: from what is in hand, as many as one go takes, with what else it takes
+            // (three copper ingots and a tin ore make bronze), or short of those.
+            Method::Cook { input, uses, with, station, .. } if cooks.get(input).is_some_and(|&n| n > 0) => {
+                let count = |item: &BlockId| cooks.get(item).copied().unwrap_or(0);
+                let short: Vec<(BlockId, u32)> = std::iter::once((*input, *uses))
+                    .chain(with.iter().copied())
+                    .filter_map(|(item, n)| (count(&item) < n as u32).then(|| (item, n as u32 - count(&item))))
+                    .collect();
+                let reach = if short.is_empty() { Reach::Station(station.clone()) } else { Reach::Short(short) };
+                Some(Makeable { output: entry.output, recipes: None, reach })
+            }
             _ => None,
         };
         let Some(near) = near else { continue };
@@ -455,6 +465,16 @@ mod tests {
         let (input, cooked) = content.cooking.iter().next().map(|(input, recipe)| (input, recipe.output)).unwrap();
         let cook = plan(&content, &book, &[(content.blocks.item_of(input), 1)].into_iter().collect(), false, &none);
         let found = cook.iter().find(|m| m.output == cooked).expect("the cooked thing shows");
+        // What a crucible takes besides what is held counts: three copper ingots alone are
+        // a tin ore short of bronze, and with one carried, bronze is cooked.
+        let (bronze, tin) = (content.blocks.id("base:bronze_ingot").unwrap(), content.blocks.id("base:tin_ore").unwrap());
+        let copper = plan(&content, &book, &have(&content, &[("base:copper_ingot", 3)]), false, &none);
+        assert_eq!(find(&copper, &content, "base:bronze_ingot").map(|m| &m.reach), Some(&Reach::Short(vec![(tin, 1)])));
+        let alloy = plan(&content, &book, &have(&content, &[("base:copper_ingot", 3), ("base:tin_ore", 1)]), false, &none);
+        assert!(matches!(alloy.iter().find(|m| m.output == bronze).map(|m| &m.reach), Some(Reach::Station(_))), "{alloy:?}");
+        let one = plan(&content, &book, &have(&content, &[("base:copper_ingot", 1), ("base:tin_ore", 1)]), false, &none);
+        let copper_ingot = content.blocks.id("base:copper_ingot").unwrap();
+        assert_eq!(find(&one, &content, "base:bronze_ingot").map(|m| &m.reach), Some(&Reach::Short(vec![(copper_ingot, 2)])), "one go takes three");
         // Only in the home's stores, it is not shown cooked: a fire cooks from the hand.
         let stored: FxHashMap<BlockId, u32> = [(content.blocks.item_of(input), 1)].into_iter().collect();
         let from_stores = plan_cooking_from(&content, &book, &stored, &FxHashMap::default(), false, &none);

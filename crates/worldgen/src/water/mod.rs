@@ -1354,7 +1354,7 @@ mod tests {
 
     #[test]
     fn planning_samples_match_standalone_across_water_boundaries_and_worlds() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let mut points = Vec::new();
         // The actual seed-7 river settlement's search area includes both narrow water
         // and dry banks, not just an empty plane where every implementation agrees.
@@ -1442,7 +1442,7 @@ mod tests {
 
     #[test]
     fn planning_batch_scratch_reuses_storage_without_values() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let world = crate::Overworld::new(7, registry.clone());
         let p = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
             .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual river fixture");
@@ -1494,7 +1494,7 @@ mod tests {
 
     #[test]
     fn planning_raw_columns_reuse_neighbours_and_respect_exact_keys() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let world = crate::Overworld::new(7, registry.clone());
         let p = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
             .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual river fixture");
@@ -1579,7 +1579,7 @@ mod tests {
 
     #[test]
     fn site_work_preserves_exact_sampler_keys() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let world = crate::Overworld::new(7, registry.clone());
         let p = (0..625).map(|i| IVec2::new(-1976 + 16 * (i % 25), 552 + 16 * (i / 25)))
             .find(|p| freshwater(&world.rivers.sample(world.stages(), p.x, p.y, false))).expect("actual river fixture");
@@ -1620,7 +1620,7 @@ mod tests {
 
     #[test]
     fn freshwater_grid_reuses_exact_samples() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let mut cache = Freshwater::default();
         for seed in [7, 42, 7] {
             let world = crate::Overworld::new(seed, registry.clone());
@@ -1674,7 +1674,7 @@ mod tests {
 
     #[test]
     fn freshwater_absent_channels_skip_geology_and_reset_false_answers() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let world = crate::Overworld::new(7, registry.clone());
         let dry = (0..1024).map(|i| IVec2::new(-336 + 16 * (i % 32), 816 + 16 * (i / 32))).find(|p| {
             let tiers = world.rivers.tiers(world.stages(), *p - 1, *p + 1);
@@ -1718,7 +1718,7 @@ mod tests {
 
     #[test]
     fn freshwater_query_matches_full_grid_circle() {
-        let registry = Arc::new(voxmar_engine::block::BlockRegistry::from_ron("base", include_str!("../../../../assets/content/base/blocks.ron")).unwrap());
+        let registry = Arc::new(crate::test_registry());
         let mut wet = 0;
         let mut dry = 0;
         let mut cache = Freshwater::default();
@@ -1847,6 +1847,8 @@ mod tests {
         let mut accepted = 0;
         for seed in [1, 2, 3, 4] {
             let world = crate::Overworld::new(seed, registry.clone());
+            // The same world with every trickle a stream, made once for the seed's tarns.
+            let blocked = std::sync::OnceLock::new();
             let meadow = world.locate_biome("alpine_meadow", IVec2::ZERO, 60000).unwrap();
             let centre = meadow.div_euclid(IVec2::splat(REGION));
             let ground = StreamGround { rivers: &world.rivers, land: world.stages() };
@@ -1865,8 +1867,11 @@ mod tests {
                 for lake in final_basin.lakes.iter().filter(|l| l.tarn && l.pit.div_euclid(IVec2::splat(side)) == region) {
                     accepted += 1;
                     assert!(world.rivers.tarn_isolated(&ground, &lake.cells));
-                    let mut blocked = crate::Overworld::new(seed, registry.clone());
-                    blocked.rivers.creek = 0.000_001;
+                    let blocked = blocked.get_or_init(|| {
+                        let mut blocked = crate::Overworld::new(seed, registry.clone());
+                        blocked.rivers.creek = 0.000_001;
+                        blocked
+                    });
                     let ground = StreamGround { rivers: &blocked.rivers, land: blocked.stages() };
                     assert!(!blocked.rivers.tarn_isolated(&ground, &lake.cells), "an active stream failed to veto seed {seed}, pit {}", lake.pit);
                     assert!(ground.tarn_cells(lake.pit, lake.level, world.rivers.streams.tier.tarns.as_ref().unwrap().size).is_none(), "production admitted a stream through seed {seed}, pit {}", lake.pit);

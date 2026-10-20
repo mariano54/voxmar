@@ -28,10 +28,13 @@ mod centre;
 pub mod culture;
 pub mod def;
 mod house;
+pub mod interior;
 pub mod people;
 mod plan;
+pub mod roofs;
 #[cfg(test)]
 mod tests;
+mod walls;
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -76,6 +79,18 @@ pub struct Building {
     pub what: String,
     /// The work done in it (`bakery`, `mill`, `shrine`), for the people who work there.
     pub work: Option<String>,
+    /// Where its beds and seats stand (the blocks themselves), for its people to sleep and
+    /// sit: homes only, furnished by `interiors`.
+    pub beds: Vec<IVec3>,
+    pub seats: Vec<IVec3>,
+}
+
+impl Building {
+    /// Whether it answers to `name`: its kind's, what it is in the lists (`what`), or the
+    /// work done in it.
+    pub fn answers(&self, name: &str) -> bool {
+        self.kind.name() == name || self.what == name || self.work.as_deref() == Some(name)
+    }
 }
 
 /// Whose a settlement is, as gameplay and tools see it (`cultures.ron`).
@@ -122,6 +137,10 @@ pub struct Plan {
     /// Each lane's half width, beside `lanes`.
     #[cfg_attr(not(test), allow(dead_code))]
     pub lane_halves: Vec<f32>,
+    /// Its wall, if it is walled: each column and how many blocks over the ground it
+    /// stands, and what it is built of.
+    pub walls: Vec<(IVec2, i32)>,
+    pub wall_block: Option<voxmar_engine::block::BlockId>,
     /// The blocks the settlement touches, grading included.
     pub min: IVec2,
     pub max: IVec2,
@@ -145,6 +164,21 @@ struct Cell {
     /// 0..=255: how much lane is trodden here.
     tread: u8,
     clear: bool,
+}
+
+impl Cell {
+    /// The ground's height where it is graded, from its own `sample`.
+    fn graded(&self, sample: &GeoSample) -> i32 {
+        let target = self.target as i32;
+        let height = if self.core {
+            target
+        } else {
+            let w = self.weight as f32 / 255.0;
+            (sample.height as f32 + (target - sample.height) as f32 * w).round() as i32
+        };
+        // Never below the water beside it, which would let it spill.
+        height.max(sample.water)
+    }
 }
 
 pub(crate) struct Raster {
@@ -175,6 +209,15 @@ impl Raster {
 
     fn get(&self, x: i32, z: i32) -> Option<&Cell> {
         self.index(IVec2::new(x, z)).map(|i| &self.cells[i])
+    }
+
+    /// The height of the ground at (x, z) once graded, from its own `sample`, as `apply`
+    /// gives it.
+    fn ground(&self, x: i32, z: i32, sample: &GeoSample) -> i32 {
+        match self.get(x, z) {
+            Some(cell) if !sample.submerged() && sample.cavity.is_none() && cell.weight > 0 => cell.graded(sample),
+            _ => sample.height,
+        }
     }
 
     /// A pad at `height` over `core`, held exactly where `inside`, easing out over
@@ -314,13 +357,14 @@ impl Weigh for Slot {
                 + p.raster.sums.capacity() * std::mem::size_of::<(f32, f32, f32)>()
                 + table + p.voxels.values().map(|v| v.capacity() * std::mem::size_of::<Voxel>()).sum::<usize>()
                 + p.buildings.capacity() * std::mem::size_of::<Building>()
-                + p.buildings.iter().map(|b| b.what.capacity() + b.work.as_ref().map_or(0, String::capacity) + b.room.capacity() * std::mem::size_of::<IVec2>()).sum::<usize>()
+                + p.buildings.iter().map(|b| b.what.capacity() + b.work.as_ref().map_or(0, String::capacity) + b.room.capacity() * std::mem::size_of::<IVec2>() + (b.beds.capacity() + b.seats.capacity()) * std::mem::size_of::<IVec3>()).sum::<usize>()
                 + p.people.capacity() * std::mem::size_of::<people::Resident>()
                 + p.people.iter().map(|r| r.species.capacity()).sum::<usize>()
                 + p.gates.capacity() * std::mem::size_of::<IVec2>()
                 + p.lanes.capacity() * std::mem::size_of::<Vec<Vec2>>()
                 + p.lanes.iter().map(|l| l.capacity() * std::mem::size_of::<Vec2>()).sum::<usize>()
                 + p.lane_halves.capacity() * std::mem::size_of::<f32>()
+                + p.walls.capacity() * std::mem::size_of::<(IVec2, i32)>()
                 + p.size.capacity() + p.layout.capacity() + p.style.capacity() + p.name.0.capacity() + p.name.1.capacity()
                 + p.culture.bytes() - std::mem::size_of::<culture::Culture>()
         })
@@ -478,15 +522,7 @@ impl Settlements {
             return sample;
         }
         if !sample.submerged() && sample.cavity.is_none() && cell.weight > 0 {
-            let target = cell.target as i32;
-            let height = if cell.core {
-                target
-            } else {
-                let w = cell.weight as f32 / 255.0;
-                (sample.height as f32 + (target - sample.height) as f32 * w).round() as i32
-            };
-            // Never below the water beside it, which would let it spill.
-            sample.height = height.max(sample.water);
+            sample.height = cell.graded(&sample);
             sample.crag.amplitude = 0.0;
         }
         let tread = cell.tread as f32 / 255.0;
@@ -681,6 +717,39 @@ impl Settlements {
     }
 }
 
+impl Settlements {
+    /// The roof pieces the plan of the settlement whose square's middle is at `centre`
+    /// sets, and where: for tools judging a settlement as the world holds it.
+    pub fn roofs_of(&self, world: &Overworld, centre: IVec2) -> Option<Vec<(IVec3, BlockId)>> {
+        let fixed = self.fixed.as_ref()?;
+        self.planned(world, centre, &|b| fixed.fire.piece(b))
+    }
+
+    /// The blocks `keep` picks that the plan of the settlement whose square's middle is at
+    /// `centre` sets, and where.
+    pub fn planned(&self, world: &Overworld, centre: IVec2, keep: &dyn Fn(BlockId) -> bool) -> Option<Vec<(IVec3, BlockId)>> {
+        let slot = self.slot(world, self.cell_of(centre.x, centre.y));
+        let plan = slot.0.as_ref().filter(|p| p.centre == centre)?;
+        let mut roofs: Vec<(IVec3, BlockId)> = plan
+            .voxels
+            .values()
+            .flatten()
+            .filter(|v| !v.ground)
+            .filter_map(|v| match v.put {
+                Put::Set(b) if keep(b) => Some((v.pos, b)),
+                _ => None,
+            })
+            .collect();
+        roofs.sort_unstable_by_key(|r| (r.0.y, r.0.x, r.0.z));
+        Some(roofs)
+    }
+
+    /// What its flames are kept from (`rules.fire`).
+    pub fn fire(&self) -> Option<&roofs::Fire> {
+        self.fixed.as_ref().map(|f| &f.fire)
+    }
+}
+
 /// The blocks settlements furnish themselves with (`furnishings` in settlements.ron):
 /// none without water and dirt, and only the plain common sorts of flowers and bushes.
 fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
@@ -732,6 +801,13 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
         sacks: palette(&f.sacks, &any),
         crates: palette(&f.crates, &any),
         cloth: palette(&f.cloth, &any),
+        interiors: interior::Interiors::new(&def.interiors, registry),
+        fire: roofs::Fire::new(&def.rules.fire, registry, def.styles.iter().flat_map(|s| {
+            let woods = &s.woods;
+            s.roof_pieces.iter().flat_map(move |p| {
+                woods.iter().flat_map(move |(wood, _)| woods.iter().filter_map(move |(trim, _)| roofs::RoofPieces::resolve(p, wood, trim, |n| registry.id(n))))
+            })
+        })),
         plinth: def.rules.houses.plinth,
         moss: def.rules.houses.moss,
     })

@@ -308,4 +308,51 @@ mod tests {
         assert_eq!(region.light(IVec3::new(32, 100, 16)) & 0xF, 0);
         assert_eq!(region.light(IVec3::new(16, 100, 29)) & 0xF, 1);
     }
+
+    /// The game's windows let light into a room walled in stone: daylight down a shaft
+    /// outside the window and a torch set before it both reach the room through a lattice,
+    /// a shuttered lattice left open, an arrow slit or an empty frame. Stone, or the shutters
+    /// shut, keep the room dark.
+    #[test]
+    fn daylight_and_torchlight_come_in_through_a_window() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let reg = &content.blocks;
+        let (stone, torch) = (reg.expect("base:stone"), reg.expect("base:torch"));
+        // Stone to y 120; a three-block room behind a wall at x 11, the window in it, and
+        // outside a cell at x 12 open up a shaft to the sky.
+        let (window, outside, room) = (IVec3::new(11, 101, 9), IVec3::new(12, 101, 9), IVec3::new(10, 101, 9));
+        let mut column = Column::default();
+        for y in 0..120 {
+            for z in 0..32 {
+                for x in 0..32 {
+                    column.set_block(IVec3::new(x, y, z), stone);
+                }
+            }
+        }
+        for x in 8..=10 {
+            column.set_block(IVec3::new(x, 101, 9), BlockId::AIR);
+        }
+        for y in 101..120 {
+            column.set_block(outside.with_y(y), BlockId::AIR);
+        }
+        let lit = |column: &Column, at: IVec3| LitRegion::compute(reg, &neighborhood(column.clone())).light(at);
+        let emission = reg.info(torch).emission;
+        for name in ["base:oak_lattice_window", "base:oak_shuttered_window", "base:stone_arrow_slit", "base:oak_window_frame", "base:stone", "base:oak_shuttered_window_shut"] {
+            let through = !matches!(name, "base:stone" | "base:oak_shuttered_window_shut");
+            let mut column = column.clone();
+            column.set_block(window, reg.expect(name));
+            let day = lit(&column, room) >> 4;
+            column.set_block(outside.with_y(102), stone);
+            column.set_block(outside, torch);
+            let night = lit(&column, room);
+            assert_eq!(night >> 4, 0, "{name}: the shaft is capped, no daylight left");
+            match through {
+                true => {
+                    assert_eq!(day, 13, "{name}: daylight through the window, one less a cell");
+                    assert_eq!(night & 0xF, emission - 2, "{name}: torchlight through the window");
+                }
+                false => assert_eq!((day, night & 0xF), (0, 0), "{name} let light into the room"),
+            }
+        }
+    }
 }

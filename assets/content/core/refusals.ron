@@ -26,6 +26,7 @@
         "Locked": (silent: true),
         "Store": (silent: true),
         "SprungTrap": (silent: true),
+        "Coats": (silent: true),
         // A tool, a level: what to get or train.
         "ToolGood": (say: "tools.needs"),
         "BlockLevel": (say: "skills.needs"),
@@ -60,9 +61,11 @@
         "craft.age",
         // Home stations.
         "station.level", "station.too_few", "station.nothing_grows", "station.needs.sky", "station.needs.spot", "station.needs.water",
+        // The land around a station or structure still loading: judged once it is there.
+        "station.unloaded",
         // A catch in a trap taken below its skill's level.
         "trap.needs",
-        // No sleep with a hunter near or a wound fresh.
-        "bed.threatened", "bed.just_hurt",
+        // No sleep with a hunter near or a wound fresh, or in a bed of someone's home.
+        "bed.threatened", "bed.just_hurt", "bed.someones",
     ],
 )

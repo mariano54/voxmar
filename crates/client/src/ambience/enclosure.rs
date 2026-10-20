@@ -11,6 +11,10 @@
 //!
 //! The fill also keeps a few random blocks of each group it met, nearer ones likelier, so
 //! one-shots can sound from real places: birds from leaves that are actually there.
+//!
+//! Whether the player is indoors is asked apart, as the fill leaks out of an open door and
+//! would call a house half outdoors: a roof over the columns around the eye, and walls met
+//! by short rays out from it at head and chest height ([`Enclosure::shelter`]).
 
 use std::collections::VecDeque;
 
@@ -47,6 +51,12 @@ pub struct Enclosure {
     pub sky: f32,
     /// Share of the nearby sky-open air that has leaves above it.
     pub canopy: f32,
+    /// How indoors the player is, 0..1: a roof overhead and walls around (a door may stand
+    /// open). A cave counts; a tree's leaves do not.
+    pub shelter: f32,
+    /// Share of the columns around the eye with a roof close overhead that the sky falls on:
+    /// rain is heard drumming on it, walls or not.
+    pub roof: f32,
     /// Weighted count of each group's blocks met.
     pub groups: Vec<f32>,
     /// A few blocks of each group, nearer ones likelier.
@@ -62,7 +72,14 @@ pub struct Kinds {
     pub group: Vec<Option<u8>>,
     /// A structure's core whose group counts it only while its fire burns.
     pub lit_only: Vec<bool>,
+    /// Each block's wall group, if any (a home's walls by their shelter), counted besides
+    /// its `group`, and never as the floor under a cell.
+    pub wall_group: Vec<Option<u8>>,
     pub groups: usize,
+    /// Blocks out from the eye a wall may be and still count, and above it a roof may be for
+    /// rain to be heard on it.
+    pub walls: i32,
+    pub roof: i32,
 }
 
 /// How much a block `d` steps away counts.
@@ -120,11 +137,7 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
     // Weighted reservoir per group: the samples with the largest keys u^(1 / weight).
     let mut keys: Vec<Vec<f32>> = vec![Vec::new(); kinds.groups];
     let mut random = seed;
-    let mut meet = |found: &mut Enclosure, p: IVec3, b: BlockId, d: i32| {
-        let Some(group) = kinds.group[b.0 as usize] else { return };
-        if kinds.lit_only[b.0 as usize] && !burning(p) {
-            return;
-        }
+    let mut count = |found: &mut Enclosure, p: IVec3, group: u8, d: i32| {
         let (group, w) = (group as usize, weight(d));
         found.groups[group] += w;
         random = mix(random);
@@ -138,6 +151,13 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
         {
             samples[i] = p;
             keys[i] = key;
+        }
+    };
+    let mut meet = |found: &mut Enclosure, p: IVec3, b: BlockId, d: i32, floor: bool| {
+        let wall = kinds.wall_group[b.0 as usize].filter(|_| !floor);
+        let own = kinds.group[b.0 as usize].filter(|_| !kinds.lit_only[b.0 as usize] || burning(p));
+        for group in [own, wall].into_iter().flatten() {
+            count(found, p, group, d);
         }
     };
 
@@ -158,7 +178,7 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
             }
         }
         if let Some(b) = block(p).filter(|b| !b.is_air()) {
-            meet(&mut found, p, b, d);
+            meet(&mut found, p, b, d, false);
         }
         for step in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y] {
             let n = p + step;
@@ -169,7 +189,7 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
             let b = block(n);
             if !is_open(b) {
                 if let Some(b) = b {
-                    meet(&mut found, n, b, d + 1);
+                    meet(&mut found, n, b, d + 1, step == IVec3::NEG_Y);
                 }
                 continue;
             }
@@ -189,6 +209,30 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
     if near_sky > 0 {
         found.canopy = near_canopy as f32 / near_sky as f32;
     }
+
+    // Indoors: a roof over the eye's column and its neighbours, and walls on most sides.
+    let (mut covered, mut roofed) = (0, 0);
+    for dz in -1..=1 {
+        for dx in -1..=1 {
+            let r = roof(eye.x + dx, eye.z + dz);
+            covered += (r.solid > eye.y) as u32;
+            roofed += (r.solid > eye.y && r.solid <= eye.y + kinds.roof) as u32;
+        }
+    }
+    let mut walls = 0;
+    let directions = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)];
+    for (dx, dz) in directions {
+        for height in [0, -1] {
+            let wall = (1..=kinds.walls).map(|step| block(eye + IVec3::new(dx * step, height, dz * step))).find(|b| !is_open(*b));
+            // Unloaded space is no wall here: it says nothing of what is built.
+            walls += wall.is_some_and(|b| b.is_some()) as u32;
+        }
+    }
+    let walls = walls as f32 / (2 * directions.len()) as f32;
+    // A doorway or a window or two still leaves a room indoors; a wall or two is a porch.
+    let t = ((walls - 0.35) / 0.45).clamp(0.0, 1.0);
+    found.shelter = covered as f32 / 9.0 * t * t * (3.0 - 2.0 * t);
+    found.roof = roofed as f32 / 9.0;
     found
 }
 
@@ -209,7 +253,10 @@ mod tests {
             // Groups: 0 rock, 1 leaves, 2 water, 3 grass.
             group: vec![None, Some(0), Some(1), Some(2), Some(3)],
             lit_only: vec![false; 5],
+            wall_group: vec![None; 5],
             groups: 4,
+            walls: 6,
+            roof: 8,
         }
     }
 
@@ -243,6 +290,47 @@ mod tests {
         assert!(found.groups[3] > 100.0, "grass all around");
         assert_eq!(found.groups[0], 0.0, "the stone is under the grass");
         assert!(found.samples[3].len() == SAMPLES && found.samples[3].iter().all(|p| p.y == 63));
+        assert_eq!((found.shelter, found.roof), (0.0, 0.0));
+    }
+
+    /// A 7×7 hut of stone on the field, three high inside, roofed at 67.
+    fn hut(door: bool, window: bool) -> impl Fn(IVec3) -> Option<BlockId> {
+        move |p: IVec3| {
+            let (edge, inside) = (p.x.abs() == 3 || p.z.abs() == 3, p.x.abs() <= 3 && p.z.abs() <= 3);
+            Some(if inside && p.y == 67 {
+                STONE
+            } else if inside && edge && (64..67).contains(&p.y) {
+                let doorway = door && p.x == 3 && p.z == 0 && p.y < 66;
+                let pane = window && p.x == -3 && p.z.abs() <= 1 && p.y == 65;
+                if doorway || pane { AIR } else { STONE }
+            } else {
+                field(p).unwrap()
+            })
+        }
+    }
+
+    #[test]
+    fn a_hut_is_indoors_with_its_door_open() {
+        let eye = IVec3::new(0, 65, 0);
+        let shut = scan(eye, hut(false, false), |_| false, &kinds(), 1);
+        assert_eq!((shut.shelter, shut.roof), (1.0, 1.0));
+        let open = scan(eye, hut(true, true), |_| false, &kinds(), 1);
+        assert!(open.shelter > 0.85, "{}", open.shelter);
+        assert_eq!(open.roof, 1.0);
+        // The fill leaks out of the door, so by sky and air alone it is half outdoors.
+        assert!(open.air > shut.air && open.sky > 0.0, "{} {}", open.air, open.sky);
+        // Standing in the doorway is on the way out; a step outside is outdoors.
+        let doorway = scan(IVec3::new(3, 65, 0), hut(true, true), |_| false, &kinds(), 1);
+        assert!(doorway.shelter < open.shelter, "{}", doorway.shelter);
+        let outside = scan(IVec3::new(5, 65, 0), hut(true, true), |_| false, &kinds(), 1);
+        assert_eq!((outside.shelter, outside.roof), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_roof_on_posts_is_heard_in_the_rain_but_is_not_indoors() {
+        let porch = |p: IVec3| Some(if p.x.abs() <= 3 && p.z.abs() <= 3 && p.y == 67 { STONE } else { field(p).unwrap() });
+        let found = scan(IVec3::new(0, 65, 0), porch, |_| false, &kinds(), 1);
+        assert_eq!((found.shelter, found.roof), (0.0, 1.0));
     }
 
     #[test]
@@ -253,6 +341,8 @@ mod tests {
         assert!(found.air < 0.02, "{}", found.air);
         assert_eq!(found.sky, 0.0);
         assert!(found.groups[0] > 300.0, "close rock all around: {}", found.groups[0]);
+        // Underground is sheltered, but no rain falls on the rock far above.
+        assert_eq!((found.shelter, found.roof), (1.0, 0.0));
     }
 
     #[test]
@@ -279,6 +369,7 @@ mod tests {
         assert!(found.canopy > 0.9, "{}", found.canopy);
         assert!(found.groups[1] > 100.0);
         assert!(found.samples[1].iter().all(|p| (70..74).contains(&p.y)));
+        assert_eq!((found.shelter, found.roof), (0.0, 0.0), "leaves are no roof");
     }
 
     #[test]

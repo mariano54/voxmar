@@ -452,6 +452,13 @@ fn movement(
         let held = player.inventory.get(player.selected).map(|s| s.item);
         combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).map(|g| g.speed)
     });
+    // Drawing a shot, the player moves at the class's `drawing_speed` (a bow held drawn
+    // walks and sprints slowly; a weapon that strikes is not slowed).
+    let drawing_speed = fighting.drawn(clock).then(|| {
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        combat.drawing_speed(&combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill))))
+    });
+    fighting.drawing_pace = drawing_speed;
     let controls = Controls {
         wish: wish.normalize_or_zero(),
         forward: pressed(KeyCode::KeyW) && !pressed(KeyCode::KeyS),
@@ -471,7 +478,7 @@ fn movement(
         jump_delay: player.jump_delay,
     };
     // Quicker or slower on foot as the player's effects say (fruit, a gale).
-    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed * guard_speed.unwrap_or(1.0);
+    let speed = launch.content.effects.modifiers(&player.vitals.effects).speed * guard_speed.unwrap_or(1.0) * drawing_speed.unwrap_or(1.0);
     let tuning = launch.content.movement.on_foot(speed);
     let dt = time.delta_secs().min(0.25);
     let around = Around { world: &world };
@@ -603,6 +610,23 @@ pub(crate) fn follow_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The same case as the server's `an_unloaded_cell_stops_a_player_as_a_whole_cube`: a
+    /// cell in a loaded column of air stops nothing; one in the next column, not loaded, and
+    /// one under the world stop the player as a whole cube, as the server judges them.
+    #[test]
+    fn an_unloaded_cell_stops_a_player_as_a_whole_cube() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let mut world = ClientWorld::new(content.blocks, 2, crate::render::terrain::Terrain::detached());
+        let loaded = IVec3::new(1, 64, 1);
+        world.insert_column(ColumnPos::of_block(loaded), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+        let around = Around { world: &world };
+        assert!(around.boxes(loaded).is_empty());
+        for unloaded in [loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE, IVec3::new(1, -1, 1)] {
+            assert_eq!(around.boxes(unloaded), &voxmar_engine::physics::CUBE, "{unloaded}");
+        }
+    }
 
     /// Flat ground below y 0.
     struct Floor;
