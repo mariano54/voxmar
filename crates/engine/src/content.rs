@@ -534,6 +534,9 @@ impl Content {
                 if !machines.burn_seconds(fuel).is_some_and(|seconds| seconds.is_finite() && seconds > 0.0 && (seconds * count as f32).is_finite()) {
                     return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} needs a positive finite burn time in machines.ron", structure.name, blocks.def(fuel).name)));
                 }
+                if machines.fuel_heat(fuel).is_some_and(|heat| heat < structure.heat) {
+                    return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} burns cooler than the heat {} it asks", structure.name, blocks.def(fuel).name, structure.heat)));
+                }
             }
         }
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
@@ -804,7 +807,7 @@ mod tests {
 
     /// A recipe as the walk uses it: its skill, level and experience a batch, how many a
     /// batch makes, what each of its cells takes, and the station it needs (the crafting
-    /// table for a big grid, a cooking station's tag).
+    /// table for a big grid, a cooking station's tag). A smoulder counts as one too.
     struct Batch {
         skill: Option<SkillId>,
         level: u8,
@@ -882,10 +885,20 @@ mod tests {
                 let with = r.with.iter().flat_map(|&(item, n)| std::iter::repeat_n(vec![item], n as usize));
                 Some(Batch { skill: r.skill, level: r.def.level, xp: r.def.xp, count: r.def.count as u32, cells: held.chain(with).collect(), station: Some(r.def.station.clone()) })
             };
+            // A smoulder (the charcoal clamp): a batch is one structure, every piece it takes,
+            // making what each of its charred cells breaks into.
+            let smouldered = || {
+                content.multiblocks.iter().find_map(|m| {
+                    let s = m.smoulder.as_ref().filter(|s| content.blocks.info(s.done).drops == id)?;
+                    let count = s.wood.len() as u32 * content.blocks.info(s.done).drop_count as u32;
+                    let cells = m.pieces().into_iter().flat_map(|(accepts, n)| std::iter::repeat_n(accepts.to_vec(), n as usize)).collect();
+                    Some(Batch { skill: None, level: 0, xp: 0.0, count, cells, station: None })
+                })
+            };
             match way {
                 Way::Grid => grid(),
                 Way::Cooked | Way::CookedAt(_) => cooked(),
-                Way::Either => grid().or_else(cooked),
+                Way::Either => grid().or_else(cooked).or_else(smouldered),
             }
         }
 
