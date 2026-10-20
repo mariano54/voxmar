@@ -302,6 +302,12 @@ impl Climate {
     /// around others, as on the lattice, are worked out once; offset by offset, so
     /// neighbours share their lanes.
     pub(crate) fn regionals(&self, geology: &Geology, points: &[(f32, f32)]) -> Vec<Regional> {
+        self.regionals_with(geology, points, |unique| geology.reliefs(unique))
+    }
+
+    /// The regional climate at each position like `regionals`, the relief at and around
+    /// them from `reliefs`, which gives it at each position asked for.
+    pub(crate) fn regionals_with(&self, geology: &Geology, points: &[(f32, f32)], reliefs: impl FnOnce(&[(f32, f32)]) -> Vec<Relief>) -> Vec<Regional> {
         let n = points.len();
         let mut index: FxHashMap<(u32, u32), u32> = FxHashMap::default();
         let mut unique = Vec::new();
@@ -315,7 +321,7 @@ impl Climate {
                 })
             })
             .collect();
-        let reliefs = geology.reliefs(&unique);
+        let reliefs = reliefs(&unique);
         let mut out = vec![Regional::default(); n];
         for (c, (four, out)) in points.chunks(4).zip(out.chunks_mut(4)).enumerate() {
             let around: [[Relief; AROUND.len()]; 4] =
