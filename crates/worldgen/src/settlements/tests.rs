@@ -301,23 +301,11 @@ pub(super) fn base_world(seed: u64) -> Overworld {
 
 /// One world per seed for the whole test binary, for the tests that only read a world: a
 /// settlement's plan is made once however many tests look at it, and planning is most of
-/// what these tests cost. Tests that count what a world plans, or that compare a fresh
-/// world with another, use `base_world`.
+/// what these tests cost. The same worlds as the generator's own tests read
+/// (`crate::tests::shared_world`): they plan the settlements round spawn too. Tests that
+/// count what a world plans, or that compare a fresh world with another, use `base_world`.
 fn shared_world(seed: u64) -> std::sync::Arc<Overworld> {
-    use std::sync::{Arc, Mutex, OnceLock};
-    static WORLDS: Mutex<Vec<(u64, Arc<OnceLock<Arc<Overworld>>>)>> = Mutex::new(Vec::new());
-    let slot = {
-        let mut worlds = WORLDS.lock().unwrap();
-        match worlds.iter().find(|(s, _)| *s == seed) {
-            Some((_, slot)) => slot.clone(),
-            None => {
-                let slot = Arc::new(OnceLock::new());
-                worlds.push((seed, slot.clone()));
-                slot
-            }
-        }
-    };
-    slot.get_or_init(|| Arc::new(base_world(seed))).clone()
+    crate::tests::shared_world(seed)
 }
 
 /// A settlement, its graded ground and its buildings are the same whichever column or
@@ -1619,7 +1607,7 @@ fn a_settlement_stands_near_spawn() {
     let seeds: Vec<u64> = (0..20).chain([42, 99, 0x5eed]).collect();
     // Each world on its own core, its outcome kept in seed order.
     let outcomes: Vec<(u64, Option<Result<(), String>>)> = seeds.par_iter().map(|&seed| {
-        let world = base_world(seed);
+        let world = shared_world(seed);
         let within = world.settlements.def.rules.spawn_settlement_within as f32;
         let spawn = world.spawn_point();
         let at = IVec2::new(spawn.x, spawn.z);
