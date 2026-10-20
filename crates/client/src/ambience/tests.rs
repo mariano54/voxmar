@@ -534,4 +534,17 @@ fn the_settlement_axis_is_the_way_to_the_nearest_middle() {
         .expect("somewhere 700 blocks off with no settlement in hearing");
     let place = super::place(&generator, IVec3::new(alone.x, near.centre.y, alone.y));
     assert_eq!(place.settlement, super::defs::NO_SETTLEMENT);
+    // Past hearing of every settlement, though the search still gives some from the regions
+    // it touches: none, not the nearest of those.
+    let heard = super::SETTLEMENTS_HEARD as f32;
+    let beyond = [IVec2::new(1, 0), IVec2::new(0, 1), IVec2::new(-1, 0), IVec2::new(0, -1)]
+        .into_iter()
+        .map(|way| near.centre.xz() + way * 260)
+        .find(|&at| {
+            let found = generator.settlements_near(at, super::SETTLEMENTS_HEARD);
+            !found.is_empty() && found.iter().all(|s| s.centre.xz().as_vec2().distance(at.as_vec2() + 0.5) > heard)
+        })
+        .expect("somewhere 260 blocks off where the search gives only settlements out of hearing");
+    let place = super::place(&generator, IVec3::new(beyond.x, near.centre.y, beyond.y));
+    assert_eq!(place.settlement, super::defs::NO_SETTLEMENT, "a settlement out of hearing counted");
 }
