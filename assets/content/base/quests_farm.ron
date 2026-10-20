@@ -20,6 +20,13 @@
             rewards: [Xp("mining", 60.0), Xp("engineering", 40.0)],
         ),
         (
+            name: "kiln_plans", age: "farm", branch: "fuel", title: "Plans for the Kiln",
+            why: "A clamp takes its time over a charge of logs. While it chars, plan the kiln: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up kiln bricks to see what they take.",
+            tasks: [[LookUp("crucible"), LookUp("kiln_bricks")]],
+            after: ["fuel_to_hand"],
+            rewards: [Xp("engineering", 30.0)],
+        ),
+        (
             name: "the_potter", age: "farm", branch: "main", title: "The Potter",
             why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
             tasks: [[Craft("clay_pot", 6)]],
@@ -51,10 +58,10 @@
         (
             name: "the_kiln_charge", age: "farm", branch: "fuel", title: "A Full Charge",
             capstone: true,
-            why: "The Crucible Kiln burns a whole charge when it is lit: thirty-two charcoal, or twenty-four coal ore. Keep the earth clamp charring logs while you fire clay, or bring coal up from the seam, and hold a full charge in your pack. The reward is a second clamp, to keep two fires smouldering at once.",
+            why: "The Crucible Kiln burns a whole charge when it is lit: thirty-two charcoal, or twenty-four coal ore. Keep a clamp charring logs while you fire clay, or bring coal up from the seam, and hold a full charge in your pack.",
             tasks: [[Have("charcoal", 32)], [Have("coal_ore", 24)]],
-            after: ["charcoal", "an_earth_clamp"],
-            rewards: [Xp("engineering", 200.0), Item("earth_clamp", 1)],
+            after: ["charcoal", "a_kiln_yard"],
+            rewards: [Xp("engineering", 200.0)],
         ),
         (
             name: "red_metal", age: "farm", branch: "mining", title: "Red Metal",
@@ -95,9 +102,9 @@
         ),
         (
             name: "a_kiln_yard", age: "farm", branch: "main", title: "A Kiln Yard",
-            why: "One kiln fires one clay at a time, and the Crucible Kiln wants a great deal of it. Make a yard of fires: a second pit kiln beside the first, with your earth clamp by them, so clay and logs smoulder while you work two kilns by hand. Set down a second pit kiln.",
-            tasks: [[Placed("pit_kiln", 2), Placed("earth_clamp", 1)]],
-            after: ["fire_the_clay", "an_earth_clamp"],
+            why: "One kiln fires one clay at a time, and the Crucible Kiln wants a great deal of it. Make a yard of fires: a second pit kiln beside the first, so two clay fire at once while you tend them by hand. Set down a second pit kiln.",
+            tasks: [[Placed("pit_kiln", 2)]],
+            after: ["fire_the_clay"],
             rewards: [Xp("construction", 120.0), Item("clay", 8)],
         ),
         (

@@ -8349,10 +8349,10 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
     f.at_table(table);
     f.craft(&[(0, cobble, 1), (2, cobble, 1), (3, cobble, 1), (4, "base:campfire", 1), (5, cobble, 1)], "base:pit_kiln", 1);
-    f.mark("pit_kiln");
     let kiln = f.rel(2, 0, 1);
     f.walk_toward(Fresh::middle(kiln), 3.0);
     f.place("base:pit_kiln", kiln - up);
+    f.mark("pit_kiln");
     // An Earth Clamp, which Fire the Clay names: eight dirt dug from a bank of it on the farm
     // plot round a log at the table (Construction 3), set down by the kiln and loaded with
     // sixteen clay. It fires them, none cracked, while clay is fired by hand toward the
@@ -8396,6 +8396,7 @@ const QUEST_BOOK_ORDER: &[&str] = &[
     "fire_the_clay",
     "the_potter",
     "fuel_to_hand",
+    "kiln_plans",
     "charcoal",
     "red_metal",
     "a_kiln_yard",
@@ -8584,7 +8585,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // Fuel to Hand: forty logs carried at once, past its thirty-two, for the charcoal of the
     // copper ingots and the kiln's whole charge, and a log for sticks.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
-    f.gather("base:stone_axe", trunks, log, 40);
+    f.gather("base:stone_axe", trunks.clone(), log, 40);
     f.wait(5.0, "the server counting the logs carried", |c| quest_status(c, "fuel_to_hand").0);
     f.mark("fuel_to_hand");
     // Charcoal: sixteen logs burnt down.
@@ -8593,6 +8594,13 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // is taken.
     let clamp = site.clamp.expect("the clamp set down for Fire the Clay");
     f.tend_clamp(clamp, Some(log));
+    // Plans for the Kiln, while the clamp chars: the crucible and kiln bricks looked up.
+    for item in ["base:crucible", "base:kiln_bricks"] {
+        let item = f.c.content.blocks.expect(item);
+        f.c.connection.send_at(ClientMessage::LookedUp { item }, f.now());
+    }
+    f.wait(5.0, "the server counting the plans looked up", |c| quest_status(c, "kiln_plans").0);
+    f.mark("kiln_plans");
     while f.have(charcoal) < 16 {
         let more = f.have(fired) + 1;
         f.fire_clay(&Site { clamp: None, ..site.clone() }, more);
@@ -8652,12 +8660,17 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
     f.mark("brick_by_brick");
 
-    // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).
+    // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10), done
+    // once it is set down in the kiln's middle.
     f.at_table(site.table);
     f.craft(&[(0, bricks, 1), (2, bricks, 1), (3, bricks, 1), (4, "base:clay_pot", 1), (5, bricks, 1), (6, bricks, 1), (7, bricks, 1), (8, bricks, 1)], "base:crucible", 1);
-    f.mark("the_crucible");
 
-    // A Full Charge: thirty-two charcoal held at once.
+    // A Full Charge: thirty-two charcoal held at once, from the rest of the trunks.
+    let short = 32u32.saturating_sub(f.have(charcoal) + f.have(log));
+    if short > 0 {
+        let more = f.have(log) + short;
+        f.gather("base:stone_axe", trunks, log, more);
+    }
     f.burn_charcoal(&site, 32);
     f.wait(5.0, "the server counting the charge carried", |c| quest_status(c, "the_kiln_charge").0);
     f.mark("the_kiln_charge");
@@ -8667,6 +8680,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let centre = f.rel(13, 0, 9);
     f.walk_toward(Fresh::middle(f.rel(13, 0, 6)), 0.05);
     let core = f.place("base:crucible", centre - IVec3::Y);
+    f.mark("the_crucible");
     for (dx, dz) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
         f.place(bricks, centre + IVec3::new(dx, -1, dz));
     }
@@ -8726,6 +8740,7 @@ const FRESH_QUESTS: &[(&str, &str)] = &[
     ("the_potter", "the_potter"),
     ("a_kiln_load", "a_kiln_load"),
     ("fuel_to_hand", "fuel_to_hand"),
+    ("kiln_plans", "kiln_plans"),
     ("a_kiln_yard", "a_kiln_yard"),
     ("first_bricks", "first_bricks"),
     ("the_kiln_ring", "the_kiln_ring"),

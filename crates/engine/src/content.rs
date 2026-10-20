@@ -962,7 +962,21 @@ mod tests {
                             }
                         }
                         Goal::Craft(item, _) | Goal::Cook(item, _) if item == "any" => {}
-                        Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::Have(item, _) if item.starts_with("tag:") => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        // Held, of a tag: gathered if any of it is (logs), else the easiest made.
+                        Goal::Have(item, n) if let Some(tag) = item.strip_prefix("tag:") => {
+                            let accepts: Vec<BlockId> = content.blocks.tagged(tag).collect();
+                            assert!(!accepts.is_empty(), "{}: nothing is tagged `{tag}`", quest.name);
+                            let short = n.saturating_sub(accepts.iter().map(|b| route.stock.get(b).copied().unwrap_or(0)).sum());
+                            route.consume(&accepts, short, &format!("holding {item}"));
+                        }
+                        Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::Have(item, _) | Goal::Placed(item, _) if item.starts_with("tag:") => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        // Set down: made, in all, at least that many (what is set down is not used
+                        // up, so a ring of bricks set down still builds the kiln after).
+                        Goal::Placed(item, n) => {
+                            let id = route.item(item);
+                            let short = n.saturating_sub(route.made.get(&id).copied().unwrap_or(0));
+                            route.produce(id, short, Way::Either);
+                        }
                         Goal::Craft(item, n) | Goal::Cook(item, n) => {
                             let id = route.item(item);
                             let short = n.saturating_sub(route.made.get(&id).copied().unwrap_or(0));
@@ -971,7 +985,12 @@ mod tests {
                         Goal::Have(item, n) => {
                             let id = route.item(item);
                             let short = n.saturating_sub(route.stock.get(&id).copied().unwrap_or(0));
-                            route.produce(id, short, Way::Either);
+                            if route.recipe(id, Way::Either).is_some() {
+                                route.produce(id, short, Way::Either);
+                            } else {
+                                // Mined (an ore held whole) or gathered: what more it takes now.
+                                route.consume(&[id], short, &format!("holding {item}"));
+                            }
                         }
                         Goal::Mine(ore, n) => {
                             let ore = route.item(ore);
@@ -996,7 +1015,7 @@ mod tests {
                         Goal::Visit(_) | Goal::LookUp(_) => {}
                         // A rite asks for quests done, on whatever paths: nothing made.
                         Goal::QuestsDone(..) | Goal::Capstones(..) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Watering(..) | Goal::Placed(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {
