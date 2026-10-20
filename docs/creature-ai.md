@@ -94,7 +94,7 @@ Built now (`engine::creature::brain::modules`):
 | herd | social | closes on its group when it drifts well apart (its spacing past it), to its companion's near side, the same companion until there; spacing by sociability |
 | sentinel | social | stands watch while kin graze |
 | tempted | drive | follows a player holding its favourite food, hurrying as they draw ahead, keeping after them to 1.5 times the radius it noticed them at, and stepping back when too close; its home goes with it, so it stays where it was led; a grudge outweighs the food |
-| hunt | danger | chases and strikes, by RuneScape's rules; strikes up to its height and 1.5 blocks over its feet and down at a head 1.5 under them, from a pit's rim (`strike: (above, below)` on the creature), and only along a way through the air from its body to the player's head or middle (`blow_open`: never through a roof or a wall, and standing at a target it has no such way to, it gives up at once); stalkers creep crouched, then pounce; gives up past its leash (unless struck there in the last 3 s: it fights back), or after balking twice running (a search finding no way to its target brings a balk on sooner; standing over or under its target out of that reach, a player down a hole too deep, it has no way at once), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
+| hunt | danger | chases and strikes, by RuneScape's rules; strikes up to its height and 1.5 blocks over its feet and down at a head 1.5 under them, from a pit's rim (`strike: (above, below)` on the creature), and only along a way through the air from its body to the player's head or middle (`blow_open`: never through a roof or a wall, and standing at a target it has no such way to, it gives up at once; a charge, which runs at the target first, needs instead a lane along the ground from one side of its body or the other, `charge_open`: a wall across its run shuts it off, a trunk on the line does not); stalkers creep crouched, then pounce; gives up past its leash (unless struck there in the last 3 s: it fights back), or after balking twice running (a search finding no way to its target brings a balk on sooner; standing over or under its target out of that reach, a player down a hole too deep, it has no way at once), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
 | defend | danger | fights back when hurt (the boar, the bull, the bear); gives up as hunt does |
 | curious | social | comes to look from a distance, backs off if you come closer |
 | warn | danger | every creature whose kind has a `warn`: stands its ground and warns a player who comes within its radius (its stance and `warn` sound); goes for one who stays its seconds or comes within `near`, as if struck; lets be one who backs off first (see "Warnings" below) |
@@ -215,7 +215,15 @@ under its own middle: one on a pit's lip walks back off it. So nothing wanders o
 still drops in. So prey runs along a cliff
 edge or a lake shore rather than off it, and a boxed-in creature stands rather than press.
 Anything that jumps gets up a single block, however low its jump (the hop is lifted to
-clear it), and no higher. A land animal out of its depth (water under its feet and below)
+clear it), and no higher. Building pieces count by their shapes, not as whole blocks: a
+creature walks up a slab, a stair's tread or a roof's rise without a hop, as a player
+steps (`Movement::step`, 0.5625 blocks by default, from 0.5 to 1 in data), from the low
+side only; the way-finder takes those for open ground too. A hopper (a rabbit) hops up
+them instead. A piece that stands in its way and is not walked up (a post, a panel, a
+lattice window, a railing) is a whole block to its body, so nothing small slips through the
+gaps beside a post or at a corner of panels. A lower slab is a floor: the look ahead judges
+a drop from a slab bridge's edge as from any other. A long head held low may lift (up to half a
+block, `Body::lift`) to clear a riser as it climbs; its head is never inside a block. A land animal out of its depth (water under its feet and below)
 makes for the nearest dry cell within 12 blocks, whatever it had in mind, keeps on through
 the shallows, and hauls itself up the bank.
 

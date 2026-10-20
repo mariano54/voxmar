@@ -400,6 +400,10 @@ pub struct Movement {
     pub turn: f32,
     /// Upward speed of its jump; 0 for creatures that cannot jump.
     pub jump: f32,
+    /// How high it walks up without a hop, in blocks (a slab, a stair's tread), as a
+    /// player steps: from a half block (what the way-finder takes for open ground) to a
+    /// whole one.
+    pub step: f32,
     /// How high a flier keeps over the ground (or the treetops) in flight, in blocks; only
     /// for `Flier`s.
     pub fly: f32,
@@ -409,9 +413,13 @@ pub struct Movement {
     pub step_rise: f32,
 }
 
+/// What a species walks up without a hop unless it says (`Movement::step`): a player's
+/// step, nine sixteenths of a block.
+pub const STEP: f32 = 0.5625;
+
 impl Default for Movement {
     fn default() -> Self {
-        Self { style: Style::Walker, walk: 1.6, run: 4.5, turn: 270.0, jump: 7.5, fly: 0.0, step_rise: Climbing::default().step_rise }
+        Self { style: Style::Walker, walk: 1.6, run: 4.5, turn: 270.0, jump: 7.5, step: STEP, fly: 0.0, step_rise: Climbing::default().step_rise }
     }
 }
 
@@ -1041,6 +1049,9 @@ impl CreatureRegistry {
             if flier != (def.movement.fly > 0.0) || !(def.movement.fly.is_finite() && def.movement.fly <= 32.0) {
                 return Err(error(format!("a `Flier` needs `fly` from above 0 to 32 blocks, and only a flier has one (`fly: {}`)", def.movement.fly)));
             }
+            if !(def.movement.step.is_finite() && (0.5..=1.0).contains(&def.movement.step)) {
+                return Err(error(format!("`step` must be from 0.5 (a slab) to 1 block, not {}", def.movement.step)));
+            }
             if flier && def.movement.run <= def.movement.walk * 1.5 {
                 return Err(error("a flier takes wing above one and a half times its walk, so its `run` must be faster than that".into()));
             }
@@ -1367,6 +1378,23 @@ mod tests {
             defs[0].body.skin.eye = Some(radius);
             let error = CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).unwrap_err();
             assert!(error.0.contains("skin.eye"), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn a_step_is_from_a_slab_to_a_block() {
+        let mut defs = CreatureRegistry::read("base", RABBIT).unwrap().defs;
+        defs[0].diet = Default::default();
+        defs[0].loot.clear();
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        for step in [0.5, 0.5625, 1.0] {
+            defs[0].movement.step = step;
+            assert!(CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).is_ok(), "{step} refused");
+        }
+        for step in [0.0, 0.49, 1.01, f32::NAN, f32::INFINITY] {
+            defs[0].movement.step = step;
+            let error = CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).unwrap_err();
+            assert!(error.0.contains("`step`"), "{step}: {error:?}");
         }
     }
 

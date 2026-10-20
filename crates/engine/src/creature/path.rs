@@ -19,6 +19,9 @@ pub struct Walker {
     pub height: i32,
     /// Whether it gets up a single block.
     pub climbs: bool,
+    /// How high it walks up without a hop (`Movement::step`): up a slab, and course by
+    /// course up stairs or a roof, climber or not.
+    pub step: f32,
     /// Whether water two deep, or lava, is a wall to it (a land animal).
     pub wary: bool,
     /// Blocks across its body takes up (`span_of` its width): a bear or an aurochs takes a
@@ -108,6 +111,9 @@ const STANDS: u16 = 128;
 /// Whether the cell is in the way, once known.
 const SOLID_KNOWN: u16 = 256;
 const SOLID: u16 = 512;
+/// Whether the cell has anything a body meets in it (`Surroundings::boxes`), once known.
+const BOXED_KNOWN: u16 = 1024;
+const BOXED: u16 = 2048;
 
 /// How far up and down from where a search starts it keeps what it learns; beyond that it
 /// looks again each time.
@@ -164,13 +170,35 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         solid
     }
 
+    /// Whether anything in `cell` meets a body (`Surroundings::boxes`).
+    fn boxed(&self, cell: IVec3) -> bool {
+        let slot = self.slot(cell);
+        if let Some(bits) = slot.map(|s| s.get()).filter(|b| b & BOXED_KNOWN != 0) {
+            return bits & BOXED != 0;
+        }
+        let boxed = !self.world.boxes(cell).is_empty();
+        if let Some(slot) = slot {
+            slot.set(slot.get() | BOXED_KNOWN | if boxed { BOXED } else { 0 });
+        }
+        boxed
+    }
+
     /// Whether the column from `cell` up is open as high as it stands.
     fn open(&self, cell: IVec3) -> bool {
         let slot = self.slot(cell);
         if let Some(bits) = slot.map(|s| s.get()).filter(|b| b & OPEN_KNOWN != 0) {
             return bits & OPEN != 0;
         }
-        let open = (0..self.walker.height).all(|h| !self.solid(cell + IVec3::Y * h));
+        // Standing on something low in the cell (a slab, a sill), its head is that much
+        // higher, in the cell over its height.
+        // A low piece over its floor (a slab, a sill, a beam) is in its way as much as a
+        // wall, and over a low floor so is any piece whose foot is under its head.
+        let rise = self.rise(cell);
+        let open = (0..self.walker.height).all(|h| !self.solid(cell + IVec3::Y * h) && (h == 0 || !self.boxed(cell + IVec3::Y * h)))
+            && (rise == 0.0 || {
+                let over = cell + IVec3::Y * self.walker.height;
+                !self.solid(over) && self.world.boxes(over).iter().all(|b| b.min.y >= rise)
+            });
         if let Some(slot) = slot {
             slot.set(slot.get() | OPEN_KNOWN | if open { OPEN } else { 0 });
         }
@@ -185,11 +213,40 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         }
         let wet = self.world.water(cell);
         let deep = wet && (self.world.water(cell - IVec3::Y) || self.world.water(cell + IVec3::Y)) || self.world.lava(cell);
-        let bits = if self.world.footing(cell - IVec3::Y) { FLOOR } else { 0 } | if wet { WET } else { 0 } | if deep { DEEP } else { 0 };
+        let floor = self.world.footing(cell - IVec3::Y) || self.rise(cell) > 0.0;
+        let bits = if floor { FLOOR } else { 0 } | if wet { WET } else { 0 } | if deep { DEEP } else { 0 };
         if let Some(slot) = slot {
             slot.set(slot.get() | GROUND_KNOWN | bits);
         }
         bits
+    }
+
+    /// How high what is in a cell that is not in the way comes (a slab, a sill): where a
+    /// body in it stands.
+    fn rise(&self, cell: IVec3) -> f32 {
+        if !self.boxed(cell) {
+            return 0.0;
+        }
+        self.world.boxes(cell).iter().map(|b| b.max.y).fold(0.0, f32::max)
+    }
+
+    /// Whether, going in from where it stands at height `from` in its own cell toward
+    /// (dx, dz), it walks up through `cell` without a hop, course by course (stairs from
+    /// the step side, a roof from the eave), no course higher than a step over the last.
+    fn walks_up(&self, cell: IVec3, from: f32, dx: i32, dz: i32) -> bool {
+        const STRIPS: usize = 16;
+        let boxes = self.world.boxes(cell);
+        let (axis, back) = if dx != 0 { (0, dx < 0) } else { (2, dz < 0) };
+        let mut at = from;
+        (0..STRIPS).all(|i| {
+            // The strip `i` sixteenths in from the side it comes in by.
+            let (near, far) = (i as f32 / STRIPS as f32, (i + 1) as f32 / STRIPS as f32);
+            let (lo, hi) = if back { (1.0 - far, 1.0 - near) } else { (near, far) };
+            let top = boxes.iter().filter(|b| b.min[axis] < hi && b.max[axis] > lo).map(|b| b.max.y).fold(0.0, f32::max);
+            let ok = top <= 1.0 + 1e-3 && top - at <= self.walker.step + 1e-3;
+            at = top;
+            ok
+        })
     }
 
     /// The cells of the square with corner `cell`.
@@ -279,7 +336,10 @@ impl<'a, W: Surroundings> Looker<'a, W> {
             // Up a block: room over its head where it stands to jump, and the square up.
             let up = flat + IVec3::Y;
             let headroom = || self.square(cell).all(|c| !self.solid(c + IVec3::Y * self.walker.height));
-            return (self.walker.climbs && dx * dz == 0 && headroom() && self.stands(up)).then_some(up);
+            // Or walked up, as stairs or a roof are, or a block from a slab.
+            let from = self.square(cell).map(|c| self.rise(c)).fold(0.0, f32::max);
+            let walks = || self.square(flat).all(|c| !self.solid(c) || self.walks_up(c, from, dx, dz));
+            return (dx * dz == 0 && (self.walker.climbs || walks()) && headroom() && self.stands(up)).then_some(up);
         }
         // Over the edge: it drops while the square is clear, as far as a short drop; further
         // than it goes of its own accord only onto open ground.
@@ -371,7 +431,7 @@ mod tests {
         }
     }
 
-    const WOLF: Walker = Walker { height: 1, climbs: true, wary: true, span: 1, drop: SAFE_DROP };
+    const WOLF: Walker = Walker { height: 1, climbs: true, step: crate::creature::STEP, wary: true, span: 1, drop: SAFE_DROP };
 
     #[test]
     fn a_way_goes_through_the_door_and_up_the_step() {
@@ -461,6 +521,88 @@ mod tests {
             let (chaser, wanders) = (cost(&WOLF), cost(&wanderer));
             assert!(wanders <= (BUDGET * 8 * 2) as u64, "over trenches {long:?} long a wanderer's search looked {wanders} times, a chaser's {chaser}");
         }
+    }
+
+    /// Flat ground and a ledge a block up from x = 4, with, at x = 3 along z = 0, `piece`:
+    /// stairs or a roof rising toward +x, or a slab.
+    struct Flight {
+        piece: Vec<crate::physics::Aabb>,
+    }
+
+    impl Surroundings for Flight {
+        fn solid(&self, c: IVec3) -> bool {
+            c.y < 0 || (c.x >= 4 && c.y < 1) || (c == IVec3::new(3, 0, 0) && self.piece.iter().any(|b| b.max.y > 0.501))
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+        fn boxes(&self, c: IVec3) -> &[crate::physics::Aabb] {
+            if c == IVec3::new(3, 0, 0) {
+                &self.piece
+            } else if self.solid(c) {
+                &crate::physics::CUBE
+            } else {
+                &[]
+            }
+        }
+    }
+
+    fn piece(boxes: &[([f32; 3], [f32; 3])]) -> Vec<crate::physics::Aabb> {
+        boxes.iter().map(|&(min, max)| crate::physics::Aabb { min: Vec3::from(min) / 16.0, max: Vec3::from(max) / 16.0 }).collect()
+    }
+
+    #[test]
+    fn one_that_cannot_jump_walks_up_stairs_a_roof_or_a_slab_from_the_low_side_only() {
+        let snail = Walker { climbs: false, ..WOLF };
+        let stairs = piece(&[([0.0, 0.0, 0.0], [16.0, 8.0, 16.0]), ([8.0, 8.0, 0.0], [16.0, 16.0, 16.0])]);
+        let roof = piece(&[([0.0, 0.0, 0.0], [16.0, 4.0, 16.0]), ([4.0, 4.0, 0.0], [16.0, 8.0, 16.0]), ([8.0, 8.0, 0.0], [16.0, 12.0, 16.0]), ([12.0, 12.0, 0.0], [16.0, 16.0, 16.0])]);
+        let slab = piece(&[([0.0, 0.0, 0.0], [16.0, 8.0, 16.0])]);
+        for (name, piece) in [("stairs", stairs.clone()), ("roof", roof), ("slab", slab)] {
+            let flight = Flight { piece };
+            let way = find(&flight, &snail, IVec3::new(0, 0, 0), IVec3::new(7, 1, 0));
+            let way = way.unwrap_or_else(|| panic!("no way up the {name}"));
+            assert!(way.iter().all(|c| c.z.abs() <= 1), "the way up the {name} goes round: {way:?}");
+        }
+        // Stairs turned away, their back to it, are a wall a block high.
+        let back = piece(&[([0.0, 0.0, 0.0], [16.0, 8.0, 16.0]), ([0.0, 8.0, 0.0], [8.0, 16.0, 16.0])]);
+        let flight = Flight { piece: back };
+        let way = find(&flight, &snail, IVec3::new(0, 0, 0), IVec3::new(7, 1, 0));
+        assert!(way.is_none_or(|w| !w.contains(&IVec3::new(3, 1, 0))), "it went up the back of the stairs");
+        // On top of the stairs, a block up, it has room to stand.
+        let low = Flight { piece: stairs };
+        assert!(snail.stands(&low, IVec3::new(3, 1, 0)), "nowhere to stand on top of the stairs");
+    }
+
+    /// A lane one block across between walls, with a slab low in the cell at (3, 1, 0): a
+    /// beam at a tall body's chest.
+    struct Beam;
+
+    const BEAM: [crate::physics::Aabb; 1] = [crate::physics::Aabb { min: Vec3::ZERO, max: Vec3::new(1.0, 0.5, 1.0) }];
+
+    impl Surroundings for Beam {
+        fn solid(&self, c: IVec3) -> bool {
+            c.y < 0 || c.z.abs() == 1 && c.y < 4
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+        fn boxes(&self, c: IVec3) -> &[crate::physics::Aabb] {
+            if c == IVec3::new(3, 1, 0) {
+                &BEAM
+            } else if self.solid(c) {
+                &crate::physics::CUBE
+            } else {
+                &[]
+            }
+        }
+    }
+
+    #[test]
+    fn a_low_piece_at_a_tall_bodys_chest_closes_its_way() {
+        let tall = Walker { height: 2, ..WOLF };
+        let (from, to) = (IVec3::new(0, 0, 0), IVec3::new(6, 0, 0));
+        assert_eq!(find(&Beam, &tall, from, to), None, "a tall body's way runs through a beam at its chest");
+        assert!(find(&Beam, &WOLF, from, to).is_some(), "no way under the beam for a body a block high");
     }
 
     #[test]
@@ -621,6 +763,14 @@ mod cost {
             self.1.set(self.1.get() + 1);
             self.0.footing(c)
         }
+        fn lava(&self, c: IVec3) -> bool {
+            self.1.set(self.1.get() + 1);
+            self.0.lava(c)
+        }
+        fn boxes(&self, c: IVec3) -> &[crate::physics::Aabb] {
+            self.1.set(self.1.get() + 1);
+            self.0.boxes(c)
+        }
     }
 
     /// A wall along x = 0, a doorway `door` blocks across at z = 4 and on.
@@ -642,7 +792,7 @@ mod cost {
     #[test]
     #[ignore]
     fn search_cost() {
-        let wolf = Walker { height: 1, climbs: true, wary: true, span: 1, drop: SAFE_DROP };
+        let wolf = Walker { height: 1, climbs: true, step: crate::creature::STEP, wary: true, span: 1, drop: SAFE_DROP };
         let bear = Walker { height: 2, span: 2, ..wolf };
         for (name, walker) in [("wolf", wolf), ("bear", bear)] {
             for door in [0, 1, 2] {
