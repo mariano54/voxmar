@@ -34,10 +34,10 @@
     done: (face: (22, 46, 30), rim: (118, 214, 120)),
     ready: (face: (66, 50, 18), rim: (246, 205, 107)),
     // The lines from a quest to those after it, `width` interface pixels thick: `done` once
-    // the first is done, `ahead` before. Into a quest that is open, a light runs along the
-    // line from the quest before it, `flow` lengths of the line a second, lit over `glow`
-    // of the line's length.
-    lines: (width: 2, done: (118, 214, 120), ahead: (78, 84, 108), flow: 0.6, glow: 0.35),
+    // the first is done, `ahead` before. Into a quest that is open, a light of `light` runs
+    // along the line from the quest before it, `flow` lengths of the line a second, lit over
+    // `glow` of the line's length, as clear as the line it runs on.
+    lines: (width: 2, done: (118, 214, 120), ahead: (78, 84, 108), flow: 0.6, glow: 0.35, light: (255, 244, 200)),
     // The web's ground: a dot every `spacing` interface pixels, of `dot` at `alpha`.
     grid: (spacing: 12, dot: (120, 130, 170), alpha: 0.3),
 )
