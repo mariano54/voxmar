@@ -504,6 +504,11 @@ impl PeopleDef {
     /// Checks what the people are against the rest of the content: every species is a
     /// villager (placed by settlements, never by the land), and every job and folk work
     /// names a work or kind of building there is (`works`).
+    /// Every species that may live in a settlement, as written.
+    pub fn species(&self) -> Vec<&str> {
+        self.jobs.iter().map(|j| j.species.as_str()).chain(self.folk.iter().map(|f| f.species.as_str())).chain(self.guards.iter().map(|g| g.species.as_str())).collect()
+    }
+
     pub fn check_against(&self, creatures: &voxmar_engine::creature::CreatureRegistry, works: &[String]) -> Result<(), ContentError> {
         let fail = |what: String| Err(ContentError(format!("settlements.ron: people: {what}")));
         let species = self.jobs.iter().map(|j| &j.species).chain(self.folk.iter().map(|f| &f.species)).chain(self.guards.iter().map(|g| &g.species));
