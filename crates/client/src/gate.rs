@@ -637,6 +637,8 @@ struct Gate {
     /// for the distant land, and how many of its tiles were in when placing began.
     arrive_ready: Option<f32>,
     land_at_place: (usize, usize),
+    /// Whether the distant land was told in (`LAND_IN`).
+    land_told: bool,
     /// Progress through a step's own stages, and when the current one began.
     phase: u32,
     phase_since: f32,
@@ -796,6 +798,9 @@ struct Gate {
     /// The walled town nearest the one `/locate settlement town` found, where the observer
     /// judges walls, roofs and jetties: the middle of its square.
     town: IVec3,
+    /// The look for the walled town nearest the town `/locate` found, off the frame: it
+    /// plans every square nearer than the answer, seconds of work.
+    town_search: Option<std::thread::JoinHandle<Option<IVec3>>>,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// The snail struck, so a fallen mark on another creature cannot end its watch.
@@ -1015,6 +1020,7 @@ impl Gate {
             load_parts: [None; LOAD_PARTS.len()],
             arrive_ready: None,
             land_at_place: (0, 0),
+            land_told: false,
             phase: 0,
             phase_since: 0.0,
             settled: 0,
@@ -1093,6 +1099,7 @@ impl Gate {
             settlement: IVec3::ZERO,
             settlement_reply: String::new(),
             town: IVec3::ZERO,
+            town_search: None,
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             quarry_id: None,
@@ -1729,7 +1736,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 75.0,
-        // Two answers waited on, each up to `WALLS_WAIT` server seconds.
+        // Four answers waited on (Hearthside, Snug, the evening in, the dooryard), each up
+        // to `WALLS_WAIT` server seconds only while it does not come.
         Step::HomeWalls => STEP_LIMIT + 10.0,
         // A smoulder waited on up to fire.ron's catching time and 4 s (a panel daubed in
         // that wait); then the catch and the burning out, up to their times and 4 s each from
@@ -1779,6 +1787,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
 }
 
 fn step(world: &mut World, gate: &mut Gate, now: f32) {
+    tell_land_in(world, gate, now);
     music_fades(world, gate, now);
     watch_fire(world, gate);
     if !gate.evening_told {
@@ -7529,8 +7538,9 @@ const WALLS_WAIT: f32 = 8.0;
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
 /// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound), two
 /// of them hide windows, it turns Snug and is a bright room. Then, set to midnight (`/time`,
-/// no waiting for dark), indoors by the hearth it is an evening in, and noon again after.
-/// All of it goes again after, the camp left for the way home.
+/// no waiting for dark), indoors by the hearth it is an evening in, and noon again after;
+/// with the roof off, an awning, a bench and a hay bale set out about it, a dooryard. All of
+/// it goes again after, the camp left for the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase();
     let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
@@ -7543,6 +7553,9 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let (low, high) = (bag + IVec3::new(-5, 0, -3), bag + IVec3::new(3, 3, 3));
     let (hearth, light) = (bag + IVec3::new(0, 0, 2), bag + IVec3::new(-3, 0, -2));
     let panes = [IVec3::new(bag.x - 1, bag.y + 1, low.z), IVec3::new(bag.x + 1, bag.y + 1, low.z)];
+    // The yard, set out in the room once its roof is off: an awning over the stand's corner,
+    // a bench and a hay bale under the open sky.
+    let yard = [(bag + IVec3::new(-2, 2, -2), "red_awning"), (bag + IVec3::new(1, 0, -2), "oak_bench"), (bag + IVec3::new(2, 0, 1), "hay_bale")];
     let walls = |net: &Net, block: &str| {
         for (a, b) in [
             (low, IVec3::new(low.x, high.y, high.z)),
@@ -7558,7 +7571,7 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         walls(net, "air");
         roof(net, "air");
-        for at in [hearth, light] {
+        for at in [hearth, light].into_iter().chain(yard.map(|(at, _)| at)) {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("effect clear");
@@ -7620,16 +7633,33 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
             }
         }
         // At midnight, indoors at home by the hearth: an evening in, its chip, and its line
-        // (told once a session, so seen at any point in the run).
-        _ => {
+        // (told once a session, so seen at any point in the run). Then noon, the roof off, and
+        // the yard set out.
+        3 => {
             let (evening, told) = (has(world, "base:evening_in"), gate.evening_told);
-            if evening && told {
+            let done = evening && told;
+            if done {
                 gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()));
-                world.resource::<Net>().command("time set noon");
-                leave(world, gate);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")));
-                world.resource::<Net>().command("time set noon");
+            }
+            if done || gate.waited_out(WALLS_WAIT) {
+                let net = world.resource::<Net>();
+                net.command("time set noon");
+                roof(net, "air");
+                for (at, block) in yard {
+                    net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
+                }
+                gate.advance(now);
+            }
+        }
+        // Under the sky again, an awning, a bench and a bale about the home: a dooryard.
+        _ => {
+            if has(world, "base:dooryard") {
+                gate.check("home: dooryard", Ok("the roof off, an awning, a bench and a hay bale set out about the home showed the Dooryard chip".into()));
+                leave(world, gate);
+            } else if gate.waited_out(WALLS_WAIT) {
+                gate.check("home: dooryard", Err(format!("{waited:.1} server s after taking the roof off and setting out {yard:?}: Dooryard chip false, Evening in {}", has(world, "base:evening_in"))));
                 leave(world, gate);
             }
         }
@@ -11113,10 +11143,10 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// The building pieces the pieces step sets (blocks_building.ron), in a facing or two.
-const PIECES: [&str; 23] = [
+const PIECES: [&str; 25] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
-    "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing",
+    "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing", "thatch_corner_east", "birch_shingles_inner_corner",
 ];
 /// How many pieces the player judges from one spot before the middle one: three, so the
 /// crosshair turned to a piece beside it reaches it before crossing a neighbour.
@@ -14027,9 +14057,9 @@ const WOLF: &str = "base:wolf";
 const CLIMB_AT: IVec3 = IVec3::new(0, 0, 36);
 /// Blocks back along the step's top the player stands once the wolf is struck.
 const CLIMB_BACK: f32 = 3.0;
-/// What the climb allows past the wolf's recovery, thoughts, run over the way and wind-up:
-/// the client's frames. Without a client the wolf strikes within those alone
-/// (`creatures::way_tests`, `a_wolf_bitten_from_a_step_comes_up_and_strikes_within_the_climb_allowance`
+/// What the climb allows past the wolf's thoughts, chase and wind-up: the client's frames.
+/// Without a client the wolf comes in reach within its chase and strikes at its next thought
+/// (`creatures::way_tests`, `a_wolf_let_go_below_a_step_comes_up_it_and_strikes_within_its_chase`
 /// in the server).
 const CLIMB_SPARE: f32 = 0.5;
 
@@ -14042,30 +14072,29 @@ struct ClimbRun {
     /// The blows each way the server had answered as the phase began.
     struck: u32,
     hurts: u32,
-    /// The wolf's blows at the player before the timing began: the count taken of them; the
-    /// latest, at the server seconds taken in by the frame before it was seen (it came
-    /// after them); and the server seconds of the last frame.
-    told: u32,
-    bitten: Option<f32>,
-    taken_before: f32,
-    /// Server seconds the wolf is allowed, from the player standing back to its blow, and
-    /// what they were made of.
+    /// Server seconds the wolf is allowed, from its being let go to its blow, and what they
+    /// were made of.
     allowed: f32,
     allowance: String,
-    /// The wolf at its highest, and where it was when the player stood back.
+    /// The wolf at its highest; where it stood held as it was let go, and where it was first
+    /// seen to move from there.
     highest: f32,
+    held_at: Option<Vec3>,
     from: Vec3,
     /// `Gate::frames` as the phase began.
     frames_at: u32,
 }
 
-/// A wolf on level ground below a step a block high: struck from the step's edge, then,
-/// with the player three blocks back along the top, it comes up the step and strikes.
-/// What is judged derives from the setup: its blow lands with its feet up on the step,
-/// within the server seconds of what is left of its recovery from a blow it struck at the
-/// edge, a thought to start the chase and one to strike in reach (`NEAR_THINK_LONGEST`
-/// each), its own run over the way from where it was to its reach of the player, its
-/// wind-up and `CLIMB_SPARE`. Before the fix to heads meeting
+/// A wolf held at the foot of a step a block high (`/summon ... held`): struck from the
+/// step's edge, then let go (`/creatures release`) with the player three blocks back along
+/// the top, it comes up the step and strikes. What is judged derives from the setup: timed
+/// from its first move (its first thought once let go), its blow lands with its feet up on
+/// the step within the server seconds of its chase up the step to its reach of the player by
+/// its own physics (`motion::chase_with_hop`: its way at its run, the hop's time in the air,
+/// its gathering speed), a thought to strike once in reach (`NEAR_THINK_LONGEST`), its
+/// wind-up and `CLIMB_SPARE`.
+/// Held, it is below the step when let go, so the step is climbed every run: let loose at
+/// the edge, it had come up while it fought there. Before the fix to heads meeting
 /// steps (`motion::step`) a wolf coming straight at a step met it with its head first and
 /// was turned along it.
 fn climb(world: &mut World, gate: &mut Gate, now: f32) {
@@ -14099,27 +14128,14 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
         gate.climb.frames_at = gate.frames;
         gate.advance(now);
     };
-    // A blow the wolf strikes at the edge holds it its recovery, and it may come on to the
-    // end: so the latest before the timing begins, at the earliest it could have been.
-    if gate.phase > 0 && gate.climb.allowed == 0.0 {
-        let fighting = world.resource::<crate::fight::Fighting>();
-        let new = fighting.hurt_count.saturating_sub(gate.climb.told) as usize;
-        if fighting.hurt.iter().rev().take(new).any(|h| Some(h.0) == gate.climb.wolf) {
-            gate.climb.bitten = Some(gate.climb.taken_before);
-        }
-        gate.climb.told = fighting.hurt_count;
-    }
-    gate.climb.taken_before = gate.server_now;
     match gate.phase {
         0 => {
             // In creative while it is built: level ground, the step across it a block high
             // from the edge on, the wild creatures about it sent away, and the wolf summoned
-            // below it, two blocks out.
+            // below it, two blocks out, and held there.
             gate.climb = ClimbRun {
                 before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(),
-                told: world.resource::<crate::fight::Fighting>().hurt_count,
                 highest: f32::MIN,
-                taken_before: gate.server_now,
                 ..default()
             };
             let net = world.resource::<Net>();
@@ -14133,7 +14149,7 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
             net.command("creatures disperse");
             // /summon sets the first one 1.8 blocks west of the cell's middle (`summon`):
             // asked two east, it lands about on the edge's line.
-            net.command(&format!("summon {} 1 {} {} {}", WOLF.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
+            net.command(&format!("summon {} 1 {} {} {} held", WOLF.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
             advance(gate);
         }
         1 => {
@@ -14191,38 +14207,57 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
                 fail(world, gate, format!("the wolf went out of view (its feet {:.2} up at most)", gate.climb.highest));
                 return;
             };
-            // Timed from this client's player standing back, within a quarter block.
+            // Let go once this client's player stands back, within a quarter block; timed from
+            // its first move seen, which its first thought made.
             if gate.climb.allowed == 0.0 {
-                // A blow before it stands back was struck at the edge: not counted.
+                // A blow before it moves was struck at the edge: not counted.
                 gate.climb.hurts = world.resource::<crate::fight::Fighting>().hurt_count;
-                if me.xz().distance(back.xz()) > 0.25 {
+                let Some(held_at) = gate.climb.held_at else {
+                    if me.xz().distance(back.xz()) > 0.25 {
+                        if waited(gate, NARROW_WAIT) {
+                            fail(world, gate, format!("the player never came to stand back along the step: at {me:.2}, sent to {back:.2}"));
+                        }
+                        return;
+                    }
+                    world.resource::<Net>().command("creatures release");
+                    gate.climb.held_at = Some(view.position);
+                    to_phase(gate, 3, now);
+                    gate.climb.frames_at = gate.frames;
+                    return;
+                };
+                if view.position.distance(held_at) < 0.05 {
                     if waited(gate, NARROW_WAIT) {
-                        fail(world, gate, format!("the player never came to stand back along the step: at {me:.2}, sent to {back:.2}"));
+                        fail(world, gate, format!("the wolf never moved from {held_at:.2} once let go"));
                     }
                     return;
                 }
-                // What is left of its recovery from its last blow at the edge, a thought to
-                // set off and one to strike once in reach; its way, from its body's front to
-                // its reach of the player, at its run; and its wind-up before the blow lands.
+                // Held where it stood, its chase is from there: its first move is seen a frame
+                // late at most, which `CLIMB_SPARE` is for.
+                let up = held_at.y - at.y as f32;
+                if up > 0.5 {
+                    fail(world, gate, format!("the wolf was held {up:.2} up the step, not at its foot: at {held_at:.2}"));
+                    return;
+                }
+                // A thought to strike once in reach; its chase, from its body's edge where it
+                // stood to its reach of the player, by its own physics; and its wind-up before
+                // the blow lands.
                 let content = &world.resource::<Launch>().content;
-                let def = &content.creatures.get(species).def;
-                let run = def.movement.run.max(0.1);
-                let attack = def.attack;
-                let reach = attack.map_or(1.0, |a| a.reach);
-                let windup = attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
-                let recovery = attack.and_then(|a| a.recovery).unwrap_or(content.combat.feel.creature_recovery).max(0.0);
-                let held = gate.climb.bitten.map_or(0.0, |at| (at + recovery - gate.server_now).clamp(0.0, recovery));
-                let thoughts = 2.0 * voxmar_server::NEAR_THINK_LONGEST as f32 / voxmar_protocol::TICKS_PER_SECOND as f32;
-                let half = def.body.size.0 * view.scale / 2.0;
-                let way = (view.position.xz().distance(me.xz()) - half - reach).max(0.0);
-                gate.climb.allowed = held + thoughts + way / run + windup + CLIMB_SPARE;
+                let creature = content.creatures.get(species);
+                let movement = &creature.def.movement;
+                let windup = creature.def.attack.and_then(|a| a.windup).unwrap_or(content.combat.feel.creature_windup);
+                let second = voxmar_protocol::TICKS_PER_SECOND as f32;
+                let thought = voxmar_server::NEAR_THINK_LONGEST as f32 / second;
+                let way = (creature.edge(held_at.xz().distance(me.xz()), view.scale) - creature.longest_reach(0)).max(0.0);
+                let chase = voxmar_engine::creature::motion::chase_with_hop(movement, way, movement.run, 1.0 / second);
+                gate.climb.allowed = chase + thought + windup + CLIMB_SPARE;
                 gate.climb.allowance = format!(
-                    "{held:.2} s left of its {recovery:.2} s recovery, {thoughts:.2} s for two thoughts, {way:.2} blocks at its run of {run:.2} a second, a wind-up of {windup:.2} s and {CLIMB_SPARE:.1} s to spare"
+                    "a chase of {chase:.2} s ({way:.2} blocks at its run of {:.2} a second, the hop up and its gathering speed), {thought:.2} s for a thought in reach, a wind-up of {windup:.2} s and {CLIMB_SPARE:.1} s to spare",
+                    movement.run
                 );
-                gate.climb.from = view.position;
+                gate.climb.from = held_at;
                 to_phase(gate, 3, now);
                 gate.climb.frames_at = gate.frames;
-                info!("gate: climb: the player stands back at {me:.2}, the wolf at {:.2}; allowed {:.2} server s ({})", view.position, gate.climb.allowed, gate.climb.allowance);
+                info!("gate: climb: let go at {held_at:.2} with the player back at {me:.2}, the wolf first seen moving at {:.2}; allowed {:.2} server s ({})", view.position, gate.climb.allowed, gate.climb.allowance);
                 return;
             }
             let up = view.position.y - at.y as f32;
@@ -15988,6 +16023,8 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     // At the corner away from the fire, so it stands behind the hearthstone as the player
     // by the fire sees it: at the near corner it is in the way of a click on its top.
     let chimney = [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)];
+    // Carried up a brick flue to a pot, which smokes in the chimney's place.
+    let (flue, pot) = (chimney[1] + IVec3::Y, chimney[1] + IVec3::Y * 2);
     // A cottage stove the other side of the fire, cooked at after the hearth.
     let stove = fire + IVec3::new(-2, 0, 0);
     // The campfire's count ends `FIRE_WATCH` after it began, in whichever phase that falls.
@@ -16133,27 +16170,27 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             for at in hearth_ring(hearth) {
                 net.command(&format!("setblock {} {} {} cobblestone", at.x, at.y, at.z));
             }
-            for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney")] {
+            for (at, block) in [(hearth, "hearthstone"), (chimney[0], "chimney"), (chimney[1], "chimney"), (flue, "chimney_stack"), (pot, "chimney_pot")] {
                 net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
             }
             gate.advance(now);
         }
         // A Homestead Hearth beside it, a hearthstone in a ring of stone with a chimney two
-        // tall at its corner: cold, the chimney does not smoke; lit, its top smokes (`over`
-        // the hearth), as home does from across a valley.
+        // tall at its corner, carried up a flue to a pot: cold, nothing smokes; lit, the pot
+        // smokes (the chimney's smoke, `over` the hearth), as home does from across a valley.
         7 => {
             let (placed, lit) = {
                 let client = world.resource::<ClientWorld>();
-                (client.registry.id("base:chimney").is_some_and(|c| client.block(chimney[1]) == Some(c)), client.fires.contains(&hearth))
+                (client.registry.id("base:chimney_pot").is_some_and(|c| client.block(pot) == Some(c)), client.fires.contains(&hearth))
             };
             if placed && lit {
-                world.resource_mut::<crate::emitters::Emitters>().watch(chimney[1]);
+                world.resource_mut::<crate::emitters::Emitters>().watch(pot);
                 gate.chimney_since = Some(now);
                 hearth_lit(world, gate, now, stove);
             } else if placed {
                 // A cold hearth's chimney gives nothing off.
                 let amount = world.resource::<crate::render::particles::Particles>().amount;
-                let cold = world.resource::<crate::emitters::Emitters>().rate_of(chimney[1], world.resource::<ClientWorld>(), amount);
+                let cold = world.resource::<crate::emitters::Emitters>().rate_of(pot, world.resource::<ClientWorld>(), amount);
                 if cold > 0.0 {
                     gate.check("chimney smoke", Err(format!("the chimney of a cold hearth smokes ({cold:.2} a second)")));
                     hearth_lit(world, gate, now, stove);
@@ -16178,7 +16215,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // Raw small game in hand, right clicks on the standing hearth, then on the stove, each
         // cook one as the campfire did, while the lit chimney is watched.
         8 | 9 => {
-            chimney_watch(world, gate, now, chimney[1]);
+            chimney_watch(world, gate, now, pot);
             let (at, name, check) = if gate.phase == 8 { (hearth, "base:hearthstone", "hearth: cooks") } else { (stove, "base:cottage_stove", "stove: cooks") };
             let (placed, raw) = {
                 let client = world.resource::<ClientWorld>();
@@ -16236,7 +16273,7 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         // The chimney's watch, if still open, decides before the hearth comes down.
         10 => {
-            chimney_watch(world, gate, now, chimney[1]);
+            chimney_watch(world, gate, now, pot);
             if gate.chimney_since.is_none() {
                 gate.next(Step::HomeMotif, now);
             }
@@ -16245,11 +16282,12 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// The Cook step's hearth, its stove and chimney, from where that step stood.
-fn cook_hearth(gate: &Gate) -> (IVec3, [IVec3; 2], IVec3) {
+/// The Cook step's hearth, its stove and chimney (with its flue and pot), from where that
+/// step stood.
+fn cook_hearth(gate: &Gate) -> (IVec3, [IVec3; 4], IVec3) {
     let fire = gate.feet + IVec3::new(0, 0, 14);
     let hearth = fire + IVec3::new(3, 0, 0);
-    (hearth, [hearth + IVec3::new(1, 1, 1), hearth + IVec3::new(1, 2, 1)], fire + IVec3::new(-2, 0, 0))
+    (hearth, [1, 2, 3, 4].map(|y| hearth + IVec3::new(1, y, 1)), fire + IVec3::new(-2, 0, 0))
 }
 
 /// The home motif, at the Cook step's Homestead Hearth, lit and so home: a roof of planks
@@ -16387,9 +16425,9 @@ fn chimney_watch(world: &mut World, gate: &mut Gate, now: f32, top: IVec3) {
     gate.chimney_owed = 0.0;
     gate.chimney_since = None;
     gate.check("chimney smoke", if done {
-        Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the chimney's top in {watched:.1} s ({owed:.1} owed)"))
+        Ok(format!("no smoke while the hearth was cold; lit, {count} puffs rose from the pot atop the chimney's flue in {watched:.1} s ({owed:.1} owed)"))
     } else {
-        Err(format!("only {count} puffs rose from the chimney's top over a hearthstone in {watched:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
+        Err(format!("only {count} puffs rose from the pot atop a chimney's flue over a hearthstone in {watched:.1} s, under {CHIMNEY_PARTICLES} with {owed:.1} owed ({why})"))
     });
 }
 
@@ -16399,10 +16437,10 @@ fn hearth_ring(hearth: IVec3) -> impl Iterator<Item = IVec3> {
 }
 
 /// Takes the Cook step's hearth, its ring and chimney, and the stove down, and goes on.
-fn hearth_done(world: &mut World, gate: &mut Gate, now: f32, hearth: IVec3, chimney: [IVec3; 2], stove: IVec3) {
+fn hearth_done(world: &mut World, gate: &mut Gate, now: f32, hearth: IVec3, chimney: [IVec3; 4], stove: IVec3) {
     let net = world.resource::<Net>();
     net.command(&format!("fill {} {} {} {} {} {} air", hearth.x - 1, hearth.y, hearth.z - 1, hearth.x + 1, hearth.y, hearth.z + 1));
-    for at in [chimney[0], chimney[1], stove] {
+    for at in chimney.into_iter().chain([stove]) {
         net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
     }
     gate.next(Step::Dry, now);
@@ -17536,13 +17574,16 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 return;
             };
             // Not every town is walled (a size's `walls` chance): the walls are judged at
-            // the walled town nearest the one found.
-            let walled = world
-                .resource::<crate::render::lod::WorldGenerator>()
-                .get()
-                .cloned()
-                .and_then(|g| g.settlements_near(at.xz(), TOWN_RADIUS).into_iter().filter(|s| s.size == "town" && s.wall_block.is_some()).min_by_key(|s| (s.centre.xz() - at.xz()).length_squared()));
-            let Some(walled) = walled else {
+            // the walled town nearest the one found, looked for on a thread of its own, as
+            // planning the squares on the way held a frame for seconds.
+            let Some(search) = gate.town_search.take_if(|search| search.is_finished()) else {
+                if gate.town_search.is_none() {
+                    let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned();
+                    gate.town_search = Some(std::thread::spawn(move || generator?.nearest_settlement(at.xz(), TOWN_RADIUS, |s| s.size == "town" && s.wall_block.is_some()).map(|s| s.centre)));
+                }
+                return;
+            };
+            let Some(walled) = search.join().ok().flatten() else {
                 gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));
                 gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                 gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
@@ -17550,7 +17591,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.advance(now);
                 return;
             };
-            let at = walled.centre;
+            let at = walled;
             gate.town = at;
             if let Some(observer) = gate.observer.as_mut() {
                 observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
@@ -18577,6 +18618,27 @@ fn land(world: &World, gate: &mut Gate) {
             Ok(format!("{:.0}% of {grass} grass blocks carry a plant, {:.0}% of them tall grass", 100.0 * cover, 100.0 * tall_share))
         },
     );
+}
+
+/// The file in the gate's directory written once the distant land is first in: `tools/gate`
+/// holds the test binaries until it is there (or the game has ended). The land is the slowest
+/// part of loading, built on this game's own low-priority workers, and the tests beside it
+/// took the Mac's cores from it: with 20 of its 568 tiles in when placing began, breaking
+/// waited 42 s for it (`Step::Collect`), where alone it is in within a few seconds.
+const LAND_IN: &str = "land-in";
+
+/// Writes `LAND_IN` the first frame the distant land is all in.
+fn tell_land_in(world: &World, gate: &mut Gate, now: f32) {
+    if gate.land_told {
+        return;
+    }
+    let (tiles, wanted) = world.resource::<Lod>().progress();
+    if wanted > 0 && tiles >= wanted {
+        gate.land_told = true;
+        if let Err(e) = std::fs::write(gate.dir.join(LAND_IN), format!("{now:.1}\n")) {
+            error!("gate: could not write {LAND_IN}: {e}");
+        }
+    }
 }
 
 /// What being loaded takes, in `load_parts`'s order, as the load line names them.
