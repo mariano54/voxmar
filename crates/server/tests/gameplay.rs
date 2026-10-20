@@ -564,9 +564,17 @@ impl Client {
     /// server sends only land it holds, so once the client has it, so has the server.
     #[track_caller]
     fn land_round(&mut self) {
+        self.land_within(1);
+    }
+
+    /// Waits until the client has every column within `radius` columns of the player's
+    /// (across, a square as the server streams them): with `radius` the view distance, all
+    /// the land the server will load round where the player stands.
+    #[track_caller]
+    fn land_within(&mut self, radius: i32) {
         self.pump_until(|c| {
             let at = ColumnPos::of_block(c.position.floor().as_ivec3());
-            (-1..=1).all(|dx| (-1..=1).all(|dz| c.world.contains(at.offset(dx, dz))))
+            (-radius..=radius).all(|dx| (-radius..=radius).all(|dz| c.world.contains(at.offset(dx, dz))))
         });
     }
 
@@ -3598,6 +3606,9 @@ fn a_settlement_come_back_to_holds_its_people_once() {
     let mut client = settlement_client();
     let tp = to_settlement(&mut client, "", "midnight");
     client.ok("/time freeze");
+    // A person comes out only onto land the server holds, so on a busy machine they kept
+    // coming as the land came in, past twenty looks: the looks begin once it is all in.
+    client.land_within(2);
     // Settled: the same people two looks running. On a loaded machine the server can still
     // be bringing them in after three looks, so it looks until they hold still.
     let mut before = census(&client);
@@ -6099,7 +6110,10 @@ fn a_coke_oven_bakes_coal_into_coke_that_a_blast_furnace_blows_with_ore_into_two
     let (coal, coke, ore, ingot) = (blocks.expect("base:coal_ore"), blocks.expect("base:coke"), blocks.expect("base:iron_ore"), blocks.expect("base:iron_ingot"));
     let count = |c: &Client, item| c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     client.pump_until(|c| count(c, coal) == 1 && c.world.block(oven) == c.content.blocks.id("base:coke_oven") && c.world.block(furnace + IVec3::X) == c.content.blocks.id("base:bellows"));
-    // The coal goes in, and the oven bakes it by its own heat.
+    // The coal goes in once the land round is in, and the oven bakes it by its own heat.
+    // Waited for after it went in (`machine_says`), the land took longer on a busy machine
+    // than the bake: the first ask found it done, idle.
+    client.land_round();
     use_machine(&mut client, oven);
     client.pump_until(|c| count(c, coal) == 0);
     machine_says(&mut client, &format!("{} {} {}", oven.x, oven.y, oven.z), "making Coke", 10);

@@ -391,6 +391,7 @@ impl Decor {
     /// its candidate, writing only the column's own blocks.
     #[allow(clippy::too_many_arguments)]
     pub fn place(&self, id: DecorId, area: &Area, site: &Site, base: IVec3, rng: &mut Rng, blocks: &mut Blocks, parts: &mut TreeParts) {
+        let ground = self.list[id.0 as usize].ground;
         match &self.list[id.0 as usize].form {
             Form::Patch { radius, top } => self.patch(area, site, base, *radius, top, rng, blocks),
             Form::Boulder { radius, stones, moss } => {
@@ -545,8 +546,9 @@ impl Decor {
                     }
                     let g = area.height(x, z);
                     let at = IVec3::new(x, g + 1, z);
-                    // Only on open soil within this column: a nodule never hangs over a drop.
-                    if (g + 1 - base.y).abs() > 2 || !blocks.contains(at) || !self.soil(area, blocks, IVec3::new(x, g, z)) {
+                    // Only on open ground it stands on within this column: a nodule never hangs
+                    // over a drop.
+                    if (g + 1 - base.y).abs() > 2 || !blocks.contains(at) || !self.open(area, blocks, IVec3::new(x, g, z), ground) {
                         continue;
                     }
                     blocks.put_if_air(at, *block);
@@ -620,8 +622,14 @@ impl Decor {
 
     /// Whether the block at `cell` is open soil an ornament may repaint or grow on.
     fn soil(&self, area: &Area, blocks: &Blocks, cell: IVec3) -> bool {
+        self.open(area, blocks, cell, ground_bit(Ground::Soil))
+    }
+
+    /// Whether the block at `cell` is open ground of one of `grounds` (bits of
+    /// [`ground_bit`]), out of the water with nothing but plants above it.
+    fn open(&self, area: &Area, blocks: &Blocks, cell: IVec3, grounds: u8) -> bool {
         let above = blocks.get(cell + IVec3::Y);
-        area.world.terrain.ground(blocks.get(cell)) == Ground::Soil
+        grounds & ground_bit(area.world.terrain.ground(blocks.get(cell))) != 0
             && (above.is_air() || area.world.terrain.is_plant(above))
             && !area.geology.get(cell.x, cell.z).submerged()
     }
