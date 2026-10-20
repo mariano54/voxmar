@@ -1700,7 +1700,9 @@ mod tests {
     fn an_item_no_way_gives_fails_to_load_named_with_its_package() {
         let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
         let content = load_content(&assets).unwrap();
-        assert_eq!(recipe_book(&content).unsourced(&content.blocks), (Vec::new(), Vec::new()), "the game's own items each have a way, and no creative_only tag is stale");
+        let named = |ids: Vec<voxmar_engine::block::BlockId>| ids.into_iter().map(|id| content.blocks.def(id).name.clone()).collect::<Vec<_>>();
+        let (dead, stale) = recipe_book(&content).unsourced(&content.blocks);
+        assert_eq!((named(dead), named(stale)), (Vec::new(), Vec::new()), "the game's own items each have a way, and no creative_only tag is stale");
         let dir = std::env::temp_dir().join(format!("voxmar-no-way-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let mods = dir.join("content");
