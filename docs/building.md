@@ -24,6 +24,9 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Stone flue, hood | `stone_flue`, `chimney_hood` | a cobble flue as the brick one; a brick skirt round a hearth narrowing to a flue | | 4 cobblestone and clay make 2 (2); 5 stone bricks make 1 (6) |
 | Jetty beam | `<timber>_jetty_beam` | a joist along the top of the cell, out past the wall, a brace stepping down to the wall | overhang towards the placer | 2 beams, a post make 2 (4) |
 | Door frame | `<timber>_door_frame` (`_top`) | jambs either side and a lintel, two blocks high; stops nothing | placed whole, as a door; faces the placer | 2 posts, a beam make 1 (3) |
+| Window frame | `<timber>_window_frame` | jambs, a sill and a lintel round an opening, one block high; stops nothing | faces the placer | 2 posts, 2 beams make 2 (3) |
+| Shuttered window | `<timber>_shuttered_window` (`_shut`) | a lattice window with two leaves on its face, standing out open, across it shut | faces the placer; a right click shuts and opens them | a lattice window and shutters make 1 (3) |
+| Arrow slit | `stone_arrow_slit` | dressed stone with an upright slit three texels wide through it | the slit runs away from the placer | 2 stone bricks, a brick slab make 2 (5) |
 
 The home's ladder runs from a hide lean-to through wattle and daub and timber to stone and
 brick. Every piece on it carries a shelter tag for how well it keeps the weather out of a
@@ -35,7 +38,20 @@ and the stone flue cobbles laid in clay.
 
 Timber posts, beams and jetty beams are sound, lattices draughty; thatch and shingles are
 both sound (the trade between them is fire); the stone flue and the hood are sound. A door
-frame is an opening, not a wall, and carries no grade, as an open door or shutter does not.
+or window frame is an opening, not a wall, and carries no grade, as an open door or shutter
+does not: a room with an empty frame is open there.
+
+A window walls a room in but lets the weather through: a lattice window, a shuttered one
+left open and an arrow slit are draughty, and carry `draught`, the tag of a wall a draught
+comes through (which a draughty home's whistle can listen for). `draught` means an open
+gap: an oiled-hide window or old glass is a draughty wall with no gap in it, so it
+carries no `draught`. A room with them is as
+closed as without, and as Snug, but each is a face short of sound: enough of them cost a
+room Cosy, which asks nine tenths sound. Shut, the shutters are a sound wall and keep the
+light out. Every window lets light in: a block tagged `window`, `lattice`, `window_frame`,
+`slit` or `draught`, or lit through, is refused at load if it is a whole cube or dims light
+by more than 2 (`light_filter`); a misspelt `shelter:` tag, or `draught` on anything but a
+draughty wall, is refused too.
 The home's load check (`Rules::check_shelters`) holds every solid building or roof block
 but furniture to exactly one grade.
 
