@@ -68,18 +68,22 @@ impl Server {
         }
     }
 
-    /// Uses breaking or tilling the block at `pos` takes from what `agent` holds.
-    pub(crate) fn wear_on_block(&mut self, agent: PlayerId, pos: voxmar_engine::glam::IVec3, tilling: bool) {
+    /// Uses breaking or tilling the block at `pos` takes from the tool it began with: `tool`
+    /// is the hotbar slot in hand then and what was in it. One switched to since is not
+    /// worn, and one since moved out of that slot is not found there.
+    pub(crate) fn wear_on_block(&mut self, agent: PlayerId, pos: voxmar_engine::glam::IVec3, tilling: bool, (slot, began): (usize, Option<voxmar_engine::block::BlockId>)) {
         let tools = &self.content.tools;
+        let there = self.players.get(&agent).and_then(|p| p.inventory.get(slot)).map(|s| s.item);
+        if there != began {
+            return;
+        }
         let uses = if tilling {
-            let held = self.players.get(&agent).and_then(|p| p.held());
-            if held.is_some_and(|item| tools.uses(item) > 0) { tools.wear().till } else { 0 }
+            if began.is_some_and(|item| tools.uses(item) > 0) { tools.wear().till } else { 0 }
         } else {
             let Some(block) = self.block(pos) else { return };
-            let held = self.players.get(&agent).and_then(|p| p.held());
-            tools.break_wear(held, block, self.content.blocks.info(block).hardness)
+            tools.break_wear(began, block, self.content.blocks.info(block).hardness)
         };
-        self.wear_held(agent, uses);
+        self.wear_slot(agent, slot, uses);
     }
 }
 
@@ -132,25 +136,25 @@ mod tests {
         assert!(uses >= 10, "a wooden pickaxe lasts {uses} uses");
         let wear = |server: &Server| server.players[&1].inventory.slots[0].map(|s| s.wear);
         let stone = put(&mut server, "base:stone");
-        server.wear_on_block(1, stone, false);
+        server.wear_on_block(1, stone, false, server.tool_in_hand(1));
         assert_eq!(wear(&server), Some(1), "a stone");
         let planks = put(&mut server, "base:oak_planks");
-        server.wear_on_block(1, planks, false);
+        server.wear_on_block(1, planks, false, server.tool_in_hand(1));
         assert_eq!(wear(&server), Some(3), "planks, which a pickaxe is not made for");
         let grass = put(&mut server, "base:short_grass");
         assert_eq!(server.content.blocks.info(server.content.blocks.expect("base:short_grass")).hardness, 0.0);
-        server.wear_on_block(1, grass, false);
+        server.wear_on_block(1, grass, false, server.tool_in_hand(1));
         assert_eq!(wear(&server), Some(3), "grass breaks at a touch");
         assert_eq!(told(&client), (0, 0));
         // Down to a tenth left, it warns once.
         let warn_at = (uses as f32 * server.content.tools.wear().warn).ceil() as u16;
         server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - warn_at - 1;
         let stone = put(&mut server, "base:stone");
-        server.wear_on_block(1, stone, false);
-        server.wear_on_block(1, stone, false);
+        server.wear_on_block(1, stone, false, server.tool_in_hand(1));
+        server.wear_on_block(1, stone, false, server.tool_in_hand(1));
         assert_eq!(told(&client), (1, 0), "warned once, crossing a tenth left");
         server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - 1;
-        server.wear_on_block(1, stone, false);
+        server.wear_on_block(1, stone, false, server.tool_in_hand(1));
         let pick = server.content.blocks.expect("base:stone_pickaxe");
         let left = server.content.tools.head(pick).map(|head| ItemStack::new(head, 1));
         assert_eq!(server.players[&1].inventory.slots[0], left, "broken, nothing but a head it names is left in the hand");
@@ -174,7 +178,7 @@ mod tests {
             server.tick = tick;
             let stone = put(&mut server, "base:stone");
             for _ in 0..200 {
-                server.wear_on_block(1, stone, false);
+                server.wear_on_block(1, stone, false, server.tool_in_hand(1));
             }
             (server.players[&1].inventory.slots[0].unwrap().wear, server.players[&1].draws.wears)
         };
@@ -216,23 +220,50 @@ mod tests {
         assert_eq!(lying, [("base:iron_pickaxe".to_string(), 1, 4, Some(owner), grave)]);
     }
 
+    /// Mining wears the tool it began with, from its slot: not one switched to before the
+    /// block broke, and nothing if that tool has left its slot.
+    #[test]
+    fn mining_wears_the_tool_it_began_with() {
+        let (mut server, _client) = holding("base:iron_pickaxe", 0);
+        let pick = server.content.blocks.expect("base:iron_pickaxe");
+        let began = server.tool_in_hand(1);
+        assert_eq!(began, (0, Some(pick)));
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[1] = Some(ItemStack::new(pick, 1));
+        player.selected = 1;
+        let wear = |server: &Server, slot: usize| server.players[&1].inventory.slots[slot].map(|s| s.wear);
+        // Enough stones that skill cannot save every use.
+        for _ in 0..5 {
+            let stone = put(&mut server, "base:stone");
+            server.wear_on_block(1, stone, false, began);
+        }
+        assert!(wear(&server, 0).is_some_and(|w| w > 0), "the one it began with: {:?}", wear(&server, 0));
+        assert_eq!(wear(&server, 1), Some(0), "the one switched to");
+        let before = wear(&server, 0);
+        let moved = server.players.get_mut(&1).unwrap().inventory.slots[0].take();
+        server.players.get_mut(&1).unwrap().inventory.slots[7] = moved;
+        let stone = put(&mut server, "base:stone");
+        server.wear_on_block(1, stone, false, began);
+        assert_eq!((wear(&server, 7), wear(&server, 1)), (before, Some(0)), "moved out of its slot, nothing wears");
+    }
+
     /// A hoe wears as it tills; in creative nothing wears; a block a player holds that never
     /// wears (a stick) and a bare hand are untouched.
     #[test]
     fn tilling_wears_and_creative_does_not() {
         let (mut server, _client) = holding("base:wooden_hoe", 0);
         let soil = put(&mut server, "base:dirt");
-        server.wear_on_block(1, soil, true);
+        server.wear_on_block(1, soil, true, server.tool_in_hand(1));
         assert_eq!(server.players[&1].inventory.slots[0].unwrap().wear, server.content.tools.wear().till);
         server.players.get_mut(&1).unwrap().allow_flight = true;
-        server.wear_on_block(1, soil, true);
+        server.wear_on_block(1, soil, true, server.tool_in_hand(1));
         assert_eq!(server.players[&1].inventory.slots[0].unwrap().wear, server.content.tools.wear().till, "creative");
         let (mut server, _client) = holding("base:stick", 0);
         let stone = put(&mut server, "base:stone");
-        server.wear_on_block(1, stone, false);
+        server.wear_on_block(1, stone, false, server.tool_in_hand(1));
         assert_eq!(server.players[&1].inventory.slots[0].unwrap().wear, 0, "a stick never wears");
         server.players.get_mut(&1).unwrap().inventory.slots[0] = None;
-        server.wear_on_block(1, stone, false);
+        server.wear_on_block(1, stone, false, server.tool_in_hand(1));
         assert_eq!(server.players[&1].inventory.slots[0], None);
     }
 

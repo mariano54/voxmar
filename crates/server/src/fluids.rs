@@ -20,6 +20,7 @@ impl Server {
         if changes.is_empty() {
             return;
         }
+        // One pass over what changed, every per-cell hook in it.
         for &(pos, block) in &changes {
             self.dirty.insert(ColumnPos::of_block(pos));
             // Water washes a snare (or a planted flower) away as surely as a hand breaks
@@ -28,6 +29,8 @@ impl Server {
             self.unplaced(pos, block);
             // A flood can wash a bag away: no ghost home where it lay.
             self.home_changed(pos, block);
+            // Water over burning thatch puts it out; over a flame, ends what it lit.
+            self.blaze_changed(pos, block);
         }
         self.send_changes(changes);
     }

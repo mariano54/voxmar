@@ -212,17 +212,18 @@ fn raw(content: &crate::content::Content, item: BlockId) -> bool {
         && !content.cooking.iter().any(|(_, r)| r.output == item)
 }
 
-/// The level of `item` for its worth: the most of what wears or wields it, and the least
-/// level of a recipe that makes it, at the grid or smelted or fired at a station (1 when
-/// nothing says). A dish's Cooking level is not its worth: it says how often it burns.
+/// The level of `item` for its worth: the most of what wears or wields it, the Fishing
+/// level that lands it, and the least level of a way to make it, at the grid or at a
+/// station, a dish's Cooking level among them (1 when nothing says). A fish and the dish
+/// cooked of it are worth alike: a glimmer koi caught at 75 and cooked at 75.
 pub fn level_of(content: &crate::content::Content, item: BlockId) -> u8 {
     let worn = content.combat.wear_level(item);
     let wielded = content.combat.weapon(item).map(|w| w.level);
+    let caught = content.fishing.iter().filter(|c| c.item == item).map(|c| c.def.level).min();
     let crafted = content.recipes.iter().filter(|r| r.output == item).map(|r| r.level);
-    let cooking = content.cooking.skill;
-    let smelted = content.cooking.iter().filter(|(_, r)| r.output == item && r.skill != cooking).map(|(_, r)| r.def.level);
-    let made = crafted.chain(smelted).min();
-    [worn, wielded, made].into_iter().flatten().max().unwrap_or(1).max(1)
+    let cooked = content.cooking.iter().filter(|(_, r)| r.output == item).map(|(_, r)| r.def.level);
+    let made = crafted.chain(cooked).min();
+    [worn, wielded, caught, made].into_iter().flatten().max().unwrap_or(1).max(1)
 }
 
 #[cfg(test)]
@@ -265,9 +266,16 @@ mod tests {
         let pinned = ["hearthstone", "iron_ingot", "iron_sword", "iron_pickaxe", "chainmail_shirt", "bread"].map(of);
         assert_eq!(pinned, [5, 5, 15, 24, 50, 2], "hearthstone, ingot, sword, pickaxe, chainmail shirt, bread");
         // What is fired or smelted is worth its station's level, not a raw material's half:
-        // the 1.25 premium counts at each step (adopted at the piece 6 review).
+        // the 1.25 premium counts at each step (adopted at the piece 6 review). Four fired
+        // clay make two kiln bricks (Farm pacing), so a brick is half what it was.
         let fired = ["crucible", "bloomery", "bronze_ingot", "kiln_bricks"].map(of);
-        assert_eq!(fired, [95, 90, 4, 10], "crucible, bloomery, bronze ingot, kiln bricks");
+        assert_eq!(fired, [51, 46, 4, 5], "crucible, bloomery, bronze ingot, kiln bricks");
+        // A cured hide took ten minutes on a rack: worth more than the raw one (value.ron).
+        assert_eq!([of("raw_hide"), of("hide")], [2, 3], "raw hide, cured hide");
+        // A fish is worth the Fishing level that lands it, and the dish cooked of it its
+        // Cooking level, the same: neither is a raw material's half.
+        let fish = ["raw_trout", "cooked_trout", "raw_tuna", "cooked_tuna", "raw_glimmer_koi", "cooked_glimmer_koi", "bronze_ingot"].map(of);
+        assert_eq!(fish, [5, 5, 40, 40, 2220, 2220, 4], "trout, tuna and glimmer koi, raw and cooked; a bronze ingot at its crucible's level");
         // Every item has a worth, and none is worth nothing.
         let mut known = HashMap::new();
         for item in (0..content.blocks.len() as u16).map(BlockId) {

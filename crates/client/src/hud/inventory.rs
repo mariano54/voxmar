@@ -1253,8 +1253,8 @@ fn tooltip(
             let book = viewer.book().map(|book| origins_and_uses(&locale, &launch.content, book, item)).unwrap_or_default();
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
-                .chain(wear_lines(&locale, &launch.content, item, wear))
                 .chain(tool_line(&locale, &launch.content, item))
+                .chain(wear_lines(&locale, &launch.content, item, wear))
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
                 .chain(armour_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
