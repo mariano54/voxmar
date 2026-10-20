@@ -205,7 +205,7 @@ fn look_up(
     mut commands: Commands,
 ) {
     if viewer.book.is_none() {
-        viewer.book = Some(Arc::new(RecipeBook::new(&launch.content)));
+        viewer.book = Some(Arc::new(voxmar_server::recipe_book(&launch.content)));
     }
     if let Some(StartLookup(name, uses)) = start.as_deref() {
         commands.remove_resource::<StartLookup>();
@@ -489,7 +489,9 @@ fn draw(
     let entries: Vec<Entry> = found.iter().skip(lookup.page * PER_PAGE).take(PER_PAGE).map(|e| (*e).clone()).collect();
     commands.entity(body).despawn_children().with_children(|body| {
         if entries.is_empty() {
-            let key = if lookup.uses { "recipes.none.uses" } else { "recipes.none.recipes" };
+            // An item no way in survival gives says so, rather than to look for it.
+            let creative = content.blocks.def(lookup.item).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY);
+            let key = if lookup.uses { "recipes.none.uses" } else if creative { "recipes.none.creative" } else { "recipes.none.recipes" };
             body.spawn(text(font, locale.format(key, &[("item", &name(lookup.item))]), BODY, MUTED));
         }
         for (entry, wants) in entries.iter().zip(wants.iter().cloned().chain(std::iter::repeat(None))) {
@@ -610,7 +612,30 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
                 item_cell(card, font, images, Some(*tool), None);
             }
         }
-        Method::Drop { .. } | Method::Catch { .. } => {}
+        Method::Trap { trap, .. } => {
+            item_cell(card, font, images, Some(*trap), None);
+        }
+        Method::Bees { block, holding, .. } => {
+            if let Some(held) = holding {
+                item_cell(card, font, images, Some(*held), None);
+                card.spawn(text(font, "+", BODY, MUTED));
+            }
+            item_cell(card, font, images, Some(content.blocks.item_of(*block)), None);
+        }
+        Method::Chest { chest, .. } => {
+            item_cell(card, font, images, Some(*chest), None);
+        }
+        Method::Trade { wants: Some((want, n)), .. } => {
+            let asked = match want {
+                voxmar_engine::wander::Want::Item(item) => Some(*item),
+                voxmar_engine::wander::Want::Tag(tag) => content.blocks.tagged(tag).next(),
+            };
+            item_cell(card, font, images, asked, (*n > 1).then(|| n.to_string()));
+        }
+        Method::Found { tool: Some(tool), .. } => {
+            item_cell(card, font, images, Some(*tool), None);
+        }
+        Method::Drop { .. } | Method::Catch { .. } | Method::Trade { wants: None, .. } | Method::Reward { .. } | Method::Found { tool: None, .. } => {}
     }
 }
 
@@ -679,6 +704,40 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
         Method::Drop { creature: id, chance } => {
             let percent = (chance.min(1.0) * 100.0).round() as u32;
             vec![(locale.format("recipes.drop", &[("creature", &creature(*id)), ("chance", &percent)]), MUTED)]
+        }
+        Method::Trap { trap, creature: id, chance: odds, skill, level: at } => {
+            [(locale.format("recipes.trap", &[("trap", &block(*trap)), ("creature", &creature(*id))]), MUTED)].into_iter().chain(chance(*odds)).chain(level(Some(*skill), *at)).collect()
+        }
+        Method::Bees { block: bees, holding, chance: odds, skill, level: at } => {
+            let bees = block(content.blocks.item_of(*bees));
+            let line = match holding {
+                Some(held) => locale.format("recipes.bees.holding", &[("block", &bees), ("item", &block(*held))]),
+                None => locale.format("recipes.bees", &[("block", &bees)]),
+            };
+            [(line, MUTED)].into_iter().chain(chance(*odds)).chain(level(Some(*skill), *at)).collect()
+        }
+        Method::Chest { chest, chance: odds } => [(locale.format("recipes.chest", &[("chest", &block(*chest))]), MUTED)].into_iter().chain(chance(*odds)).collect(),
+        Method::Trade { event, wants, chance: odds } => {
+            let party = locale.get(&content.wandering.get(*event).title_key()).to_owned();
+            let line = match wants {
+                Some((want, n)) => {
+                    let asked = match want {
+                        voxmar_engine::wander::Want::Item(item) => block(*item),
+                        voxmar_engine::wander::Want::Tag(tag) => content.blocks.tagged(tag).next().map_or_else(|| tag.clone(), block),
+                    };
+                    locale.format("recipes.trade", &[("party", &party), ("count", n), ("item", &asked)])
+                }
+                None => locale.format("recipes.gift", &[("party", &party)]),
+            };
+            [(line, MUTED)].into_iter().chain(chance(*odds)).collect()
+        }
+        Method::Reward { quest } => {
+            let title = content.quests.get(quest).map_or_else(|| quest.clone(), |q| super::quests::title(locale, q));
+            vec![(locale.format("recipes.reward", &[("quest", &title)]), MUTED)]
+        }
+        Method::Found { tool, skill, level: at } => {
+            let tool = tool.map(|tool| (locale.format("recipes.found.tool", &[("tool", &block(tool))]), SOFT));
+            [(locale.get("recipes.found").to_owned(), MUTED)].into_iter().chain(tool).chain(level(*skill, *at)).collect()
         }
     }
 }

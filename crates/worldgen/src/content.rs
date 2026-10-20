@@ -1857,6 +1857,42 @@ pub(crate) const BASE_FILES: [(&str, &str); 19] = [
     ("weather.ron", include_str!("../../../assets/content/base/weather.ron")),
 ];
 
+/// Every string in a RON source, comments left out.
+fn ron_strings(source: &str) -> Vec<String> {
+    let mut strings = Vec::new();
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '/' if chars.peek() == Some(&'/') => {
+                chars.by_ref().find(|&c| c == '\n');
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut last = ' ';
+                for c in chars.by_ref() {
+                    if last == '*' && c == '/' {
+                        break;
+                    }
+                    last = c;
+                }
+            }
+            '"' => {
+                let mut word = String::new();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => word.extend(chars.next()),
+                        '"' => break,
+                        c => word.push(c),
+                    }
+                }
+                strings.push(word);
+            }
+            _ => {}
+        }
+    }
+    strings
+}
+
 impl WorldContent {
     /// The generator's definitions from loaded content packages, checked against their
     /// blocks.
@@ -1896,6 +1932,29 @@ impl WorldContent {
             add("");
         }
         hash
+    }
+
+    /// The blocks the generator's files (every package's, but ambient particles) name, by
+    /// name or by `tag:`: what the world may lay, for the recipe book's "found in the world"
+    /// (`RecipeBook::found`). Names count wherever they stand, so this may hold a block the
+    /// world never lays after all, never leave one out; items that are never placed
+    /// (seeds a wild crop is named by) are left out.
+    pub fn placed<'a>(files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Vec<voxmar_engine::block::BlockId> {
+        let lays = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
+        let mut found = Vec::new();
+        for file in files.filter(|file| lays(&file.name)) {
+            for word in ron_strings(&file.source) {
+                if let Some(tag) = word.strip_prefix("tag:") {
+                    found.extend(registry.tagged(tag));
+                } else if let Some(id) = registry.id(&word).or_else(|| registry.id(&format!("{}:{word}", file.package))) {
+                    found.push(id);
+                }
+            }
+        }
+        found.retain(|&id| !registry.def(id).item);
+        found.sort();
+        found.dedup();
+        found
     }
 
     /// The base package's definitions alone.

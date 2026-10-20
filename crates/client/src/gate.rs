@@ -4929,6 +4929,32 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             }
         }
+        // An item only the creative catalogue has says so when looked up, rather than to
+        // find it in the world; every other item has a way (content would not load).
+        10 => {
+            let Some(item) = creative_only(world) else {
+                gate.check("recipes: creative only", Err("no item is tagged creative_only to look up".into()));
+                gate.advance(now);
+                return;
+            };
+            let mut viewer = world.resource_mut::<RecipeViewer>();
+            if viewer.trail.last().map(|look| look.item) != Some(item) {
+                viewer.trail.clear();
+                viewer.open(item, false);
+                world.resource_mut::<UiState>().recipes_open = true;
+                return;
+            }
+            let (wanted, name) = {
+                let (locale, launch) = (world.resource::<Locale>(), world.resource::<Launch>());
+                let name = locale.block(launch.content.blocks.def(item));
+                (locale.format("recipes.none.creative", &[("item", &name)]), launch.content.blocks.def(item).name.clone())
+            };
+            let drawn = viewer_words(world);
+            if drawn.contains(&wanted) || in_phase > 2.0 {
+                gate.check("recipes: creative only", if drawn.contains(&wanted) { Ok(format!("R over {name} says {wanted:?}")) } else { Err(format!("R over {name} drew {drawn:?}, not {wanted:?}")) });
+                gate.advance(now);
+            }
+        }
         _ => {
             world.resource_mut::<RecipeViewer>().trail.clear();
             let mut ui = world.resource_mut::<UiState>();
@@ -4939,8 +4965,27 @@ fn recipes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
+/// The text-fit tour's `index`th recipe lookup (see [`FIT_LOOKUPS`] and [`FIT_WAYS`]).
+fn fit_lookup(world: &World, index: usize) -> Option<crate::hud::recipes::Lookup> {
+    let blocks = &world.resource::<Launch>().content.blocks;
+    if let Some(&(name, uses)) = FIT_LOOKUPS.get(index) {
+        return blocks.id(name).map(|item| crate::hud::recipes::Lookup { item, uses, page: 0 });
+    }
+    let Some(kind) = FIT_WAYS.get(index - FIT_LOOKUPS.len()) else { return creative_only(world).map(|item| crate::hud::recipes::Lookup { item, uses: false, page: 0 }) };
+    let (_, item, method) = way_kinds(world).into_iter().find(|(found, ..)| found == kind)?;
+    let book = world.resource::<crate::hud::recipes::RecipeViewer>().book()?;
+    let page = book.making(item).iter().position(|entry| entry.method == method).unwrap_or(0) / crate::hud::recipes::PER_PAGE;
+    Some(crate::hud::recipes::Lookup { item, uses: false, page })
+}
+
+/// The first item by name that a player could hold but only the creative catalogue gives.
+fn creative_only(world: &World) -> Option<BlockId> {
+    let blocks = &world.resource::<Launch>().content.blocks;
+    blocks.ids().filter(|&id| blocks.holdable(id) && blocks.def(id).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY)).min_by(|a, b| blocks.def(*a).name.cmp(&blocks.def(*b).name))
+}
+
 /// The kinds of way the recipe step looks up, as `way_kinds` names them.
-const WAY_KINDS: [&str; 6] = ["craft at a level", "machine", "home station", "harvest", "breaking", "fishing"];
+const WAY_KINDS: [&str; 12] = ["craft at a level", "machine", "home station", "harvest", "breaking", "fishing", "trap", "bees", "chest", "trade", "quest reward", "found in the world"];
 
 /// For each of [`WAY_KINDS`] the book has, an item made that way (the first by name) and
 /// the way.
@@ -4955,6 +5000,12 @@ fn way_kinds(world: &World) -> Vec<(&'static str, BlockId, voxmar_engine::recipe
         Method::Harvest { .. } => Some("harvest"),
         Method::Break { .. } => Some("breaking"),
         Method::Catch { .. } => Some("fishing"),
+        Method::Trap { .. } => Some("trap"),
+        Method::Bees { .. } => Some("bees"),
+        Method::Chest { .. } => Some("chest"),
+        Method::Trade { wants: Some(_), .. } => Some("trade"),
+        Method::Reward { .. } => Some("quest reward"),
+        Method::Found { .. } => Some("found in the world"),
         _ => None,
     };
     WAY_KINDS
@@ -8962,6 +9013,10 @@ enum View {
 /// item, an ingredient (with the quests asking for it), a creature's product with a range
 /// of amounts, a cooked dish, a machine's, a home station's, what breaking gravel gives now
 /// and then, a harvest and a catch.
+/// Then, on an item got each of these ways (`way_kinds`, the first by name) on the page with
+/// that way, and last on an item only the creative catalogue has (the first by name).
+const FIT_WAYS: [&str; 6] = ["trap", "bees", "chest", "trade", "quest reward", "found in the world"];
+const FIT_LOOKUP_COUNT: usize = FIT_LOOKUPS.len() + FIT_WAYS.len() + 1;
 const FIT_LOOKUPS: [(&str, bool); 9] = [
     ("base:campfire", false),
     ("base:oak_log", true),
@@ -9026,7 +9081,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     } else {
         [View::Hud, View::Debug, View::Tracker, View::Dead, View::Console, View::Inventory]
             .into_iter()
-            .chain((0..FIT_LOOKUPS.len()).map(View::Recipes))
+            .chain((0..FIT_LOOKUP_COUNT).map(View::Recipes))
             .chain([View::Character, View::Prayers])
             .chain((0..skills).map(View::Guide))
             .chain([View::Quests, View::FirstNight])
@@ -9427,11 +9482,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         world.resource_mut::<crate::hud::journal::JournalView>().page = page;
     }
     let lookup = match view {
-        Some(View::Recipes(index)) => {
-            let (name, uses) = FIT_LOOKUPS[index];
-            let blocks = &world.resource::<Launch>().content.blocks;
-            blocks.id(name).map(|item| crate::hud::recipes::Lookup { item, uses, page: 0 })
-        }
+        Some(View::Recipes(index)) => fit_lookup(world, index),
         _ => None,
     };
     world.resource_mut::<crate::hud::recipes::RecipeViewer>().trail = lookup.into_iter().collect();

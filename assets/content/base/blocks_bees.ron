@@ -18,7 +18,7 @@
         ),
         (
             name: "honey_skep", render: Model, shape: "skep", solid: false, sound: Grass, textures: All("honey_skep"),
-            hardness: 0.5, drops: "bee_skep", color: (214, 160, 50), tags: ["skep", "hive", "bees"],
+            hardness: 0.5, drops: "bee_skep", color: (214, 160, 50), tags: ["creative_only", "skep", "hive", "bees"],
             particles: [(style: Ember, rate: 4.0, at: (0.5, 0.25, 0.5), spread: 0.45, size: 0.35, height: 0.9, color: Some((70, 52, 14)), blend: Some(Cutout))],
         ),
     ],

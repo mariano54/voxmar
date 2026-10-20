@@ -331,6 +331,11 @@ impl Treasure {
         self.chests.iter().map(|(&b, c)| (b, c))
     }
 
+    /// The coin chests hold their gold in, if any.
+    pub fn gold(&self) -> Option<BlockId> {
+        self.gold.map(|(coin, _)| coin)
+    }
+
     /// The age of a lockpick, if `item` is one.
     pub fn pick_age(&self, item: BlockId) -> Option<u8> {
         self.picks.get(&item).copied()
