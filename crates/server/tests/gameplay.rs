@@ -5222,7 +5222,7 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
         while outcomes.len() < 2 {
             // A blow taken lets the creature recover a while before it is provoked again.
             if !outcomes.is_empty() {
-                client.wait_server(1);
+                client.wait_server_asked(1);
             }
             let before = provoke_until_it_winds_up(&mut client, id, slot, name);
             // Only a wind-up begun facing us: one begun facing away (a creature struck from
@@ -5237,7 +5237,7 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
                 askew += 1;
                 assert!(askew <= 6, "the {name} wound up facing away {askew} times");
                 wait_for_blow(&mut client, id, before);
-                client.wait_server(1);
+                client.wait_server_asked(1);
                 continue;
             }
             // Straight back from it, facing it, until the blow lands: a walk's worth each
