@@ -463,8 +463,6 @@ impl QuestRegistry {
                 return Err(RegistryError(format!("quest {} is written in {earlier} and again in {source}", quest.name)));
             }
         }
-        // The quests alone, for the checks that look across the book.
-        let quests: Vec<QuestDef> = written.iter().map(|(q, _)| q.clone()).collect();
         for (quest, source) in &written {
             if quest.tasks.is_empty() {
                 return Err(RegistryError(format!("{source}: quest {} has no task", quest.name)));
