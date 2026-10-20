@@ -711,6 +711,17 @@ mod tests {
     /// and Alchemy wait for their systems (Combat's slices, brewing).
     const UNTRAINED: [&str; 6] = ["core:attack", "core:defence", "core:hitpoints", "core:ranged", "core:magic", "core:alchemy"];
 
+    /// The game's flues, hood and pot carry `CHIMNEY_PIECE_TAG`, so a renamed tag can't
+    /// quietly leave every chimney smoking from under its roof.
+    #[test]
+    fn the_chimney_pieces_carry_the_chimney_piece_tag() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        for name in ["base:chimney_stack", "base:stone_flue", "base:chimney_hood", "base:chimney_pot"] {
+            let id = content.blocks.id(name).unwrap_or_else(|| panic!("no block {name}"));
+            assert!(content.blocks.def(id).has_tag(crate::block::CHIMNEY_PIECE_TAG), "{name} is not a chimney piece");
+        }
+    }
+
     /// Every skill something trains has a way in at level 1: one whose only source asks
     /// for level 5 never leaves level 1 (Construction, with only the altar, did: design
     /// draft 94). And the skills nothing trains are exactly `UNTRAINED`.

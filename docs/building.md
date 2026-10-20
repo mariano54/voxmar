@@ -81,8 +81,8 @@ Chimney pieces (`chimney_piece`: the stone and brick flues, the hood, the pot) c
 hearth's smoke up through a roof: stacked straight over the hearth's chimney (or over any
 block that smokes), its smoke comes out of the top of the stack while flames, embers and
 sparks stay at the fire, so a chimney carried up past the eaves smokes from its pot and not
-under the roof (client `emitters.rs` `flue_top`; a stack taller than eight smokes from its
-eighth piece; tests `only_smoke_goes_up_a_flue` and
+under the roof (client `emitters.rs` `flue_top`; a stack of any height smokes from its top
+piece; tests `only_smoke_goes_up_a_flue` and
 `a_flue_over_a_chimney_carries_its_smoke_up_to_the_pot`; the gate's Cook step builds its
 hearth's chimney with a brick flue and a pot and counts the pot's puffs, "chimney smoke").
 The stone flue comes at Construction 2, before brick, so a thatched house can have one, and
