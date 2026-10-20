@@ -639,18 +639,20 @@ impl Server {
     /// A hit taken spoils a shot being drawn with a weapon whose class says so
     /// (`spoiled_by_hits`): the draw is let go and the meter starts again from
     /// `Feel::cancel_to`, as a guard raised does. The client does the same on the hit it is
-    /// told of (`Fighting::hurt`).
-    fn spoil_draw(&mut self, player: PlayerId, now: f64) {
+    /// told it spoiled (`Hurt::spoiled`, `Fighting::hurt`). Returns whether it did.
+    fn spoil_draw(&mut self, player: PlayerId, now: f64) -> bool {
         let feel = self.content.combat.feel;
-        let Some(fighter) = self.fights.fighters.get_mut(&player) else { return };
-        let Some(aim) = fighter.aim else { return };
+        let Some(fighter) = self.fights.fighters.get_mut(&player) else { return false };
+        let Some(aim) = fighter.aim else { return false };
         if !self.content.combat.spoiled_by_hits(&aim.weapon) {
-            return;
+            return false;
         }
         let timing = self.content.combat.timing(&aim.weapon);
-        if fighter.rhythm.cancel(now, &timing, &feel) {
+        let spoiled = fighter.rhythm.cancel(now, &timing, &feel);
+        if spoiled {
             fighter.aim = None;
         }
+        spoiled
     }
 
     /// Tells a player what came of their blow, with their pips as the server counts them.
@@ -803,15 +805,16 @@ impl Server {
             Some(damage) => (damage, defended),
             None => (0, if defended == Defended::Hit { Defended::Missed } else { defended }),
         };
+        let mut spoiled = false;
         if defended == Defended::Hit && damage > 0 {
             // An unguarded hit costs the rhythm.
             if let Some(fighter) = self.fights.fighters.get_mut(&player) {
                 fighter.rhythm.lose_pips();
             }
-            self.spoil_draw(player, lands);
+            spoiled = self.spoil_draw(player, lands);
         }
         if let Some(p) = self.players.get(&player) {
-            p.connection.send(ServerMessage::Hurt { creature, damage, defended });
+            p.connection.send(ServerMessage::Hurt { creature, damage, defended, spoiled });
         }
     }
 
@@ -926,7 +929,7 @@ impl Server {
         let damage = ((weapon.max_hit(level) as f32 * (1.0 + feel.counter_max_hit)).round() as u16).max(1);
         self.end_charge(creature, Some(stun));
         if let Some(p) = self.players.get(&player) {
-            p.connection.send(ServerMessage::Hurt { creature, damage: 0, defended: Defended::Perfect });
+            p.connection.send(ServerMessage::Hurt { creature, damage: 0, defended: Defended::Perfect, spoiled: false });
         }
         self.hurt_creature(player, creature, damage, weapon.skill, Blow::Counter);
     }
@@ -1133,8 +1136,9 @@ mod tests {
     }
 
     /// A blow that hurts the player spoils a bow being drawn (`spoiled_by_hits`): the shot
-    /// is let go, and the meter starts again from `cancel_to`. A blow that misses spoils
-    /// nothing, and a spear thrust is not spoiled by a hit.
+    /// is let go, the meter starts again from `cancel_to`, and the client is told so
+    /// (`Hurt::spoiled`). A blow that misses spoils nothing, and a spear thrust is not
+    /// spoiled by a hit.
     #[test]
     fn a_hit_taken_spoils_a_bow_draw_but_not_a_spear_thrust() {
         for (weapon, ammo, spoils) in [("base:short_bow", Some("base:arrow"), true), ("base:flint_spear", None, false)] {
@@ -1155,12 +1159,13 @@ mod tests {
                 assert!(server.fights.fighters[&1].aim.is_some(), "the swing started");
                 server.creature_blow(bear, 1, at + 0.1, false);
                 let hurt = std::iter::from_fn(|| client.try_recv().ok().flatten()).find_map(|message| match message {
-                    ServerMessage::Hurt { damage, defended, .. } => Some((damage, defended)),
+                    ServerMessage::Hurt { damage, defended, spoiled, .. } => Some((damage, defended, spoiled)),
                     _ => None,
                 });
                 let fighter = &server.fights.fighters[&1];
+                assert_eq!(hurt.is_some_and(|h| h.2), fighter.aim.is_none(), "{weapon}: the client is told the draw was spoiled exactly when it was");
                 match hurt {
-                    Some((damage, Defended::Hit)) if damage > 0 => {
+                    Some((damage, Defended::Hit, _)) if damage > 0 => {
                         hits += 1;
                         assert_eq!(fighter.aim.is_none(), spoils, "{weapon}: a hit taken spoiled the draw: {}", fighter.aim.is_none());
                         assert_eq!(fighter.rhythm.pending().is_none(), spoils, "{weapon}: the meter");

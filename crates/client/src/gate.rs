@@ -16570,8 +16570,8 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             }
             let net = world.resource::<Net>();
-            // The creature the combat check summoned goes, or its level tag would still be
-            // up behind the menus' text check.
+            // Any creature still near goes (FirstFights cleared the combat steps' own), or a
+            // level tag would be up behind the menus' text check.
             net.command("creatures kill");
             net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
             net.command("give raw_small_game 3");
