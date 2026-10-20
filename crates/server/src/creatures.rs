@@ -514,6 +514,27 @@ fn strikes_from(species: &creature::Creature, phase: u8, scale: f32, from: Vec3,
     species.reaches(phase, edge, level) && species.strikes_from_here(phase, edge, level) && species.in_band(from.y, to.y, voxmar_engine::physics::player::HEIGHT, scale)
 }
 
+/// Whether the segment from `a` to `b` passes through `aabb` (slab by slab).
+fn segment_meets(a: Vec3, b: Vec3, aabb: &voxmar_engine::physics::Aabb) -> bool {
+    let (mut near, mut far) = (0.0f32, 1.0f32);
+    let d = b - a;
+    for axis in 0..3 {
+        if d[axis].abs() < 1e-6 {
+            if a[axis] < aabb.min[axis] || a[axis] > aabb.max[axis] {
+                return false;
+            }
+            continue;
+        }
+        let (t0, t1) = ((aabb.min[axis] - a[axis]) / d[axis], (aabb.max[axis] - a[axis]) / d[axis]);
+        near = near.max(t0.min(t1));
+        far = far.min(t0.max(t1));
+        if near > far {
+            return false;
+        }
+    }
+    true
+}
+
 /// Whether only a charge of a creature's fits a target at `to` from `from` (`strikes_from`
 /// aside): one it runs at the target first, so the way along the ground decides it
 /// (`Server::charge_open`), not the air between them now.
@@ -548,10 +569,14 @@ impl Server {
     /// beside a wall from striking through it.
     pub(crate) fn blow_open(&self, body: &Body, reach: f32, to: Vec3) -> bool {
         const PLAYER_HALF: f32 = 0.3;
-        // Land not loaded is no wall to a blow, as it is to walking (`Ground`).
+        // Land not loaded is no wall to a blow, as it is to walking (`Ground`). A block stops
+        // it by its shape: a blow at a player on a ladder, or in an open hatch, passes the
+        // rungs and the hatch hung at the back of the cell.
         let blocks = &self.content.blocks;
-        let solid = |c: IVec3| self.block(c).is_some_and(|b| blocks.info(b).solid);
-        let clear = |a: Vec3, b: Vec3| voxmar_engine::physics::raycast(a, b - a, (b - a).length(), solid).is_none();
+        let clear = |a: Vec3, b: Vec3| {
+            let meets = |c: IVec3| self.block(c).is_some_and(|block| blocks.collision(block).iter().any(|aabb| segment_meets(a - c.as_vec3(), b - c.as_vec3(), aabb)));
+            voxmar_engine::physics::raycast(a, b - a, (b - a).length(), meets).is_none()
+        };
         let (width, height) = body.size;
         let flat = (to - body.position).with_y(0.0);
         let out = (flat.length() - PLAYER_HALF).clamp(0.0, width * 0.5 + reach.max(0.0));
@@ -4343,6 +4368,25 @@ mod fight_tests {
         assert!(species.reaches(0, species.edge(9.0, 1.0), true) && !strikes_from(species, 0, 1.0, body.position, at(4.5)), "at nine blocks only his charge fits");
         assert!(open(at(4.5)), "the trunk barred his charge");
         assert!(charges_from(species, 0, 1.0, body.position, at(4.5)) && server.charge_open(&body, at(4.5)), "the trunk barred his charge's run");
+    }
+
+    /// A wolf's blow at a player standing on a ladder, or in an open hatch, has its way: the
+    /// rungs and the hatch hang at the back of the cell, the player before them. Before:
+    /// every solid block was a whole cell to a blow, so a ladder shaft was a cell no blow
+    /// reached.
+    #[test]
+    fn a_blow_reaches_a_player_on_a_ladder_or_in_an_open_hatch() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let wolf = put(&mut server, "base:wolf", c.as_vec3() + Vec3::new(-1.5, 0.0, -1.5), Vec3::Z);
+        let body = server.creatures.live[&wolf].body;
+        let reach = server.content.creatures.get(server.creatures.live[&wolf].species).longest_reach(0);
+        for name in ["base:oak_ladder", "base:oak_hatch_open"] {
+            set(&mut server, name, [c + IVec3::new(-2, 0, 0), c + IVec3::new(-2, 1, 0)]);
+            assert!(server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 0.5)), "no blow through {name} to the player in it");
+        }
+        set(&mut server, "base:stone", [c + IVec3::new(-2, 0, 0), c + IVec3::new(-2, 1, 0)]);
+        assert!(!server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 1.5)), "a blow went through stone");
     }
 
     /// Old Tusk struck by a player nine blocks off on open ground, with the server's own
