@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Tint};
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
-use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3, Vec3Swizzles};
 use voxmar_engine::world::Column;
 
 use crate::{Generator, Overworld};
@@ -3471,4 +3471,65 @@ fn jettied_storeys_stand_out_on_their_beams() {
     eprintln!("{places} places, {beams} jetty beams");
     assert!(beams >= 10, "only {beams} jetty beams in {places} places");
     assert!(wrong.is_empty(), "jetty beams not under a jetty: {wrong:?}");
+}
+
+/// `/locate settlement` finds what a look at every square in reach would find nearest,
+/// planning only the squares nearer than the answer: every square within thousands of
+/// blocks planned at once held a frame (and the server's tick) for seconds.
+#[test]
+fn the_nearest_settlement_is_found_nearest_first() {
+    let radius = 4000;
+    let every = shared_world(0x5eed);
+    let spawn = every.spawn_point();
+    for (from, size) in [(IVec2::new(spawn.x, spawn.z), None), (IVec2::new(spawn.x, spawn.z), Some("town")), (IVec2::new(spawn.x + 2500, spawn.z - 1800), Some("village"))] {
+        let away = |s: &crate::SettlementInfo| (s.centre.xz() - from).as_i64vec2().length_squared();
+        let wanted = every
+            .settlements_near(from, radius)
+            .iter()
+            .filter(|s| away(s) <= i64::from(radius).pow(2) && size.is_none_or(|size| s.size == size))
+            .min_by_key(|s| (away(s), s.centre.x, s.centre.z))
+            .map(|s| s.id);
+        let fresh = base_world(0x5eed);
+        let found = fresh.nearest_settlement(from, radius, |s| size.is_none_or(|size| s.size == size));
+        assert_eq!(found.as_ref().map(|s| s.id), wanted, "from {from} for {size:?}: {:?}", found.map(|s| (s.name.0, s.centre)));
+        // Planned: the squares whose nearest point is no farther than the answer (all in
+        // reach where there is none), besides those any world plans first for its spawn,
+        // and the rest of the last few planned side by side.
+        let spacing = fresh.settlements.def.grid.spacing;
+        let answer = found.as_ref().map_or(i64::from(radius).pow(2), away);
+        let (lo, hi) = (fresh.settlements.cell_of(from.x - radius, from.y - radius), fresh.settlements.cell_of(from.x + radius, from.y + radius));
+        let squares: Vec<IVec2> = (lo.y..=hi.y).flat_map(|z| (lo.x..=hi.x).map(move |x| IVec2::new(x, z))).collect();
+        let nearer = squares.iter().filter(|&&c| (from.clamp(c * spacing, (c + 1) * spacing - 1) - from).as_i64vec2().length_squared() <= answer).count();
+        let promised = fresh.settlements.promised(&fresh).iter().filter(|c| !squares.contains(c)).count();
+        let planned = fresh.settlements.made();
+        let side_by_side = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8) - 1;
+        assert!(planned <= nearer + promised + side_by_side, "from {from} for {size:?}: {planned} squares planned, only {nearer} as near as the answer (+{promised} for the spawn, +{side_by_side} side by side)");
+        eprintln!("from {from} for {size:?}: {planned} of {} squares in reach planned", squares.len());
+    }
+}
+
+/// A block belongs to the settlement of its own square or none (a settlement never
+/// reaches past its square), so a bed's settlement is found by planning that square
+/// alone, however far the bed stands from the settlement's middle.
+#[test]
+fn a_bed_belongs_to_the_settlement_of_its_square() {
+    let world = shared_world(0x5eed);
+    let spawn = world.spawn_point();
+    let town = world
+        .settlements_near(IVec2::new(spawn.x, spawn.z), 6000)
+        .into_iter()
+        .filter(|s| s.size == "town")
+        .max_by_key(|s| s.buildings.len())
+        .expect("a town");
+    let (far, bed) = town
+        .buildings
+        .iter()
+        .flat_map(|b| b.beds.iter().map(|&p| ((p.xz() - town.centre.xz()).as_vec2().length(), p)))
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .expect("a bed in the town");
+    assert!(far > 64.0, "{}'s farthest bed is only {far:.0} blocks from its middle", town.name.0);
+    let fresh = base_world(0x5eed);
+    let holding = fresh.settlement_holding(bed.xz()).expect("the bed's square settled");
+    assert_eq!(holding.id, town.id, "the bed at {bed} ({far:.0} blocks out) is {}'s, not {}'s", town.name.0, holding.name.0);
+    assert!(holding.buildings.iter().any(|b| b.beds.contains(&bed)));
 }

@@ -9528,3 +9528,36 @@ fn a_village_bed_is_someones() {
     client.pump_until(|c| told(c, "wake here"));
     assert!(!refused(&client), "a bag set in a village bed's place was refused");
 }
+
+/// A bed in a town's farthest house, over 64 blocks from its middle, is as much the
+/// town's as one by its well: sleep there is refused, as the bed's settlement is the one
+/// whose square holds it, not one found within a reach of it.
+#[test]
+fn a_bed_far_out_in_a_town_is_someones() {
+    let seed = 0x5eed;
+    let mut client = Client::join_with(ServerConfig { seed, view_distance: 2, allow_flight: false, ..Default::default() });
+    client.admin = true;
+    let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
+    let overworld = voxmar_worldgen::Overworld::with_content(seed, client.content.blocks.clone(), &world_content);
+    let town = overworld.nearest_settlement(client.position.floor().as_ivec3().xz(), 10000, |s| s.size == "town").expect("a town");
+    // Its farthest ground-floor bed from the middle, and the home it stands in.
+    let (far, home, bed) = town
+        .buildings
+        .iter()
+        .flat_map(|b| b.beds.iter().filter(|p| p.y == b.floor + 1).map(move |&p| ((p.xz() - town.centre.xz()).as_vec2().length(), b, p)))
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .expect("a town home with a bed on its ground floor");
+    assert!(far > 64.0, "{}'s farthest bed is only {far:.0} blocks from its middle", town.name.0);
+    let open = |c: &Client, p: IVec3| c.world.block(p).is_some_and(|b| !c.content.blocks.def(b).solid);
+    client.ok("/time set noon");
+    client.ok(&format!("/tp {} {} {}", bed.x as f32 + 0.5, bed.y + 1, bed.z as f32 + 0.5));
+    client.pump_until(|c| c.world.block(bed).is_some_and(|b| c.content.blocks.def(b).has_tag("bed")));
+    let side = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().map(|d| bed + d).find(|&p| open(&client, p) && open(&client, p + IVec3::Y) && home.room.contains(&p.xz()))
+        .unwrap_or_else(|| panic!("the {} bed at {bed} has no open side", home.what));
+    client.ok(&format!("/tp {} {} {}", side.x as f32 + 0.5, side.y, side.z as f32 + 0.5));
+    client.pump_until(|c| c.position.distance(side.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) < 1.0);
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| c.refused.iter().any(|t| t.contains("belongs to someone")));
+    assert!(!client.chat.iter().any(|(_, t)| t.contains("wake here")), "the bed {far:.0} blocks out in {} took as where the player wakes", town.name.0);
+}

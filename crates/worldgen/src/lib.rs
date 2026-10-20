@@ -619,27 +619,41 @@ impl Overworld {
     /// The settlements whose squares lie within `radius` blocks of `centre`: their names
     /// (English and Japanese), sizes, middles and buildings.
     pub fn settlements_near(&self, centre: IVec2, radius: i32) -> Vec<SettlementInfo> {
-        self.settlements
-            .near(self, centre, radius)
-            .iter()
-            .filter_map(|slot| slot.0.as_ref())
-            .map(|p| SettlementInfo {
-                id: p.id,
-                name: p.name.clone(),
-                size: p.size.clone(),
-                style: p.style.clone(),
-                layout: p.layout.clone(),
-                centre: IVec3::new(p.centre.x, p.height, p.centre.y),
-                buildings: p.buildings.clone(),
-                gates: p.gates.clone(),
-                lanes: p.lanes.clone(),
-                levers: p.levers,
-                culture: self.settlements.culture_info(p),
-                people: p.people.clone(),
-                walls: p.walls.clone(),
-                wall_block: p.wall_block,
-            })
-            .collect()
+        self.settlements.near(self, centre, radius).iter().filter_map(|slot| slot.0.as_ref()).map(|p| self.settlement_info(p)).collect()
+    }
+
+    /// The settlement nearest `from` by its middle, within `radius`, that `keep` takes:
+    /// what `settlements_near` would find nearest, planning only the squares nearer than
+    /// it (`/locate settlement`).
+    pub fn nearest_settlement(&self, from: IVec2, radius: i32, keep: impl Fn(&SettlementInfo) -> bool) -> Option<SettlementInfo> {
+        let slot = self.settlements.nearest(self, from, radius, |p| keep(&self.settlement_info(p)))?;
+        slot.0.as_ref().map(|p| self.settlement_info(p))
+    }
+
+    /// The settlement whose square holds (x, z), if that square is settled: the only one a
+    /// block there can be part of, planning that square alone.
+    pub fn settlement_holding(&self, at: IVec2) -> Option<SettlementInfo> {
+        let slot = self.settlements.holding(self, at.x, at.y)?;
+        slot.0.as_ref().map(|p| self.settlement_info(p))
+    }
+
+    fn settlement_info(&self, p: &settlements::Plan) -> SettlementInfo {
+        SettlementInfo {
+            id: p.id,
+            name: p.name.clone(),
+            size: p.size.clone(),
+            style: p.style.clone(),
+            layout: p.layout.clone(),
+            centre: IVec3::new(p.centre.x, p.height, p.centre.y),
+            buildings: p.buildings.clone(),
+            gates: p.gates.clone(),
+            lanes: p.lanes.clone(),
+            levers: p.levers,
+            culture: self.settlements.culture_info(p),
+            people: p.people.clone(),
+            walls: p.walls.clone(),
+            wall_block: p.wall_block,
+        }
     }
 
     /// The shaped roof pieces the settlement whose square's middle is at `centre` lays,

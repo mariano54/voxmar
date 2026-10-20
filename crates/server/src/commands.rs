@@ -830,13 +830,9 @@ impl Server {
         }
         let position = self.position_of(id);
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
-        let nearest = self
-            .overworld
-            .settlements_near(from, radius)
-            .into_iter()
-            .map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s))
-            .filter(|(offset, s)| offset.as_vec2().length() <= radius as f32 && size.is_none_or(|size| *size == s.size))
-            .min_by_key(|(offset, _)| offset.length_squared());
+        // Nearest first, planning only the squares nearer than the answer: every square
+        // within a radius of thousands planned at once held the server's tick for seconds.
+        let nearest = self.overworld.nearest_settlement(from, radius, |s| size.is_none_or(|size| *size == s.size)).map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s));
         match nearest {
             Some((offset, s)) => Ok(Words::key("command.locate.settlement")
                 .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
