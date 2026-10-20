@@ -109,6 +109,7 @@ impl Mixer {
         ambience: &Ambience,
         env: &Environment,
         samples: &[Vec<IVec3>],
+        sky: &[Vec<bool>],
         buildings: &[Vec<Vec3>],
         listener: Vec3,
         dt: f32,
@@ -155,6 +156,13 @@ impl Mixer {
                     let block = blocks[self.pick(blocks.len(), None)];
                     Some(block.as_vec3() + 0.5)
                 }
+                Placement::OpenBlock(group) => {
+                    let open: Vec<IVec3> = samples.get(group).into_iter().flatten().zip(sky.get(group).into_iter().flatten()).filter(|(_, sky)| **sky).map(|(b, _)| *b).collect();
+                    if open.is_empty() {
+                        continue;
+                    }
+                    Some(open[self.pick(open.len(), None)].as_vec3() + 0.5)
+                }
                 Placement::Around { distance, height } => {
                     let angle = self.unit() * std::f32::consts::TAU;
                     let d = distance.0 + (distance.1 - distance.0) * self.unit();
@@ -179,11 +187,35 @@ impl Mixer {
     }
 }
 
+/// A sample a clip is kept in: a float, or 16 bits (full scale at ±32767).
+pub trait Sample: Copy {
+    fn to_f32(self) -> f32;
+    fn from_f32(value: f32) -> Self;
+}
+
+impl Sample for f32 {
+    fn to_f32(self) -> f32 {
+        self
+    }
+    fn from_f32(value: f32) -> Self {
+        value
+    }
+}
+
+impl Sample for i16 {
+    fn to_f32(self) -> f32 {
+        self as f32 / i16::MAX as f32
+    }
+    fn from_f32(value: f32) -> Self {
+        (value.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16
+    }
+}
+
 /// Places a mono one-shot in stereo for a listener at `ears`, facing `forward` with
 /// `right` to the right, and blends in its reverb `wet` by `reverb`. Sources behind are a
 /// little quieter, as the ears' shadow makes them; at the listener it sounds from the
 /// middle.
-pub fn place(dry: &[f32], wet: &[Vec<f32>; 2], at: Option<Vec3>, ears: Vec3, right: Vec3, forward: Vec3, reverb: f32) -> [Vec<f32>; 2] {
+pub fn place<S: Sample>(dry: &[S], wet: &[Vec<S>; 2], at: Option<Vec3>, ears: Vec3, right: Vec3, forward: Vec3, reverb: f32) -> [Vec<f32>; 2] {
     let (left_gain, right_gain) = match at {
         None => (std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2),
         Some(at) => {
@@ -197,8 +229,8 @@ pub fn place(dry: &[f32], wet: &[Vec<f32>; 2], at: Option<Vec3>, ears: Vec3, rig
     };
     let dry_gain = 1.0 - 0.35 * reverb;
     let len = dry.len().max(wet[0].len());
-    let channel = |gain: f32, wet: &[f32]| -> Vec<f32> {
-        (0..len).map(|i| dry.get(i).copied().unwrap_or(0.0) * gain * dry_gain + wet.get(i).copied().unwrap_or(0.0) * reverb).collect()
+    let channel = |gain: f32, wet: &[S]| -> Vec<f32> {
+        (0..len).map(|i| dry.get(i).map_or(0.0, |s| s.to_f32()) * gain * dry_gain + wet.get(i).map_or(0.0, |s| s.to_f32()) * reverb).collect()
     };
     [channel(left_gain, &wet[0]), channel(right_gain, &wet[1])]
 }
@@ -257,7 +289,7 @@ mod tests {
     fn run(mixer: &mut Mixer, ambience: &Ambience, env: &Environment, samples: &[Vec<IVec3>], seconds: f32) -> Vec<Cue> {
         let mut cues = Vec::new();
         for _ in 0..(seconds * 60.0) as usize {
-            mixer.update(ambience, env, samples, &[], Vec3::ZERO, 1.0 / 60.0, |_, _| 1.0, (3, 5), &mut cues);
+            mixer.update(ambience, env, samples, &[], &[], Vec3::ZERO, 1.0 / 60.0, |_, _| 1.0, (3, 5), &mut cues);
         }
         cues
     }

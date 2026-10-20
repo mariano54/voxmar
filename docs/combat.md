@@ -26,7 +26,7 @@ and "Items" tabs); the code is `engine/src/combat.rs`, the data each package's
 | --- | --- | --- | --- | --- |
 | Bone club | mace (crush) | Attack 1 | 3 | two bones and a stick, Crafting 1 |
 | Stone sword | sword (slash) | Attack 1 | 3 | two cobblestone and a stick, Crafting 1 |
-| Wooden axe | axe (slash) | Attack 1 | 2 | the tool |
+| Flint axe | axe (slash) | Attack 1 | 2 | the tool |
 | Stone axe | axe (slash) | Attack 1 | 3 | the tool |
 | Flint spear | spear (stab, reach, braces) | Attack 1 | 3 | a flint on two sticks, Crafting 2; 1 in 9 from Old Tusk |
 | Tusk club | mace (crush) | Attack 5 | 5 | Old Tusk's great tusk and a stick, Crafting 3 |
