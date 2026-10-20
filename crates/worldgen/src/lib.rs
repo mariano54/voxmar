@@ -2103,7 +2103,7 @@ mod tests {
     /// nearest place of `biome` to `from` in `world`, with its columns (dry land of that home biome)
     /// and where each of `count` plants (by `looks`) stands on them, after trees, trails,
     /// boulders and water; none where the world has no such biome near.
-    fn biome_area(world: &Overworld, biome: &str, from: IVec2, chunks: i32, looks: &std::collections::HashMap<BlockId, usize>, count: usize) -> Option<(u64, Vec<Vec<(i32, i32)>>)> {
+    fn biome_area(world: &Overworld, biome: &str, from: IVec2, chunks: i32, looks: &std::collections::HashMap<BlockId, usize>, count: usize) -> Option<(u64, u64, Vec<Vec<(i32, i32)>>, Vec<usize>)> {
         let id = world.biomes.id(&format!("base:{biome}"))?;
         let at = world.locate_biome(biome, from, 60000)?;
         let first = ColumnPos::of_block(IVec3::new(at.x, 0, at.y)).offset(-chunks / 2, -chunks / 2);
@@ -2125,8 +2125,8 @@ mod tests {
             .collect();
         let area = generate_columns(world, &positions);
         // Each column of chunks counted on its own core, summed in order.
-        let counted: Vec<(u64, Vec<Vec<(i32, i32)>>)> = positions.par_iter().zip(&area).map(|(&pos, column)| {
-            let (mut columns, mut placed) = (0u64, vec![Vec::new(); count]);
+        let counted: Vec<(u64, u64, Vec<Vec<(i32, i32)>>, Vec<usize>)> = positions.par_iter().zip(&area).map(|(&pos, column)| {
+            let (mut columns, mut banks, mut placed, mut off) = (0u64, 0u64, vec![Vec::new(); count], vec![0; count]);
             let corner = pos.origin();
             let sampler = sampler(pos);
             // A census needs home, height and water only. Sample the full river area once,
@@ -2140,21 +2140,28 @@ mod tests {
                         continue;
                     }
                     columns += 1;
+                    // A lake's bank (`Habitat::LakeShore`), for the herbs that grow along it,
+                    // and each herb's plants off it.
+                    let bank = geo.body == Body::Lake && geo.height - geo.water <= 2;
+                    banks += u64::from(bank);
                     if let Some(&k) = looks.get(&column.block(IVec3::new(x, geo.height + 1, z))) {
                         placed[k].push((corner.x + x, corner.z + z));
+                        off[k] += usize::from(!bank);
                     }
                 }
             }
-            (columns, placed)
+            (columns, banks, placed, off)
         }).collect();
-        let (mut columns, mut placed) = (0u64, vec![Vec::new(); count]);
-        for (n, found) in counted {
+        let (mut columns, mut banks, mut placed, mut off) = (0u64, 0u64, vec![Vec::new(); count], vec![0; count]);
+        for (n, bank, found, away) in counted {
             columns += n;
+            banks += bank;
+            off.iter_mut().zip(away).for_each(|(all, away)| *all += away);
             for (all, found) in placed.iter_mut().zip(found) {
                 all.extend(found);
             }
         }
-        Some((columns, placed))
+        Some((columns, banks, placed, off))
     }
 
     /// Census batching must retain exactly the old site's home, height and water,
@@ -2233,7 +2240,7 @@ mod tests {
             let world = shared_world(seed);
             for (b, biome) in biomes.iter().enumerate() {
                 for &from in PLACES.iter().take(places()) {
-                    let Some((columns, placed)) = biome_area(&world, biome, from, chunks, &looks, plants.len()) else { continue };
+                    let Some((columns, _, placed, _)) = biome_area(&world, biome, from, chunks, &looks, plants.len()) else { continue };
                     tally[b].0 += columns;
                     for (k, placed) in placed.iter().enumerate() {
                         let groups = patches(placed);
@@ -2664,13 +2671,26 @@ mod tests {
         }
     }
 
+    /// The worlds `rare_herbs_grow_at_their_rates` counts, in order: the first four hold
+    /// every herb biome near each of `PLACES` and big enough that they usually cover all of
+    /// them (silverwood glades and moonlit meadows the scarcest), so few worlds are made;
+    /// the rest are the next best, should a count fall short.
+    const HERB_SEEDS: [u64; 16] = [26, 14, 37, 6, 22, 33, 31, 13, 25, 4, 28, 19, 21, 3, 12, 32];
+
     /// Design's rates for the rare herbs (draft 89): in every biome naming it, each herb
     /// grows within 0.5 to 1.6 times its own `aim` (plants.ron), in patches of 3 to 6
     /// (2.5 to 6.5 measured), and the classes keep their order: Legendary herbs rarer than
     /// VeryRare ones, VeryRare than Rare, on the same samples. Each biome is counted in more
     /// places (three a seed) until every herb in it has 25 patches (a count's noise under
-    /// about ±20%) over at least twelve places, up to 16 seeds; a biome too small to get
-    /// there is printed and left to the census.
+    /// about ±20%) over at least twelve places, up to 16 seeds (`HERB_SEEDS`); a biome too small to get
+    /// there is printed and left to the census. A herb of a lake's bank (the sky lotus) is
+    /// held to its rate per million columns of bank instead, its data's `rate` times the
+    /// biome's weight, with the same band: it grows only where the land has lakes, and
+    /// how much of a biome is lake bank differs eightfold from world to world, so its rate
+    /// over the whole biome follows the world's tarns (it still counts towards the classes'
+    /// order). Its count stops at the bank that makes 25 patches at that rate, and is left to
+    /// the census when the other herbs are done first; it must never grow off a bank, and
+    /// must show wherever a quarter of that bank was counted.
     /// Generated for real, so slow: the full gate runs it.
     #[test]
     fn rare_herbs_grow_at_their_rates() {
@@ -2686,26 +2706,59 @@ mod tests {
         // the water does (tarns in tarn country), so a count needs many places as well as
         // many patches.
         let mut tally: Vec<(usize, u64, Vec<(usize, usize)>)> = vec![(0, 0, vec![(0, 0); herbs.len()]); biomes.len()];
+        // Per biome its columns of lake bank, and per herb its plants off them.
+        let mut banks = vec![0u64; biomes.len()];
+        let mut off = vec![vec![0usize; herbs.len()]; biomes.len()];
+        // A herb of a lake's bank, by pair: its rate per million columns of bank (its data's
+        // rate times the biome's weight), and the columns of bank that make 25 patches at
+        // that rate, which its count stops at instead of at 25 patches: lake-free places add
+        // no bank, so they cannot hold a count open.
+        let along_bank = |herb: &str, biome: &str| {
+            let plant = def(herb);
+            plant.habitat.edge().then(|| {
+                assert_eq!(plant.habitat, crate::content::Habitat::LakeShore, "{herb}: only a lake's bank is counted");
+                let named = content.biomes.iter().find(|d| d.name == format!("base:{biome}")).unwrap();
+                let weight = named.flora.plants.iter().chain(named.flora.wonders.iter().flatten()).find_map(|s| matches!(s, crate::content::Select::Name(n, _) if *n == plant.name).then(|| s.weight())).unwrap();
+                let patches = plant.patches.as_ref().unwrap();
+                let aim = (patches.rate * weight) as f64;
+                let mean = (patches.size.0 + patches.size.1) as f64 / 2.0;
+                (aim, (25.0 * mean * 1e6 / aim) as u64)
+            })
+        };
         // Larger acceptance censuses can require the same seed prefix in every biome;
         // the normal gate retains twelve places and the existing sixteen-seed ceiling.
         let min_places = std::env::var("HERB_MIN_PLACES").map(|s| s.parse::<usize>().expect("HERB_MIN_PLACES must be an integer")).unwrap_or(12);
         assert!((12..=48).contains(&min_places), "HERB_MIN_PLACES must be in 12..=48");
-        println!("rare-herb coverage: at least {min_places} places and 25 clusters per pair, up to 16 seeds");
-        let done = |tally: &[(usize, u64, Vec<(usize, usize)>)], b: usize| tally[b].0 >= min_places && pairs.iter().filter(|p| p.1 == biomes[b]).all(|p| tally[b].2[herb_index(&p.0)].1 >= 25);
+        println!("rare-herb coverage: at least {min_places} places and 25 clusters per pair (enough bank for 25 along a bank), up to 16 seeds");
+        // A biome is done when it has its places and every herb its patches or its bank; the
+        // run goes on while any biome lacks places or patches, never for bank alone: a world
+        // of few tarns would otherwise make many worlds for one herb, which is then left to
+        // the census.
+        let counted = |tally: &[(usize, u64, Vec<(usize, usize)>)], b: usize| {
+            tally[b].0 >= min_places && pairs.iter().filter(|p| p.1 == biomes[b] && along_bank(&p.0, &p.1).is_none()).all(|p| tally[b].2[herb_index(&p.0)].1 >= 25)
+        };
+        let done = |tally: &[(usize, u64, Vec<(usize, usize)>)], banks: &[u64], b: usize| {
+            counted(tally, b) && pairs.iter().filter(|p| p.1 == biomes[b]).all(|p| along_bank(&p.0, &p.1).is_none_or(|(_, wanted)| banks[b] >= wanted))
+        };
+        // HERB_SEEDS=a,b,... counts other worlds instead, to check the rates hold beyond these.
+        let order: Vec<u64> = std::env::var("HERB_SEEDS").map(|s| s.split(',').map(|n| n.trim().parse().expect("HERB_SEEDS must be seeds")).collect()).unwrap_or_else(|_| HERB_SEEDS.to_vec());
         let mut seeds = 0;
-        while seeds < 16 && (0..biomes.len()).any(|b| !done(&tally, b)) {
+        while seeds < order.len().min(16) && (0..biomes.len()).any(|b| !counted(&tally, b)) {
+            let seed = order[seeds];
             seeds += 1;
-            let world = shared_world(seeds);
-            let open: Vec<usize> = (0..biomes.len()).filter(|&b| !done(&tally, b)).collect();
-            println!("seed {seeds}: counting {}", open.iter().map(|&b| biomes[b].as_str()).collect::<Vec<_>>().join(", "));
+            let world = shared_world(seed);
+            let open: Vec<usize> = (0..biomes.len()).filter(|&b| !done(&tally, &banks, b)).collect();
+            println!("seed {seed}: counting {}", open.iter().map(|&b| biomes[b].as_str()).collect::<Vec<_>>().join(", "));
             // Every place of every open biome side by side, counted in order.
             use rayon::prelude::*;
             let wanted: Vec<(usize, IVec2)> = open.iter().flat_map(|&b| PLACES.map(|from| (b, from))).collect();
             let areas: Vec<_> = wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect();
             for (b, area) in areas {
-                let Some((columns, placed)) = area else { continue };
+                let Some((columns, bank, placed, away)) = area else { continue };
                 tally[b].0 += 1;
                 tally[b].1 += columns;
+                banks[b] += bank;
+                off[b].iter_mut().zip(away).for_each(|(all, away)| *all += away);
                 for (k, placed) in placed.iter().enumerate() {
                     tally[b].2[k].0 += placed.len();
                     tally[b].2[k].1 += patches(placed).len();
@@ -2719,16 +2772,43 @@ mod tests {
             let columns = tally[b].1;
             let (n, groups) = tally[b].2[herb_index(herb)];
             let rate = n as f64 * 1e6 / columns.max(1) as f64;
-            let aim = def(herb).patches.as_ref().unwrap().aim as f64;
+            let bank = along_bank(herb, biome);
+            // Along a lake's bank, per million columns of bank; elsewhere, of the biome.
+            let (judged, aim, over) = match bank {
+                Some((aim, _)) => (n as f64 * 1e6 / banks[b].max(1) as f64, aim, format!("{} columns of bank", banks[b])),
+                None => (rate, def(herb).patches.as_ref().unwrap().aim as f64, format!("{columns} columns")),
+            };
             let size = n as f64 / groups.max(1) as f64;
-            let line = format!("{herb} in {biome}: {rate:.1} per million (aim {aim:.0}, {:.2}x), {:.0} visible clusters a million, {size:.1} per cluster, {n} plants in {groups} clusters in {columns} columns of {} places", rate / aim, groups as f64 * 1e6 / columns.max(1) as f64, tally[b].0);
-            if groups < 25 {
-                println!("{line}: too few clusters to judge, left to the census");
+            let line = format!("{herb} in {biome}: {judged:.1} per million{} (aim {aim:.0}, {:.2}x), {rate:.1} per million of the biome, {:.0} visible clusters a million, {size:.1} per cluster, {n} plants in {groups} clusters in {over} of {} places", if bank.is_some() { " of bank" } else { "" }, judged / aim, groups as f64 * 1e6 / columns.max(1) as f64, tally[b].0);
+            if let Some((_, wanted)) = bank {
+                // Never off its bank, and found wherever there is bank enough for a few patches.
+                if off[b][herb_index(herb)] > 0 {
+                    wrong.push(format!("{herb} in {biome}: {} plants off a lake's bank", off[b][herb_index(herb)]));
+                }
+                if banks[b] >= wanted / 4 && n == 0 {
+                    wrong.push(format!("{herb} in {biome}: none along {} columns of bank", banks[b]));
+                }
+            }
+            let enough = match bank {
+                Some((_, wanted)) => banks[b] >= wanted,
+                None => groups >= 25,
+            };
+            if !enough {
+                // The gate's own seeds must find bank enough for every herb of the bank, or a
+                // change to tarns or weights would leave one unjudged unseen; other seed sets
+                // (HERB_SEEDS) leave it to the census.
+                if bank.is_some() && std::env::var("HERB_SEEDS").is_err() {
+                    wrong.push(format!("{line}: too little bank on the gate's seeds to judge it"));
+                    continue;
+                }
+                println!("{line}: too few to judge, left to the census");
                 continue;
             }
             println!("{line}");
-            measured.push((herb.clone(), rate));
-            if !(0.5 * aim..=1.6 * aim).contains(&rate) || !(2.5..=6.5).contains(&size) {
+            // The classes' order compares rates over the biome; a herb of the bank takes its
+            // ratio to its aim there, as its rate over the biome follows the world's tarns.
+            measured.push((herb.clone(), if bank.is_some() { judged / aim * def(herb).patches.as_ref().unwrap().aim as f64 } else { rate }));
+            if !(0.5 * aim..=1.6 * aim).contains(&judged) || !(2.5..=6.5).contains(&size) {
                 wrong.push(line);
             }
         }
