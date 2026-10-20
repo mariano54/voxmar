@@ -461,8 +461,8 @@ steps! {
     /// its people come, and one greets the player in its own voice; the ambience hears it
     /// at work by day, not by night; then `/locate settlement town` finds a town, and the
     /// wall of the walled town nearest it stands where planned, its shaped roofs as planned
-    /// with none of its flames in reach of its thatch, and its jettied houses stand out on
-    /// their beams.
+    /// with none of its flames in reach of its thatch, its jettied houses stand out on
+    /// their beams, and its row houses stand wall to wall under one roof.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -10486,13 +10486,15 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     }
 }
 
-/// The building pieces the pieces step sets (blocks_building.ron), in a facing or two.
-const PIECES: [&str; 31] = [
+/// The building pieces the pieces step sets (blocks_building.ron) and the built-in
+/// furnishings (blocks_furnishings.ron), in a facing or two. A piece that is not solid (a
+/// window seat, sat in as every seat is) passes stopping nothing.
+const PIECES: [&str; 35] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
     "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing", "thatch_corner_east", "birch_shingles_inner_corner", "oak_fence",
     "birch_fence_corner_east", "dark_oak_fence_gate", "oak_ladder", "birch_hatch",
-    "oak_hatch_open_east",
+    "oak_hatch_open_east", "birch_stair_cupboard_east", "oak_window_seat", "dark_oak_sill_west", "oak_pantry_shelf",
 ];
 /// How many pieces the player judges from one spot before the middle one: three, so the
 /// crosshair turned to a piece beside it reaches it before crossing a neighbour.
@@ -10605,6 +10607,7 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let client = world.resource::<ClientWorld>();
             let boxes = client.block(cell).map(|b| client.registry.collision(b).to_vec()).unwrap_or_default();
             let filled: f32 = boxes.iter().map(|b| (b.max - b.min).element_product()).sum();
+            let solid = client.block(cell).is_some_and(|b| client.registry.info(b).solid);
             let shaped = i < PIECES.len();
             let way = i >= PIECES.len() + WALLS.len();
             let result = if !stood(world, spot(i)) {
@@ -10615,6 +10618,8 @@ fn pieces(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 Err(format!("{name}, a frame round a way through, stops movement with {} boxes filling {:.0}% of its cell", boxes.len(), filled * 100.0))
             } else if way {
                 Ok("under the crosshair, on client and server, stopping nothing: the way through it is open".to_owned())
+            } else if shaped && !solid && boxes.is_empty() {
+                Ok("under the crosshair, on client and server, not solid and stopping nothing, as a seat".to_owned())
             } else if shaped && (boxes.is_empty() || filled >= 0.999) {
                 Err(format!("{name} stops movement with {} boxes filling {:.0}% of its cell: not its shape", boxes.len(), filled * 100.0))
             } else if !shaped && boxes != voxmar_engine::physics::CUBE {
@@ -17057,6 +17062,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     gate.check("town walls", Err(format!("no answer to /locate settlement town {TOWN_RADIUS}")));
                     gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                     gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                    gate.check("settlement rows", Err("no town to judge the row houses of".into()));
                     gate.phase = 6;
                     gate.advance(now);
                 }
@@ -17070,6 +17076,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.check("town walls", Err(format!("/locate settlement town: {reply}")));
                 gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                 gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                gate.check("settlement rows", Err("no town to judge the row houses of".into()));
                 gate.phase = 6;
                 gate.advance(now);
                 return;
@@ -17084,10 +17091,24 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 return;
             };
-            let Some(walled) = search.join().ok().flatten() else {
+            let walled = match search.join() {
+                Ok(walled) => walled,
+                Err(panic) => {
+                    let why = panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_else(|| "no message".into());
+                    gate.check("town walls", Err(format!("the look for a walled town panicked: {why}")));
+                    gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
+                    gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                    gate.check("settlement rows", Err("no town to judge the row houses of".into()));
+                    gate.phase = 6;
+                    gate.advance(now);
+                    return;
+                }
+            };
+            let Some(walled) = walled else {
                 gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));
                 gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                 gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                gate.check("settlement rows", Err("no town to judge the row houses of".into()));
                 gate.phase = 6;
                 gate.advance(now);
                 return;
@@ -17111,6 +17132,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     gate.check("town walls", Err(format!("the world around the town at {at} did not load: the server sent {held} of its {n} columns in {SETTLEMENT_LOAD} server seconds")));
                     gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                     gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
+                    gate.check("settlement rows", Err("no town to judge the row houses of".into()));
                     gate.phase = 6;
                     gate.advance(now);
                 }
@@ -17122,6 +17144,8 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.check("settlement roofs", roofs);
             let jetties = judge_jetties(world, gate, at);
             gate.check("settlement jetties", jetties);
+            let rows = judge_rows(world, gate, at);
+            gate.check("settlement rows", rows);
             gate.advance(now);
         }
         // Back on the test ground.
@@ -17410,6 +17434,66 @@ fn judge_jetties(world: &World, gate: &Gate, at: IVec3) -> Result<String, String
     Ok(format!("{name}: {} jetty beams within {TOWN_REACH} stand as planned, each under its overhanging floor", planned.len()))
 }
 
+/// The town's row houses as the server built them: wherever two of its homes planned within
+/// `TOWN_REACH` of its square stand wall to wall (two walls between their rooms), both walls
+/// stand solid and windowless, and the roof runs on over the join at one height.
+fn judge_rows(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
+    let Some(generator) = world.resource::<crate::render::lod::WorldGenerator>().get().cloned() else {
+        return Err("no world generator on the client to read the town's plan from".into());
+    };
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let plans = generator.settlements_near(at.xz(), 64);
+    let Some(plan) = plans.iter().find(|s| s.centre.xz() == at.xz()) else {
+        return Err(format!("worldgen plans no settlement with its middle at {at} ({} near)", plans.len()));
+    };
+    let name = &plan.name.0;
+    let block = |p: IVec3| observer.world.block(p);
+    let named = |p: IVec3| block(p).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let wall = |p: IVec3| block(p).is_some_and(|b| {
+        let def = client.registry.def(b);
+        def.solid && !def.name.contains("glass") && !def.name.contains("window")
+    });
+    let top = |w: IVec2, floor: i32| (floor..floor + 24).rev().find(|&y| block(IVec3::new(w.x, y, w.y)).is_some_and(|b| client.registry.def(b).solid));
+    let within = |p: IVec2| (p - at.xz()).abs().max_element() <= TOWN_REACH;
+    let homes: Vec<_> = plan.buildings.iter().filter(|b| !b.room.is_empty() && b.door.is_some()).collect();
+    let (mut joins, mut wrong) = (0, Vec::new());
+    for a in &homes {
+        let along = a.facing.turn(1, 0);
+        let edge = a.room.iter().map(|p| p.dot(along)).max().unwrap_or(0);
+        let side: Vec<IVec2> = a.room.iter().copied().filter(|p| p.dot(along) == edge).collect();
+        let Some(b) = homes.iter().find(|b| b.facing == a.facing && b.floor == a.floor && b.room.iter().any(|&p| side.contains(&(p - along * 3)))) else { continue };
+        // Where both have room beside the join, inside the ground judged.
+        let shared: Vec<IVec2> = side.iter().copied().filter(|&p| b.room.contains(&(p + along * 3)) && within(p + along * 2)).collect();
+        if shared.is_empty() {
+            continue;
+        }
+        joins += 1;
+        for p in shared {
+            let (wa, wb) = (p + along, p + along * 2);
+            for y in a.floor + 1..=a.floor + 2 {
+                for w in [wa, wb] {
+                    let at = IVec3::new(w.x, y, w.y);
+                    if !wall(at) && wrong.len() < 4 {
+                        wrong.push(format!("the wall between the rooms at {at} is {}", named(at)));
+                    }
+                }
+            }
+            let (ta, tb) = (top(wa, a.floor), top(wb, a.floor));
+            if ta != tb && wrong.len() < 4 {
+                wrong.push(format!("the roofs over the join at {wa} and {wb} stand at {ta:?} and {tb:?}"));
+            }
+        }
+    }
+    if joins == 0 {
+        return Err(format!("{name}: no homes planned wall to wall within {TOWN_REACH} of its square at {at}"));
+    }
+    if !wrong.is_empty() {
+        return Err(format!("{name}: of {joins} joins between row houses within {TOWN_REACH}: {}", wrong.join("; ")));
+    }
+    Ok(format!("{name}: {joins} joins between row houses within {TOWN_REACH} stand wall to wall under one roof"))
+}
+
 /// The town's shaped roofs as the server built them: every roof piece its plan lays within
 /// `TOWN_REACH` of its square stands there, in the facing planned, and no flame of the town
 /// reaches its thatch (or anything else that catches) as fire catches in a home.
@@ -17434,18 +17518,34 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     if !wrong.is_empty() {
         return Err(format!("{name}: {} of its {} roof pieces within {TOWN_REACH} are not as planned: {}", wrong.len(), planned.len(), wrong.into_iter().take(4).collect::<Vec<_>>().join("; ")));
     }
-    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+    // The town's flames first (by the settlements' own table, not a tag looked up per
+    // block over the whole town), then only the blocks within their reach.
+    let mut flames: Vec<IVec3> = Vec::new();
     for z in at.z - TOWN_REACH..=at.z + TOWN_REACH {
         for x in at.x - TOWN_REACH..=at.x + TOWN_REACH {
             for y in at.y - 24..=at.y + 40 {
                 let p = IVec3::new(x, y, z);
-                if let Some(b) = observer.world.block(p).filter(|b| !b.is_air()) {
-                    blocks.insert(p, b);
+                if observer.world.block(p).is_some_and(|b| generator.settlement_flame(b)) {
+                    flames.push(p);
                 }
             }
         }
     }
-    let flames = blocks.values().filter(|&&b| client.registry.def(b).has_tag("fire")).count();
+    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+    let reach = generator.settlement_fire_reach() + 1;
+    for &f in &flames {
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let p = f + IVec3::new(x, y, z);
+                    if let Some(b) = observer.world.block(p).filter(|b| !b.is_air()) {
+                        blocks.insert(p, b);
+                    }
+                }
+            }
+        }
+    }
+    let flames = flames.len();
     let thatch = planned.iter().filter(|r| client.registry.def(r.1).has_tag("thatch")).count();
     let reached = generator.flames_reaching(&blocks);
     if !reached.is_empty() {

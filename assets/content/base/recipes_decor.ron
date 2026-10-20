@@ -27,6 +27,11 @@
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["{name}_planks", "", "{name}_planks"], ["{name}_planks", "", "{name}_planks"]], output: "{name}_desk", skill: "core:construction", level: 7, xp: 6.0),
         // Books are bound in hide until the Farm age brings paper.
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["hide", "hide", "hide"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_bookshelf", skill: "core:construction", level: 8, xp: 8.0),
+        // Built in for a cosier home: a bench boxed in under a wool cushion, a slab on a
+        // stick for a sill, a shelf stood with two clay pots.
+        (ingredients: ["{name}_bench", "{name}_planks", "{name}_planks", "wool"], output: "{name}_window_seat", skill: "core:construction", level: 5, xp: 5.0),
+        (ingredients: ["{name}_slab", "stick"], output: "{name}_sill", count: 2, skill: "core:construction", level: 3, xp: 2.0),
+        (ingredients: ["{name}_shelf", "clay_pot", "clay_pot"], output: "{name}_pantry_shelf", skill: "core:construction", level: 5, xp: 4.0),
         (ingredients: ["{name}_cupboard", "{name}_planks", "{name}_planks", "{name}_planks"], output: "{name}_wardrobe", skill: "core:construction", level: 10, xp: 6.0),
 
         // A cloth is a wool and a flower that dyes it, until the loom (one line a dye: each
