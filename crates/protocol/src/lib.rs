@@ -45,7 +45,9 @@ pub use voxmar_engine::weather::Weather;
 // 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
 // 49: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one
 // on.
-pub const PROTOCOL_VERSION: u32 = 49;
+// 50: kept for the light ladder, landing ahead of this one.
+// 51: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
+pub const PROTOCOL_VERSION: u32 = 51;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -317,4 +319,8 @@ pub struct PlayerView {
     pub name: String,
     pub position: Vec3,
     pub yaw: f32,
+    /// How far they look up (positive) or down, radians.
+    pub pitch: f32,
+    /// What is in their hand.
+    pub held: Option<BlockId>,
 }
