@@ -9406,7 +9406,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.hold("base:torch");
     f.propose("base:light", ActionTarget::Block { block: flue, face: Face::PosY });
     let flue_is = |c: &Client, name: &str| c.world.block(flue) == c.content.blocks.id(name);
-    f.wait(5.0, "lighting the clamp", |c| flue_is(c, "base:clamp_flue"));
+    f.wait(5.0, "lighting the clamp", |c| flue_is(c, "base:clamp_flue_catching"));
     let spent = move |c: &Client| c.world.block(flue) == Some(BlockId::AIR);
     // Clay in Store, while it smoulders: thirty-two clay dug (Clay Banks on the way), and a
     // chest by the pit kiln, eight planks round an empty middle at the table, with them put

@@ -6547,13 +6547,13 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
         }
         4 => {
             aim_at(world, aim);
-            let lit = block(world, core) == Some(smoulder.burning);
+            let lit = block(world, core).is_some_and(|b| smoulder.is_burning(b));
             if lit && drawn(world, core) {
                 mouse(world, MouseButton::Right, false);
                 if gate.shot(world, "clamp-lit").is_none() {
                     return;
                 }
-                gate.check("clamp: lit", Ok(format!("lit from a {} in hand, the {}'s flue is a {}", name(plan.torch), structure.title, name(smoulder.burning))));
+                gate.check("clamp: lit", Ok(format!("lit from a {} in hand, the {}'s flue is a {}", name(plan.torch), structure.title, name(block(world, core).unwrap_or(smoulder.burning)))));
                 world.resource::<Net>().command(&format!("time add {}h", smoulder.hours.ceil()));
                 gate.advance(now);
             } else if waited {

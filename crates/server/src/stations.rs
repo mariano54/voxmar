@@ -136,6 +136,9 @@ impl Server {
             });
             return Some((load, None));
         }
+        if let Some(load) = self.smoulder_seen(pos) {
+            return Some((Some(load), None));
+        }
         let fuelled = self.content.multiblocks.with_core(block).any(|m| !m.fuels.is_empty());
         fuelled.then(|| (None, Some(if self.station_lit(pos) { self.lit.get(&pos).map_or(0, |fire| seconds(fire.until)) } else { 0 })))
     }

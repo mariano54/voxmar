@@ -36,6 +36,25 @@
                 (style: Ember, rate: 0.6, at: (0.5, 0.2, 0.5), spread: 0.1, size: 0.6, height: 1.0, color: Some((226, 84, 16))),
             ],
         ),
+        // The flue just lit, the kindling catching: thick pale smoke, sparks, a dim glow
+        // (multiblocks.ron's clamp `stages`).
+        (
+            name: "clamp_flue_catching", render: Plant, solid: false, sound: Wood, textures: All("clamp_flue"),
+            light: 4, drops: "core:air", hardness: 0.0, color: (200, 90, 30), tags: ["creative_only", "fire", "multiblock_core"],
+            particles: [
+                (style: Smoke, rate: 6.0, at: (0.5, 0.4, 0.5), spread: 0.15, size: 1.3, height: 3.5, color: Some((168, 164, 156))),
+                (style: Ember, rate: 1.5, at: (0.5, 0.3, 0.5), spread: 0.15, size: 0.6, height: 1.5, color: Some((240, 120, 30))),
+            ],
+        ),
+        // The flue near the end, the wood charred through: a thin blue-grey wisp and a low
+        // glow, a sign to come back soon.
+        (
+            name: "clamp_flue_dying", render: Plant, solid: false, sound: Wood, textures: All("clamp_flue"),
+            light: 3, drops: "core:air", hardness: 0.0, color: (160, 70, 30), tags: ["creative_only", "fire", "multiblock_core"],
+            particles: [
+                (style: Smoke, rate: 1.2, at: (0.5, 0.4, 0.5), spread: 0.05, size: 0.7, height: 2.0, color: Some((120, 124, 132))),
+            ],
+        ),
         // What a clamp leaves where its firewood was: charcoal done in its time, part-burnt
         // wood opened early, ash where rain came in at the flue.
         (

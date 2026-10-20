@@ -73,6 +73,9 @@ pub struct Target {
     /// Seconds until the next block may be mined after one breaks, as Minecraft's five
     /// ticks, so sweeping across a meadow does not mow it flat.
     mine_cooldown: f32,
+    /// A smouldering structure the player was warned that breaking opens early (its core),
+    /// and until when (seconds of game time) a fresh click there goes ahead.
+    open_early: Option<(IVec3, f32)>,
 }
 
 impl Target {
@@ -80,6 +83,22 @@ impl Target {
     pub fn mining_seconds(&self) -> Option<f32> {
         self.mining.is_some().then_some(self.mining_seconds)
     }
+}
+
+/// How long after the warning a second click opens a smouldering structure early.
+const OPEN_EARLY_SECONDS: f32 = 4.0;
+
+/// The smouldering structure breaking `at` would open before its time, by its core, and
+/// the warning that says what that costs: what it makes now, not what it would.
+fn opens_early(world: &ClientWorld, content: &voxmar_engine::content::Content, locale: &Locale, at: IVec3) -> Option<(IVec3, String)> {
+    let (core, structure) = content.multiblocks.smoulder_round(at, |p| world.block(p))?;
+    let smoulder = structure.smoulder.as_ref()?;
+    if !world.block(core).is_some_and(|b| smoulder.is_burning(b)) {
+        return None;
+    }
+    let name = |block: BlockId| locale.block(content.blocks.def(content.blocks.info(block).drops));
+    let title = locale.get_or(&voxmar_engine::lang::def_key("multiblock", &structure.name), &structure.title).to_owned();
+    Some((core, locale.format("multiblock.open_early", &[("structure", &title), ("early", &name(smoulder.early)), ("done", &name(smoulder.done))])))
 }
 
 /// The number keys pick a hotbar slot, and so does the wheel unless it is zooming.
@@ -334,7 +353,20 @@ fn break_and_place(
             {
                 toasts.refused(words, time.elapsed_secs());
             }
+            // A piece of a structure still smouldering (a lit clamp's earth or flue) opens it
+            // early, spoiling what it chars: the first fresh click says so, and only one
+            // more soon after goes ahead.
+            _ if target.mine_cooldown <= 0.0
+                && let Some((core, words)) = opens_early(&world, &launch.content, &locale, hit.block)
+                && target.open_early.is_none_or(|(warned, until)| warned != core || time.elapsed_secs() > until || !mouse.just_pressed(MouseButton::Left)) =>
+            {
+                if mouse.just_pressed(MouseButton::Left) {
+                    target.open_early = Some((core, time.elapsed_secs() + OPEN_EARLY_SECONDS));
+                    toasts.refused(words, time.elapsed_secs());
+                }
+            }
             _ if target.mine_cooldown <= 0.0 && def.validate(&context, action_target).is_ok() => {
+                target.open_early = None;
                 target.mining_seconds = def.seconds(&context, action_target);
                 target.mining = Some(action_target);
                 net.propose_from(&player, mine, action_target);
@@ -863,6 +895,51 @@ mod tests {
         }
         let proposed: Vec<ActionId> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect();
         assert_eq!(proposed, [content.actions.expect("base:light")], "lit, and the campfire kept in hand");
+    }
+
+    /// A lit clamp's earth clicked to dig: the first click only warns what opening it now
+    /// costs, holding on does nothing more, and a second click soon after digs; an unlit
+    /// clamp digs at once.
+    #[test]
+    fn opening_a_lit_clamp_early_asks_twice() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let mine = content.actions.expect("core:mine");
+        let clamp = content.multiblocks.iter().find(|m| m.smoulder.is_some()).expect("a clamp").clone();
+        let smoulder = clamp.smoulder.clone().unwrap();
+        for lit in [true, false] {
+            let (mut app, _, server_side) = app(content.actions.clone());
+            let core = IVec3::new(10, 100, 10);
+            for (at, piece) in clamp.example() {
+                app.world_mut().resource_mut::<ClientWorld>().set_block(core + at, piece);
+            }
+            if lit {
+                app.world_mut().resource_mut::<ClientWorld>().set_block(core, smoulder.burning);
+            }
+            app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block: core - IVec3::Z, face: voxmar_engine::coords::Face::NegZ, distance: 2.5 });
+            app.world_mut().resource_mut::<LocalPlayer>().position = Vec3::new(10.5, 99.0, 6.5);
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+            let click = |app: &mut App, hold: usize| {
+                app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+                app.update();
+                app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+                for _ in 0..hold {
+                    app.update();
+                }
+                app.world_mut().resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
+                app.update();
+                std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { action, .. } if *action == mine)).count()
+            };
+            let first = click(&mut app, 10);
+            let warned: Vec<String> = app.world().resource::<SkillToasts>().refusals().map(str::to_owned).collect();
+            if lit {
+                assert_eq!(first, 0, "the first click on a lit clamp digs nothing, held or not");
+                assert!(matches!(warned.as_slice(), [why] if why.contains("Part-Burnt Wood") && why.contains("not Charcoal")), "{warned:?}");
+                assert_eq!(click(&mut app, 0), 1, "a second click soon after digs");
+            } else {
+                assert_eq!(first, 1, "an unlit clamp digs at once");
+                assert!(warned.is_empty(), "{warned:?}");
+            }
+        }
     }
 
     /// A chest opened with a block in hand, the button held on while its screen comes: the

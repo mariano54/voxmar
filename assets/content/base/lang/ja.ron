@@ -1101,6 +1101,8 @@
     "block.base.firewood": "薪",
     "block.base.kindling": "焚きつけ",
     "block.base.clamp_flue": "炭窯の煙道",
+    "block.base.clamp_flue_catching": "炭窯の煙道",
+    "block.base.clamp_flue_dying": "炭窯の煙道",
     "block.base.charcoal_heap": "木炭の山",
     "block.base.charred_wood_heap": "焼けかけの木の山",
     "block.base.ash_heap": "灰の山",

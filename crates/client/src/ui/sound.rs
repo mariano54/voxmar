@@ -33,7 +33,7 @@ impl Plugin for UiSoundPlugin {
             .init_resource::<JinglesAsked>()
             .add_systems(Startup, (synthesize, jingle_clips))
             .add_systems(Update, ask_jingles)
-            .add_systems(Update, ((click_buttons, hover_buttons, hear_screens, hear_refusals), play.in_set(Audible)).chain())
+            .add_systems(Update, ((click_buttons, hover_buttons, hear_screens, hear_refusals, hear_news), play.in_set(Audible)).chain())
             .add_systems(Update, play_jingles.in_set(Audible));
     }
 }
@@ -68,10 +68,13 @@ pub enum UiSound {
     LevelUp,
     /// A skill reached a milestone level (`hud::celebrate`).
     Milestone,
+    /// Something the player set going finished while they were away: a clamp charred
+    /// through, a kiln gone cold (`ServerMessage::Fired`).
+    Fired,
 }
 
 impl UiSound {
-    pub const ALL: [UiSound; 12] = [
+    pub const ALL: [UiSound; 13] = [
         UiSound::Click,
         UiSound::Hover,
         UiSound::Item,
@@ -84,6 +87,7 @@ impl UiSound {
         UiSound::QuestClaim,
         UiSound::LevelUp,
         UiSound::Milestone,
+        UiSound::Fired,
     ];
 
     /// Its name in `sounds.ron`'s `interface`.
@@ -101,6 +105,7 @@ impl UiSound {
             UiSound::QuestClaim => "quest_claim",
             UiSound::LevelUp => "level_up",
             UiSound::Milestone => "level_milestone",
+            UiSound::Fired => "fired",
         }
     }
 
@@ -468,6 +473,16 @@ fn hear_refusals(toasts: Option<Res<crate::hud::skills::SkillToasts>>, time: Res
 }
 
 const REFUSE_EVERY: f32 = 0.35;
+
+/// News of something finished elsewhere (`hud::skills`) sounds `Fired`, once however much
+/// came in the same frame.
+fn hear_news(toasts: Option<ResMut<crate::hud::skills::SkillToasts>>, mut sounds: MessageWriter<UiSound>) {
+    if let Some(mut toasts) = toasts
+        && !toasts.take_fired().is_empty()
+    {
+        sounds.write(UiSound::Fired);
+    }
+}
 
 /// A screen opening sounds `Open`; one closing with none opening, `Close` (the recipes
 /// closing back onto the inventory, the last screen shut). Switching from one screen to

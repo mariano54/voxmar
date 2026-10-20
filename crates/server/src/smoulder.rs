@@ -31,6 +31,10 @@ pub struct Smouldering {
     pub wet: u64,
     #[serde(default)]
     pub roofed: bool,
+    /// Who lit it, by key (`player_key`), told when it is done; None for one lit before
+    /// this was kept.
+    #[serde(default)]
+    pub by: Option<String>,
 }
 
 /// How a smoulder ended.
@@ -47,8 +51,9 @@ impl Server {
         let Some(smoulder) = &structure.smoulder else { return };
         let title = Words::Own(def_key("multiblock", &structure.name), structure.title.clone());
         if self.smoulders.contains_key(&core) {
-            let left = self.smoulders[&core].done.saturating_sub(self.day as u64) as f64 / HOUR;
-            self.tell_smoulder(agent, Words::key("multiblock.smouldering").with("structure", title).with("hours", format!("{:.0}", left.ceil())));
+            let left = self.smoulders[&core].done.saturating_sub(self.day as u64) as f64;
+            let words = Words::key("multiblock.smouldering").with("structure", title).with("hours", format!("{:.0}", (left / HOUR).ceil())).with("minutes", Words::text(self.real_minutes(left)));
+            self.tell_smoulder(agent, words);
             return;
         }
         let blocks = &self.content.blocks;
@@ -64,10 +69,19 @@ impl Server {
         let done = now + (smoulder.hours as f64 * HOUR).round() as u64;
         // Its flue is loaded now, so a roof already over it is known before it is left.
         let roofed = !self.open_sky(core + IVec3::Y);
-        self.smoulders.insert(core, Smouldering { position: core.to_array(), structure: structure.name.clone(), turn, lit: now, done, seen: now, wet: 0, roofed });
-        self.set_block(core, smoulder.burning);
+        let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
+        self.smoulders.insert(core, Smouldering { position: core.to_array(), structure: structure.name.clone(), turn, lit: now, done, seen: now, wet: 0, roofed, by });
+        self.set_block(core, smoulder.burning_at(0.0));
         self.tally(agent, "lit", &structure.name, 1);
-        self.tell_smoulder(agent, Words::key("multiblock.smoulders").with("structure", title).with("hours", format!("{:.0}", smoulder.hours.ceil())));
+        let minutes = self.real_minutes(done.saturating_sub(now) as f64);
+        self.tell_smoulder(agent, Words::key("multiblock.smoulders").with("structure", title).with("hours", format!("{:.0}", smoulder.hours.ceil())).with("minutes", Words::text(minutes)));
+    }
+
+    /// Day ticks as whole real minutes at the world's pace, rounded up, at least one: a
+    /// player reads "two hours" of the day as their own unless told.
+    fn real_minutes(&self, day_ticks: f64) -> u64 {
+        let pace = (self.day_speed * self.content.commands.day_pace()) as f64 * voxmar_protocol::TICKS_PER_SECOND as f64 * 60.0;
+        if pace > 0.0 { (day_ticks / pace).ceil().max(1.0) as u64 } else { 1 }
     }
 
     fn tell_smoulder(&self, agent: PlayerId, words: Words) {
@@ -112,7 +126,7 @@ impl Server {
         }
         let (now, tick, day, wet) = (self.day.floor() as u64, self.tick, self.day, self.survival.douse_rain);
         let cores: Vec<IVec3> = self.smoulders.keys().copied().collect();
-        let (mut done, mut opened) = (Vec::new(), Vec::new());
+        let (mut done, mut opened, mut stage) = (Vec::new(), Vec::new(), Vec::new());
         for core in cores {
             let s = &self.smoulders[&core];
             if let Some(m) = self.content.multiblocks.get(&s.structure)
@@ -143,6 +157,16 @@ impl Server {
             s.seen = s.seen.max(until);
             if now >= s.done && loaded {
                 done.push(core);
+            } else if loaded {
+                stage.push((core, now.saturating_sub(s.lit) as f32 / s.done.saturating_sub(s.lit).max(1) as f32));
+            }
+        }
+        // Its flue shows how far along the burn is: catching, steady, dying down.
+        for (core, share) in stage {
+            let Some(smoulder) = self.smoulders.get(&core).and_then(|s| self.content.multiblocks.get(&s.structure)).and_then(|m| m.smoulder.as_ref()) else { continue };
+            let now_shows = smoulder.burning_at(share);
+            if self.block(core).is_some_and(|b| smoulder.is_burning(b) && b != now_shows) {
+                self.set_block(core, now_shows);
             }
         }
         for core in done {
@@ -150,6 +174,58 @@ impl Server {
         }
         for core in opened {
             self.end_smoulder(core, End::Opened);
+        }
+    }
+
+    /// Tells the one who lit a fuelled fire that is no home (a kiln) that it has gone cold,
+    /// wherever they are, once, as its fuel runs out.
+    pub(crate) fn tell_fires_out(&mut self) {
+        let (since, tick) = (self.fires_out_seen, self.tick);
+        self.fires_out_seen = tick;
+        if since == 0 {
+            return;
+        }
+        let out: Vec<(String, String)> = self
+            .lit
+            .values()
+            .filter(|fire| fire.until > since && fire.until <= tick)
+            .filter(|fire| self.content.multiblocks.get(&fire.structure).is_some_and(|m| !m.home && !m.fuels.is_empty()))
+            .filter_map(|fire| Some((fire.owner.clone()?, fire.structure.clone())))
+            .collect();
+        for (owner, structure) in out {
+            let Some(m) = self.content.multiblocks.get(&structure) else { continue };
+            let title = Words::Own(def_key("multiblock", &m.name), m.title.clone());
+            self.tell_fired(&owner, Words::key("multiblock.fire_out").with("structure", title));
+        }
+    }
+
+    /// What a smouldering structure's core looked at says (`Server::station_seen`): the wood
+    /// it chars, what it will make of it (less what rain has spoiled so far) and the real
+    /// seconds left at the world's pace. None for a core not smouldering.
+    pub(crate) fn smoulder_seen(&self, core: IVec3) -> Option<voxmar_protocol::StationLoad> {
+        let s = self.smoulders.get(&core)?;
+        let structure = self.content.multiblocks.get(&s.structure)?;
+        let smoulder = structure.smoulder.as_ref()?;
+        let item = smoulder.wood.first().and_then(|&o| structure.takes(o).first().copied())?;
+        let heaps = smoulder.wood.iter().filter(|&&o| self.block(core + turned(o, s.turn)).is_some_and(|b| structure.takes(o).contains(&b))).count();
+        let share = s.wet as f64 / s.done.saturating_sub(s.lit).max(1) as f64;
+        let good = heaps - (heaps as f64 * share.min(1.0)).round() as usize;
+        let info = self.content.blocks.info(smoulder.done);
+        let pace = (self.day_speed * self.content.commands.day_pace()) as f64 * voxmar_protocol::TICKS_PER_SECOND as f64;
+        let seconds = if pace > 0.0 { (s.done as f64 - self.day).max(0.0) / pace } else { 0.0 };
+        Some(voxmar_protocol::StationLoad {
+            item,
+            count: heaps.min(u8::MAX as usize) as u8,
+            output: info.drops,
+            makes: (good * info.drop_count as usize).min(u8::MAX as usize) as u8,
+            seconds: seconds.ceil().min(u32::MAX as f64) as u32,
+        })
+    }
+
+    /// Sends `words` to the player keyed `owner` (`player_key`), if they are on.
+    fn tell_fired(&self, owner: &str, words: Words) {
+        if let Some(player) = self.players.values().find(|p| crate::player_key(&p.name) == owner) {
+            player.connection.send(voxmar_protocol::ServerMessage::Fired { words });
         }
     }
 
@@ -171,6 +247,7 @@ impl Server {
                 (cells.len() as f64 * share.min(1.0)).round() as usize
             }
         };
+        let heaps = cells.len();
         for (i, pos) in cells.into_iter().enumerate() {
             let into = match end {
                 End::Opened => smoulder.early,
@@ -179,8 +256,18 @@ impl Server {
             };
             self.set_block(pos, into);
         }
-        if self.block(core) == Some(smoulder.burning) {
+        if self.block(core).is_some_and(|b| smoulder.is_burning(b)) {
             self.set_block(core, smoulder.spent);
+        }
+        // Whoever lit it hears it is done, wherever they are, and what waits there.
+        if end == End::Done
+            && let Some(by) = &s.by
+        {
+            let title = Words::Own(def_key("multiblock", &structure.name), structure.title.clone());
+            let info = self.content.blocks.info(smoulder.done);
+            let count = (heaps - spoiled) * info.drop_count as usize;
+            let words = if spoiled > 0 { Words::key("multiblock.smoulder_done_wet").with("spoiled", Words::text(spoiled)) } else { Words::key("multiblock.smoulder_done") };
+            self.tell_fired(by, words.with("structure", title).with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(info.drops).name.clone())));
         }
     }
 
@@ -207,6 +294,7 @@ impl crate::process::Process for Smoulders {
 
     fn run(&mut self, server: &mut Server) {
         server.tend_smoulders();
+        server.tell_fires_out();
     }
 }
 
@@ -232,6 +320,13 @@ mod tests {
 
     /// A stone floor under open sky, two columns wide, and player 1 on it holding `item`.
     fn fixture(item: &str) -> Server {
+        let (server, client) = heard(item);
+        std::mem::forget(client);
+        server
+    }
+
+    /// The fixture, with player 1's end of the connection, to hear what they are told.
+    fn heard(item: &str) -> (Server, voxmar_protocol::ClientConnection) {
         let mut server = crate::test_server();
         server.world = Default::default();
         let stone = id(&server, "base:stone");
@@ -245,14 +340,13 @@ mod tests {
             server.world.insert(ColumnPos::new(cx, 0), Arc::new(column));
         }
         let (client, connection) = voxmar_protocol::local_pair();
-        std::mem::forget(client);
         let at = Vec3::new(10.5, (FLOOR + 1) as f32, 6.5);
         let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
         player.joined = true;
         player.inventory.slots[0] = Some(stack(id(&server, item), 1));
         player.selected = 0;
         server.players.insert(1, player);
-        server
+        (server, client)
     }
 
     fn id(server: &Server, name: &str) -> BlockId {
@@ -340,7 +434,7 @@ mod tests {
         assert!(server.smoulders.is_empty(), "a stick does not light it");
         server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(stack(id(&server, "base:torch"), 1));
         light(&mut server);
-        assert_eq!(server.block(FLUE), Some(id(&server, "base:clamp_flue")), "lit");
+        assert_eq!(server.block(FLUE), Some(id(&server, "base:clamp_flue_catching")), "lit");
         assert_eq!(server.players[&1].inventory.slots[0].map(|s| s.count), Some(1), "the torch kept");
         server.day += burn_ticks(&server) - 1.0;
         server.tend_smoulders();
@@ -352,6 +446,81 @@ mod tests {
         let heap = server.content.blocks.info(id(&server, "base:charcoal_heap"));
         assert_eq!((heap.drops, heap.drop_count), (id(&server, "base:charcoal"), 4), "thirty-six charcoal, a kiln's charge and more");
         assert!(server.smoulders.is_empty());
+    }
+
+    /// A lit clamp looked at says what it chars, what it will make and the seconds left at
+    /// the world's pace; its flue catches, burns steady and dies down as the burn goes on;
+    /// and whoever lit it is told, wherever they are, when it is done and what waits there.
+    #[test]
+    fn a_clamp_shows_its_burn_and_tells_its_lighter_when_done() {
+        let (mut server, client) = heard("base:torch");
+        sky(&mut server, "clear");
+        build(&mut server);
+        light(&mut server);
+        let flue = |server: &Server| server.block(FLUE).map(|b| server.content.blocks.def(b).name.clone()).unwrap_or_default();
+        assert_eq!(flue(&server), "base:clamp_flue_catching", "just lit, it catches");
+        let burn = burn_ticks(&server);
+        let pace = server.day_speed as f64 * server.content.commands.day_pace() as f64 * TICKS_PER_SECOND as f64;
+        let seen = server.smoulder_seen(FLUE).expect("a lit clamp says what it does");
+        assert_eq!(
+            (seen.item, seen.count, seen.output, seen.makes, seen.seconds),
+            (id(&server, "base:firewood"), 9, id(&server, "base:charcoal"), 36, (burn / pace).ceil() as u32),
+            "nine firewood charring into thirty-six charcoal, its whole burn left"
+        );
+        assert!(server.station_seen(1, FLUE).is_some_and(|(load, fire)| load == Some(seen) && fire.is_none()), "answered when looked at");
+        assert!(server.smoulder_seen(CORNER).is_none(), "only its core answers");
+        server.day += burn / 2.0;
+        server.tend_smoulders();
+        assert_eq!(flue(&server), "base:clamp_flue", "halfway, steady");
+        assert_eq!(server.smoulder_seen(FLUE).map(|s| s.seconds), Some((burn / 2.0 / pace).ceil() as u32), "half its time left");
+        server.day += burn * 0.4;
+        server.tend_smoulders();
+        assert_eq!(flue(&server), "base:clamp_flue_dying", "near the end, dying down");
+        while client.try_recv().is_ok_and(|m| m.is_some()) {}
+        server.day += burn;
+        server.tend_smoulders();
+        let mut fired = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            if let voxmar_protocol::ServerMessage::Fired { words: voxmar_engine::lang::Words::Key(key, args) } = message {
+                let count = args.iter().find(|(name, _)| name == "count").map(|(_, w)| format!("{w:?}"));
+                fired.push((key, count));
+            }
+        }
+        assert!(matches!(fired.as_slice(), [(key, Some(count))] if key == "multiblock.smoulder_done" && count.contains("36")), "{fired:?}");
+    }
+
+    /// A kiln someone fired (a fuelled structure, no home) going cold tells them once,
+    /// wherever they are; a home hearth's fire, kept for good, never does.
+    #[test]
+    fn a_kiln_gone_cold_tells_whoever_fired_it_once() {
+        let (mut server, client) = heard("base:torch");
+        server.players.get_mut(&1).unwrap().name = "Ada".into();
+        let kiln = server.content.multiblocks.iter().find(|m| !m.home && !m.fuels.is_empty()).expect("a fuelled kiln").name.clone();
+        let hearth = server.content.multiblocks.iter().find(|m| m.home).expect("a home hearth").name.clone();
+        let (here, there) = (IVec3::new(4, FLOOR + 1, 4), IVec3::new(20, FLOOR + 1, 20));
+        server.tell_fires_out();
+        let until = server.tick + 40;
+        server.lit.insert(here, crate::hearth::Lit { position: here.to_array(), structure: kiln, until, owner: Some(crate::player_key("Ada")) });
+        server.lit.insert(there, crate::hearth::Lit { position: there.to_array(), structure: hearth, until, owner: Some(crate::player_key("Ada")) });
+        let told = |client: &voxmar_protocol::ClientConnection| {
+            let mut keys = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let voxmar_protocol::ServerMessage::Fired { words: voxmar_engine::lang::Words::Key(key, _) } = message {
+                    keys.push(key);
+                }
+            }
+            keys
+        };
+        told(&client);
+        server.tick += 20;
+        server.tell_fires_out();
+        assert!(told(&client).is_empty(), "still burning");
+        server.tick += 40;
+        server.tell_fires_out();
+        assert_eq!(told(&client), ["multiblock.fire_out"], "gone cold, told once for the kiln and never for the hearth");
+        server.tick += 40;
+        server.tell_fires_out();
+        assert!(told(&client).is_empty(), "told once");
     }
 
     /// Its earth clicked from the floor beside it, as a player there sees it: lit from a
@@ -367,7 +536,7 @@ mod tests {
         assert!(server.smoulders.is_empty(), "a stick does not light it");
         server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(stack(id(&server, "base:torch"), 1));
         server.propose(1, action, side, Instant::now());
-        assert_eq!(server.block(FLUE), Some(id(&server, "base:clamp_flue")), "lit");
+        assert_eq!(server.block(FLUE), Some(id(&server, "base:clamp_flue_catching")), "lit");
         assert!(server.smoulders.contains_key(&FLUE), "its core smoulders");
         assert_eq!(server.block(FLUE - IVec3::Z), Some(id(&server, "base:dirt")), "its earth kept");
         assert_eq!(server.players[&1].inventory.slots[0].map(|s| s.count), Some(1), "the torch kept");

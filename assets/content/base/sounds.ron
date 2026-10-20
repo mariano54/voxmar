@@ -309,6 +309,10 @@
         "quest_claim": (jingle: true),
         "level_up": (jingle: true),
         "level_milestone": (jingle: true),
+        // A firing the player set going finished while they were away (a clamp charred
+        // through, a kiln gone cold): the last embers, an earthen settle and fired ware
+        // ringing once as it cools.
+        "fired": (sounds: ["sounds/fired_1.ogg", "sounds/fired_2.ogg"], volume: 0.45),
     },
     // The mix (crates/client/src/mix.rs). A later package's bands and caps replace those it
     // names; its ducking replaces the whole.

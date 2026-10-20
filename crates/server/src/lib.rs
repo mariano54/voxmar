@@ -720,6 +720,8 @@ pub(crate) struct Server {
     lit: FxHashMap<IVec3, hearth::Lit>,
     /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
     smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
+    /// The tick fuelled fires were last looked over for going out (`Server::tell_fires_out`).
+    fires_out_seen: u64,
     /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
     /// kept by owner), by core cell: set when it is first lit, kept while its fire is out or
     /// a piece of it is broken, forgotten only when its owner breaks its hearthstone or lights
@@ -904,6 +906,7 @@ impl Server {
             factory: voxmar_engine::factory::Factory::default(),
             lit,
             smoulders,
+            fires_out_seen: 0,
             hearth_owners,
             fires_sent: Vec::new(),
             placed,

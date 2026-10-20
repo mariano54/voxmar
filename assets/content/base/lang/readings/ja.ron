@@ -835,6 +835,8 @@
     "block.base.firewood": "まき",
     "block.base.kindling": "たきつけ",
     "block.base.clamp_flue": "すみがまのえんどう",
+    "block.base.clamp_flue_catching": "すみがまのえんどう",
+    "block.base.clamp_flue_dying": "すみがまのえんどう",
     "block.base.charcoal_heap": "もくたんのやま",
     "block.base.charred_wood_heap": "やけかけのきのやま",
     "block.base.ash_heap": "はいのやま",

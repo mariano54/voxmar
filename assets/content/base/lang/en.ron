@@ -1104,6 +1104,8 @@
     "block.base.firewood": "Firewood",
     "block.base.kindling": "Kindling",
     "block.base.clamp_flue": "Clamp Flue",
+    "block.base.clamp_flue_catching": "Clamp Flue",
+    "block.base.clamp_flue_dying": "Clamp Flue",
     "block.base.charcoal_heap": "Charcoal Heap",
     "block.base.charred_wood_heap": "Part-Burnt Wood Heap",
     "block.base.ash_heap": "Ash Heap",
