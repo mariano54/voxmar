@@ -4242,19 +4242,24 @@ mod fight_tests {
     /// stuck clock.
     #[test]
     fn fighters_at_walls_and_doorways_strike_back_or_give_up_rather_than_press() {
-        for (scene, set) in scenes() {
-            for name in FIGHTERS {
-                let f = fight(name, set, 20.0);
-                if matches!(scene, "past door" | "staggered") && WIDE.contains(&name) {
-                    assert!(f.pressing < 4.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
-                    assert!(f.strikes == 0, "{scene}: {name} struck through a way it cannot pass");
-                    assert!(f.last > 3.5, "{scene}: {name} ended {:.2} blocks from the player, in their reach", f.last);
-                } else {
-                    assert!(f.first.is_some_and(|s| s < 3.0), "{scene}: {name} first struck at {:?}", f.first);
-                    assert!(f.pressing < 2.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
-                }
+        // A scene to a thread: each fight is its own server.
+        std::thread::scope(|threads| {
+            for (scene, set) in scenes() {
+                threads.spawn(move || {
+                    for name in FIGHTERS {
+                        let f = fight(name, set, 20.0);
+                        if matches!(scene, "past door" | "staggered") && WIDE.contains(&name) {
+                            assert!(f.pressing < 4.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
+                            assert!(f.strikes == 0, "{scene}: {name} struck through a way it cannot pass");
+                            assert!(f.last > 3.5, "{scene}: {name} ended {:.2} blocks from the player, in their reach", f.last);
+                        } else {
+                            assert!(f.first.is_some_and(|s| s < 3.0), "{scene}: {name} first struck at {:?}", f.first);
+                            assert!(f.pressing < 2.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
+                        }
+                    }
+                });
             }
-        }
+        });
     }
 
     /// On uneven ground (a step, a flight of steps, a slab, logs lying about, tall grass)

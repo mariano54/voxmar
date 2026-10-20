@@ -153,8 +153,8 @@ pub struct InterfaceStyle {
     pub book_zooms: Vec<f32>,
     /// Which of `book_zooms` the book opens at.
     pub book_zoom_at: usize,
-    /// How much of the window the book takes across, in percent; down, it takes all but the
-    /// keys under it and the HUD at the bottom.
+    /// How much of the window the book takes across, in percent; down, it takes all from
+    /// under the bar of the screens' keys to the HUD at the bottom.
     pub book_width: f32,
 }
 
@@ -394,7 +394,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             super::makeable::spawn(card, font, HOTBAR_SLOTS);
             spawn_legend(card, font);
         });
-        super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);
+        super::screens::mark_screen(root, super::screens::GameScreen::Inventory);
         // The held stack belongs to the inventory; the tooltip also serves recipe and
         // quest icons, so it must live outside this screen's visibility hierarchy.
         let pointer = Node { position_type: PositionType::Absolute, width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
@@ -1395,7 +1395,7 @@ mod tests {
         assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (8.0, Some("base:hearthstone")), "core's distance, base's icon");
         assert_eq!((style.home_shown_beyond, style.home_dusk, style.home_dawn, style.home_fade), (48.0, 16500, 23500, 0.5));
         // Each way home number is checked as it loads.
-        assert_eq!((style.book_zooms.len(), style.book_zoom_at, style.book_width), (5, 1, 96.0));
+        assert_eq!((style.book_zooms.len(), style.book_zoom_at, style.book_width), (5, 1, 98.0));
         // As is each of the quest book's: sharp zooms from small to big, opening at one of
         // them, across most of the window.
         for bad in [

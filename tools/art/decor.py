@@ -176,6 +176,10 @@ def book():
 
     tex("furniture_wood", wood_pal, [paint(W, 0.58, "Boards(height: 4, seam: -0.5, joint: -0.4, value: 0.2, bevel: 0.12), Noise(cells: (4, 16), octaves: 2, amount: 0.25)")])
     tex("furniture_grain", wood_pal, [paint(W, 0.58, "Noise(cells: (8, 2), octaves: 2, amount: 0.32), Stripes(period: 4.0, width: 0.25, amount: -0.2, vertical: true, phase: 1.0), Grain(0.12)")])
+    # The lattice windows' own grain, drawn as the timber's: a lit room's light glows
+    # through a lattice (`lit_through`), and glowing is a drawing's, so it must not be the
+    # drawing every post and chair leg shares.
+    tex("lattice_grain", wood_pal, [paint(W, 0.58, "Noise(cells: (8, 2), octaves: 2, amount: 0.32), Stripes(period: 4.0, width: 0.25, amount: -0.2, vertical: true, phase: 1.0), Grain(0.12)")])
     tex("furniture_panel", wood_pal, [paint(W, 0.58, "Noise(cells: (8, 2), amount: 0.25), Grain(0.1)"), panel()])
     tex("furniture_drawers", wood_pal, [paint(W, 0.58, "Noise(cells: (8, 2), amount: 0.25), Grain(0.1)"), drawers()])
     tex("furniture_books", {"wood": "furn_wood", "cloth": "furn_cloth"}, [paint(W, 0.3, "Grain(0.1)"), books()])
