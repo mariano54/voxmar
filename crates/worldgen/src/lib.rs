@@ -1161,6 +1161,35 @@ pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
     }
 }
 
+/// Every package's content, as a server loads it, loaded once for the run and read by the
+/// tests that only read it.
+#[cfg(test)]
+pub(crate) fn full_content() -> &'static (voxmar_engine::content::Content, WorldContent) {
+    static FULL: std::sync::OnceLock<(voxmar_engine::content::Content, WorldContent)> = std::sync::OnceLock::new();
+    FULL.get_or_init(|| {
+        let content = voxmar_engine::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap();
+        let world = WorldContent::load(&content).unwrap();
+        (content, world)
+    })
+}
+
+/// The world of `seed` on every package's content (`full_content`), one for every test that
+/// only reads what it generates, held for the rest of the run: a shared generator makes
+/// exactly what a new one would (`Overworld::shared`), and the next test on the seed finds
+/// its rivers and settlements already planned rather than planning them again. Tests that
+/// count what a world plans, or compare a fresh world with another, make their own.
+#[cfg(test)]
+pub(crate) fn shared_full_world(seed: u64) -> Arc<Overworld> {
+    static HELD: std::sync::Mutex<Vec<Arc<Overworld>>> = std::sync::Mutex::new(Vec::new());
+    let (content, world) = full_content();
+    let shared = Overworld::shared(seed, content, world);
+    let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if !held.iter().any(|w| Arc::ptr_eq(w, &shared)) {
+        held.push(shared.clone());
+    }
+    shared
+}
+
 /// All base block files, in the same order as the game loader. Partial registries
 /// omit furnishings and tag members, which can change generation and census results.
 #[cfg(test)]
