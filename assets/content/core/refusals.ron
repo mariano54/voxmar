@@ -49,6 +49,8 @@
         "Bees": (say: "refusal.bees"),
         "Station": (say: "refusal.station"),
         "Swaps": (say: "refusal.doorway"),
+        // Daubing a panel someone leans on: the same words as placing a block on them.
+        "CoatClear": (say: "refusal.someone_there"),
         "Relights": (say: "refusal.needs_flame"),
     },
     sent: [
@@ -68,6 +70,8 @@
         "trap.needs",
         // No sleep with a hunter near or a wound fresh, or in a bed of someone's home.
         "bed.threatened", "bed.just_hurt", "bed.someones",
+        // Daubing a panel another player or a creature leans on, which their client cannot see.
+        "refusal.someone_there",
         // A station recipe's tool not carried (an axe to split a log on a chopping block).
         "cooking.needs_tool",
     ],
