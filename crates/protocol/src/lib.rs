@@ -45,11 +45,12 @@ pub use voxmar_engine::weather::Weather;
 // 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
 // 49: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one
 // on.
-// 50: kept for the light ladder, landing ahead of this one.
+// 50: kept as a gap.
 // 51: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
-// 52: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
+// 52 and 53 are kept for the light ladder and the farm days piece.
+// 54: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
 // and Players told as they change (seen, gone), names once, only those near enough.
-pub const PROTOCOL_VERSION: u32 = 52;
+pub const PROTOCOL_VERSION: u32 = 54;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
