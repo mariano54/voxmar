@@ -30,6 +30,9 @@
         "base:cook": (effect: Some("steam")),
         // Flint struck: sparks off the tinder (the fire then shows itself).
         "base:light": (effect: Some("sparks")),
+        // A burnt-out light lit again from a flame in hand or fuel poured in: sparks as it
+        // catches (the flame then shows itself).
+        "base:relight": (effect: Some("sparks")),
         // A soft glow rising at the altar.
         "base:pray": (effect: Some("motes")),
         "core:attack": (shown: Some(Combat)),
