@@ -93,7 +93,7 @@ pub enum Requirement {
     /// The actor's Cooking level is at least what the held item's recipe there needs.
     CookingLevel,
     /// The actor carries the tool the held item's recipe there asks for, if any (a hammer
-    /// to crush ore on an anvil).
+    /// to crush ore on an anvil, an axe to split a log on a chopping block).
     CookingTool,
     /// The actor holds something it can eat.
     HoldingFood,
@@ -759,7 +759,7 @@ impl ActionDef {
                 match ctx.actor_held() {
                     None => true,
                     Some(item) => {
-                        let fuel = machine.burns() && machines.burn_seconds(item).is_some();
+                        let fuel = machine.burns() && machines.burns_in(machine, item).is_some();
                         let input = machine.is_processor() && machines.takes(machine, item);
                         // A bin takes anything but machines: a chute in hand is laid against it.
                         let bin = machine.bin_takes(item) && !ctx.blocks().def(item).has_tag(&machines.rules.machine_tag);

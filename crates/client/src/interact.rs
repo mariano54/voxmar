@@ -439,8 +439,9 @@ fn break_and_place(
                     target.cooking_until = time.elapsed_secs() + seconds + 0.2;
                     return;
                 }
-                // Below its level, or with no tool about (a hammer for the anvil): it says
-                // why, and the ore held is not set down on the station instead.
+                // Below its level, or with no tool about (a hammer for the anvil, an axe for the
+                // chopping block): it says why, and what is held is not set down on the station
+                // instead.
                 Some(Err(Rejection::Unmet(need @ (Requirement::CookingLevel | Requirement::CookingTool)))) => {
                     if let Some(words) = refusal(&context, &locale, Some(hit.block), need) {
                         toasts.refused(words, time.elapsed_secs());
