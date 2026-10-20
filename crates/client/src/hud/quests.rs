@@ -717,8 +717,9 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) 
             // The chapters, the web filling what is left, and the picked quest's page at the
             // right.
             card.spawn(Node { flex_grow: 1.0, min_height: Val::ZERO, column_gap: Val::Px(space::GAP), ..default() }).with_children(|columns| {
-                let chapters = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), width: Val::Px(CHAPTERS), flex_shrink: 0.0, overflow: Overflow::scroll_y(), ..default() };
-                columns.spawn((chapters, Chapters));
+                // The chapters and the list of what is open now, scrolled when it runs long.
+                let chapters = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), width: Val::Px(CHAPTERS), min_height: Val::ZERO, flex_shrink: 0.0, overflow: Overflow::scroll_y(), ..default() };
+                columns.spawn((chapters, Chapters, ScrollList));
                 let web = Node {
                     flex_grow: 1.0,
                     flex_basis: Val::ZERO,
@@ -785,23 +786,27 @@ fn book_shown(ui: Res<UiState>) -> bool {
     ui.quests_open && !ui.recipes_open
 }
 
-#[allow(clippy::type_complexity)]
-fn pick(
-    launch: Res<Launch>,
-    chapters_pressed: Query<(&ChapterButton, &Interaction), Changed<Interaction>>,
-    nodes: Query<(&QuestNode, &Interaction), Changed<Interaction>>,
-    listed: Query<(&OpenQuest, &Interaction), Changed<Interaction>>,
-    pins: Query<&Interaction, (Changed<Interaction>, With<PinButton>)>,
-    mut view: ResMut<QuestView>,
-    mut settings: ResMut<Settings>,
-    mut recentre: ResMut<Recentre>,
-) {
+/// What the book's pages are pressed by: its chapters, its quests on the web, the list of
+/// those open now (and the mouse, to tell a new press from one held while the list is
+/// drawn again), and the pin.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Presses<'w, 's> {
+    chapters: Query<'w, 's, (&'static ChapterButton, &'static Interaction), Changed<Interaction>>,
+    nodes: Query<'w, 's, (&'static QuestNode, &'static Interaction), Changed<Interaction>>,
+    listed: Query<'w, 's, (&'static OpenQuest, &'static Interaction), Changed<Interaction>>,
+    mouse: Res<'w, ButtonInput<MouseButton>>,
+    pins: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<PinButton>)>,
+}
+
+fn pick(launch: Res<Launch>, presses: Presses, mut view: ResMut<QuestView>, mut settings: ResMut<Settings>, mut recentre: ResMut<Recentre>) {
     let content = &launch.content;
-    // One from the list of those open now, wherever it is: brought to the middle too. Once:
-    // the list is drawn again under a held press.
+    let Presses { chapters: chapters_pressed, nodes, listed, mouse, pins } = presses;
+    // One from the list of those open now, wherever it is: brought to the middle too, the
+    // one picked already as well. Only on a new press: the list is drawn again under a held
+    // one.
     for (open, interaction) in &listed {
         if *interaction == Interaction::Pressed
-            && view.picked.as_deref() != Some(open.0.as_str())
+            && mouse.just_pressed(MouseButton::Left)
             && let Some(quest) = content.quests.get(&open.0)
         {
             view.chapter = chapters(content).iter().position(|age| *age == quest.age).unwrap_or(view.chapter);
@@ -1303,19 +1308,22 @@ fn draw(
                         Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item_id(content, package(quest), name),
                         _ => None,
                     };
-                    let Some(item) = asked else {
-                        detail.spawn((Node { flex_shrink: 0.0, ..default() }, line));
-                        continue;
-                    };
-                    detail.spawn(Node { flex_shrink: 0.0, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
-                        super::recipes::item_cell(row, font, &images, Some(item), None);
-                        row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, line));
-                    });
-                    // How to get it, the way the recipe viewer draws it, with the words that
-                    // say how: made, found, broken or caught, so the book itself teaches the
-                    // goal.
+                    match asked {
+                        Some(item) => {
+                            detail.spawn(Node { flex_shrink: 0.0, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
+                                super::recipes::item_cell(row, font, &images, Some(item), None);
+                                row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, line));
+                            });
+                        }
+                        None => {
+                            detail.spawn((Node { flex_shrink: 0.0, ..default() }, line));
+                        }
+                    }
+                    // How to get it (or any of a tag's), the way the recipe viewer draws it,
+                    // with the words that say how: made, found, broken or caught, so the book
+                    // itself teaches the goal.
                     if let Some(book) = viewer.book() {
-                        let ways = goal_ways(content, book, goal, item);
+                        let ways = goal_ways(content, book, package(quest), goal);
                         if !ways.is_empty() {
                             let key = format!("{}/{t}/{g}", quest.name);
                             let shown = view.ways.get(&key).copied().unwrap_or(0) % ways.len();
@@ -1749,13 +1757,44 @@ fn drag_web(
     }
 }
 
-/// The ways a goal's item is got, from the recipe book: every way of making what a goal
-/// makes, carries or looks up; for a plant to pick or a rock to mine, breaking or
-/// harvesting that very block (with the tool it takes), else the wild ways its item comes;
-/// a catch, the ways it is caught, trapped, found or dropped. A block the book has no way to (one
-/// found in the world that drops itself, as clay) is broken where it lies. A quest's
-/// reward is left out.
-pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, goal: &Goal, item: BlockId) -> Vec<Entry> {
+/// The items a goal's name stands for: one item, or each item with a `tag:` (none for
+/// `any`).
+fn goal_items(content: &Content, package: &str, name: &str) -> Vec<BlockId> {
+    match name.strip_prefix("tag:") {
+        Some(tag) => {
+            let mut items: Vec<BlockId> = content.blocks.tagged(tag).map(|b| content.blocks.item_of(b)).collect();
+            items.sort();
+            items.dedup();
+            items
+        }
+        None => item_id(content, package, name).into_iter().collect(),
+    }
+}
+
+/// The ways a goal's item (or any of a tag's) is got, from the recipe book, each once:
+/// every way of making what a goal makes or carries; for a plant to pick or a rock to
+/// mine, breaking or harvesting that very block (with the tool it takes), else the wild
+/// ways its item comes; a catch, the ways it comes on a line. A block the book has no way
+/// to (one found in the world that drops itself, as clay) is broken where it lies. A
+/// quest's reward is left out, and a goal to look an item up shows none: looking it up is
+/// its lesson.
+pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, package: &str, goal: &Goal) -> Vec<Entry> {
+    let name = match goal {
+        Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) => name,
+        _ => return Vec::new(),
+    };
+    let mut all: Vec<Entry> = Vec::new();
+    for item in goal_items(content, package, name) {
+        for way in item_ways(content, book, goal, item) {
+            if !all.contains(&way) {
+                all.push(way);
+            }
+        }
+    }
+    all
+}
+
+fn item_ways(content: &Content, book: &RecipeBook, goal: &Goal, item: BlockId) -> Vec<Entry> {
     let wild = |entry: &&Entry| matches!(entry.method, Method::Harvest { .. } | Method::Break { .. } | Method::Catch { .. } | Method::Drop { .. } | Method::Product { .. } | Method::Trap { .. } | Method::Bees { .. } | Method::Chest { .. });
     let plant = content.blocks.item_of(item);
     let ways: Vec<&Entry> = match goal {
@@ -1764,14 +1803,14 @@ pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, goal: &Goal, item:
             let at: Vec<&Entry> = book.entries().iter().filter(|e| matches!(e.method, Method::Break { block, .. } | Method::Harvest { crop: block, .. } if from(block))).collect();
             if at.is_empty() { book.making(item).into_iter().filter(wild).collect() } else { at }
         }
-        Goal::Catch(..) => book.making(item).into_iter().filter(wild).collect(),
-        Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::CraftNear(..) | Goal::Placed(..) | Goal::Have(..) | Goal::LookUp(..) => book.making(item),
-        _ => return Vec::new(),
+        // Only a catch on a line counts for one.
+        Goal::Catch(..) => return book.making(item).into_iter().filter(|e| matches!(e.method, Method::Catch { .. })).cloned().collect(),
+        _ => book.making(item),
     };
     // A quest's reward is no way to do a quest: the goal teaches the work itself.
     let ways: Vec<&Entry> = ways.into_iter().filter(|e| !matches!(e.method, Method::Reward { .. })).collect();
     let info = content.blocks.info(item);
-    if ways.is_empty() && !matches!(goal, Goal::Catch(..)) && info.drop_count > 0 && content.blocks.item_of(info.drops) == plant {
+    if ways.is_empty() && info.drop_count > 0 && content.blocks.item_of(info.drops) == plant {
         let rule = content.tools.rule(item);
         let tool = rule.and_then(|rule| content.tools.first_of(rule.tool?, rule.tier));
         let (skill, level) = rule.map_or((None, 1), |rule| (rule.skill, rule.level));
@@ -2391,7 +2430,6 @@ pub(crate) mod tests {
         assert_eq!(path_head(&[]), None);
     }
 
-    /// Each chapter has a name in Japanese, and the tracker's numbers come from the data.
     /// The list of what can be done now: rewards waiting first, then the quests open, in
     /// the book's order; none done or still waiting on another.
     #[test]
@@ -2400,12 +2438,15 @@ pub(crate) mod tests {
         let mut player = LocalPlayer::default();
         let fresh: Vec<String> = open_now(&content, &player).iter().map(|q| q.name.clone()).collect();
         assert!(!fresh.is_empty() && fresh.iter().all(|n| content.quests.get(n).unwrap().after.is_empty()), "{fresh:?}");
-        let first = fresh[0].clone();
+        // Done, one that alone opens another: its reward waits at the top, and what it
+        // opened joins the open ones.
+        let opens = |name: &str| content.quests.iter().filter(|q| q.after == [name.to_owned()]).map(|q| q.name.clone()).collect::<Vec<_>>();
+        let first = fresh.iter().find(|n| !opens(n).is_empty()).expect("a first quest opens another").clone();
         player.quests.push(QuestState { name: first.clone(), done: true, claimed: false, tasks: Vec::new() });
         let then: Vec<String> = open_now(&content, &player).iter().map(|q| q.name.clone()).collect();
         assert_eq!(then[0], first, "its reward waits: first");
-        assert_eq!(then.iter().filter(|n| **n == first).count(), 1, "{then:?}");
-        assert!(then.len() > fresh.len() - 1, "what it opened joins: {then:?}");
+        assert!(!then[1..].contains(&first), "done, it is no longer open: {then:?}");
+        assert!(opens(&first).iter().all(|n| then.contains(n) && !fresh.contains(n)), "what it opened joins: {then:?}");
         // Open across chapters, they come in the book's order, the first chapter first.
         let mut far = LocalPlayer::default();
         far.quests = content.quests.iter().step_by(2).map(|q| QuestState { name: q.name.clone(), done: true, claimed: true, tasks: Vec::new() }).collect();
@@ -2415,36 +2456,54 @@ pub(crate) mod tests {
     }
 
     /// A goal shows how its item is got without leaving the book: a rock to mine, broken
-    /// with the tool it takes; a crop to pick, harvested; a thing to make, its recipes.
+    /// with the tool it takes; a crop to pick, harvested; a thing to make, its recipes; a
+    /// tag's goal, the ways of each item with it.
     #[test]
     fn each_goal_shows_how_its_item_is_got() {
         let content = content();
-        let book = RecipeBook::new(&content);
+        let book = voxmar_server::recipe_book(&content).unwrap();
         let id = |name: &str| content.blocks.id(name).unwrap();
+        let ways = |goal: Goal| goal_ways(&content, &book, "base", &goal);
         let coal = id("base:coal_ore");
-        let mined = goal_ways(&content, &book, &Goal::Mine("coal_ore".into(), 1), coal);
+        let mined = ways(Goal::Mine("coal_ore".into(), 1));
         assert!(!mined.is_empty() && mined.iter().all(|e| matches!(e.method, Method::Break { block, .. } if block == coal)), "{mined:?}");
         assert!(mined.iter().any(|e| matches!(e.method, Method::Break { tool: Some(_), .. })), "it names the tool it takes: {mined:?}");
-        let wheat = id("base:wheat_crop");
-        let picked = goal_ways(&content, &book, &Goal::Pick("wheat_crop".into(), 1), wheat);
+        let picked = ways(Goal::Pick("wheat_crop".into(), 1));
         assert!(picked.iter().any(|e| matches!(e.method, Method::Harvest { forage: false, .. })), "{picked:?}");
         // Clay, found in the world and dropping itself, has no recipe: it is dug where it lies.
         let clay = id("base:clay");
-        let dug = goal_ways(&content, &book, &Goal::Have("clay".into(), 1), clay);
-        assert!(matches!(dug.as_slice(), [Entry { method: Method::Break { block, .. }, output, .. }] if *block == clay && *output == clay), "{dug:?}");
+        let dug = ways(Goal::Have("clay".into(), 1));
+        assert!(matches!(dug.as_slice(), [Entry { method: Method::Found { .. } | Method::Break { .. }, output, .. }] if *output == clay), "{dug:?}");
         let campfire = id("base:campfire");
-        assert_eq!(goal_ways(&content, &book, &Goal::Craft("campfire".into(), 1), campfire), book.making(campfire).into_iter().cloned().collect::<Vec<_>>());
-        // Every goal on an item in the books shows at least one way, so none leaves a player
-        // to guess.
+        assert_eq!(ways(Goal::Craft("campfire".into(), 1)), book.making(campfire).into_iter().cloned().collect::<Vec<_>>());
+        // A tag's goal: a way for each log, each once.
+        let logs = ways(Goal::Have("tag:log".into(), 1));
+        let outputs: Vec<BlockId> = logs.iter().map(|e| e.output).collect();
+        assert!(outputs.contains(&id("base:oak_log")) && outputs.contains(&id("base:spruce_log")), "{logs:?}");
+        assert!(logs.iter().enumerate().all(|(i, e)| !logs[..i].contains(e)), "each once");
+        // A catch shows only the line's ways; looking an item up shows none, for that is its
+        // lesson.
+        let fish = ways(Goal::Catch("tag:fish".into(), 1));
+        assert!(!fish.is_empty() && fish.iter().all(|e| matches!(e.method, Method::Catch { .. })), "{fish:?}");
+        assert!(ways(Goal::LookUp("stone_pickaxe".into())).is_empty());
+        // Every goal on an item or a tag in the books shows at least one way, so none leaves
+        // a player to guess.
+        let mut shown = 0;
         for quest in content.quests.iter() {
             for goal in quest.tasks.iter().flatten() {
-                let (Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::LookUp(name)) = goal else { continue };
-                let Some(item) = item_id(&content, package(quest), name) else { continue };
-                assert!(!goal_ways(&content, &book, goal, item).is_empty(), "{}: {goal:?} shows no way to get it", quest.name);
+                let (Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) | Goal::Catch(name, _)) = goal else { continue };
+                if name == "any" || name == "Kinds" {
+                    continue;
+                }
+                assert!(!goal_items(&content, package(quest), name).is_empty(), "{}: {goal:?} names no item", quest.name);
+                assert!(!goal_ways(&content, &book, package(quest), goal).is_empty(), "{}: {goal:?} shows no way to get it", quest.name);
+                shown += 1;
             }
         }
+        assert!(shown > 100, "{shown}");
     }
 
+    /// Each chapter has a name in Japanese, and the tracker's numbers come from the data.
     #[test]
     fn chapters_are_named_and_the_tracker_is_data() {
         let content = content();
