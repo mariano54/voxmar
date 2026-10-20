@@ -222,7 +222,7 @@
                 (name: "milk", with: ["tag:pail"], silent: true),
             ],
             // The server answers at once: a fleece picked up a moment later is not taken for it.
-            brought_within: Some(2.0),
+            brought_within: Some(3.0),
             brings: [
                 // A fleece shorn: iron blades snipping, the wool rustling as it parts.
                 (tags: ["wool"], sounds: ["sounds/work/shear_1.ogg", "sounds/work/shear_2.ogg"], volume: 0.7),
@@ -244,7 +244,7 @@
             sounds: ["sounds/work/honey_1.ogg", "sounds/work/honey_2.ogg"], volume: 0.7, when_done: true,
             // A swarm is heard only by the skep of bees it brings; only it awaits one.
             ways: [(name: "swarm", with: ["bee_nest"], silent: true)],
-            brought_within: Some(2.0),
+            brought_within: Some(3.0),
             brings: [
                 // A swarm smoked into the skep: two puffs, the hum swelling and settling. Heard
                 // as the skep of bees comes to hand; one that stays put for want of smoke is
