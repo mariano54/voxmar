@@ -722,6 +722,24 @@ mod tests {
         }
     }
 
+    /// Each timber's hatch opens and shuts as a pair, in every facing: shut it keeps the
+    /// light out as a roof does and is no ladder; open it lets light by and is climbed.
+    #[test]
+    fn a_hatch_opens_to_be_climbed_and_shuts_to_keep_the_light_out() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let blocks = &content.blocks;
+        for timber in ["oak", "birch", "dark_oak"] {
+            for facing in ["", "_east", "_south", "_west"] {
+                let shut = blocks.id(&format!("base:{timber}_hatch{facing}")).unwrap();
+                let open = blocks.id(&format!("base:{timber}_hatch_open{facing}")).unwrap();
+                assert_eq!((blocks.swapped(shut), blocks.swapped(open)), (Some(open), Some(shut)), "the {timber} hatch{facing} opens and shuts as a pair");
+                let (shut, open) = (blocks.info(shut), blocks.info(open));
+                assert!(shut.solid && !shut.climbable && shut.attenuation == 15, "a shut {timber} hatch{facing} lets light by or is climbed");
+                assert!(open.solid && open.climbable && open.attenuation < 15, "an open {timber} hatch{facing} keeps light out or is not climbed");
+            }
+        }
+    }
+
     /// Every skill something trains has a way in at level 1: one whose only source asks
     /// for level 5 never leaves level 1 (Construction, with only the altar, did: design
     /// draft 94). And the skills nothing trains are exactly `UNTRAINED`.
