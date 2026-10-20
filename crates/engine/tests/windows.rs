@@ -47,3 +47,43 @@ fn a_window_lets_a_lit_rooms_light_out() {
     assert_eq!(outside(blocks.id("base:hide_window").unwrap()), light - 2, "out through the window");
     assert_eq!(outside(stone), 0, "a stone wall keeps it in");
 }
+
+/// A lattice window is a window, and so is one hung with shutters while they stand open:
+/// tagged `window` (so a home's rooms count it), it glows by the light through it and lets
+/// a candle's light out as a hide window does. Shut, the shutters keep the light in and are
+/// no window; nor are a bare frame (an opening, not a window) or an arrow slit.
+#[test]
+fn a_lattice_window_lets_the_light_out_and_counts_as_a_window() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = Content::load(&dir).unwrap();
+    let blocks = &content.blocks;
+    let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
+    for name in ["base:oak_lattice_window", "base:oak_shuttered_window", "base:birch_lattice_window_east"] {
+        assert!(blocks.def(id(name)).has_tag("window"), "{name} is a window");
+    }
+    for name in ["base:oak_shuttered_window_shut", "base:oak_window_frame", "base:stone_arrow_slit"] {
+        assert!(!blocks.def(id(name)).has_tag("window"), "{name} is no window");
+    }
+    let stone = id("base:stone");
+    let candle = id("base:candle");
+    let room = IVec3::new(16, 100, 16);
+    let outside = |wall: BlockId| {
+        let mut column = Column::default();
+        for x in -1..=1 {
+            for y in -1..=1 {
+                for z in -1..=1 {
+                    column.set_block(room + IVec3::new(x, y, z), stone);
+                }
+            }
+        }
+        column.set_block(room, candle);
+        column.set_block(room + IVec3::Z, wall);
+        let column = Arc::new(column);
+        let region = LitRegion::compute(blocks, &std::array::from_fn(|_| column.clone()));
+        region.light(room + IVec3::Z * 2) & 0xF
+    };
+    let light = blocks.info(candle).emission;
+    assert_eq!(outside(id("base:oak_lattice_window")), light - 2, "out through the lattice");
+    assert_eq!(outside(id("base:oak_shuttered_window")), light - 2, "out through the open shutters");
+    assert_eq!(outside(id("base:oak_shuttered_window_shut")), 0, "the shut shutters keep it in");
+}
