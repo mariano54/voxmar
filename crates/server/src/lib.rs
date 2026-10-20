@@ -738,8 +738,8 @@ impl Server {
         let weather = WeatherState::new(meta.seed, overworld.dials().wind.into(), land, content.weather.clone(), chances);
         let processes = process::core_processes();
         let generator: Arc<dyn Generator> = overworld.clone();
-        // Load the spawn column up front and stand on its highest solid block, so
-        // features like trees never bury the player.
+        // Load the spawn column up front and stand on its highest ground under any tree,
+        // so trees never bury the player or hold them up on a crown (`find_ground`).
         let mut world = VoxelWorld::default();
         let spawn_block = generator.spawn_point();
         let spawn_column = ColumnPos::of_block(spawn_block);
@@ -1232,14 +1232,29 @@ impl Server {
         self.world.block(pos)
     }
 
+    /// Whether a live player's body takes up any of `cell`.
+    pub(crate) fn player_in(&self, cell: IVec3) -> bool {
+        self.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
+    }
+
+    /// Whether putting `block` at `cell` would shut a player inside it: a solid block where
+    /// a player stands, which no hand may place. Admin fills leave such a cell as it is
+    /// (`/fill`, `/setblock`); regrowth brings back only plants that are not solid.
+    pub(crate) fn would_trap_a_player(&self, cell: IVec3, block: BlockId) -> bool {
+        self.content.blocks.info(block).solid && self.player_in(cell)
+    }
+
     pub(crate) fn is_solid(&self, pos: IVec3) -> bool {
         self.block(pos).is_some_and(|b| self.content.blocks.info(b).solid)
     }
 
     /// What a cell stops a player with, in blocks from its lower corner (see
-    /// `BlockRegistry::collision`): the boxes the client moves its player against.
+    /// `BlockRegistry::collision`): the boxes the client moves its player against. Space
+    /// not loaded (or under the world) is a whole cube, as the client judges it, so the two
+    /// agree at the edge of the loaded world: a player waits there rather than walk or fall
+    /// into land not loaded yet.
     pub(crate) fn boxes(&self, pos: IVec3) -> &[voxmar_engine::physics::Aabb] {
-        self.block(pos).map_or(&[], |b| self.content.blocks.collision(b))
+        self.block(pos).map_or(&voxmar_engine::physics::CUBE, |b| self.content.blocks.collision(b))
     }
 
     /// Changes many blocks at once (a command's), telling each player about those in columns
@@ -1303,16 +1318,19 @@ impl Server {
     }
 }
 
-/// The spot nearest `start` within its column whose top block is opaque ground with two
-/// free blocks above it (so the player never spawns in a tree).
+/// The spot nearest `start` within its column whose highest ground, under any tree (blocks
+/// tagged `tree`: trunks, bark, roots, leaves, giant mushroom caps), is opaque with two
+/// free blocks above it: the player wakes on the land under or beside a tree, never on its
+/// crown or in it.
 fn find_ground(world: &VoxelWorld, registry: &BlockRegistry, start: IVec3) -> Vec3 {
     let origin = ColumnPos::of_block(start).origin();
     let mut candidates: Vec<IVec3> =
         (0..CHUNK_SIZE).flat_map(|z| (0..CHUNK_SIZE).map(move |x| origin + IVec3::new(x, 0, z))).collect();
     candidates.sort_by_key(|p| (p.x - start.x).abs() + (p.z - start.z).abs());
     let info = |p: IVec3| world.block(p).map(|b| registry.info(b));
+    let tree = |p: IVec3| world.block(p).is_some_and(|b| registry.def(b).has_tag("tree"));
     for column in candidates {
-        let Some(ground) = (0..WORLD_HEIGHT).rev().map(|y| column.with_y(y)).find(|&p| info(p).is_some_and(|i| i.solid))
+        let Some(ground) = (0..WORLD_HEIGHT).rev().map(|y| column.with_y(y)).find(|&p| info(p).is_some_and(|i| i.solid) && !tree(p))
         else {
             continue;
         };
@@ -1379,6 +1397,37 @@ pub(crate) fn test_server_on(content: Content) -> Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where a new world of `seed` wakes its first player, from the spawn column alone as
+    /// `Server::new` loads it, and the block they stand on.
+    fn spawn_on(seed: u64, content: &Content, world_content: &WorldContent) -> (Vec3, Option<BlockId>) {
+        let generator = Overworld::shared(seed, content, world_content);
+        let start = generator.spawn_point();
+        let mut world = VoxelWorld::default();
+        world.insert(ColumnPos::of_block(start), Arc::new(generator.generate(ColumnPos::of_block(start))));
+        let spawn = find_ground(&world, &content.blocks, start);
+        (spawn, world.block((spawn - Vec3::Y * 0.5).floor().as_ivec3()))
+    }
+
+    /// A new player never wakes on a tree (a block tagged `tree`): with seed 157 they woke
+    /// on an oak's crown of bark, its top the highest solid block in the column; now they
+    /// stand on the land under or beside it. And over a run of seeds, none does.
+    #[test]
+    fn a_new_player_never_wakes_on_a_tree() {
+        let content = test_content();
+        let world_content = WorldContent::load(&content).expect("checked by load_content");
+        let tree = |b: Option<BlockId>| b.is_some_and(|b| content.blocks.def(b).has_tag("tree"));
+        // Each seed plans its land round spawn (about 1.6 s), so they plan side by side.
+        let woke: Vec<_> = std::thread::scope(|scope| {
+            let (content, world_content) = (&content, &world_content);
+            let runs: Vec<_> = [157, 1, 2, 3, 4, 5].map(|seed| scope.spawn(move || (seed, spawn_on(seed, content, world_content)))).into_iter().collect();
+            runs.into_iter().map(|run| run.join().unwrap()).collect()
+        });
+        for (seed, (spawn, under)) in woke {
+            let name = under.map(|b| content.blocks.def(b).name.clone());
+            assert!(under.is_some_and(|b| content.blocks.info(b).solid) && !tree(under), "seed {seed}: the player wakes at {spawn} on {name:?}");
+        }
+    }
 
     /// A world's draw key is made with it (the config's, else a random one) and kept in its
     /// meta; an older world, saved without one, is given one when it opens.

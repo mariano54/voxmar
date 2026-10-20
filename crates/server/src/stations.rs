@@ -181,6 +181,15 @@ impl Server {
             self.refuse(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
             return;
         }
+        // Its needs and what speeds it are judged on the land around it, all of it loaded.
+        let reach = station.needs.iter().chain(station.faster.iter().map(|(spot, _)| spot)).map(|spot| match spot {
+            Spot::OpenSky => 0,
+            Spot::Near(_, reach) | Spot::Water(reach) => *reach,
+        });
+        if !self.land_loaded(pos, reach.max().unwrap_or(0)) {
+            self.refuse(agent, Words::key("station.unloaded"));
+            return;
+        }
         if let Some(lacks) = self.lacks(pos, station) {
             self.refuse(agent, lacks);
             return;
@@ -391,6 +400,29 @@ mod tests {
 
     fn xp(server: &Server, skill: &str) -> u32 {
         server.players[&1].skills.xp(server.content.skills.id(skill).unwrap())
+    }
+
+    /// A station is judged on the land around it: while a column within its needs' reach is
+    /// still loading, using it is refused with a line saying so and takes nothing; once
+    /// loaded, it works as before.
+    #[test]
+    fn a_station_by_land_still_loading_says_so_and_takes_nothing() {
+        let mut server = fixture(1);
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        // Three blocks from the column to the west: in reach of a fire that speeds it.
+        let rack = IVec3::new(34, 200, 40);
+        server.set_block(rack, block(&server, "base:drying_rack"));
+        hold(&mut server, "base:raw_beef", 8);
+        let west = ColumnPos::new(0, 1);
+        let held = server.world.remove(west).expect("loaded");
+        server.use_station(1, rack);
+        let refused: Vec<Words> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Refused { why } => Some(why), _ => None }).collect();
+        assert_eq!(refused, [Words::key("station.unloaded")]);
+        assert_eq!((at(&server, rack).as_str(), carried(&server, "base:raw_beef")), ("base:drying_rack", 8), "loaded on land still loading");
+        server.world.insert(west, held);
+        server.use_station(1, rack);
+        assert_eq!(at(&server, rack), "base:drying_rack_hung");
     }
 
     /// The rack: raw meat in hand loads it (up to eight), it hangs while the clock runs,
