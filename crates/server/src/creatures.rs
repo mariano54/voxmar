@@ -415,6 +415,11 @@ impl motion::Surroundings for Ground<'_> {
     }
 }
 
+/// Whether what a creature is doing is one of the modules `names`.
+fn doing_any(species: &creature::Creature, mind: &Mind, names: &[&str]) -> bool {
+    mind.doing.is_some_and(|i| names.contains(&species.modules[i].0.name()))
+}
+
 impl Server {
     fn skill(&self, name: &str) -> Option<SkillId> {
         self.content.skills.id(name)
@@ -716,8 +721,9 @@ impl Server {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species = self.content.creatures.get(creature.species);
         let mut body = creature.body;
-        // In a chase it goes down after what it chases where it could not climb back.
-        body.bold = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
+        // In a chase it goes down after what it chases where it could not climb back; led by
+        // food a player holds, it goes down after them too (into a sunken pen).
+        body.bold = doing_any(species, &creature.mind, &["hunt", "defend", "tempted"]);
         let mut decision = creature.decision;
         let held = self.tick < creature.held_until;
         // A land animal out of its depth makes for the nearest shore, whatever it had in mind
@@ -869,7 +875,7 @@ impl Server {
                 // through, or round a box it cannot get into): it gives the chase up and
                 // goes home rather than hang there. Back at it within a minute, it gives up
                 // at the first balk.
-                let chasing = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
+                let chasing = doing_any(species, &creature.mind, &["hunt", "defend"]);
                 if chasing && !species.def.boss {
                     let again = self.tick < creature.balked_at + BALK_WINDOW;
                     creature.balked = if again { creature.balked + 1 } else { 1 };
@@ -4432,6 +4438,11 @@ mod fight_tests {
     /// enough to cross it, turning as it steers; where its feet got to lowest, and whether
     /// any of it was ever in a cell `bad` says; and where it ended.
     fn walk_from(server: &Server, from: Vec3, species: &voxmar_engine::creature::Creature, pace: f32, bold: bool, bad: impl Fn(IVec3) -> bool) -> (f32, bool, Vec3) {
+        walk_toward(server, from, Vec3::X, species, pace, bold, bad)
+    }
+
+    /// As `walk_from`, wishing to go along `wish`.
+    fn walk_toward(server: &Server, from: Vec3, wish: Vec3, species: &voxmar_engine::creature::Creature, pace: f32, bold: bool, bad: impl Fn(IVec3) -> bool) -> (f32, bool, Vec3) {
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ground = Ground::of(server);
         let (movement, water) = (species.def.movement, species.def.habitat.water);
@@ -4439,7 +4450,7 @@ mod fight_tests {
         (body.reach, body.head, body.on_ground, body.bold) = (species.reach, species.head, true, bold);
         let (mut side, mut lowest, mut touched) = (0.0, body.position.y, false);
         for _ in 0..((12.0 / pace + 4.0) * TICKS_PER_SECOND as f32) as u32 {
-            let (heading, turned) = motion::steer(&body, &ground, &movement, water, Vec3::X, side, pace, dt);
+            let (heading, turned) = motion::steer(&body, &ground, &movement, water, wish, side, pace, dt);
             side = turned;
             motion::step(&mut body, &ground, &movement, water, Drive { wish: heading, speed: pace, face: None }, dt);
             if std::env::var("VOXMAR_TRACE").is_ok_and(|v| v == species.def.name) {
@@ -4502,6 +4513,55 @@ mod fight_tests {
                     assert!(lowest > c.y as f32 - 0.5, "{} walked into a pit {deep} deep (wet {wet}) at {pace} its walk: down to {:.2}", species.def.name, lowest - c.y as f32);
                 }
             }
+        }
+    }
+
+    /// One standing on a closed pit's lip, its middle a little over the drop (a player dug
+    /// beside it, or it was pushed there), walks back off it onto the bank and along it; it
+    /// goes no further over. Before: every way was shut to it, back onto the bank too, and
+    /// it stood there for good.
+    #[test]
+    fn one_on_a_pits_lip_walks_back_off_it() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        closed_pit(&mut server, c, 3);
+        let kinds = walkers(&server);
+        for species in kinds {
+            let half = species.def.body.size.0 * 0.5;
+            let walk = species.def.movement.walk;
+            for over in [0.05, 0.15, 0.25].into_iter().filter(|&over| over + 0.05 < half) {
+                let from = c.as_vec3() + Vec3::new(1.0 + over, 0.0, 0.5);
+                for wish in [-Vec3::X, Vec3::Z, -Vec3::Z] {
+                    let (lowest, _, end) = walk_toward(&server, from, wish, species, walk, false, |_| false);
+                    assert!(lowest > c.y as f32 - 0.5, "{} on the lip {over} over went down into the pit going {wish}", species.def.name);
+                    assert!(end.distance(from) > 2.0, "{} on the lip {over} over stood there going {wish}: got to {:.2}", species.def.name, end - c.as_vec3());
+                }
+            }
+        }
+    }
+
+    /// Stock led by food its owner holds goes down after them into a sunken pen it could not
+    /// climb out of on its own: leading animals into one is what a player means it for.
+    #[test]
+    fn stock_led_by_held_food_goes_down_into_a_sunken_pen() {
+        for (name, food) in [("base:mouflon", "base:wheat"), ("base:red_deer", "base:apple")] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            closed_pit(&mut server, c, 2);
+            let player = join(&mut server, c.as_vec3() + Vec3::new(3.0, -2.0, 0.5));
+            let item = server.content.blocks.expect(food);
+            let owner = server.players[&player].name.clone();
+            let held = server.players.get_mut(&player).unwrap();
+            held.inventory.add(item, 4);
+            held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == item)).expect("the food is held");
+            let id = put(&mut server, name, c.as_vec3() + Vec3::new(-2.5, 0.0, 0.5), Vec3::X);
+            server.creatures.live.get_mut(&id).unwrap().owner = Some(owner);
+            for _ in 0..15 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+            }
+            let at = server.creatures.live[&id].body.position;
+            assert!(at.y < c.y as f32 - 1.5, "{name} led by {food} kept out of the sunken pen: at {:.2}", at - c.as_vec3());
         }
     }
 

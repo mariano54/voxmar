@@ -272,8 +272,11 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // wading in the shallows, it does not walk on into the deep.
     let feet = body.position.floor().as_ivec3();
     let wary = water == Water::Land && !(body.in_water && world.water(feet - IVec3::Y));
-    // Lava is a wall to anything that walks, unless it is already in it: then it walks out.
-    let burns = matches!(water, Water::Land | Water::Amphibious) && !world.lava(feet) && !world.lava(feet - IVec3::Y);
+    // Lava is a wall to anything that walks, unless it is already in it: then it walks out,
+    // and no deeper in.
+    let lava_kind = matches!(water, Water::Land | Water::Amphibious);
+    let in_lava = lava_kind && (world.lava(feet) || world.lava(feet - IVec3::Y));
+    let burns = lava_kind && !in_lava;
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
     // Down into a space it would hang in (a trench too short for a long head to come down
@@ -285,7 +288,9 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // Down is below where its feet are: at a lip its box's corners may all be over the drop
     // (`now`) while its edge still stands on it.
     let feet = (body.position.y + 0.01).floor() as i32;
-    let held = |middle: Vec3, then: IVec3| {
+    // `pit`: judged for a pit too (below); never from under its own middle, or one whose
+    // middle is over a pit's lip would find no way at all, back onto the bank either.
+    let held = |middle: Vec3, then: IVec3, trench: bool, pit: bool| {
         if then.y >= feet {
             return false;
         }
@@ -301,7 +306,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         // deep), at any pace; a pit with water in its floor too, as a pool it would swim up
         // out of only if its top is in reach.
         let climb = (movement.jump > 0.0) as i32;
-        if !body.bold && feet - then.y > climb {
+        if pit && !body.bold && feet - then.y > climb {
             let walker = Walker {
                 height: body.size.1.ceil() as i32,
                 climbs: climb > 0,
@@ -313,7 +318,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
                 return true;
             }
         }
-        if pace > movement.walk || world.water(then) {
+        if !trench || pace > movement.walk || world.water(then) {
             return false;
         }
         let landed = |k: i32| Body { position: at(k), yaw: yaw_of(heading), ..*body };
@@ -336,13 +341,14 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         && then.y < feet
     {
         judged = true;
-        if held(body.position, then) {
+        if held(body.position, then, true, false) {
             return false;
         }
     }
     let samples = (ahead / 0.4).ceil().max(1.0) as i32;
     let step = heading * (ahead / samples as f32);
     let mut aabb = Aabb::standing(to, body.size.0, body.size.1);
+    let mut pit_judged = false;
     (0..=samples).all(|i| {
         if i > 0 {
             move_and_slide(&mut aabb, step, solid);
@@ -356,10 +362,12 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
             None => false,
             Some(then) => {
                 let first_down = then.y < feet && !std::mem::replace(&mut judged, true);
+                let first_pit = then.y < feet && !std::mem::replace(&mut pit_judged, true);
                 now - then.y <= SAFE_DROP
                     && !(wary && world.water(then) && world.water(then - IVec3::Y))
                     && !(burns && world.lava(then))
-                    && !(first_down && held(middle, then))
+                    && !(in_lava && world.lava(then) && then.y < now)
+                    && !((first_down || first_pit) && held(middle, then, first_down, first_pit))
             }
         }
     })

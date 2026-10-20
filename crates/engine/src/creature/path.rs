@@ -69,6 +69,11 @@ impl Walker {
 /// for open.
 pub const OPEN_FLOOR: usize = 64;
 
+/// Squares the fills out of drops in one search look at in all: past that, a drop it has not
+/// learnt of is taken for one with no way out, and a walker that keeps to its climb does not
+/// go down it. Many closed pits in reach cost a search no more than this.
+pub const FILL_BUDGET: usize = 4 * OPEN_FLOOR;
+
 /// What a fill out of a drop learnt of each square it reached: the highest square it
 /// reached from there and how many (capped past `OPEN_FLOOR`). A walker goes up and down
 /// alike there (no further than it climbs), so every square a fill reached reaches the
@@ -118,8 +123,10 @@ struct Looker<'a, W> {
     known: Vec<std::cell::Cell<u16>>,
     /// Whether it goes down further than `Walker::drop` onto open ground (`way_out`).
     deep: bool,
-    /// What its fills out of drops have learnt, for the length of a search.
+    /// What its fills out of drops have learnt, for the length of a search, and how many
+    /// squares they have looked at (`FILL_BUDGET`).
     outs: Outs,
+    filled: std::cell::Cell<usize>,
 }
 
 /// Cells across the grid a search keeps.
@@ -131,7 +138,7 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         let span = walker.span.max(1);
         let origin = about.map_or(IVec3::ZERO, |at| at - IVec3::new(RANGE + 2, DEPTH, RANGE + 2));
         let size = about.map_or(0, |_| ((ACROSS + span) * (ACROSS + span) * 2 * DEPTH) as usize);
-        Self { world, walker, origin, known: vec![std::cell::Cell::new(0); size], deep: true, outs: Outs::default() }
+        Self { world, walker, origin, known: vec![std::cell::Cell::new(0); size], deep: true, outs: Outs::default(), filled: std::cell::Cell::new(0) }
     }
 
     /// Where the grid keeps `cell`, if it does.
@@ -224,6 +231,9 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         if let Some(&known) = self.outs.borrow().get(&from) {
             return open(known);
         }
+        if self.filled.get() >= FILL_BUDGET {
+            return false;
+        }
         let mut seen = vec![from];
         let mut queue = vec![from];
         while let Some(cell) = queue.pop() {
@@ -239,6 +249,7 @@ impl<'a, W: Surroundings> Looker<'a, W> {
                 }
             }
         }
+        self.filled.set(self.filled.get() + seen.len());
         let known = (seen.iter().map(|c| c.y).max().unwrap_or(from.y), seen.len());
         let mut outs = self.outs.borrow_mut();
         for cell in seen {
@@ -411,16 +422,19 @@ mod tests {
         assert!(!way_out(&Hole { deep: 3, open: false }, &wanderer, IVec3::new(3, -3, 0), 0));
     }
 
-    /// Ground cut by endless trenches a block across and two deep every other block, its
-    /// cells looked at counted.
+    /// Ground cut by trenches a block across and two deep every other block, endless or
+    /// closed at both ends (`long` blocks of them, short of a fill's `OPEN_FLOOR`), its cells
+    /// looked at counted.
     struct Trenches {
         looks: std::cell::Cell<u64>,
+        long: Option<i32>,
     }
 
     impl Surroundings for Trenches {
         fn solid(&self, c: IVec3) -> bool {
             self.looks.set(self.looks.get() + 1);
-            c.y < if c.x.rem_euclid(2) == 1 { -2 } else { 0 }
+            let cut = c.x.rem_euclid(2) == 1 && self.long.is_none_or(|long| (-long / 4..long - long / 4).contains(&c.z));
+            c.y < if cut { -2 } else { 0 }
         }
         fn water(&self, _: IVec3) -> bool {
             self.looks.set(self.looks.get() + 1);
@@ -430,19 +444,23 @@ mod tests {
 
     /// A search by a wanderer (going down only onto open ground) over trenches looks at no
     /// more cells than a search may at its most (`BUDGET` squares, eight ways, two looks
-    /// each): what a fill out of a drop learns, every square it reached answers, and its
-    /// looks go through what the search keeps. Before: each drop it looked at filled afresh,
-    /// 277 thousand looks to a chaser's 2.9 thousand.
+    /// each): what a fill out of a drop learns, every square it reached answers, its looks
+    /// go through what the search keeps, and its fills look at no more than `FILL_BUDGET`
+    /// squares in all. Before: each drop it looked at filled afresh, 277 thousand looks to a
+    /// chaser's 2.9 thousand; and closed trenches 62 long, each a fill of its own, took 54
+    /// thousand.
     #[test]
     fn a_wanderers_search_over_trenches_is_bounded() {
-        let cost = |walker: &Walker| {
-            let world = Trenches { looks: std::cell::Cell::new(0) };
-            let _ = find(&world, walker, IVec3::new(0, 0, 0), IVec3::new(0, 0, 40));
-            world.looks.get()
-        };
-        let wanderer = Walker { drop: WOLF.climb(), ..WOLF };
-        let (chaser, wanders) = (cost(&WOLF), cost(&wanderer));
-        assert!(wanders <= (BUDGET * 8 * 2) as u64, "a wanderer's search looked {wanders} times, a chaser's {chaser}");
+        for long in [None, Some(62), Some(30), Some(8)] {
+            let cost = |walker: &Walker| {
+                let world = Trenches { looks: std::cell::Cell::new(0), long };
+                let _ = find(&world, walker, IVec3::new(0, 0, 0), IVec3::new(0, 0, 40));
+                world.looks.get()
+            };
+            let wanderer = Walker { drop: WOLF.climb(), ..WOLF };
+            let (chaser, wanders) = (cost(&WOLF), cost(&wanderer));
+            assert!(wanders <= (BUDGET * 8 * 2) as u64, "over trenches {long:?} long a wanderer's search looked {wanders} times, a chaser's {chaser}");
+        }
     }
 
     #[test]
