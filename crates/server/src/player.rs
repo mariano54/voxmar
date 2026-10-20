@@ -106,6 +106,10 @@ pub struct Player {
     /// How many times the server has moved the player (`Player::teleport`); inputs that
     /// do not echo it are stale.
     pub teleports: u32,
+    /// The others as last told to this player (`Server::broadcast_players`), names and all.
+    pub told: rustc_hash::FxHashMap<PlayerId, PlayerView>,
+    /// The others' names as told to this player, near or far (`Server::broadcast_players`).
+    pub named: rustc_hash::FxHashMap<PlayerId, String>,
     pub support: Support,
     /// The last place they stood on ground out of lava: where a death in the void or in
     /// lava leaves their things (`Server::grave_site`).
@@ -222,6 +226,8 @@ impl Player {
             budget_at: None,
             accepted: spawn,
             teleports: 0,
+            told: rustc_hash::FxHashMap::default(),
+            named: rustc_hash::FxHashMap::default(),
             support: Support { y: spawn.y, fluid: false, at: None },
             last_ground: None,
             connected_tick: tick,
@@ -248,7 +254,7 @@ impl Player {
     }
 
     pub fn view(&self) -> PlayerView {
-        PlayerView { id: self.id, name: self.name.clone(), position: self.position, yaw: self.yaw, pitch: self.pitch, held: self.held() }
+        PlayerView { id: self.id, name: Some(self.name.clone()), position: self.position, yaw: self.yaw, pitch: self.pitch, held: self.held(), fight: Default::default() }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -1246,43 +1252,144 @@ mod tests {
         connection
     }
 
-    /// Drive the server directly: no tick race can hide an identity change or a cap bypass.
-    /// The last of the other players a client was told of, emptying what came before.
-    fn told_of_others(client: &ClientConnection) -> Option<Vec<PlayerView>> {
+    /// Every Players message a client was sent since last asked: (seen, gone) each.
+    fn told_of_others(client: &ClientConnection) -> Vec<(Vec<PlayerView>, Vec<PlayerId>)> {
+        told_of_others_and_names(client).into_iter().map(|(seen, gone, _)| (seen, gone)).collect()
+    }
+
+    /// Every Players message a client was sent since last asked, names out of sight and all.
+    #[allow(clippy::type_complexity)]
+    fn told_of_others_and_names(client: &ClientConnection) -> Vec<(Vec<PlayerView>, Vec<PlayerId>, Vec<(PlayerId, String)>)> {
         std::iter::from_fn(|| client.try_recv().ok().flatten())
             .filter_map(|message| match message {
-                ServerMessage::Players { players } => Some(players),
+                ServerMessage::Players { seen, gone, names } => Some((seen, gone, names)),
                 _ => None,
             })
-            .last()
+            .collect()
+    }
+
+    /// Two players joined, Bob holding an iron sword: Ada is told of him by name, with what
+    /// he holds.
+    fn ada_and_bob() -> (Server, ClientConnection, ClientConnection, BlockId) {
+        let mut server = crate::test_server();
+        let ada = join(&mut server, 1, "Ada");
+        let bob = join(&mut server, 2, "Bob");
+        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
+        let p = server.players.get_mut(&2).unwrap();
+        p.inventory.add(sword, 1);
+        p.selected = (0..voxmar_engine::inventory::SLOTS).find(|&s| p.inventory.get(s).is_some_and(|stack| stack.item == sword)).expect("the sword in a slot");
+        (server, ada, bob, sword)
+    }
+
+    /// Bob moved by his own input, looking `pitch` up.
+    fn bob_moves(server: &mut Server, bob: &ClientConnection, by: Vec3, pitch: f32) {
+        let p = &server.players[&2];
+        let input = PlayerInput { position: p.position + by, yaw: 0.3, pitch, selected_slot: p.selected as u8, flying: false, teleport: p.teleports };
+        bob.send(ClientMessage::Input(input));
+        server.handle_messages();
     }
 
     /// Others see what a player holds and how they look up or down (at most as far as the
     /// server lets them: 1.6 radians); the last one left is told the others are gone, once.
     #[test]
     fn others_are_told_what_a_player_holds_and_where_they_look_and_when_they_go() {
-        let mut server = crate::test_server();
-        let ada = join(&mut server, 1, "Ada");
-        let bo = join(&mut server, 2, "Bob");
-        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
-        let p = server.players.get_mut(&2).unwrap();
-        p.inventory.add(sword, 1);
-        let slot = (0..voxmar_engine::inventory::SLOTS).find(|&s| p.inventory.get(s).is_some_and(|stack| stack.item == sword)).expect("the sword in a slot");
-        let input = PlayerInput { position: p.position, yaw: 0.3, pitch: 3.0, selected_slot: slot as u8, flying: false, teleport: p.teleports };
-        bo.send(ClientMessage::Input(input));
-        server.handle_messages();
+        let (mut server, ada, bob, sword) = ada_and_bob();
+        bob_moves(&mut server, &bob, Vec3::ZERO, 3.0);
         server.broadcast_players();
-        let told = told_of_others(&ada).expect("Ada was told of Bob");
-        let bob = told.iter().find(|v| v.id == 2).expect("Bob among the others");
-        assert_eq!((bob.held, bob.pitch), (Some(sword), 1.6), "what Bob holds and how far up he looks");
-        assert!(told.iter().all(|v| v.id != 1), "Ada was told of herself");
+        let told = told_of_others(&ada);
+        let (seen, _) = told.last().expect("Ada was told of Bob");
+        let view = seen.iter().find(|v| v.id == 2).expect("Bob among the others");
+        assert_eq!((view.held, view.pitch, view.name.as_deref()), (Some(sword), 1.6, Some("Bob")), "what Bob holds, how far up he looks and his name");
+        assert!(seen.iter().all(|v| v.id != 1), "Ada was told of herself");
         server.leave(2);
         server.broadcast_players();
-        assert_eq!(told_of_others(&ada).map(|t| t.len()), Some(0), "Ada was not told Bob had gone");
+        let told = told_of_others_and_names(&ada);
+        assert!(
+            told.len() == 1 && told[0].0.is_empty() && told[0].1 == [2] && told[0].2 == [(2, String::new())],
+            "Ada was not told once that Bob had gone, his name to forget: {told:?}"
+        );
         server.broadcast_players();
-        assert!(told_of_others(&ada).is_none(), "alone, Ada was told of nobody again and again");
+        assert!(told_of_others(&ada).is_empty(), "alone, Ada was told of nobody again and again");
     }
 
+    /// A view unchanged since it was sent is not sent again, and a name only the first time.
+    #[test]
+    fn an_unchanged_player_is_not_told_again_and_a_name_is_told_once() {
+        let (mut server, ada, bob, _) = ada_and_bob();
+        server.broadcast_players();
+        assert_eq!(told_of_others(&ada).len(), 1, "Ada was not told of Bob");
+        for _ in 0..3 {
+            server.broadcast_players();
+        }
+        assert!(told_of_others(&ada).is_empty(), "Bob standing still was told again");
+        bob_moves(&mut server, &bob, Vec3::new(0.2, 0.0, 0.0), 0.0);
+        server.broadcast_players();
+        let told = told_of_others(&ada);
+        assert_eq!(told.len(), 1, "Bob moving was not told");
+        let view = &told[0].0[0];
+        assert!(view.id == 2 && view.name.is_none(), "Bob's name was told again: {view:?}");
+    }
+
+    /// A player further than `players_seen` is not told of, only named, once (for a
+    /// creature they keep); coming near, they are told of, the name not again.
+    #[test]
+    fn a_far_player_is_not_told_of() {
+        let (mut server, ada, _bob, _) = ada_and_bob();
+        let seen = server.config.limits.players_seen;
+        let far = server.players[&1].position + Vec3::new(seen + 10.0, 0.0, 0.0);
+        server.players.get_mut(&2).unwrap().position = far;
+        server.broadcast_players();
+        let told = told_of_others_and_names(&ada);
+        assert!(
+            told.len() == 1 && told[0].0.is_empty() && told[0].2 == [(2, "Bob".to_owned())],
+            "Ada was told of Bob {} blocks off, or not of his name: {told:?}",
+            seen + 10.0
+        );
+        server.broadcast_players();
+        assert!(told_of_others(&ada).is_empty(), "Bob's name was told again");
+        let near = server.players[&1].position + Vec3::new(seen - 10.0, 0.0, 0.0);
+        server.players.get_mut(&2).unwrap().position = near;
+        server.broadcast_players();
+        let told = told_of_others(&ada);
+        assert!(told.len() == 1 && told[0].0[0].id == 2 && told[0].0[0].name.is_none(), "Ada was not told of Bob as he came near, or his name again: {told:?}");
+        server.players.get_mut(&2).unwrap().position = far;
+        server.broadcast_players();
+        let told = told_of_others(&ada);
+        assert!(told.len() == 1 && told[0].1 == [2], "Ada was not told Bob went out of sight: {told:?}");
+    }
+
+    /// A player told of, hovering just past `players_seen`, stays told of until they go
+    /// past `players_seen_margin` more: never told of and gone again tick by tick.
+    #[test]
+    fn a_player_at_the_edge_of_sight_stays_told_of() {
+        let (mut server, ada, _bob, _) = ada_and_bob();
+        let (seen, margin) = (server.config.limits.players_seen, server.config.limits.players_seen_margin);
+        assert!(margin > 1.0, "the margin is some blocks");
+        let at = |server: &Server, x: f32| server.players[&1].position + Vec3::new(x, 0.0, 0.0);
+        let to = at(&server, seen - 0.5);
+        server.players.get_mut(&2).unwrap().position = to;
+        server.broadcast_players();
+        assert_eq!(told_of_others(&ada).len(), 1, "Ada was not told of Bob just inside sight");
+        for (tick, x) in [seen + 0.5, seen - 0.5, seen + margin - 0.5, seen - 0.25].into_iter().enumerate() {
+            let to = at(&server, x);
+            server.players.get_mut(&2).unwrap().position = to;
+            server.broadcast_players();
+            let told = told_of_others(&ada);
+            assert!(told.iter().all(|t| t.1.is_empty()), "Ada was told Bob went out of sight {x} blocks off (move {tick}): {told:?}");
+        }
+        let to = at(&server, seen + margin + 0.5);
+        server.players.get_mut(&2).unwrap().position = to;
+        server.broadcast_players();
+        let told = told_of_others(&ada);
+        assert!(told.len() == 1 && told[0].1 == [2], "Ada was not told Bob went out of sight past the margin: {told:?}");
+        // Gone, he is told of again only once back inside `players_seen`.
+        let to = at(&server, seen + margin - 0.5);
+        server.players.get_mut(&2).unwrap().position = to;
+        server.broadcast_players();
+        assert!(told_of_others(&ada).is_empty(), "Ada was told of Bob again inside the margin, not inside sight");
+    }
+
+    /// Drive the server directly: no tick race can hide an identity change or a cap bypass.
     #[test]
     fn the_saved_name_keeps_identity_herd_caps_births_and_death_drops() {
         check_saved_ownership(false);
@@ -1336,7 +1443,7 @@ mod tests {
         server.items = Items::restore(save.read_items().unwrap(), |name| server.content.blocks.item_named(name));
         let returning = join(&mut server, 2, "BOB");
         assert_eq!(server.players[&2].name, "Bob");
-        assert_eq!(server.players[&2].view().name, "Bob", "replicated identity uses the saved name");
+        assert_eq!(server.players[&2].view().name.as_deref(), Some("Bob"), "replicated identity uses the saved name");
         assert_eq!(server.factory.state_mut(wheel_pos).unwrap().owner.as_deref(), Some("Bob"));
         assert_eq!(server.kept_by(&server.players[&2].name), kept_each);
         assert_eq!(server.birth_room(&server.players[&2].name), 0, "case changes cannot evade the herd cap");

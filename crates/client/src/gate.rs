@@ -453,7 +453,9 @@ steps! {
     /// sends them away.
     Party,
     /// `/locate ore` finds a sample of ore on the ground, and the server's world there has
-    /// it, with its vein's ore below it.
+    /// it, with its vein's ore below it. Broken, it teaches its prospecting experience as
+    /// well as its own; coal ore set in its place refuses a first-tier pickaxe, naming the
+    /// stone one.
     Ore,
     /// `/locate gorge` finds a river deep between walls, and the server's world there has
     /// them.
@@ -802,6 +804,14 @@ struct Gate {
     tarn: Option<TarnVisit>,
     /// Where `/locate ore` found a sample of ore.
     ore: IVec3,
+    /// The Mining level before the ore step raised it, to put back (none when it did not).
+    ore_mining: Option<u8>,
+    /// The sample `ore` found, kept once it is broken.
+    ore_sample: Option<BlockId>,
+    /// The tools the ore step gave that the player had none of, to clear after.
+    ore_given: Vec<String>,
+    /// The sample's drop and how many the player carried before the ore step, put back after.
+    ore_drop: Option<(String, u32)>,
     /// Where `/locate settlement` sent the player: the middle of its square.
     settlement: IVec3,
     /// What `/locate settlement` answered, English, for the culture it names.
@@ -842,6 +852,12 @@ struct Gate {
     tap_at: f32,
     tapped: bool,
     taps: u32,
+    /// Rabbits the snare step has put in its snare, and when the last went in (server
+    /// seconds): one may slip it, and another goes in.
+    snare_tries: u32,
+    /// Sticks lying by the snare or carried before a deer was put in to tear it.
+    snare_sticks: u32,
+    snare_at: f32,
     /// The sling step's run (`sling`).
     sling: SlingRun,
     /// The Rootmothers seen before the Boss step summoned its own, and the one it summoned:
@@ -1117,6 +1133,10 @@ impl Gate {
             town: IVec3::ZERO,
             town_search: None,
             ore: IVec3::ZERO,
+            ore_mining: None,
+            ore_sample: None,
+            ore_given: Vec::new(),
+            ore_drop: None,
             quarry: Vec3::ZERO,
             quarry_id: None,
             fallen_watched: false,
@@ -1134,6 +1154,9 @@ impl Gate {
             tap_at: f32::MIN,
             tapped: false,
             taps: 0,
+            snare_tries: 0,
+            snare_sticks: 0,
+            snare_at: 0.0,
             sling: SlingRun::default(),
             boss_before: Vec::new(),
             boss_id: None,
@@ -1503,9 +1526,26 @@ impl Observer {
                         }
                     }
                     ServerMessage::Chat { text, .. } => self.replies.push(text),
-                    ServerMessage::Players { players } => {
-                        self.names = players.iter().map(|p| (p.id, p.name.clone())).collect();
-                        self.others = players.iter().filter(|p| Some(p.id) != self.id).map(|p| (p.id, p.position)).collect();
+                    ServerMessage::Players { seen, gone, names } => {
+                        // Names stay through going out of sight; one left with no name is forgotten.
+                        for (id, name) in names {
+                            if name.is_empty() {
+                                self.names.remove(&id);
+                            } else {
+                                self.names.insert(id, name);
+                            }
+                        }
+                        for id in gone {
+                            self.others.remove(&id);
+                        }
+                        for p in seen {
+                            if let Some(name) = p.name {
+                                self.names.insert(p.id, name);
+                            }
+                            if Some(p.id) != self.id {
+                                self.others.insert(p.id, p.position);
+                            }
+                        }
                     }
                     _ => {}
                 },
@@ -3847,8 +3887,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let (hopper, boiler, chest) = (k, k + IVec3::new(2, 0, -1), k + IVec3::new(2, 2, 0));
             let teardown = move |world: &mut World| {
                 let (a, b) = (k + IVec3::new(-1, -1, -1), k + IVec3::new(4, 2, 3));
+                remove_wheel_aurochs(world, k);
                 let net = world.resource::<Net>();
-                for line in ["creatures remove aurochs".to_owned(), format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                for line in [format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
                     net.command(&line);
                 }
                 for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
@@ -4033,8 +4074,9 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             let teardown = move |world: &mut World| {
                 let (a, b) = (k + IVec3::new(-4, -1, -1), k + IVec3::new(4, 3, 3));
+                remove_wheel_aurochs(world, k);
                 let net = world.resource::<Net>();
-                for line in ["creatures remove aurochs".to_owned(), format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
+                for line in [format!("fill {} {} {} {} {} {} air", a.x, a.y, a.z, b.x, b.y, b.z), "clear".to_owned()] {
                     net.command(&line);
                 }
                 for line in ["give oak_planks 64", "give cobblestone 64", "give glass 32", "give glowstone 16"] {
@@ -6780,6 +6822,19 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// How near the pad's middle no creature may be for the look step's first look.
 const LOOK_CLEAR: f32 = 12.0;
 
+/// Takes the tamed aurochs off the treadwheel's floor (beside `k + (3, 0, 2)`): `/creatures
+/// remove` reaches 8 blocks, and the iron age's shot is taken from about 10 off, so the
+/// player is put by the wheel for it and back where they were. One left grazed round the
+/// test ground and, struck by the first fights' swings, fought the player through the whiff.
+fn remove_wheel_aurochs(world: &World, k: IVec3) {
+    let back = world.resource::<LocalPlayer>().position;
+    let by = k.as_vec3() + Vec3::new(3.5, 0.0, 2.5);
+    let net = world.resource::<Net>();
+    net.command(&format!("tp {} {} {}", by.x, by.y, by.z));
+    net.command("creatures remove aurochs");
+    net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
+}
+
 /// Takes every creature within [`LOOK_CLEAR`] of the look step's pad away, whatever its
 /// species: the wild sent away, and the kept taken away from the pad's middle and from a
 /// ring around it, so all are reached by a remove's 8 blocks; then the player stands where
@@ -8147,6 +8202,11 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
             net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
+            // The observer, left at the town the settlement steps judged, is brought above the
+            // course: the server tells it only of players within `players_seen`.
+            if let Some(observer) = gate.observer.as_mut() {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y + 40, stand.z as f32 + 0.5) });
+            }
             gate.step_up_fault = None;
             gate.advance(now);
         }
@@ -10436,11 +10496,12 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
     fit_tool(world, matches!(view, Some(View::Inventory)));
     if let Some(View::Quests) = view {
         // A quest still waiting on another, so its page reads so, beside those done and open.
-        use crate::hud::quests::{QuestView, Standing, standing};
+        use crate::hud::quests::{QuestView, Standing, chapters, standing};
         let picked = {
             let (launch, player) = (world.resource::<Launch>(), world.resource::<LocalPlayer>());
             let content = &launch.content;
-            let first_age = content.quests.iter().next().map(|q| q.age.clone());
+            // Chapter 0, the age the book opens on, whatever file its quests are in.
+            let first_age = chapters(content).into_iter().next();
             let chapter: Vec<_> = content.quests.iter().filter(|q| Some(&q.age) == first_age.as_ref()).collect();
             chapter.iter().find(|q| standing(content, player, q) == Standing::Waiting).or(chapter.first()).map(|q| q.name.clone())
         };
@@ -14146,6 +14207,8 @@ const WOLF: &str = "base:wolf";
 const CLIMB_AT: IVec3 = IVec3::new(0, 0, 36);
 /// Blocks back along the step's top the player stands once the wolf is struck.
 const CLIMB_BACK: f32 = 3.0;
+/// The climb step's last phase: the wolf killed and the step swept away.
+const CLIMB_DONE: u32 = 5;
 /// What the climb allows past the wolf's thoughts, chase and wind-up: the client's frames.
 /// Without a client the wolf comes in reach within its chase and strikes at its next thought
 /// (`creatures::way_tests`, `a_wolf_let_go_below_a_step_comes_up_it_and_strikes_within_its_chase`
@@ -14172,6 +14235,13 @@ struct ClimbRun {
     from: Vec3,
     /// `Gate::frames` as the phase began.
     frames_at: u32,
+    /// After its blow, before its next: the furthest the wolf got from the player, how far
+    /// round them it went in degrees, its last bearing from them, and the server seconds
+    /// allowed (`Attack::circle`).
+    far: f32,
+    round: f32,
+    bearing: Option<f32>,
+    circle_allowed: f32,
 }
 
 /// A wolf held at the foot of a step a block high (`/summon ... held`): struck from the
@@ -14185,7 +14255,10 @@ struct ClimbRun {
 /// Held, it is below the step when let go, so the step is climbed every run: let loose at
 /// the edge, it had come up while it fought there. Before the fix to heads meeting
 /// steps (`motion::step`) a wolf coming straight at a step met it with its head first and
-/// was turned along it.
+/// was turned along it. Then, if its bite circles (`Attack::circle`), from that blow to its
+/// next it backs off to at least its body's half, its reach and half its `away` from the
+/// player, and goes 15 degrees or more round them. Before: it stood nose to nose and bit
+/// again.
 fn climb(world: &mut World, gate: &mut Gate, now: f32) {
     let Some(species) = world.resource::<Launch>().content.creatures.find(WOLF) else {
         gate.check("climb", Err(format!("no `{WOLF}` in the content")));
@@ -14211,7 +14284,7 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
     let fail = |world: &mut World, gate: &mut Gate, why: String| {
         gate.check("climb", Err(why));
         mouse(world, MouseButton::Left, false);
-        to_phase(gate, 4, now);
+        to_phase(gate, CLIMB_DONE, now);
     };
     let advance = |gate: &mut Gate| {
         gate.climb.frames_at = gate.frames;
@@ -14359,11 +14432,63 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
             let what = format!("from {:.2} to {:.2}, its feet {up:.2} up (at most {:.2}), allowed {:.2} server s for {}", gate.climb.from, view.position, gate.climb.highest, gate.climb.allowed, gate.climb.allowance);
             if blow && up > 0.9 {
                 gate.check("climb", Ok(format!("up the step a block high, the wolf struck in {taken:.2} server s: {what}")));
+                gate.climb.frames_at = gate.frames;
                 to_phase(gate, 4, now);
             } else if blow {
                 fail(world, gate, format!("the wolf struck from below the step, {taken:.2} server s on: {what}"));
             } else if waited(gate, gate.climb.allowed) {
                 fail(world, gate, format!("no blow from the wolf in {taken:.2} server s ({in_phase:.2} game s): {what}, moving {:.2}", view.velocity.with_y(0.0).length()));
+            }
+        }
+        4 => {
+            let circled = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
+                gate.check("circling", result);
+                mouse(world, MouseButton::Left, false);
+                to_phase(gate, CLIMB_DONE, now);
+            };
+            let me = world.resource::<LocalPlayer>().position;
+            let content = &world.resource::<Launch>().content;
+            let def = &content.creatures.get(species).def;
+            let Some((attack, circle)) = def.attack.and_then(|a| a.circle.map(|c| (a, c))) else {
+                circled(world, gate, Ok(format!("{WOLF}'s bite has no `circle` in its data: it bites again where it stands")));
+                return;
+            };
+            let Some(view) = view else {
+                circled(world, gate, Err(format!("the wolf went out of view after its blow (it got {:.2} blocks off, {:.0} degrees round)", gate.climb.far, gate.climb.round)));
+                return;
+            };
+            let half = def.body.size.0 * view.scale / 2.0;
+            let clear = half + attack.reach + circle.away * 0.5;
+            let bearing = (view.position - me).z.atan2((view.position - me).x);
+            if gate.climb.bearing.is_none() {
+                // From the blow: its recovery, then the longer of its circle and the rest
+                // of its `every`; back in from `away` at its run, its wind-up, and the spare.
+                let feel = content.combat.feel;
+                let recovery = attack.recovery.unwrap_or(feel.creature_recovery);
+                let windup = attack.windup.unwrap_or(feel.creature_windup);
+                let run = def.movement.run.max(0.1);
+                gate.climb.circle_allowed = recovery + circle.seconds.max(attack.every - windup - recovery) + circle.away / run + windup + CLIMB_SPARE;
+                gate.climb.far = 0.0;
+                gate.climb.round = 0.0;
+                gate.climb.hurts = world.resource::<crate::fight::Fighting>().hurt_count;
+                info!("gate: circling: the wolf bit at {:.2}; allowed {:.2} server s to its next, wanting {clear:.2} blocks off", view.position, gate.climb.circle_allowed);
+            } else if let Some(last) = gate.climb.bearing {
+                gate.climb.round += ((bearing - last + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).to_degrees();
+            }
+            gate.climb.bearing = Some(bearing);
+            gate.climb.far = gate.climb.far.max(view.position.xz().distance(me.xz()));
+            let fighting = world.resource::<crate::fight::Fighting>();
+            let new = (fighting.hurt_count - gate.climb.hurts) as usize;
+            gate.climb.hurts = fighting.hurt_count;
+            let blow = fighting.hurt.iter().rev().take(new).any(|h| h.0 == view.id);
+            let taken = gate.server_in_phase();
+            let what = format!("it got {:.2} blocks off ({clear:.2} wanted) and went {:.0} degrees round the player (15 wanted), {taken:.2} server s after its blow", gate.climb.far, gate.climb.round.abs());
+            if blow && gate.climb.far >= clear && gate.climb.round.abs() >= 15.0 {
+                circled(world, gate, Ok(format!("between bites {what}")));
+            } else if blow {
+                circled(world, gate, Err(format!("the wolf bit again before it circled: {what}")));
+            } else if waited(gate, gate.climb.circle_allowed) {
+                circled(world, gate, Err(format!("no second bite in {:.2} server s allowed: {what}, at {:.2}", gate.climb.circle_allowed, view.position)));
             }
         }
         _ => {
@@ -15718,8 +15843,15 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
     let before = |gate: &Gate, name: &str| gate.feel_asked.get(name).copied().unwrap_or(0);
     aim_at(world, at + Vec3::Y * 0.4);
     match gate.phase {
-        // The wolf stands in reach, each frame a fixed step of its time.
+        // The wolf stands in reach, each frame a fixed step of its time. No real creature
+        // near is left (wild ones within 64 blocks dispersed, the player's own within 8
+        // removed): one under the crosshair takes the step's swings and fights back, and this
+        // step and ShotCancel after it aim only at stand-ins. Trains had the Workshop's
+        // tamed aurochs, struck, butting the player through the whiff.
         0 => {
+            let net = world.resource::<Net>();
+            net.command("creatures disperse");
+            net.command("creatures remove");
             let mut creatures = world.resource_mut::<Creatures>();
             creatures.receive(vec![view(FIGHTER, wolf, Pose::Idle, wolf_health)], vec![]);
             (creatures.watch, creatures.watch_step) = (Some(FIGHTER), Some(PUPPET_STEP));
@@ -16064,6 +16196,9 @@ const OTHER_WALK: u32 = 60;
 const OTHER_FRAMES: u32 = 240;
 /// The share of the pace their limbs swing full at that the stand-in walks.
 const OTHER_PACE: f32 = 0.7;
+/// The stand-in's swing's wind-up (seconds), and frames it is watched after loosing a shot.
+const OTHER_WINDUP: f32 = 0.4;
+const OTHER_SETTLE: u32 = 20;
 /// How far the stand-in looks up (radians; down, below 0).
 const OTHER_PITCH: f32 = -0.2;
 
@@ -16078,6 +16213,8 @@ fn others(world: &mut World, gate: &mut Gate) {
     let combat = &launch.content.combat;
     let fists = combat.wielded(None, |_| 1);
     let weapon = launch.content.blocks.ids().find(|&id| combat.wielded(Some(id), |_| 99).class != fists.class);
+    // A bow or sling, to be seen drawn (the weapon again, if none shoots).
+    let shooter = launch.content.blocks.ids().find(|&id| !combat.ammo(&combat.wielded(Some(id), |_| 99)).is_empty());
     let Some(weapon) = weapon else {
         gate.check("others", Err("no item is wielded as a weapon".into()));
         gate.next(Step::Cook, now);
@@ -16086,10 +16223,18 @@ fn others(world: &mut World, gate: &mut Gate) {
     let start = gate.feet.as_vec3() + Vec3::new(-1.5, 0.0, 6.0);
     let pace = look.full_pace * OTHER_PACE;
     // Facing the eye, so its front and its right fist show.
-    let view = |at: Vec3| voxmar_protocol::PlayerView { id: OTHER, name: "Gate".into(), position: at, yaw: 0.0, pitch: OTHER_PITCH, held: Some(weapon) };
+    let shooter = shooter.unwrap_or(weapon);
+    let fought = |at: Vec3, held: voxmar_engine::block::BlockId, fight: voxmar_protocol::FightView| voxmar_protocol::PlayerView { id: OTHER, name: Some("Gate".into()), position: at, yaw: 0.0, pitch: OTHER_PITCH, held: Some(held), fight };
+    let view = |at: Vec3| fought(at, weapon, Default::default());
     let walked = |frames: u32| start + Vec3::X * pace * PUPPET_STEP * frames as f32;
     let done = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
         gate.check("others", result);
+        world.resource_mut::<RemotePlayers>().forget(OTHER);
+        world.resource_mut::<Figures>().step = None;
+        gate.next(Step::Cook, now);
+    };
+    let fights_done = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
+        gate.check("others: fights", result);
         world.resource_mut::<RemotePlayers>().forget(OTHER);
         world.resource_mut::<Figures>().step = None;
         gate.next(Step::Cook, now);
@@ -16156,11 +16301,14 @@ fn others(world: &mut World, gate: &mut Gate) {
             let reach = Vec3::new(look.hand.at.0, look.hand.at.1, look.hand.at.2).length() + 0.05;
             let drawn = world.resource::<crate::render::items::ItemModels>().0.iter().any(|m| m.posed.is_some() && read.held_at.is_some_and(|h| m.center.distance(h) < 1e-3));
             let carried = look.carry.to_radians();
+            // Where the head's joint as drawn faces (its front is -z), to tilt the way told.
+            let face = world.resource::<Figures>().head_joint(OTHER).and_then(|joint| world.get::<Transform>(joint)).map(|t| t.rotation * Vec3::NEG_Z);
             // Looking down as told (`OTHER_PITCH`): the head tilted `look` of it.
             let tilt = (OTHER_PITCH.to_degrees() * look.look).clamp(-look.look_most, look.look_most).to_radians();
             let result = match read.held_at {
                 _ if (read.arm - carried).abs() > 0.05 => Err(format!("the arm holding the weapon was swung {:.2} radians standing, {carried:.2} (`carry`) wanted", read.arm)),
                 _ if (read.head - tilt).abs() > 0.02 => Err(format!("told they look {OTHER_PITCH:.2} radians up, its head was tilted {:.2} radians, {tilt:.2} (`look`) wanted", read.head)),
+                _ if face.is_none_or(|face| face.y.signum() != OTHER_PITCH.signum()) => Err(format!("told they look {OTHER_PITCH:.2} radians up, its head's joint faces {face:?}: not the same way up or down")),
                 Some(held) if held.distance(shoulder) <= reach && drawn => Ok(format!(
                     "painted with its {} boxes, walking {pace:.2} blocks a second it trailed by the easing and its legs swung {:.2} radians; stopped, it settled in {frames} frames with the weapon {:.2} blocks from its right shoulder and its head tilted {:.2} radians as it looks",
                     read.joints,
@@ -16179,10 +16327,103 @@ fn others(world: &mut World, gate: &mut Gate) {
         }
         4 => {
             if gate.shot(world, "other-player").is_some() {
-                world.resource_mut::<RemotePlayers>().forget(OTHER);
-                world.resource_mut::<Figures>().step = None;
-                gate.next(Step::Cook, now);
+                gate.puppet.1 = 0;
+                gate.advance(now);
             }
+        }
+        // Its fight, as a server would tell it (`PlayerView::fight`). The guard up: the arm
+        // held at `guard`, what is in it turned across.
+        5 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, weapon, voxmar_protocol::FightView { guard: true, ..Default::default() }));
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as it guarded".into())) };
+            let guard = look.fight.guard.to_radians();
+            if (read.arm - guard).abs() < 0.05 && read.guarding > 0.95 {
+                gate.puppet.1 = 0;
+                gate.advance(now);
+            } else if frames >= OTHER_FRAMES {
+                fights_done(world, gate, Err(format!("told its guard was up, its arm was at {:.2} radians ({guard:.2} wanted) turned {:.2} across, {OTHER_FRAMES} frames on", read.arm, read.guarding)));
+            }
+        }
+        // A swing told winding up, its seconds moved on by the step as a server's would be:
+        // the arm raised to `raise` by the time it lands.
+        6 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            let into = frames as f32 * PUPPET_STEP;
+            let swing = voxmar_protocol::SwingView { into, windup: OTHER_WINDUP, shot: false };
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, weapon, voxmar_protocol::FightView { swing: Some(swing), ..Default::default() }));
+            if into < OTHER_WINDUP {
+                return;
+            }
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as it swung".into())) };
+            let (raise, carry) = (look.fight.raise.to_radians(), look.carry.to_radians());
+            if read.arm < carry + (raise - carry) * 0.8 {
+                return fights_done(world, gate, Err(format!("wound up for {OTHER_WINDUP} s, its arm was raised to {:.2} radians ({raise:.2} wanted)", read.arm)));
+            }
+            (gate.puppet.0, gate.puppet.1, gate.other_swung) = (Vec3::new(read.arm, 0.0, 0.0), 0, read.arm);
+            gate.advance(now);
+        }
+        // The blow told landed (the count moves on): the arm brought down through `strike`
+        // in `follow` seconds, then back to the carry.
+        7 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, weapon, voxmar_protocol::FightView { struck: 1, ..Default::default() }));
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as its blow landed".into())) };
+            gate.other_swung = gate.other_swung.min(read.arm);
+            let (strike, carry) = (look.fight.strike.to_radians(), look.carry.to_radians());
+            let follow = (look.fight.follow / PUPPET_STEP).ceil() as u32 + 2;
+            if frames == follow && gate.other_swung > strike + 0.25 {
+                return fights_done(world, gate, Err(format!("its blow landed, the arm came down only to {:.2} radians in {follow} frames ({strike:.2} wanted)", gate.other_swung)));
+            }
+            if frames > follow && !read.striking && (read.arm - carry).abs() < 0.05 {
+                gate.puppet.1 = 0;
+                gate.advance(now);
+            } else if frames >= OTHER_FRAMES {
+                fights_done(world, gate, Err(format!("after its blow its arm was at {:.2} radians, not back at the carry ({carry:.2}), {OTHER_FRAMES} frames on", read.arm)));
+            }
+        }
+        // A shot drawn: both arms held out at `draw`, the bow in the right; loosed (the count
+        // moves on), nothing is struck down.
+        8 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            let swing = voxmar_protocol::SwingView { into: frames as f32 * PUPPET_STEP, windup: 60.0, shot: true };
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, shooter, voxmar_protocol::FightView { swing: Some(swing), struck: 1, guard: false }));
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as it drew".into())) };
+            let draw = look.fight.draw.to_radians();
+            if (read.arm - draw).abs() < 0.05 && (read.left - draw).abs() < 0.05 && read.held_at.is_some() {
+                if gate.shot(world, "other-player-draw").is_some() {
+                    gate.puppet.1 = 0;
+                    gate.advance(now);
+                }
+            } else if frames >= OTHER_FRAMES {
+                fights_done(world, gate, Err(format!("drawing a shot, its arms were at {:.2} and {:.2} radians ({draw:.2} wanted), {OTHER_FRAMES} frames on", read.arm, read.left)));
+            }
+        }
+        9 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            world.resource_mut::<RemotePlayers>().puppet(fought(at, shooter, voxmar_protocol::FightView { struck: 2, ..Default::default() }));
+            let Some(read) = read else { return fights_done(world, gate, Err("the stand-in was gone as it loosed".into())) };
+            if read.striking {
+                return fights_done(world, gate, Err("a shot loosed was brought down like a blow".into()));
+            }
+            if frames < OTHER_SETTLE {
+                return;
+            }
+            let (guard, raise, strike, draw) = (look.fight.guard, look.fight.raise, look.fight.strike, look.fight.draw);
+            fights_done(
+                world,
+                gate,
+                Ok(format!(
+                    "fights as told: the guard held at {guard}°, a swing raised to {:.0}° over its {OTHER_WINDUP} s wind-up ({raise}° wanted) and brought down to {:.0}° as it landed ({strike}°), then back to the carry; a shot drawn with both arms at {draw}° and loosed without a blow",
+                    gate.puppet.0.x.to_degrees(),
+                    gate.other_swung.to_degrees()
+                )),
+            );
         }
         _ => {}
     }
@@ -16965,11 +17206,42 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
-/// Where the snare step sets its snare, from where the dry step's rack stood.
-const SNARE_FROM_RACK: IVec3 = IVec3::new(3, 0, 0);
+/// How many blocks past the snare's own `shy_reach` from the cook step's campfire (which
+/// stays lit through the dry step) the snare step sets its snare: nearer, the snare is shy
+/// of the fire and nothing is caught or torn.
+const SNARE_PAST_SHY: i32 = 2;
+
+/// Where the snare step sets its snare: along from the cook step's campfire, past the
+/// snare's `shy_reach` (`traps.ron`). That is past the creatures pad's wall, on whatever
+/// the world has there (a hole, a hill), so the step lays its own ground first
+/// (`snare_ground`).
+fn snare_cell(world: &World, gate: &Gate) -> IVec3 {
+    let content = &world.resource::<Launch>().content;
+    let reach = content.blocks.id("base:snare").and_then(|s| content.traps.set(s)).map_or(0.0, |t| t.shy_reach);
+    gate.feet + IVec3::new(0, 0, 14) + IVec3::X * (reach.ceil() as i32 + SNARE_PAST_SHY)
+}
+
+/// The snare step's own ground, as two corners: stone under the snare and the spot the
+/// player watches it from (two and a half blocks short of it), and three high of air over
+/// both, room for a deer.
+fn snare_ground(snare: IVec3) -> [(IVec3, IVec3, &'static str); 2] {
+    [(snare + IVec3::new(-1, -1, -3), snare + IVec3::new(1, -1, 1), "stone"), (snare + IVec3::new(-1, 0, -3), snare + IVec3::new(1, 2, 1), "air")]
+}
+
+/// Server seconds a rabbit put in the snare is given (the traps look every 4 ticks) before
+/// it is taken to have slipped it, and the most put in: a rabbit is held three times in
+/// five, so eight all slipping is a broken snare, not bad luck (the gate's draw key is
+/// fixed, so the same ones slip every run).
+const SNARE_SLIPPED: f32 = 0.6;
+const SNARE_TRIES: u32 = 8;
+
+/// Whether the client has no block, or air, at `at`.
+fn client_gone(world: &World, at: IVec3) -> bool {
+    world.resource::<ClientWorld>().block(at).is_none_or(|b| b.is_air())
+}
 
 fn snare(world: &mut World, gate: &mut Gate, now: f32) {
-    let snare = gate.feet + IVec3::new(0, 0, 14) + RACK_FROM_FIRE + SNARE_FROM_RACK;
+    let snare = snare_cell(world, gate);
     let waited = gate.server_in_phase() > DRY_WAIT;
     let client = world.resource::<ClientWorld>();
     let is = |name: &str| client.registry.id(name).is_some_and(|b| client.block(snare) == Some(b));
@@ -16979,12 +17251,18 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
     let end = |world: &mut World, gate: &mut Gate| {
         gate.tap(world, false, now);
         world.resource::<Net>().command(&format!("setblock {} {} {} air", snare.x, snare.y, snare.z));
+        // The rabbits that slipped it, and the deer put in to tear it, go with it.
+        world.resource::<Net>().command("creatures kill rabbit");
+        world.resource::<Net>().command("creatures kill red_deer");
         gate.next(Step::Tame, now);
     };
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
             net.command("clear raw_small_game");
+            for (a, b, block) in snare_ground(snare) {
+                net.command(&format!("fill {} {} {} {} {} {} {block}", a.x, a.y, a.z, b.x, b.y, b.z));
+            }
             net.command(&format!("setblock {} {} {} snare", snare.x, snare.y, snare.z));
             net.command(&format!("tp {} {} {}", snare.x as f32 + 0.5, snare.y, snare.z as f32 - 2.5));
             gate.advance(now);
@@ -16998,6 +17276,7 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
                 // next look: a rabbit let loose arriving just after one could run out first
                 // and never come back, by whichever tick a loaded server took the summon on.
                 world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (1, gate.server_now);
                 gate.advance(now);
             } else if waited {
                 gate.check("snare", Err(format!("the snare never stood in {DRY_WAIT} server seconds")));
@@ -17007,19 +17286,31 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
         2 => {
             aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             if sprung && drawn(world, snare) && gate.shot(world, "snare_sprung").is_some() {
-                gate.check("snare", Ok("a rabbit summoned into a set snare was caught: the server sprang it".to_owned()));
+                let tries = gate.snare_tries;
+                gate.check("snare", Ok(format!("a rabbit summoned into a set snare was caught: the server sprang it ({tries} rabbits put in, the rest slipped it)")));
                 gate.advance(now);
+            } else if set && gate.server_now - gate.snare_at > SNARE_SLIPPED && gate.snare_tries < SNARE_TRIES {
+                // Still set past a few of the traps' looks: that rabbit slipped it; another.
+                world.resource::<Net>().command(&format!("summon rabbit 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (gate.snare_tries + 1, gate.server_now);
             } else if waited {
-                gate.check("snare", Err(format!("a rabbit in the snare never sprang it in {DRY_WAIT} server seconds")));
+                gate.check("snare", Err(format!("{} rabbits in the snare never sprang it in {DRY_WAIT} server seconds", gate.snare_tries)));
                 end(world, gate);
             }
         }
-        _ => {
+        3 => {
             // Right clicks on the sprung snare, until the server answers one.
             aim_at(world, snare.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
-            if set && carried > 0 {
-                gate.check("snare taken", Ok(format!("a right click took {carried} raw small game from the snare, set again ({} clicks)", gate.taps)));
-                end(world, gate);
+            // Taken, it is set again, or worn out and gone (`wear`, a stick left).
+            let gone = client_gone(world, snare);
+            if (set || gone) && carried > 0 {
+                let after = if set { "set again" } else { "worn out and gone" };
+                gate.check("snare taken", Ok(format!("a right click took {carried} raw small game from the snare, {after} ({} clicks)", gate.taps)));
+                gate.tap(world, false, now);
+                // A fresh snare, for a deer to tear.
+                world.resource::<Net>().command(&format!("setblock {} {} {} snare", snare.x, snare.y, snare.z));
+                gate.snare_sticks = sticks_by(world, snare) + sticks_carried(world);
+                gate.advance(now);
             } else if gate.waited_out(DRY_WAIT) {
                 gate.check("snare taken", Err(format!("{} right clicks on the sprung snare: set again {set}, raw small game carried {carried}", gate.taps)));
                 end(world, gate);
@@ -17027,7 +17318,49 @@ fn snare(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.tap(world, true, now);
             }
         }
+        4 => {
+            // Set again, by the server's word: a deer is put in it, held there.
+            if set {
+                world.resource::<Net>().command(&format!("summon red_deer 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (1, gate.server_now);
+                gate.advance(now);
+            } else if waited {
+                gate.check("snare torn", Err(format!("the fresh snare never stood in {DRY_WAIT} server seconds")));
+                end(world, gate);
+            }
+        }
+        _ => {
+            // Torn: gone on the client, and a stick it left lying by it or, popped the
+            // player's way, drawn in by the magnet (`MAGNET`, 2.5 blocks, the watching spot
+            // is 2.5 off) and carried.
+            let sticks = sticks_by(world, snare) + sticks_carried(world);
+            if client_gone(world, snare) && sticks > gate.snare_sticks {
+                let tries = gate.snare_tries;
+                gate.check("snare torn", Ok(format!("a deer put in a set snare tore it: gone, a stick left by it or picked up ({tries} deer put in)")));
+                end(world, gate);
+            } else if set && gate.server_now - gate.snare_at > SNARE_SLIPPED && gate.snare_tries < SNARE_TRIES {
+                // Still set past a few of the traps' looks: that deer did not tear it; another.
+                world.resource::<Net>().command(&format!("summon red_deer 1 {} {} {} held", snare.x + 2, snare.y, snare.z));
+                (gate.snare_tries, gate.snare_at) = (gate.snare_tries + 1, gate.server_now);
+            } else if waited {
+                gate.check("snare torn", Err(format!("{} deer in the snare: gone {}, sticks by it or carried {sticks} (were {})", gate.snare_tries, client_gone(world, snare), gate.snare_sticks)));
+                end(world, gate);
+            }
+        }
     }
+}
+
+/// Sticks the player carries.
+fn sticks_carried(world: &World) -> u32 {
+    let Some(stick) = world.resource::<ClientWorld>().registry.id("base:stick") else { return 0 };
+    world.resource::<LocalPlayer>().inventory.slots.iter().flatten().filter(|s| s.item == stick).map(|s| s.count as u32).sum()
+}
+
+/// Sticks lying within two blocks of `at`, as the client has them.
+fn sticks_by(world: &World, at: IVec3) -> u32 {
+    let Some(stick) = world.resource::<ClientWorld>().registry.id("base:stick") else { return 0 };
+    let middle = at.as_vec3() + Vec3::splat(0.5);
+    world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, pos)| stack.item == stick && pos.distance(middle) < 2.0).map(|(_, stack, _)| stack.count as u32).sum()
 }
 
 /// Where the dry step looks on its rack: the middle of the strips hung from its twine.
@@ -18639,11 +18972,162 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     }
                 }
             };
+            gate.ore_sample = sample;
+            let found = result.is_ok();
             gate.check("ore", result);
-            gate.next(Step::Gorge, now);
+            let Some(sample) = gate.ore_sample.filter(|_| found) else {
+                gate.next(Step::Gorge, now);
+                return;
+            };
+            // The sample broken next, with the least tool its rule asks and Mining enough.
+            let content = world.resource::<Launch>().content.clone();
+            let rule = content.tools.rule(sample);
+            let tool = rule.and_then(|rule| content.least_tool(rule.tool?, rule.tier));
+            let (Some(rule), Some(tool)) = (rule, tool) else {
+                gate.check("ore: prospect", Err(format!("no tool breaks the {}", registry.def(sample).name)));
+                gate.next(Step::Gorge, now);
+                return;
+            };
+            let level = skill_level(world, "core:mining").0;
+            gate.ore_mining = (level < rule.level).then_some(level);
+            give_for_ore(world, gate, &content.blocks.def(tool).name);
+            let drop = content.blocks.def(content.blocks.info(sample).drops).name.clone();
+            gate.ore_drop = Some((short_name(&drop), holding(world, &drop).0));
+            // Raised only when short: the command sets the experience to the level's floor,
+            // which would undercount what the break teaches.
+            if level < rule.level {
+                world.resource::<Net>().command(&format!("skill mining {}", rule.level));
+            }
+            gate.mining_before = None;
+            gate.advance(now);
+        }
+        // Broken, the first sample over its vein teaches its rule's `prospect` besides its
+        // own experience (tools.ron).
+        4 => {
+            let content = world.resource::<Launch>().content.clone();
+            let at = gate.ore;
+            let rule = gate.ore_sample.and_then(|sample| content.tools.rule(sample).cloned());
+            let tool = rule.as_ref().and_then(|r| content.least_tool(r.tool?, r.tier));
+            let (Some(rule), Some(tool)) = (rule, tool) else {
+                end_ore(world, gate, now, "ore: prospect", Err(format!("the sample at {at} is gone, or no tool breaks it")));
+                return;
+            };
+            let tool_name = content.blocks.def(tool).name.clone();
+            if skill_level(world, "core:mining").0 < rule.level || !select(world, &tool_name) {
+                if gate.server_in_phase() > ORE_WAIT {
+                    end_ore(world, gate, now, "ore: prospect", Err(format!("Mining {} and the {tool_name} never came to hand", rule.level)));
+                }
+                return;
+            }
+            let xp = skill_level(world, "core:mining").1;
+            let before = *gate.mining_before.get_or_insert(xp);
+            aim(world, at);
+            let gone = gate.observer.as_ref().is_some_and(|o| o.world.block(at).is_some_and(|b| b.is_air()));
+            // Held until the sample breaks, and let go at once: no more is mined after.
+            mouse(world, MouseButton::Left, !gone);
+            let learnt = xp.saturating_sub(before);
+            let wanted = ((rule.xp + rule.prospect) * 10.0) as u32;
+            if gone && learnt >= wanted && rule.prospect > 0.0 {
+                gate.check("ore: prospect", Ok(format!("the first sample broken over its vein taught {:.1} Mining ({} for the break, {} for prospecting)", learnt as f32 / 10.0, rule.xp, rule.prospect)));
+                // Coal, set where the sample lay, for a pickaxe of the first tier. The player
+                // was set down in the sample's cell, and a solid block is never set over a
+                // player (`would_trap_a_player`), so they stand on top of it first.
+                let pickaxe = content.tools.rule(content.blocks.expect("base:coal_ore")).and_then(|r| r.tool).and_then(|kind| content.least_tool(kind, 1));
+                let net = world.resource::<Net>();
+                net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y + 1, at.z as f32 + 0.5));
+                net.command(&format!("setblock {} {} {} coal_ore", at.x, at.y, at.z));
+                if let Some(pickaxe) = pickaxe {
+                    give_for_ore(world, gate, &content.blocks.def(pickaxe).name);
+                }
+                gate.advance(now);
+            } else if gate.server_in_phase() > ORE_WAIT {
+                mouse(world, MouseButton::Left, false);
+                end_ore(world, gate, now, "ore: prospect", Err(format!("breaking the sample at {at} with the {tool_name}: {} and taught {learnt} tenths, not {wanted} (prospect {})", if gone { "broke" } else { "stayed" }, rule.prospect)));
+            }
+        }
+        // Coal refuses a first-tier pickaxe, naming a better one: the stone pickaxe.
+        5 => {
+            let content = world.resource::<Launch>().content.clone();
+            let (at, coal) = (gate.ore, content.blocks.expect("base:coal_ore"));
+            let rule = content.tools.rule(coal).cloned();
+            let first = rule.as_ref().and_then(|r| content.least_tool(r.tool?, 1));
+            let (Some(rule), Some(first)) = (rule, first) else {
+                end_ore(world, gate, now, "ore: coal wants stone", Err("no rule or no first-tier tool for coal ore".into()));
+                return;
+            };
+            let first_name = content.blocks.def(first).name.clone();
+            let stood = gate.observer.as_ref().is_some_and(|o| o.world.block(at) == Some(coal)) && world.resource::<ClientWorld>().block(at) == Some(coal);
+            if !stood || !select(world, &first_name) {
+                if gate.server_in_phase() > ORE_WAIT {
+                    let held = gate.observer.as_ref().and_then(|o| o.world.block(at)).map_or("nothing loaded".to_owned(), |b| content.blocks.def(b).name.clone());
+                    let feet = world.resource::<LocalPlayer>().position;
+                    end_ore(world, gate, now, "ore: coal wants stone", Err(format!("the coal ore at {at} or the {first_name} never came (coal there {stood}: the server holds {held} there, the player stands at {feet:.1})")));
+                }
+                return;
+            }
+            aim(world, at);
+            let wanted = why_by_hand(world, coal).unwrap_or_default();
+            let better = content.least_tool(rule.tool.unwrap_or_default(), rule.tier).map(|t| world.resource::<Locale>().block(content.blocks.def(t))).unwrap_or_default();
+            if !wanted.is_empty() && world.resource::<crate::hud::skills::SkillToasts>().shows_refusal(&wanted) {
+                mouse(world, MouseButton::Left, false);
+                let still = world.resource::<ClientWorld>().block(at) == Some(coal);
+                let result = match (rule.tier >= 2, wanted.contains(&better), still) {
+                    (false, ..) => Err(format!("coal ore asks for tier {} only", rule.tier)),
+                    (_, false, _) => Err(format!("the refusal \"{wanted}\" does not name the {better}")),
+                    (.., false) => Err(format!("coal ore said \"{wanted}\" but broke for the {first_name} all the same")),
+                    _ => Ok(format!("coal ore refused the {first_name}: \"{wanted}\"")),
+                };
+                end_ore(world, gate, now, "ore: coal wants stone", result);
+            } else if gate.server_in_phase() > ORE_WAIT {
+                mouse(world, MouseButton::Left, false);
+                end_ore(world, gate, now, "ore: coal wants stone", Err(format!("coal ore struck with the {first_name} never showed \"{wanted}\"")));
+            } else {
+                // A fresh press each time: a held button mines on, it does not ask again.
+                mouse(world, MouseButton::Left, gate.frames.is_multiple_of(2));
+            }
         }
         _ => {}
     }
+}
+
+/// Longest an ore stage after the sample's check waits for the server.
+const ORE_WAIT: f32 = 8.0;
+
+/// Ends the ore step with `check`: the cell the sample lay in emptied, the tools given
+/// cleared, the sample's drop back to what the player carried before, and Mining put back.
+fn end_ore(world: &mut World, gate: &mut Gate, now: f32, check: &str, result: Result<String, String>) {
+    gate.check(check, result);
+    mouse(world, MouseButton::Left, false);
+    let at = gate.ore;
+    let net = world.resource::<Net>();
+    net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    for name in gate.ore_given.drain(..) {
+        net.command(&format!("clear {name}"));
+    }
+    if let Some((drop, count)) = gate.ore_drop.take() {
+        net.command(&format!("clear {drop}"));
+        if count > 0 {
+            net.command(&format!("give {drop} {count}"));
+        }
+    }
+    if let Some(level) = gate.ore_mining.take() {
+        net.command(&format!("skill mining {level}"));
+    }
+    gate.next(Step::Gorge, now);
+}
+
+/// Gives the player one `name` for the ore step, to clear after if they had none.
+fn give_for_ore(world: &mut World, gate: &mut Gate, name: &str) {
+    let short = short_name(name);
+    if holding(world, name).0 == 0 && !gate.ore_given.contains(&short) {
+        gate.ore_given.push(short.clone());
+    }
+    world.resource::<Net>().command(&format!("give {short} 1"));
+}
+
+/// A block's name without the base package's prefix, for a command.
+fn short_name(name: &str) -> String {
+    name.strip_prefix("base:").unwrap_or(name).to_owned()
 }
 
 /// The direction to the light of the moment: the sun by day, the moon by night.

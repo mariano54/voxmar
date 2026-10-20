@@ -222,6 +222,13 @@ is what counts. Medians of three runs on 2026-10-13, with the range:
 | Brick by Brick | 478 | 468 to 484 | Sixty more fired for fifteen bricks (97 s of firing). |
 | The Crucible, Crucible Kiln lit | 489 | 479 to 495 | The crucible, twelve bricks set, three logs burnt to make up the charge. |
 
+Coal at tier 2 (Oct 20): coal ore asks a stone pickaxe (copper and tin ore too), and Torchlight waits on Black Flecks
+(a coal sample lifted with the flint pickaxe, 55 s; one coal ore dug from a cliff or shaft
+does as well, since samples are shared and never regrow) and Coal and Cinders (twelve coal, eleven
+from the plot's scattered ores with the stone pickaxe, 139 s). One run on the flint and
+toolstone plot reached Torchlight at 139 s, inside its 220 s budget, and the lit Crucible Kiln
+at 402 s.
+
 Where the grind was, and what changed (Oct 13, from the bot's first timeline):
 
 - **Brick by Brick was 216 s of the 540, 36% of the whole line**, with no reward from

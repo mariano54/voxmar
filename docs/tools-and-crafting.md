@@ -74,8 +74,13 @@ skill, a kind and tier of tool, and the experience. Ores ask for Mining levels a
 RuneScape (copper 5, tin 10, iron 15, cobalt 25, silver 30, gold 35, diamond 45, aetherite
 50), teach more the higher they ask (stone 1, coal 13, copper 17.5, tin 25, iron 35 up to
 bauxite and aetherite 396, design draft 63, so stone alone no longer trains Mining) and
-pickaxe tiers as in Minecraft (iron a stone pickaxe, gold and silver copper,
-diamond iron). A click on a block that refuses says why: "Needs Mining 15", "Needs a stone
+pickaxe tiers as in Minecraft (coal, copper, tin and iron a stone pickaxe, gold and silver
+copper, diamond iron). Coal's and copper's samples on the ground above a seam lift with a
+flint pickaxe, so the seam is found before it can be dug. The first sample a player breaks over each vein
+teaches its rule's `prospect` as well (three times the ore's experience: coal 39), with a
+line saying what lies below; it is kept as a `prospected:x,y,z` tally by the vein's
+middle (`Overworld::vein_of_sample`), so breaking more samples of the same vein, or one a
+player set down, teaches only the break. A click on a block that refuses says why: "Needs Mining 15", "Needs a stone
 pickaxe or better". Blocks players placed teach nothing (the world keeps where they put
 them, `WorldMeta::placed`).
 

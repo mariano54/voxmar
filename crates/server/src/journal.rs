@@ -2,9 +2,10 @@
 
 use voxmar_engine::block::BlockId;
 use voxmar_engine::creature::Kind;
-use voxmar_engine::glam::Vec3;
+use voxmar_engine::glam::{IVec3, Vec3};
 use voxmar_engine::journal::Page;
-use voxmar_protocol::{PlayerId, ServerMessage, TICKS_PER_SECOND};
+use voxmar_engine::lang::Words;
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 
@@ -58,6 +59,26 @@ impl Server {
         self.discover(agent, page, &name, 1);
     }
 
+    /// `agent` broke a sample of ore the world laid at `pos`: the first they break over each
+    /// vein teaches its rule's `prospect` (tools.ron) and tells them what lies below. Kept
+    /// as a tally by the vein's middle (`prospected:x,y,z`), so it survives a save.
+    pub(crate) fn prospect(&mut self, agent: PlayerId, pos: IVec3, block: BlockId) {
+        if !self.content.blocks.def(block).has_tag("ore_sample") {
+            return;
+        }
+        let Some((skill, xp)) = self.content.tools.rule(block).and_then(|rule| Some((rule.skill?, rule.prospect))).filter(|&(_, xp)| xp > 0.0) else { return };
+        let Some(vein) = self.overworld.vein_of_sample(pos, block) else { return };
+        let key = format!("prospected:{},{},{}", vein.x, vein.y, vein.z);
+        let Some(player) = self.players.get_mut(&agent) else { return };
+        if player.tallies.contains_key(&key) {
+            return;
+        }
+        player.tallies.insert(key, 1);
+        let ore = self.content.blocks.def(self.content.blocks.info(block).drops).name.clone();
+        player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("prospect.vein").with("item", Words::Block(ore)) });
+        self.grant_xp(agent, skill, xp);
+    }
+
     /// Once a second: each player finds the biome they stand in and the creatures in sight.
     pub(crate) fn look_around(&mut self) {
         if self.tick % TICKS_PER_SECOND as u64 != 0 {
@@ -97,5 +118,44 @@ impl Server {
             let at = from.lerp(to, i as f32 / steps as f32).floor().as_ivec3();
             self.block(at).is_none_or(|b| !self.content.blocks.info(b).solid)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use voxmar_engine::glam::IVec3;
+
+    /// The first coal sample a player breaks over a seam teaches its rule's prospecting
+    /// experience; breaking it there again teaches none, nor does a sample where no seam's
+    /// sample lies. (One a player set down over its seam: `actions.rs`, through the place
+    /// and mine actions.)
+    #[test]
+    fn the_first_sample_over_a_vein_teaches_prospecting() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let coal = server.content.blocks.expect("base:coal_ore_sample");
+        let prospect = server.content.tools.rule(coal).expect("a rule for coal samples").prospect;
+        assert!(prospect > 0.0, "coal samples teach no prospecting");
+        let (at, sample) = server.overworld.locate_ore(Some("coal_seam"), voxmar_engine::glam::IVec2::new(server.spawn.x as i32, server.spawn.z as i32), 1500).expect("a coal seam near spawn");
+        assert_eq!(sample, coal);
+        let mining = server.content.skills.id("core:mining").unwrap();
+        let xp = |server: &crate::Server| server.players[&1].skills.xp(mining);
+        let before = xp(&server);
+        server.prospect(1, at, coal);
+        assert_eq!(xp(&server) - before, (prospect * 10.0).round() as u32, "the first sample over the seam");
+        let once = xp(&server);
+        server.prospect(1, at, coal);
+        assert_eq!(xp(&server), once, "the same seam taught twice");
+        // Far from any seam's samples.
+        let mut lone = at + IVec3::new(5000, 0, 5000);
+        while server.overworld.vein_of_sample(lone, coal).is_some() {
+            lone.x += 1;
+        }
+        server.prospect(1, lone, coal);
+        assert_eq!(xp(&server), once, "a sample over no seam taught prospecting");
+        assert!(server.players[&1].tallies.keys().filter(|k| k.starts_with("prospected:")).count() == 1);
     }
 }

@@ -311,7 +311,8 @@ impl Module for Flee {
                 let closeness = 1.0 - (ctx.distance(threat.position) / (self.radius * 1.5)).min(1.0);
                 Want::at(3.0 * ctx.mind.fear.max(closeness * ctx.mind.personality.fear()), threat)
             }
-            // Alarmed by kin, it runs from wherever it is toward home; but a player in
+            // Alarmed by kin, it runs from wherever it is toward home (or from where it was
+            // startled, as by a snare it slipped); but a player in
             // sight holding its favourite food (and who never hurt it) settles it, so kin
             // that were scared off come to the food rather than run into wherever home is.
             None if ctx.mind.fear > 0.3 && ctx.mind.recalls(Memory::Alarm) && !self.calmed(ctx) => Want::new(ctx.mind.fear),
@@ -321,7 +322,9 @@ impl Module for Flee {
 
     fn act(&self, ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, fresh: bool) -> Decision {
         let at = ctx.at;
-        let from = target.map_or(at.position * 2.0 - at.home, |p| p.position);
+        // With no one to run from, it runs from where it was startled, else toward home.
+        let startled = ctx.mind.startled_at.filter(|_| ctx.mind.recalls(Memory::Startled));
+        let from = target.map_or(startled.unwrap_or(at.position * 2.0 - at.home), |p| p.position);
         let mut away = (at.position - from).with_y(0.0).normalize_or_zero();
         if away == Vec3::ZERO {
             away = Vec3::X;
@@ -620,6 +623,17 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
     // measures it (from its body's edge, at its own size): a boss with a volley strikes
     // from afar, and closes in where none of its moves fits (`moves::Creature::reaches`).
     let d = flat(p.position, ctx.at.position);
+    // Between blows, one that circles backs off past its reach and moves round the target,
+    // facing it, aiming `round` degrees on round from where it stands (each its own way).
+    if mind.circling > 0.0
+        && let Some((reach, circle)) = def.attack.and_then(|a| a.circle.map(|c| (a.reach, c)))
+    {
+        let from = (ctx.at.position - p.position).with_y(0.0).normalize_or(Vec3::X);
+        let side = if mind.seed & 1 == 0 { 1.0 } else { -1.0 };
+        let round = glam::Quat::from_rotation_y(side * circle.round.to_radians()) * from;
+        let off = def.body.size.0 * ctx.at.scale * 0.5 + reach + circle.away;
+        return Decision { goal: Some(p.position + round * off), speed: run(ctx) * circle.pace, face: Some(p.position), ..Default::default() };
+    }
     let reaches = ctx.creature.reaches(ctx.at.phase, ctx.creature.edge(d, ctx.at.scale), ctx.creature.level(ctx.at.position.y, p.position.y, ctx.at.scale));
     let close = reaches && p.open && ctx.creature.in_band(ctx.at.position.y, p.position.y, crate::physics::player::HEIGHT, ctx.at.scale);
     let mut decision = Decision { face: Some(p.position), ..Default::default() };

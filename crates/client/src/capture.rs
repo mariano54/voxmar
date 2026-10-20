@@ -779,6 +779,10 @@ fn capture(
     if let Some(duration) = state.flight
         && now - *state.flight_started.get_or_insert(now) < duration
     {
+        // Marks the flight's frames in a Chrome trace (tools/perf/flight_spikes.py), which
+        // cannot tell them by wall time: the flight is timed in game time, which falls behind
+        // when a frame is capped, and the trace goes on through the shot and the exit.
+        let _flight = info_span!("capture_flight").entered();
         fly(&time, &mut player, launch.content.movement.fly_sprint_speed);
         state.frame_times.push(frame_ms);
         return;
