@@ -1087,9 +1087,15 @@ impl Server {
                     cells.remove(0);
                 }
                 let wish = cells.first().map_or(drive.wish, |cell| (walker.middle(*cell) - body.position).with_y(0.0).normalize_or_zero());
-                let (heading, side) = motion::steer(&body, &Ground::climbing(self, climbs), movement, water, wish, creature.detour, drive.speed, dt);
+                // Making for a cell's middle to line up with a gap past it, it slows as it
+                // comes, to stop there rather than run on past the line through the gap.
+                let speed = match (cells.first(), cells.get(1)) {
+                    (Some(cell), Some(after)) if !straight(after) => drive.speed.min(ARRIVE.0 + ARRIVE.1 * off(cell)),
+                    _ => drive.speed,
+                };
+                let (heading, side) = motion::steer(&body, &Ground::climbing(self, climbs), movement, water, wish, creature.detour, speed, dt);
                 way = cells;
-                (Drive { wish: heading, ..drive }, side)
+                (Drive { wish: heading, speed, ..drive }, side)
             }
             _ => (drive, 0.0),
         };
@@ -2087,6 +2093,10 @@ pub(crate) fn ring(r: i32, i: i32) -> (i32, i32) {
         _ => (-r, -t),
     }
 }
+
+/// How fast a creature comes to a cell's middle where it lines up with a gap past it: at
+/// most `.0` plus `.1` for each block it still has to go.
+const ARRIVE: (f32, f32) = (2.0, 4.0);
 
 /// Whether a box goes `along` (horizontal) meeting nothing, swept in steps a tenth of a
 /// block long: not an axis at a time, which goes round a corner (a stair's turn, a doorway's
@@ -3339,8 +3349,8 @@ mod way_tests {
     /// through an open gate in a fence, past a feed trough set by the gate, and up stairs
     /// onto a floor a block up, within 20 s each. Before: an open gate kept its two half
     /// posts, leaving 0.66 of a block between them and its leaf, and a boar or a deer
-    /// (0.8 across) pressed the posts for ever; and a body a hair off the line through a
-    /// gap it fits slid along the fence beside it rather than slip aside into it.
+    /// (0.8 across) pressed the posts for ever; and one making for the gate from along the
+    /// fence ran on past the line through it and slid along the fence, pressing the posts.
     #[test]
     fn homestead_animals_led_with_food_follow_through_gates_past_troughs_and_up_stairs() {
         fn fence(server: &mut Server, c: IVec3) {
