@@ -963,8 +963,11 @@ fn draw(
         // Centred in the well by its margins; a web too big for the well has none that way,
         // and is dragged about in it rather than cut off.
         let margin = ((room - size) / 2.0).max(Vec2::ZERO);
-        // Scrolled so quest `i` stands in the middle of what the well shows beside the headers.
-        let brought = |i: usize| (centre(i) - Vec2::X * HEADER - lanes_room / 2.0).clamp(Vec2::ZERO, (size - room).max(Vec2::ZERO));
+        // What the well shows with a quest picked: all but the strip its card covers.
+        let seen = (room - Vec2::X * (SIDEBAR + 2.0 * space::HAIR)).max(Vec2::ZERO);
+        // Scrolled so quest `i`, picked, stands in the middle of what the well shows between
+        // the headers and its card.
+        let brought = |i: usize| (centre(i) - Vec2::X * HEADER - (seen - Vec2::X * HEADER) / 2.0).clamp(Vec2::ZERO, (size + margin - seen).max(Vec2::ZERO));
         if arrived {
             scroll.0 = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name)).map_or(Vec2::ZERO, brought);
         } else if let Some((pointer, point)) = zoomed {
@@ -977,8 +980,6 @@ fn draw(
         {
             // A quest newly picked stays in what the well shows beside its card (from
             // `scroll - margin`), scrolled no further than needed.
-            // What shows of it beside the card.
-            let seen = room - Vec2::X * (SIDEBAR + 2.0 * space::HAIR);
             scroll.0 = kept_in_view(scroll.0, place(i), side, margin, seen, size);
         }
         commands.entity(web).despawn_children().with_children(|web| {
