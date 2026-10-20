@@ -55,6 +55,7 @@ mod mix;
 mod music;
 mod net;
 mod player;
+mod priority;
 mod render;
 mod screenshot;
 mod session;
@@ -312,10 +313,12 @@ fn parse_options() -> Result<Options, String> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = parse_options()?;
+    priority::frame_thread();
     // A gate run is a capture that plays and checks a session rather than taking a shot.
     let headless = options.capture.is_some() || options.gate.is_some();
     // Leave two cores for the main and render threads; worldgen, lighting and meshing share
-    // the rest, at a lower priority so bursts of streaming never delay a frame. Cores, not
+    // the rest, at background priority so bursts of streaming never delay a frame
+    // (priority.rs). Cores, not
     // hardware threads: on a machine with two threads a core (the Linux box's 16-core EPYC),
     // workers on every thread slowed every frame system about threefold while the world
     // streamed in, whatever their priority, and took flightfast's p99 frame from 11 to 25 ms.
@@ -324,7 +327,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .thread_name(|i| format!("worker-{i}"))
-        .start_handler(|_| lower_thread_priority())
+        .start_handler(|_| priority::background_thread())
         .build_global()?;
     // The generator's region builds borrow helper threads besides: no more than there are
     // workers.
@@ -373,7 +376,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Every shelter tag on a block says how it sounds: muffling the rain, or whistling.
     ambience.check_shelter_tags(&content.blocks)?;
     recorded.check_ways(&content.blocks)?;
-    recorded.check_way_files(&assets)?;
+    recorded.check_files(&assets)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     fx::ActionFx::load(&content.files)?.check(&content.actions)?;
     if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
@@ -430,8 +433,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // served better: waking two dozen threads for each parallel system cost more than
             // they did, and the frame-bound scenes there gained 5-13% (dig 2.95 to 2.62 ms a
             // frame, mountains 2.98 to 2.65).
+            // Frames wait for the systems' threads, never for the io and async pools'.
             let mut options = bevy::app::TaskPoolOptions::default();
             options.compute.max_threads = SYSTEM_THREADS;
+            options.compute.on_thread_spawn = Some(Arc::new(priority::frame_thread));
+            options.io.on_thread_spawn = Some(Arc::new(priority::background_thread));
+            options.async_compute.on_thread_spawn = Some(Arc::new(priority::background_thread));
             bevy::app::TaskPoolPlugin { task_pool_options: options }
         });
     if muted {
@@ -471,6 +478,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui::UiPlugin,
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
+    app.add_plugins(priority::PriorityPlugin);
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);
@@ -634,27 +642,6 @@ fn physical_cores() -> Option<usize> {
         }
     }
     (!cores.is_empty()).then_some(cores.len())
-}
-
-/// Lowers the calling thread's scheduling priority below the game's frame threads.
-fn lower_thread_priority() {
-    #[cfg(target_os = "macos")]
-    {
-        unsafe extern "C" {
-            fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
-        }
-        const QOS_CLASS_UTILITY: u32 = 0x11;
-        // SAFETY: only changes the scheduling class of the current thread.
-        unsafe { pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0) };
-    }
-    #[cfg(target_os = "linux")]
-    {
-        unsafe extern "C" {
-            fn nice(increment: i32) -> i32;
-        }
-        // SAFETY: on Linux `nice` affects only the calling thread.
-        unsafe { nice(5) };
-    }
 }
 
 /// Block definitions and the world generator's definitions from the loaded content
