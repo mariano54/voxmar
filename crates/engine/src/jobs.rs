@@ -53,11 +53,22 @@ pub fn set_land_missing(missing: bool) {
     MISSING.store(missing, Ordering::Relaxed);
 }
 
+/// The most streaming jobs at once now: 0 for no limit, as while land around a player is
+/// missing. Generation's region builds take no more helper threads than this
+/// (`voxmar_worldgen::parallel`), so they lift with it.
+pub fn limit() -> usize {
+    limit_of(&counts())
+}
+
+fn limit_of(counts: &Counts) -> usize {
+    if MISSING.load(Ordering::Relaxed) { 0 } else { counts.limit }
+}
+
 /// Room for one more streaming job of `kind`, if there is any: held by the job while it runs.
 #[must_use]
 pub fn start(kind: Kind) -> Option<Slot> {
     let mut counts = counts();
-    let limit = if MISSING.load(Ordering::Relaxed) { 0 } else { counts.limit };
+    let limit = limit_of(&counts);
     (limit == 0 || room(limit, counts.running, kind)).then(|| {
         counts.running[kind as usize] += 1;
         Slot(kind)
@@ -136,11 +147,14 @@ mod tests {
             let slots: Vec<_> = std::iter::from_fn(|| start(Kind::Columns)).take(50).collect();
             assert_eq!(slots.len(), asked.max(LEAST), "asked {asked}");
             assert!(start(Kind::Meshes).is_none(), "asked {asked}: full");
+            assert_eq!(limit(), asked.max(LEAST), "asked {asked}");
             set_land_missing(true);
+            assert_eq!(limit(), 0, "asked {asked}: loading again");
             assert!(start(Kind::Meshes).is_some(), "asked {asked}: loading again");
             set_land_missing(false);
         }
         set_limit(0);
+        assert_eq!(limit(), 0);
         let unlimited: Vec<_> = (0..20).map_while(|_| start(Kind::DistantLand)).collect();
         assert_eq!(unlimited.len(), 20, "no limit");
     }

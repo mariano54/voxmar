@@ -119,7 +119,8 @@ impl<V> Shared<V> {
             struct GiveUp<'a, V>(&'a Shared<V>);
             impl<V> Drop for GiveUp<'_, V> {
                 fn drop(&mut self) {
-                    *self.0.lock() = false;
+                    let mut making = self.0.lock();
+                    *making = false;
                     self.0.made.notify_all();
                 }
             }
@@ -130,9 +131,13 @@ impl<V> Shared<V> {
                 hold(_kind);
             }
             let kept = self.value.set(value).is_ok();
-            // Unmarks it (a maker's), and tells the waiters.
+            // Unmarks it (a maker's), and tells the waiters, under the lock, so none that has
+            // just found it unmade misses the news.
             drop(give_up);
-            self.made.notify_all();
+            if !maker {
+                let _making = self.lock();
+                self.made.notify_all();
+            }
             return (self.value.get().expect("set above"), kept);
         }
     }

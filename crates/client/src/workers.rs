@@ -6,8 +6,8 @@
 //! to load with 16, and loading is what more workers are for.
 //!
 //! The pool keeps its size; what is capped is how many streaming jobs (generating, meshing,
-//! distant land) run at once (`voxmar_engine::jobs`), and the helper threads generation's
-//! region builds borrow. No worker is ever held: a job with no room is not started yet. The
+//! distant land) run at once (`voxmar_engine::jobs`), and with it the helper threads
+//! generation's region builds borrow. No worker is ever held: a job with no room is not started yet. The
 //! cap is lifted on leaving the world, so the next one loads on every worker, and whenever
 //! the land around the player is missing (a teleport beyond the view, or streaming fallen
 //! that far behind), which is loading again, until it has all come.
@@ -162,7 +162,6 @@ fn cap_once_loaded(
         Some(Change::Cap) => {
             cap.capped = true;
             voxmar_engine::jobs::set_limit(cap.playing);
-            voxmar_worldgen::set_helper_limit(cap.playing);
             info!("streaming on {} of {} workers while playing, from {} columns in", cap.playing, cap.all, world.voxels.len());
         }
         Some(Change::Lift) => {
@@ -185,7 +184,6 @@ fn uncap(cap: &mut Cap) {
     }
     cap.capped = false;
     voxmar_engine::jobs::set_limit(0);
-    voxmar_worldgen::set_helper_limit(cap.all);
 }
 
 #[cfg(test)]

@@ -2006,8 +2006,9 @@ mod tests {
                     let _ = done_tx.send(());
                     channels
                 });
-                // Well within the held make's wait (cache::hold), so a wait on it fails here.
-                let answered = done.recv_timeout(Duration::from_secs(60)).is_ok();
+                // Half the held make's wait (cache::hold), so a wait on it fails here, and time
+                // for a whole region of its own on a loaded machine (over 60 s in a full test run).
+                let answered = done.recv_timeout(Duration::from_secs(300)).is_ok();
                 let _ = release_tx.send(());
                 let (own, shared) = (urgent.join().unwrap(), worker.join().unwrap());
                 assert!(answered, "hold {i}: the urgent thread waited on the worker");

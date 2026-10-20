@@ -53,7 +53,8 @@ static LIMIT: AtomicUsize = AtomicUsize::new(0);
 /// Caps the helper threads alive at once at `threads` (0 for one per core). The game client
 /// gives it its worker count: on a machine with two hardware threads a core, a build taking
 /// one helper per hardware thread while every worker was busy left the main and render
-/// threads waiting for a core, the worst frames of a fast flight.
+/// threads waiting for a core, the worst frames of a fast flight. A limit on streaming
+/// (`voxmar_engine::jobs::limit`) caps them further, and lifts with it.
 pub fn set_helper_limit(threads: usize) {
     LIMIT.store(threads, Ordering::Relaxed);
 }
@@ -77,7 +78,7 @@ pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
             (cores, 2 * cores)
         }
     };
-    let limit = LIMIT.load(Ordering::Relaxed);
+    let limit = helper_limit(LIMIT.load(Ordering::Relaxed), voxmar_engine::jobs::limit());
     let wanted = cores.min(items.len()).saturating_sub(1);
     let cap = if limit == 0 { cap } else { limit };
     let helpers = if ENABLED.load(Ordering::Relaxed) { reserve(wanted.min(cap), cap) } else { 0 };
@@ -87,6 +88,15 @@ pub(crate) fn for_each<T: Sync>(items: &[T], f: impl Fn(&T) + Sync) {
     }
     with_helpers(items, f, helpers);
     HELPERS.fetch_sub(helpers, Ordering::Relaxed);
+}
+
+/// The most helpers alive at once (0 for one per core): `set`'s, and no more than streaming
+/// jobs may run at once (0 for no limit).
+fn helper_limit(set: usize, streaming: usize) -> usize {
+    match (set, streaming) {
+        (0, limit) | (limit, 0) => limit,
+        (set, streaming) => set.min(streaming),
+    }
 }
 
 /// Calls `f` on every item, on the calling thread and `helpers` fresh threads of the
@@ -196,6 +206,16 @@ fn reserve(wanted: usize, cap: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Capped by streaming's limit while there is one, so lifted while land is missing.
+    #[test]
+    fn helpers_take_no_more_than_streaming_may() {
+        assert_eq!(helper_limit(0, 0), 0, "one per core");
+        assert_eq!(helper_limit(16, 0), 16, "no streaming limit");
+        assert_eq!(helper_limit(16, 4), 4);
+        assert_eq!(helper_limit(0, 4), 4);
+        assert_eq!(helper_limit(3, 4), 3);
+    }
 
     #[test]
     fn calls_once_per_item() {

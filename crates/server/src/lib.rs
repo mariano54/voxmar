@@ -598,9 +598,11 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
 /// world, and at the default class, on a machine at a load of 70-90, the gate's creatures
 /// stood still for seconds while the frames went on. On every platform it is marked urgent
 /// for world generation, which then never has it wait on a background worker's build
-/// (`voxmar_worldgen::mark_urgent`). `VOXMAR_THREAD_PRIORITY=off` leaves it as it starts, as
-/// it does the client's threads.
+/// (`voxmar_worldgen::mark_urgent`). `VOXMAR_THREAD_PRIORITY=off` leaves its class as it
+/// starts, as it does the client's threads; it is urgent all the same.
 fn frame_class() {
+    // Never waiting on a region a streaming worker is building.
+    voxmar_worldgen::mark_urgent();
     if std::env::var("VOXMAR_THREAD_PRIORITY").is_ok_and(|v| v == "off") {
         return;
     }
@@ -609,8 +611,6 @@ fn frame_class() {
     unsafe {
         libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
     };
-    // Above the streaming workers, so never waiting on a region one of them is building.
-    voxmar_worldgen::mark_urgent();
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
