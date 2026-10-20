@@ -88,6 +88,7 @@ enum Form {
     Stump { height: (i32, i32), growth: f32, plants: Vec<(PlantId, f32)> },
     StandingStones { radius: (f32, f32), count: (i32, i32), height: (i32, i32), stones: Mat },
     FairyRing { radius: (f32, f32), plants: Vec<(PlantId, f32)> },
+    Scatter { count: (i32, i32), spread: f32, block: BlockId },
     Litter { top: Mat, cover: f32 },
     LeafPiles { cover: f32 },
     Foot { plants: Vec<(PlantId, f32)>, cover: f32 },
@@ -236,6 +237,7 @@ impl Decor {
                         (Form::StandingStones { radius: *radius, count: *count, height: *height, stones: mat(stones) }, Stage::Rocks)
                     }
                     Shape::FairyRing { radius, plants: list } => (Form::FairyRing { radius: *radius, plants: plants(list) }, Stage::Logs),
+                    Shape::Scatter { count, spread, block } => (Form::Scatter { count: *count, spread: *spread, block: registry.expect(block) }, Stage::Logs),
                     Shape::Litter { top, cover } => (Form::Litter { top: mat(top), cover: *cover }, Stage::Ornaments),
                     Shape::LeafPiles { cover } => (Form::LeafPiles { cover: *cover }, Stage::Ornaments),
                     Shape::Foot { plants: list, cover } => (Form::Foot { plants: plants(list), cover: *cover }, Stage::Ornaments),
@@ -531,6 +533,23 @@ impl Decor {
                             put_plant(blocks, IVec3::new(x, g + 1, z), plant);
                         }
                     }
+                }
+            }
+            Form::Scatter { count, spread, block } => {
+                for _ in 0..rng.range(count.0, count.1 + 1) {
+                    let a = rng.unit() * std::f32::consts::TAU;
+                    let d = spread * rng.unit().sqrt();
+                    let (x, z) = ((base.x as f32 + 0.5 + a.cos() * d).floor() as i32, (base.z as f32 + 0.5 + a.sin() * d).floor() as i32);
+                    if area.unfit(x, z) {
+                        continue;
+                    }
+                    let g = area.height(x, z);
+                    let at = IVec3::new(x, g + 1, z);
+                    // Only on open soil within this column: a nodule never hangs over a drop.
+                    if (g + 1 - base.y).abs() > 2 || !blocks.contains(at) || !self.soil(area, blocks, IVec3::new(x, g, z)) {
+                        continue;
+                    }
+                    blocks.put_if_air(at, *block);
                 }
             }
             Form::Litter { .. } | Form::LeafPiles { .. } | Form::Foot { .. } => {}
