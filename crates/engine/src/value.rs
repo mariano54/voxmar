@@ -263,6 +263,8 @@ mod tests {
         // The wiki's P51 (draft 73): raw materials count 0.5 each inside a made thing.
         let pinned = ["hearthstone", "iron_ingot", "iron_sword", "iron_pickaxe", "chainmail_shirt", "bread"].map(of);
         assert_eq!(pinned, [5, 5, 15, 24, 50, 2], "hearthstone, ingot, sword, pickaxe, chainmail shirt, bread");
+        // A cured hide took ten minutes on a rack: worth more than the raw one (value.ron).
+        assert_eq!([of("raw_hide"), of("hide")], [2, 3], "raw hide, cured hide");
         // A fish is worth the Fishing level that lands it, and the dish cooked of it its
         // Cooking level, the same: neither is a raw material's half.
         let fish = ["raw_trout", "cooked_trout", "raw_tuna", "cooked_tuna", "raw_glimmer_koi", "cooked_glimmer_koi", "bronze_ingot"].map(of);

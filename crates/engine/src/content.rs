@@ -63,6 +63,8 @@ pub struct Content {
     pub journal: Arc<crate::journal::JournalRules>,
     /// Which wild plants come back where they were picked, and how soon.
     pub regrowth: Arc<crate::regrowth::Regrowth>,
+    /// What catches fire from a flame beside it, and how it burns (`fire.ron`).
+    pub fire: Arc<crate::fire::Fire>,
     /// Wild nests, skeps and what bees do (`bees.ron`).
     pub bees: Arc<crate::bees::Bees>,
     /// Home stations left to work, and fertilisers (`stations.ron`).
@@ -234,6 +236,7 @@ impl Content {
         let mut stacking = Vec::new();
         let mut fishing = Vec::new();
         let mut regrowth = Vec::new();
+        let mut fire = Vec::new();
         let mut bees = Vec::new();
         let mut stations = Vec::new();
         let mut traps = Vec::new();
@@ -345,6 +348,10 @@ impl Content {
                         regrowth.push(crate::regrowth::Regrowth::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
+                    "fire.ron" => {
+                        fire.push(crate::fire::Fire::read(package, &source)?);
+                        files.push(ContentFile { package: package.clone(), name, source });
+                    }
                     "bees.ron" => {
                         bees.push(crate::bees::Bees::read(package, &source)?);
                         files.push(ContentFile { package: package.clone(), name, source });
@@ -441,6 +448,7 @@ impl Content {
         let prayers = crate::prayer::PrayerRegistry::new(prayers, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
         let regrowth = crate::regrowth::Regrowth::new(regrowth, &blocks)?;
+        let fire = crate::fire::Fire::new(fire, &blocks)?;
         let multiblocks = crate::multiblock::MultiblockRegistry::new(multiblocks, &blocks)?;
         let machines = crate::machine::MachineRegistry::new(machines, processes, &blocks)?;
         for structure in multiblocks.iter() {
@@ -530,6 +538,7 @@ impl Content {
             prayers: Arc::new(prayers),
             fishing: Arc::new(fishing),
             regrowth: Arc::new(regrowth),
+            fire: Arc::new(fire),
             bees: Arc::new(bees),
             stations: Arc::new(stations),
             traps: Arc::new(traps),

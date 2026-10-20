@@ -64,7 +64,10 @@
         // Each step asks for everything the one below does and replaces it, so the player always
         // sees the highest they have reached, and is told when they first reach one. Hearthside is
         // the lit Homestead Hearth, the Nomad age's end; Snug wants it roofed over; the Farm age
-        // furnishes the rest. What each tag is: bed (sleeping bag, beds), light (torches, candles,
+        // furnishes the rest, and each step up wants better walls about the room the home stands
+        // in (`HomeWalls`, the share of its walls and roof at a shelter or better: blocks
+        // tagged draughty, sound or fine): Snug walled in with anything, Homely mostly sound,
+        // Cosy sound nearly all about, the Heart half fine; each is warmer for it. What each tag is: bed (sleeping bag, beds), light (torches, candles,
         // lanterns), hearth (the hearthstone), seat, table, storage, rug, curtain, cushion,
         // crockery, books (bookshelves), cooking (stove, cauldron), workshop (loom, spindle, quern),
         // banner. A step reached counts for quests as `Built("home_NAME", 1)`.
@@ -73,24 +76,24 @@
             when: Some(All([AtHome, HomeHas("bed", 1), HomeHas("light", 1)])),
             replaces: [], modifiers: (heal: 1.2)),
         (name: "hearthside", kind: Buff, title: "Hearthside", description: "Your hearth keeps the cold off: you heal a third faster here.", announce: true,
-            next: "Next: roof it over, with your bed and two lights, to be snug.",
+            next: "Next: wall it in and roof it over, even with hide or wattle, with your bed and two lights, to be snug.",
             when: Some(All([AtHome, HomeHas("hearth", 1)])),
             replaces: ["camp"], modifiers: (heal: 1.33, warmth: 4.0)),
-        (name: "snug", kind: Buff, title: "Snug", description: "Warm under a roof: you heal half as fast again here.", announce: true,
-            next: "Next: two seats, a table, two places to store things and a third light make it homely.",
-            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 2)])),
+        (name: "snug", kind: Buff, title: "Snug", description: "Walled in and roofed over: you heal half as fast again here.", announce: true,
+            next: "Next: sound walls (logs, planks or stone) for most of the room, two seats, a table, two places to store things and a third light make it homely.",
+            when: Some(All([AtHome, Indoors, HomeWalls(Draughty, 0.9), HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 2)])),
             replaces: ["camp", "hearthside"], modifiers: (heal: 1.5, warmth: 6.0)),
-        (name: "homely", kind: Buff, title: "Homely", description: "Room to sit, work and store: you learn a twentieth more here.", announce: true,
-            next: "Next: two rugs, two curtains, a cushion, three pieces of crockery and a fourth light make it cosy.",
-            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 3), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2)])),
-            replaces: ["camp", "hearthside", "snug"], modifiers: (heal: 1.5, warmth: 6.0, xp: 1.05)),
-        (name: "cosy", kind: Buff, title: "Cosy", description: "Soft and bright: you heal faster and learn a tenth more here.", announce: true,
-            next: "Next: a bookshelf, a stove or cauldron, a loom, spindle or quern, and a banner make it the heart of the home.",
-            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 4), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2), HomeHas("rug", 2), HomeHas("curtain", 2), HomeHas("cushion", 1), HomeHas("crockery", 3)])),
-            replaces: ["camp", "hearthside", "snug", "homely"], modifiers: (heal: 1.75, warmth: 6.0, xp: 1.1)),
-        (name: "heart_of_the_home", kind: Buff, title: "Heart of the Home", description: "Everything a home needs: heal twice as fast, learn an eighth more.", announce: true,
-            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 4), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2), HomeHas("rug", 2), HomeHas("curtain", 2), HomeHas("cushion", 1), HomeHas("crockery", 3), HomeHas("books", 1), HomeHas("cooking", 1), HomeHas("workshop", 1), HomeHas("banner", 1)])),
-            replaces: ["camp", "hearthside", "snug", "homely", "cosy"], modifiers: (heal: 2.0, warmth: 6.0, xp: 1.125)),
+        (name: "homely", kind: Buff, title: "Homely", description: "Sound walls, and room to sit, work and store: 2° warmer, and you learn a twentieth more here.", announce: true,
+            next: "Next: sound walls nearly all about, two rugs, two curtains, a cushion, three pieces of crockery and a fourth light make it cosy.",
+            when: Some(All([AtHome, Indoors, HomeWalls(Draughty, 0.9), HomeWalls(Sound, 0.6), HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 3), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2)])),
+            replaces: ["camp", "hearthside", "snug"], modifiers: (heal: 1.5, warmth: 8.0, xp: 1.05)),
+        (name: "cosy", kind: Buff, title: "Cosy", description: "Soft, bright and close walled: 3° warmer, you heal faster and learn a tenth more here.", announce: true,
+            next: "Next: fine walls (dressed stone, brick or glass) for half the room, a bookshelf, a stove or cauldron, a loom, spindle or quern, and a banner make it the heart of the home.",
+            when: Some(All([AtHome, Indoors, HomeWalls(Sound, 0.9), HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 4), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2), HomeHas("rug", 2), HomeHas("curtain", 2), HomeHas("cushion", 1), HomeHas("crockery", 3)])),
+            replaces: ["camp", "hearthside", "snug", "homely"], modifiers: (heal: 1.75, warmth: 9.0, xp: 1.1)),
+        (name: "heart_of_the_home", kind: Buff, title: "Heart of the Home", description: "Everything a home needs, finely walled: 4° warmer, heal twice as fast, learn an eighth more.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeWalls(Fine, 0.5), HomeWalls(Sound, 0.9), HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 4), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2), HomeHas("rug", 2), HomeHas("curtain", 2), HomeHas("cushion", 1), HomeHas("crockery", 3), HomeHas("books", 1), HomeHas("cooking", 1), HomeHas("workshop", 1), HomeHas("banner", 1)])),
+            replaces: ["camp", "hearthside", "snug", "homely", "cosy"], modifiers: (heal: 2.0, warmth: 10.0, xp: 1.125)),
         // Rooms: side branches of the ladder, each a different use of a home. A workbench and a
         // workshop lift crafting and building levels (`boosts`, which recipes' level checks
         // count; a recipe marked firm ignores them); a pantry and a larder make more of meals.
