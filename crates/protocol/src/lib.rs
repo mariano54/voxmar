@@ -173,8 +173,10 @@ pub enum ServerMessage {
     Teleport { position: Vec3, seq: u32 },
     /// Other players near enough to see (`Limits::players_seen`), told as they change:
     /// `seen` holds only those whose view changed since it was last sent (or who came into
-    /// sight), `gone` those who left or went out of sight. Sent only when there is either.
-    Players { seen: Vec<PlayerView>, gone: Vec<PlayerId> },
+    /// sight), `gone` those who left or went out of sight. `names`: the names of players
+    /// out of sight not told before (or renamed), so a creature they keep shows who keeps it
+    /// however far off they are. Sent only when there is any.
+    Players { seen: Vec<PlayerView>, gone: Vec<PlayerId>, names: Vec<(PlayerId, String)> },
     /// The clocks, every second and whenever a command changes them: `tick` counts
     /// simulation ticks since the world began, at `TICKS_PER_SECOND`, and `day` is the
     /// time of day in ticks (0 at sunrise of the first day), which runs `day_speed` times
@@ -322,8 +324,8 @@ pub enum ChatKind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayerView {
     pub id: PlayerId,
-    /// Their name, sent once: when they come into sight, or if it changes. Else `None`,
-    /// the name told before standing.
+    /// Their name, sent once: when they come into sight not named before (in a view or in
+    /// `Players::names`), or if it changes. Else `None`, the name told before standing.
     pub name: Option<String>,
     pub position: Vec3,
     pub yaw: f32,

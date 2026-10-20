@@ -108,6 +108,8 @@ pub struct Player {
     pub teleports: u32,
     /// The others as last told to this player (`Server::broadcast_players`), names and all.
     pub told: rustc_hash::FxHashMap<PlayerId, PlayerView>,
+    /// The others' names as told to this player, near or far (`Server::broadcast_players`).
+    pub named: rustc_hash::FxHashMap<PlayerId, String>,
     pub support: Support,
     /// The last place they stood on ground out of lava: where a death in the void or in
     /// lava leaves their things (`Server::grave_site`).
@@ -225,6 +227,7 @@ impl Player {
             accepted: spawn,
             teleports: 0,
             told: rustc_hash::FxHashMap::default(),
+            named: rustc_hash::FxHashMap::default(),
             support: Support { y: spawn.y, fluid: false, at: None },
             last_ground: None,
             connected_tick: tick,
@@ -1194,9 +1197,15 @@ mod tests {
 
     /// Every Players message a client was sent since last asked: (seen, gone) each.
     fn told_of_others(client: &ClientConnection) -> Vec<(Vec<PlayerView>, Vec<PlayerId>)> {
+        told_of_others_and_names(client).into_iter().map(|(seen, gone, _)| (seen, gone)).collect()
+    }
+
+    /// Every Players message a client was sent since last asked, names out of sight and all.
+    #[allow(clippy::type_complexity)]
+    fn told_of_others_and_names(client: &ClientConnection) -> Vec<(Vec<PlayerView>, Vec<PlayerId>, Vec<(PlayerId, String)>)> {
         std::iter::from_fn(|| client.try_recv().ok().flatten())
             .filter_map(|message| match message {
-                ServerMessage::Players { seen, gone } => Some((seen, gone)),
+                ServerMessage::Players { seen, gone, names } => Some((seen, gone, names)),
                 _ => None,
             })
             .collect()
@@ -1261,7 +1270,8 @@ mod tests {
         assert!(view.id == 2 && view.name.is_none(), "Bob's name was told again: {view:?}");
     }
 
-    /// A player further than `players_seen` is not told of; coming near, they are, by name.
+    /// A player further than `players_seen` is not told of, only named, once (for a
+    /// creature they keep); coming near, they are told of, the name not again.
     #[test]
     fn a_far_player_is_not_told_of() {
         let (mut server, ada, _bob, _) = ada_and_bob();
@@ -1269,12 +1279,19 @@ mod tests {
         let far = server.players[&1].position + Vec3::new(seen + 10.0, 0.0, 0.0);
         server.players.get_mut(&2).unwrap().position = far;
         server.broadcast_players();
-        assert!(told_of_others(&ada).is_empty(), "Ada was told of Bob {} blocks off", seen + 10.0);
+        let told = told_of_others_and_names(&ada);
+        assert!(
+            told.len() == 1 && told[0].0.is_empty() && told[0].2 == [(2, "Bob".to_owned())],
+            "Ada was told of Bob {} blocks off, or not of his name: {told:?}",
+            seen + 10.0
+        );
+        server.broadcast_players();
+        assert!(told_of_others(&ada).is_empty(), "Bob's name was told again");
         let near = server.players[&1].position + Vec3::new(seen - 10.0, 0.0, 0.0);
         server.players.get_mut(&2).unwrap().position = near;
         server.broadcast_players();
         let told = told_of_others(&ada);
-        assert!(told.len() == 1 && told[0].0[0].name.as_deref() == Some("Bob"), "Ada was not told of Bob by name as he came near: {told:?}");
+        assert!(told.len() == 1 && told[0].0[0].id == 2 && told[0].0[0].name.is_none(), "Ada was not told of Bob as he came near, or his name again: {told:?}");
         server.players.get_mut(&2).unwrap().position = far;
         server.broadcast_players();
         let told = told_of_others(&ada);

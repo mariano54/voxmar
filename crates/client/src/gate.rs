@@ -1482,7 +1482,8 @@ impl Observer {
                         }
                     }
                     ServerMessage::Chat { text, .. } => self.replies.push(text),
-                    ServerMessage::Players { seen, gone } => {
+                    ServerMessage::Players { seen, gone, names } => {
+                        self.names.extend(names);
                         for id in gone {
                             self.names.remove(&id);
                             self.others.remove(&id);

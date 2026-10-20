@@ -1259,8 +1259,9 @@ impl Server {
 
     /// Tells each player of the others near enough to see (`Limits::players_seen`), only
     /// as they change: a view sent again only once it differs from the last one sent them, a
-    /// name only the first time, and those gone or out of sight named once as gone. One
-    /// already told of goes out of sight only past `players_seen_margin` more.
+    /// name only the first time (near or far: those out of sight are named in `names`, so
+    /// a creature they keep shows its keeper), and those gone or out of sight named once as
+    /// gone. One already told of goes out of sight only past `players_seen_margin` more.
     fn broadcast_players(&mut self) {
         let views: Vec<voxmar_protocol::PlayerView> = self.players.values().filter(|p| p.joined).map(|p| voxmar_protocol::PlayerView { fight: self.fight_view(p.id), ..p.view() }).collect();
         let (seen, margin) = (self.config.limits.players_seen, self.config.limits.players_seen_margin);
@@ -1275,16 +1276,29 @@ impl Server {
                 if last == Some(view) {
                     continue;
                 }
-                let named = last.is_none_or(|last| last.name != view.name);
+                let name = view.name.clone().unwrap_or_default();
+                let named = player.named.get(&view.id) != Some(&name);
+                if named {
+                    player.named.insert(view.id, name);
+                }
                 told.push(voxmar_protocol::PlayerView { name: if named { view.name.clone() } else { None }, ..view.clone() });
                 player.told.insert(view.id, view.clone());
             }
+            let mut names = Vec::new();
+            for view in views.iter().filter(|v| v.id != player.id && !near.iter().any(|n| n.id == v.id)) {
+                let name = view.name.clone().unwrap_or_default();
+                if player.named.get(&view.id) != Some(&name) {
+                    player.named.insert(view.id, name.clone());
+                    names.push((view.id, name));
+                }
+            }
+            player.named.retain(|id, _| views.iter().any(|v| v.id == *id));
             let gone: Vec<PlayerId> = player.told.keys().copied().filter(|id| !near.iter().any(|v| v.id == *id)).collect();
             for id in &gone {
                 player.told.remove(id);
             }
-            if !(told.is_empty() && gone.is_empty()) {
-                player.connection.send(ServerMessage::Players { seen: told, gone });
+            if !(told.is_empty() && gone.is_empty() && names.is_empty()) {
+                player.connection.send(ServerMessage::Players { seen: told, gone, names });
             }
         }
     }

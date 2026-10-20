@@ -1181,6 +1181,28 @@ mod tests {
     use crate::block::BlockDef;
     use crate::content::Settable;
 
+    /// A circle in range passes; each number out of its range on either side is refused,
+    /// naming `circle`.
+    #[test]
+    fn a_circle_out_of_range_is_refused() {
+        let good = Circle { seconds: 0.8, away: 0.6, pace: 0.55, round: 50.0 };
+        assert!(good.check().is_ok());
+        let broken = [
+            Circle { seconds: 0.2, ..good },
+            Circle { seconds: 2.1, ..good },
+            Circle { away: 0.2, ..good },
+            Circle { away: 2.6, ..good },
+            Circle { pace: 0.1, ..good },
+            Circle { pace: 1.1, ..good },
+            Circle { round: 14.0, ..good },
+            Circle { round: 121.0, ..good },
+            Circle { seconds: f32::NAN, ..good },
+        ];
+        for circle in broken {
+            assert!(circle.check().is_err_and(|e| e.contains("`circle`")), "{circle:?} passed");
+        }
+    }
+
     const RABBIT: &str = r#"(creatures: [(
         name: "rabbit", health: 6, level: 1,
         body: (size: (0.5, 0.45), model: Quadruped(body: (0.36, 0.3, 0.5), head: (0.28, 0.26, 0.28), legs: 0.12, ears: (0.08, 0.24), tail: (0.1, 0.1, 0.1)), colours: [(150, 120, 90), (230, 220, 200)]),

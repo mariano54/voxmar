@@ -677,6 +677,28 @@ mod tests {
         assert!(broken.check().unwrap_err().contains("right arm"));
     }
 
+    /// Each fight number out of its range, either side, is refused by name.
+    #[test]
+    fn a_fight_look_out_of_range_is_refused() {
+        let look = shipped();
+        let cases: [(&str, fn(&mut PlayerLook) -> &mut f32, f32, f32); 7] = [
+            ("fight.raise", |l| &mut l.fight.raise, -1.0, 201.0),
+            ("fight.strike", |l| &mut l.fight.strike, -46.0, 181.0),
+            ("fight.follow", |l| &mut l.fight.follow, 0.01, 1.1),
+            ("fight.guard", |l| &mut l.fight.guard, -1.0, 181.0),
+            ("fight.guard_turn", |l| &mut l.fight.guard_turn, -181.0, 181.0),
+            ("fight.draw", |l| &mut l.fight.draw, -1.0, 181.0),
+            ("fight.ease", |l| &mut l.fight.ease, 0.5, 61.0),
+        ];
+        for (name, field, low, high) in cases {
+            for value in [low, high] {
+                let mut broken = look.clone();
+                *field(&mut broken) = value;
+                assert!(broken.check().is_err_and(|e| e.contains(&format!("`{name}`"))), "{name} {value} passed");
+            }
+        }
+    }
+
     /// A figure first seen without a name is painted again once its name is told, and
     /// only then: the same name told again, or none, keeps the skin.
     #[test]

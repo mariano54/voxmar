@@ -219,6 +219,9 @@ pub struct RemotePlayers {
     /// Shown as if told of (the gate's stand-in): the server's next list, which never has
     /// them, leaves them be.
     puppets: FxHashMap<PlayerId, PlayerView>,
+    /// Every other player's name as told, near or far, kept when they go out of sight: a
+    /// creature kept by one far off still shows who keeps it.
+    names: FxHashMap<PlayerId, String>,
 }
 
 impl RemotePlayers {
@@ -228,14 +231,19 @@ impl RemotePlayers {
     }
 
     /// What the server told of others: views changed or come into sight (a name, when
-    /// missing, is the one told before), and players gone or out of sight.
-    pub fn told(&mut self, seen: Vec<PlayerView>, gone: Vec<PlayerId>) {
+    /// missing, is the one told before), players gone or out of sight, and the names of
+    /// those out of sight.
+    pub fn told(&mut self, seen: Vec<PlayerView>, gone: Vec<PlayerId>, names: Vec<(PlayerId, String)>) {
         for id in gone {
             self.players.remove(&id);
         }
+        self.names.extend(names);
         for mut view in seen {
-            if view.name.is_none() {
-                view.name = self.players.get(&view.id).and_then(|old| old.name.clone());
+            match &view.name {
+                Some(name) => {
+                    self.names.insert(view.id, name.clone());
+                }
+                None => view.name = self.names.get(&view.id).cloned(),
             }
             self.players.insert(view.id, view);
         }
@@ -258,9 +266,9 @@ impl RemotePlayers {
         self.puppets.get(&id).or_else(|| self.players.get(&id))
     }
 
-    /// What another player is called, while they are here.
+    /// What another player is called, near or far, once the server has told.
     pub fn name(&self, id: PlayerId) -> Option<&str> {
-        self.get(id).and_then(|view| view.name.as_deref())
+        self.get(id).and_then(|view| view.name.as_deref()).or_else(|| self.names.get(&id).map(String::as_str))
     }
 
     /// The player nearest along the look ray within `within` blocks of the eye, and how far:
@@ -418,7 +426,7 @@ pub(crate) fn receive(
                     fighting.dodge_ready = fighting.dodge_was;
                 }
             }
-            ServerMessage::Players { seen, gone } => remote.told(seen, gone),
+            ServerMessage::Players { seen, gone, names } => remote.told(seen, gone, names),
             ServerMessage::Time { tick, day, day_speed } => {
                 *clock = Clock { day: day as f64, day_speed, told_at: time.elapsed_secs_f64() };
                 weather.set_tick(tick, time.elapsed_secs_f64());
@@ -540,16 +548,20 @@ mod tests {
         assert_eq!(admin_token_for("::1", "[::1]:25665=six").as_deref(), Some("six"));
     }
 
-    /// A view told without a name keeps the name told before; one gone is forgotten.
+    /// A view told without a name keeps the name told before; one gone is no longer shown,
+    /// though their name is kept, as is one told of only by name, far off.
     #[test]
     fn others_are_told_as_they_change() {
         let mut players = RemotePlayers::default();
         let view = |name: Option<&str>, x: f32| PlayerView { id: 9, name: name.map(str::to_owned), position: Vec3::new(x, 0.0, 0.0), yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
-        players.told(vec![view(Some("Ada"), 0.0)], vec![]);
-        players.told(vec![view(None, 1.0)], vec![]);
+        players.told(vec![view(Some("Ada"), 0.0)], vec![], vec![]);
+        players.told(vec![view(None, 1.0)], vec![], vec![]);
         assert_eq!((players.name(9), players.position(9)), (Some("Ada"), Some(Vec3::X)));
-        players.told(vec![], vec![9]);
+        players.told(vec![], vec![9], vec![(4, "Bob".to_owned())]);
         assert_eq!(players.views().count(), 0);
+        assert_eq!((players.name(9), players.name(4), players.position(4)), (Some("Ada"), Some("Bob"), None), "names kept out of sight");
+        players.told(vec![view(None, 2.0)], vec![], vec![]);
+        assert_eq!(players.get(9).and_then(|v| v.name.as_deref()), Some("Ada"), "back in sight, the view takes the name kept");
     }
 
     /// A stand-in shown with no server behind it (the gate's) stays through what the server
@@ -559,13 +571,13 @@ mod tests {
         let mut players = RemotePlayers::default();
         let view = |id, name: &str| PlayerView { id, name: Some(name.to_owned()), position: Vec3::ZERO, yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
         players.puppet(view(7, "Gate"));
-        players.told(vec![view(9, "Ada")], vec![]);
-        players.told(vec![view(9, "Ada")], vec![]);
+        players.told(vec![view(9, "Ada")], vec![], vec![]);
+        players.told(vec![view(9, "Ada")], vec![], vec![]);
         let mut here: Vec<_> = players.views().map(|v| v.id).collect();
         here.sort();
         assert_eq!(here, vec![7, 9], "the stand-in and the player the server told of");
         assert_eq!(players.name(7), Some("Gate"));
-        players.told(Vec::new(), vec![9]);
+        players.told(Vec::new(), vec![9], Vec::new());
         assert_eq!(players.views().map(|v| v.id).collect::<Vec<_>>(), vec![7], "the server telling the others gone leaves the stand-in");
         players.forget(7);
         assert_eq!(players.views().count(), 0);

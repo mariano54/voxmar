@@ -257,8 +257,8 @@ pub struct Mind {
     pub pause: f32,
     /// Seconds until it may attack again.
     pub cooldown: f32,
-    /// Seconds left of circling its target between blows (`Attack::circle`), its recovery
-    /// first.
+    /// Seconds left of circling its target between blows (`Attack::circle`), counted from
+    /// the end of its recovery (held till then, it does not think).
     pub circling: f32,
     /// Zigzag side when fleeing, and other modules' small counters.
     pub zig: f32,
