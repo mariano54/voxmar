@@ -2454,6 +2454,89 @@ mod density_tests {
         assert!(!server.seen_by_a_player(back, 75.0), "a player who has not joined has no view");
     }
 
+    /// How long a kill of something with meat on it takes in the wild, for the pacing
+    /// audits (design/farm-pacing.md): after the world fills round a player by day, the
+    /// player sprints straight at the nearest wild animal that drops raw meat, over level
+    /// ground (terrain and the animal's flight once struck are left out, so this is a
+    /// floor), swings a stone axe at it, and goes on to the next, giving up on one it has
+    /// chased for 20 s, while the world spawns and moves its animals as it would.
+    /// `cargo test -p voxmar_server hunt_pace_probe -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "prints a table; minutes of server time per row"]
+    fn hunt_pace_probe() {
+        const SPRINT: f32 = 6.1;
+        const KILLS: u32 = 12;
+        // A swing a beat (0.7 s), and about one and a half health a swing with a stone axe.
+        const BEAT: u64 = 14;
+        const HIT: f32 = 1.5;
+        let mut server = crate::test_server();
+        let noon = (0..24_000u64).step_by(100).max_by(|a, b| creature::daylight(*a).total_cmp(&creature::daylight(*b))).unwrap();
+        println!("{:>10} | kills  seconds  s/kill  sprinting s/kill", "biome");
+        for biome in ["plains", "forest", "meadow", "savanna"] {
+            let Some(spot) = find_biome(&server, biome) else {
+                println!("{biome:>10}: none found");
+                continue;
+            };
+            density(&mut server, spot, noon + LATER, 3, false);
+            let meaty: Vec<bool> = (0..server.content.creatures.len())
+                .map(|i| {
+                    let def = server.content.creatures.get(CreatureId(i as _));
+                    def.def.kind == Kind::Animal && def.loot.iter().any(|l| server.content.blocks.def(l.item).name.contains(":raw_"))
+                })
+                .collect();
+            let start = server.tick;
+            let (mut kills, mut running, mut marks) = (0u32, 0u64, Vec::new());
+            // What it gave up on (out-ran it for 20 s, as a player would), and what it is after.
+            let (mut given_up, mut chase) = (FxHashSet::default(), (u32::MAX, 0u64));
+            while kills < KILLS && server.tick - start < 20 * 60 * TICKS_PER_SECOND as u64 {
+                let at = server.players[&1].position;
+                let prey = server
+                    .creatures
+                    .live
+                    .iter()
+                    .filter(|(id, c)| c.owner.is_none() && meaty[c.species.0 as usize] && !given_up.contains(*id))
+                    .map(|(&id, c)| (id, c.body.position, c.species))
+                    .min_by(|a, b| a.1.distance(at).total_cmp(&b.1.distance(at)));
+                let Some((id, p, species)) = prey else {
+                    for _ in 0..TICKS_PER_SECOND {
+                        server.tick += 1;
+                        server.tick_creatures();
+                    }
+                    continue;
+                };
+                let name = server.content.creatures.get(species).def.name.trim_start_matches("base:").to_owned();
+                if chase.0 != id {
+                    chase = (id, server.tick);
+                } else if server.tick - chase.1 > 20 * TICKS_PER_SECOND as u64 {
+                    given_up.insert(id);
+                    marks.push(format!("(gave up on a {name})"));
+                    continue;
+                }
+                let gap = Vec2::new(p.x - at.x, p.z - at.z);
+                if gap.length() <= 2.0 {
+                    let health = server.content.creatures.get(species).def.health as f32;
+                    for _ in 0..(health / HIT).ceil() as u64 * BEAT {
+                        server.tick += 1;
+                        server.tick_creatures();
+                    }
+                    server.creatures.live.remove(&id);
+                    kills += 1;
+                    marks.push(format!("{name}@{:.0}", (server.tick - start) as f32 / TICKS_PER_SECOND as f32));
+                    continue;
+                }
+                let step = gap.normalize() * (SPRINT / TICKS_PER_SECOND as f32).min(gap.length());
+                server.players.get_mut(&1).unwrap().position = Vec3::new(at.x + step.x, p.y, at.z + step.y);
+                running += 1;
+                server.tick += 1;
+                server.tick_creatures();
+            }
+            let seconds = (server.tick - start) as f32 / TICKS_PER_SECOND as f32;
+            let sprint = running as f32 / TICKS_PER_SECOND as f32;
+            println!("{biome:>10} | {kills:>5} {seconds:>8.1} {:>7.1} {:>16.1}", seconds / kills.max(1) as f32, sprint / kills.max(1) as f32);
+            println!("{:>10}   {}", "", marks.join(" "));
+        }
+    }
+
     #[test]
     #[ignore = "prints a table; minutes of server time per row"]
     fn wild_density_probe() {

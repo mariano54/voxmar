@@ -861,15 +861,29 @@ impl Server {
         below.overlaps(|cell| self.boxes(cell))
     }
 
-    /// Where a player above `from` would stand on the first solid block under them, on its
-    /// top (a slab's at half a block), within 64 blocks; otherwise where they are.
+    /// Where a player above `from` would stand on the first solid block under them, on the
+    /// highest top under their footprint (a slab's at half a block; a post only where they
+    /// are over it), within 64 blocks; otherwise where they are.
     fn ground_below(&self, from: Vec3) -> Vec3 {
-        let cell = from.floor().as_ivec3();
+        let half = dims::WIDTH / 2.0;
+        let (lo, hi) = (from - Vec3::new(half, 0.0, half), from + Vec3::new(half, 0.0, half));
+        let (a, b) = (lo.floor().as_ivec3(), hi.floor().as_ivec3());
         (0..64)
-            .map(|down| cell - voxmar_engine::glam::IVec3::Y * down)
-            .find_map(|below| {
-                let top = self.boxes(below).iter().map(|b| b.max.y).reduce(f32::max)?;
-                let on = Vec3::new(from.x, below.y as f32 + top, from.z);
+            .map(|down| from.floor().y as i32 - down)
+            .find_map(|y| {
+                let mut top = None::<f32>;
+                for x in a.x..=b.x {
+                    for z in a.z..=b.z {
+                        let cell = voxmar_engine::glam::IVec3::new(x, y, z);
+                        for b in self.boxes(cell) {
+                            let (min, max) = (b.min + cell.as_vec3(), b.max + cell.as_vec3());
+                            if min.x < hi.x && max.x > lo.x && min.z < hi.z && max.z > lo.z {
+                                top = Some(top.map_or(max.y, |t: f32| t.max(max.y)));
+                            }
+                        }
+                    }
+                }
+                let on = from.with_y(top?);
                 (!self.inside(on)).then_some(on)
             })
             .unwrap_or(from)
@@ -1207,5 +1221,31 @@ mod tests {
         drop(returning);
         drop(server);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A player let down lands on a post's top only where they are over it: beside it, in
+    /// the empty part of its cell, they go on down to the floor under it.
+    #[test]
+    fn a_let_down_lands_on_a_post_only_where_it_is_under_the_player() {
+        let mut server = crate::test_server();
+        let at = server.spawn.floor().as_ivec3() + voxmar_engine::glam::IVec3::new(0, 20, 0);
+        server.load_area(at - voxmar_engine::glam::IVec3::splat(4), at + voxmar_engine::glam::IVec3::splat(4));
+        let air = voxmar_engine::block::BlockId::AIR;
+        let (stone, post) = (server.content.blocks.id("base:stone").unwrap(), server.content.blocks.id("base:oak_post").unwrap());
+        for y in -3..=2 {
+            for z in -2..=2 {
+                for x in -2..=2 {
+                    let cell = at + voxmar_engine::glam::IVec3::new(x, y, z);
+                    server.set_block(cell, if y == -3 { stone } else { air });
+                }
+            }
+        }
+        server.set_block(at - voxmar_engine::glam::IVec3::Y, post);
+        let cell = at.as_vec3();
+        // Over the post: on its top.
+        assert_eq!(server.ground_below(cell + Vec3::new(0.5, 1.5, 0.5)).y, cell.y);
+        // Beside it in its cell, the footprint clear of it: down to the stone.
+        let beside = cell + Vec3::new(0.99, 1.5, 0.99);
+        assert_eq!(server.ground_below(beside), beside.with_y(cell.y - 2.0), "stood on a post's top beside it");
     }
 }
