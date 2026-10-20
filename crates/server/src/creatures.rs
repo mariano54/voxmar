@@ -4422,14 +4422,13 @@ mod fight_tests {
         }
     }
 
-    /// Walks each land kind east across a pen at `pace` (its walk, or its run) for long
-    /// enough to cross it, turning as it steers; where its feet got to lowest, and whether
-    /// any of it was ever in a cell `bad` says.
-    fn walk_east(server: &Server, c: IVec3, species: &voxmar_engine::creature::Creature, run: bool, bad: impl Fn(IVec3) -> bool) -> (f32, bool) {
+    /// Walks a land kind east across a pen at `pace` for long enough to cross it, turning as
+    /// it steers; where its feet got to lowest, and whether any of it was ever in a cell
+    /// `bad` says.
+    fn walk_east(server: &Server, c: IVec3, species: &voxmar_engine::creature::Creature, pace: f32, bad: impl Fn(IVec3) -> bool) -> (f32, bool) {
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ground = Ground::of(server);
         let movement = species.def.movement;
-        let pace = if run { movement.run.max(movement.walk) } else { movement.walk };
         let mut body = Body::new(c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), motion::yaw_of(Vec3::X), species.def.body.size);
         (body.reach, body.head, body.on_ground) = (species.reach, species.head, true);
         let (mut side, mut lowest, mut touched) = (0.0, body.position.y, false);
@@ -4469,9 +4468,42 @@ mod fight_tests {
             let kinds = walkers(&server);
             assert!(kinds.len() > 10, "too few kinds walk");
             for species in kinds {
-                let (lowest, _) = walk_east(&server, c, species, false, |_| false);
-                assert!(lowest > c.y as f32 - 0.5, "{} walked into a pit {deep} deep: down to {:.2}", species.def.name, lowest - c.y as f32);
+                // At its walk, and at the liveliest one's wander (`Personality::pace`).
+                for pace in [1.0, 1.2] {
+                    let (lowest, _) = walk_east(&server, c, species, species.def.movement.walk * pace, |_| false);
+                    assert!(lowest > c.y as f32 - 0.5, "{} walked into a pit {deep} deep at {pace} its walk: down to {:.2}", species.def.name, lowest - c.y as f32);
+                }
             }
+        }
+    }
+
+    /// A ditch a block across and two deep, along the way, is no wall to a body too wide to
+    /// come down in it (a bear, an aurochs): it walks over, its feet on both banks.
+    #[test]
+    fn wide_bodies_walk_over_a_narrow_ditch() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        set(&mut server, "base:stone", (-8..=8).flat_map(|x| (-8..=8).flat_map(move |z| (-3..=-2).map(move |y| c + IVec3::new(x, y, z)))));
+        for z in -8..=8 {
+            for y in -2..=-1 {
+                server.world.set_block(c + IVec3::new(1, y, z), BlockId::AIR);
+            }
+        }
+        let wide: Vec<_> = walkers(&server).into_iter().filter(|s| s.def.body.size.0 > 1.05).collect();
+        assert!(!wide.is_empty());
+        for species in wide {
+            let ground = Ground::of(&server);
+            let movement = species.def.movement;
+            let dt = 1.0 / TICKS_PER_SECOND as f32;
+            let mut body = Body::new(c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), motion::yaw_of(Vec3::X), species.def.body.size);
+            (body.reach, body.head, body.on_ground) = (species.reach, species.head, true);
+            let mut side = 0.0;
+            for _ in 0..((8.0 / movement.walk + 4.0) * TICKS_PER_SECOND as f32) as u32 {
+                let (heading, turned) = motion::steer(&body, &ground, &movement, Water::Land, Vec3::X, side, movement.walk, dt);
+                side = turned;
+                motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: heading, speed: movement.walk, face: None }, dt);
+            }
+            assert!(body.position.x > c.x as f32 + 3.0, "{} never got over the ditch: at {:.2}", species.def.name, body.position - c.as_vec3());
         }
     }
 
@@ -4483,7 +4515,7 @@ mod fight_tests {
         closed_pit(&mut server, c, 2);
         let wolf = server.content.creatures.get(server.content.creatures.id("base:wolf").expect("a wolf"));
         assert!(wolf.def.movement.run > wolf.def.movement.walk);
-        let (lowest, _) = walk_east(&server, c, wolf, true, |_| false);
+        let (lowest, _) = walk_east(&server, c, wolf, wolf.def.movement.run, |_| false);
         assert!(lowest < c.y as f32 - 1.5, "a running wolf kept out of the pit: down to {:.2}", lowest - c.y as f32);
     }
 
@@ -4498,8 +4530,9 @@ mod fight_tests {
         let lava = |cell: IVec3| (1..=4).contains(&(cell.x - c.x)) && (-2..=2).contains(&(cell.z - c.z)) && cell.y == c.y - 1;
         let kinds = walkers(&server);
         for species in kinds {
-            for run in [false, true] {
-                let (_, touched) = walk_east(&server, c, species, run, lava);
+            let movement = species.def.movement;
+            for (run, pace) in [(false, movement.walk), (true, movement.run.max(movement.walk))] {
+                let (_, touched) = walk_east(&server, c, species, pace, lava);
                 assert!(!touched, "{} went into lava ({})", species.def.name, if run { "running" } else { "walking" });
             }
         }

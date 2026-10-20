@@ -18,6 +18,11 @@ const TERMINAL: f32 = 60.0;
 const DRIFT_HEIGHT: f32 = 1.6;
 /// A flier takes wing when asked to go faster than this many times its walk.
 pub const TAKES_WING: f32 = 1.5;
+/// The most a wander, graze or stroll goes over its walk: its walk at the liveliest
+/// personality's pace (`Personality::pace`, 1.2), and a little. Faster is a chase or a
+/// flight.
+pub const AMBLE: f32 = 1.25;
+
 /// How fast a flier climbs and comes down in flight, and flutters down to land, in blocks
 /// per second; and how far ahead it looks for rising land.
 const CLIMB: f32 = 5.0;
@@ -280,13 +285,21 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // (`now`) while its edge still stands on it.
     let feet = (body.position.y + 0.01).floor() as i32;
     let held = |middle: Vec3, then: IVec3| {
-        if then.y >= feet || pace > movement.walk || world.water(then) {
+        if then.y >= feet || world.water(then) {
             return false;
         }
-        // Deeper than it could climb back, at a walk, only onto open ground: never into a
-        // pit it would not get out of (a hole a player dug two or three deep).
+        let at = |k: i32| Vec3::new(middle.x, then.y as f32, middle.z) + heading * (0.1 * k as f32);
+        // Too narrow along its way for its box (a crack, a ditch it straddles): it never
+        // comes down in it.
+        let open = (-4..=4).filter(|&k| !world.solid((at(k * 5) + Vec3::Y * 0.01).floor().as_ivec3())).count() as f32 * 0.5;
+        if open < body.size.0 {
+            return false;
+        }
+        // Deeper than it could climb back, at a wander (however lively), only onto open
+        // ground: never into a pit it would not get out of (a hole a player dug two or three
+        // deep).
         let climb = (movement.jump > 0.0) as i32;
-        if feet - then.y > climb {
+        if pace <= movement.walk * AMBLE && feet - then.y > climb {
             let walker = Walker {
                 height: body.size.1.ceil() as i32,
                 climbs: climb > 0,
@@ -298,10 +311,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
                 return true;
             }
         }
-        let at = |k: i32| Vec3::new(middle.x, then.y as f32, middle.z) + heading * (0.1 * k as f32);
-        // Too narrow along its way for its box (a crack): it never comes down in it.
-        let open = (-4..=4).filter(|&k| !world.solid((at(k * 5) + Vec3::Y * 0.01).floor().as_ivec3())).count() as f32 * 0.5;
-        if open < body.size.0 {
+        if pace > movement.walk {
             return false;
         }
         let landed = |k: i32| Body { position: at(k), yaw: yaw_of(heading), ..*body };
