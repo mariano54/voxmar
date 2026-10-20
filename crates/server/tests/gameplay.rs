@@ -2800,6 +2800,34 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.pump_until(|c| !has(c, "base:snug") && has(c, "base:well_rested"));
 }
 
+/// Windows count at home (docs/home.md "Light in the windows"): two hide windows set in a
+/// roofed home's wall make a Bright room, announced; one taken out, it goes.
+#[test]
+fn windows_at_home_make_a_bright_room() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let has = |c: &Client, name: &str| c.vitals.effects.iter().any(|a| c.content.effects.get(a.effect).name == name);
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let bag = feet + IVec3::new(2, 0, 0);
+    let (one, two) = (feet + IVec3::new(1, 1, -3), feet + IVec3::new(3, 1, -3));
+    for line in [
+        format!("/setblock {} {} {} sleeping_bag", bag.x, bag.y, bag.z),
+        format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 3, feet.z - 3, feet.x + 6, feet.y + 3, feet.z + 3),
+        format!("/setblock {} {} {} hide_window", one.x, one.y, one.z),
+    ] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(bag) == c.content.blocks.id("base:sleeping_bag") && c.world.block(one) == c.content.blocks.id("base:hide_window"));
+    client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
+    client.pump_until(|c| has(c, "base:rested"));
+    assert!(!has(&client, "base:bright_room"), "one window is not a bright room");
+    client.chat.clear();
+    client.ok(&format!("/setblock {} {} {} hide_window", two.x, two.y, two.z));
+    client.pump_until(|c| has(c, "base:bright_room") && told(c, "Bright room:"));
+    client.ok(&format!("/setblock {} {} {} air", one.x, one.y, one.z));
+    client.pump_until(|c| !has(c, "base:bright_room"));
+}
+
 /// A proper bed rests better than a bag (A Proper Bed: "something better than the ground"),
 /// out under the sky with nothing around it: well rested, and a longer mend.
 #[test]
@@ -3130,7 +3158,9 @@ fn crushed_dust_smelts_in_the_crucible_kiln_like_its_ore() {
 #[test]
 fn gravel_sometimes_breaks_to_flint_instead() {
     real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
-    let mut client = Client::join();
+    // Draws by a pinned key: on a new world's random one, sixty breaks at one in eight gave
+    // no flint about once in 3,300 runs (one key in 4,000 tried), and a loaded run once did.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(GRAVEL_DRAWS), ..Default::default() });
     let below = client.position.floor().as_ivec3() - IVec3::Y;
     for line in ["/clear", "/give iron_shovel 1"] {
         client.ok(line);
@@ -3140,22 +3170,27 @@ fn gravel_sometimes_breaks_to_flint_instead() {
     client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == shovel));
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
     // One break in eight gives flint: in sixty, all but certainly some.
+    let seen = |c: &Client, item: BlockId| c.items.values().filter(|i| i.stack.item == item).map(|i| i.stack.count as u32).sum::<u32>() + c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
     let mut flints = 0;
     for _ in 0..60 {
         client.ok("/setblock ~ ~-1 ~ gravel");
         client.pump_until(|c| c.world.block(below) == Some(gravel));
+        let before = seen(&client, gravel) + seen(&client, flint);
         client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
         client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
-        // The drop comes just after the block goes; setting the gravel again at once could
-        // bury it unseen.
-        client.after_server_ticks(2);
-        flints = client.items.values().filter(|i| i.stack.item == flint).count() + client.inventory.slots.iter().flatten().filter(|s| s.item == flint).count();
+        // The break's drop, its gravel or flint instead, seen loose or in the pack before
+        // the gravel is set again where it fell.
+        client.pump_until(|c| seen(c, gravel) + seen(c, flint) > before);
+        flints = seen(&client, flint);
         if flints > 0 {
             break;
         }
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
 }
+
+/// The draw key `gravel_sometimes_breaks_to_flint_instead` pins.
+const GRAVEL_DRAWS: u64 = 0x9a5e;
 
 /// A standing log refuses a bare hand: the client's break it claims finished is undone, the
 /// log put back. Held, a flint axe fells it, and the log comes to hand.
