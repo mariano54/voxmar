@@ -932,9 +932,9 @@ mod profile {
         let mut lanes = router.lanes();
         let mut sum = 0.0;
         for _ in 0..repeat {
-            for four in points.chunks(4) {
-                router.start(&mut lanes, four);
-                for k in 0..4 {
+            for some in points.chunks(crate::router::LANES) {
+                router.start(&mut lanes, some);
+                for k in 0..some.len() {
                     sum += router.get(&mut lanes, &world.geology, field, k);
                 }
             }
