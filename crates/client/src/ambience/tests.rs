@@ -926,3 +926,41 @@ fn a_settlement_talks_by_day_comes_home_at_dusk_and_sleeps_at_night() {
         assert!(away[murmur] < 1e-3 && away[evening] < 1e-3 && named.iter().all(|(_, n)| *n == 0), "a hundred blocks off at sun {sun}: {:.3} {:.3} {named:?}", away[murmur], away[evening]);
     }
 }
+
+/// Caves by their rock and their depth: wet rock (under a moist climate) has its dripping
+/// air and drips, oftener deep and shut in, where a second tier joins the first; dry rock
+/// (under a desert) has still air and grit ticking down instead, nothing dripping; water
+/// seeping into a pool is heard in either.
+#[test]
+fn caves_drip_by_their_rock_and_depth() {
+    let ambience = base();
+    let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("no bed {name}"));
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let (wet, dry, seep) = (bed("cave"), bed("dry_cave"), bed("cave_seep"));
+    let cave = |moisture: f32, depth: f32, reverb: f32, water: f32| {
+        let set = [("rock", 1.0), ("sky", 0.0), ("air", 0.3), ("reverb", reverb), ("depth", depth), ("moisture", moisture), ("water", water)];
+        scene(&ambience, "cave", &["mountain"], &set)
+    };
+    let heard = |scene: &Scene| {
+        let (timeline, levels) = run(&ambience, scene, 300.0);
+        let played = ["drip", "deep_drip", "far_drip", "grit"].map(|name| timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count());
+        (levels, played)
+    };
+    // Wet rock a dozen blocks down: its air and the first drips, not yet the deep ones.
+    let (levels, [drips, deep, _, grit]) = heard(&cave(1.4, 12.0, 0.3, 0.0));
+    assert!(levels[wet] > 0.8 * ambience.beds[wet].volume && levels[dry] < 1e-3, "wet rock's air {:.3}, dry rock's {:.3}", levels[wet], levels[dry]);
+    assert!(drips > 0 && deep == 0 && grit == 0, "shallow wet cave: {drips} drips, {deep} deep, {grit} grit");
+    // Deep and shut in: the deep tier joins, more drips in all.
+    let (_, [deeper, deep, far, _]) = heard(&cave(1.4, 40.0, 0.8, 0.0));
+    assert!(deep > 0 && far > 0 && deeper + deep > 2 * drips, "deep: {deeper} + {deep} drips against {drips} shallow ({far} far)");
+    // Dry rock, as deep: still air and grit, nothing dripping.
+    let (levels, [drips, deep, far, grit]) = heard(&cave(0.2, 40.0, 0.8, 0.0));
+    assert!(levels[dry] > 0.8 * ambience.beds[dry].volume && levels[wet] < 1e-3, "dry rock's air {:.3}, wet rock's {:.3}", levels[dry], levels[wet]);
+    assert!(drips + deep + far == 0 && grit > 0, "dry cave: {drips} + {deep} + {far} drips, {grit} grit");
+    // A pool seeping in, dry rock or wet; none without water.
+    for moisture in [0.2, 1.4] {
+        let (levels, _) = heard(&cave(moisture, 20.0, 0.5, 0.3));
+        assert!(levels[seep] > 0.5 * ambience.beds[seep].volume, "seep at moisture {moisture}: {:.3}", levels[seep]);
+    }
+    assert!(heard(&cave(1.4, 20.0, 0.5, 0.0)).0[seep] < 1e-3);
+}
