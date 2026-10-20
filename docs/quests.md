@@ -18,7 +18,14 @@ against what a player has done, so they complete retroactively. The quest book s
 ## Content
 
 `base/quests.ron` (engine `quest.rs`): name, age, branch, title, why (the reason and the
-reward, shown first), tasks, after, rewards. Goals:
+reward, shown first), tasks, after, rewards. A book of its own can go in a
+`quests_<topic>.ron` beside it (`quests_nomad.ron`, `quests_farm.ron`), like `blocks_` and
+`recipes_`: a package's files are read in name (byte) order, so `quests.ron` comes first and
+the topics follow in byte order (uppercase before lowercase), and the quests are held in that
+order. A quest may come `after` one in any file. A quest name written twice, in one file or
+two, fails the load naming both files, across packages too: a mod cannot replace a quest by
+writing its name.
+Goals:
 
 | Goal | Reads |
 | --- | --- |
