@@ -553,6 +553,17 @@ impl Content {
         let stations = crate::station::Stations::new(stations, &blocks, &skills)?;
         let traps = crate::trap::Traps::new(traps, &blocks, &creatures, &skills)?;
         let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects, &cooking, &weather)?;
+        let parties_cook: Vec<&str> = wandering
+            .iter()
+            .flat_map(|(_, event)| &event.meetings)
+            .flat_map(|meeting| &meeting.lines)
+            .flat_map(|line| &line.gives)
+            .filter_map(|give| match give {
+                crate::wander::ResolvedReward::Cook(station, ..) => Some(station.as_str()),
+                _ => None,
+            })
+            .collect();
+        cooking.check_stations(&blocks, &parties_cook)?;
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
         quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), near: &recipes.iter().filter_map(|r| r.near.clone()).collect::<Vec<_>>(), stores: &machines.iter().filter(|m| m.is_store()).map(|m| blocks.def(m.block).name.clone()).collect::<Vec<_>>(), trapped: &traps.traps.iter().flat_map(|t| &t.catches).map(|&c| creatures.get(c).def.name.clone()).collect::<Vec<_>>() })?;
         // A recipe of a later age needs that age's rite, or it could never be made.
