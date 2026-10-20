@@ -753,15 +753,20 @@ fn house_catalogue() {
 
 
 /// `cargo test --profile iter -p voxmar_worldgen settlement_census -- --ignored --nocapture`
-/// counts the settlements over 24 by 24 squares of three worlds: how many squares hold
-/// one, hamlets to villages, and the layouts and styles drawn.
+/// counts the settlements over 24 by 24 squares of four worlds (`SEEDS`): how many squares
+/// hold one, by size, how many to a square kilometre, how far from spawn the nearest of
+/// each size is, and the layouts and styles drawn.
 #[test]
 #[ignore]
 fn settlement_census() {
-    for seed in [1u64, 42, 7] {
+    let seeds: Vec<u64> = std::env::var("SEEDS").ok().map_or(vec![1, 42, 7, 0x5eed], |s| s.split(',').filter_map(|s| s.parse().ok()).collect());
+    let mut nearest: std::collections::BTreeMap<String, Vec<f32>> = Default::default();
+    let (mut all_squares, mut all_settled) = (0u32, 0u32);
+    for seed in seeds {
         let world = base_world(seed);
         let spacing = world.settlements.def.grid.spacing;
-        let (mut squares, mut hamlets, mut villages) = (0, 0, 0);
+        let mut squares = 0;
+        let mut sizes: std::collections::BTreeMap<String, u32> = Default::default();
         let mut layouts: std::collections::BTreeMap<String, u32> = Default::default();
         let mut buildings: std::collections::BTreeMap<String, u32> = Default::default();
         let start = std::time::Instant::now();
@@ -770,7 +775,7 @@ fn settlement_census() {
                 squares += 1;
                 let slot = world.settlements.slot(&world, IVec2::new(cx, cz));
                 let Some(plan) = &slot.0 else { continue };
-                if plan.size == "hamlet" { hamlets += 1 } else { villages += 1 }
+                *sizes.entry(plan.size.clone()).or_default() += 1;
                 *layouts.entry(plan.layout.clone()).or_default() += 1;
                 for b in &plan.buildings {
                     *buildings.entry(b.what.clone()).or_default() += 1;
@@ -781,9 +786,26 @@ fn settlement_census() {
         println!("  given up (no spot, unfit spots, climate, no lanes, no well, missing a must, few homes, no field or pen, unfit land, poor soil): {given_up:?}");
         let fails: Vec<u32> = super::plan::PLACE_FAILS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
         println!("  lots missed (no house fits, out of bounds, too close, on a lane, unfit ground, too steep, off the lane's height): {fails:?}");
-        println!("seed {seed}: {} of {squares} squares settled ({hamlets} hamlets, {villages} villages) in {:?}, {spacing}", hamlets + villages, start.elapsed());
+        let settled: u32 = sizes.values().sum();
+        let km2 = squares as f32 * (spacing as f32 / 1000.0).powi(2);
+        println!("seed {seed}: {settled} of {squares} squares settled {sizes:?}, {:.3} a square km, in {:?}, {spacing}", settled as f32 / km2, start.elapsed());
+        let spawn = world.spawn_point();
+        let from = IVec2::new(spawn.x, spawn.z);
+        let near = world.settlements.near(&world, from, 6000);
+        for size in ["any", "hamlet", "village", "town"] {
+            let d = near.iter().filter_map(|s| s.0.as_ref()).filter(|p| size == "any" || p.size == size).map(|p| (p.centre - from).as_vec2().length()).fold(f32::MAX, f32::min);
+            println!("  nearest {size} to spawn: {}", if d == f32::MAX { "none within 6000".to_owned() } else { format!("{d:.0}") });
+            nearest.entry(size.to_owned()).or_default().push(d);
+        }
+        all_squares += squares;
+        all_settled += settled;
         println!("  layouts {layouts:?}");
         println!("  buildings {buildings:?}");
+    }
+    println!("all: {all_settled} of {all_squares} squares settled");
+    for (size, mut d) in nearest {
+        d.sort_by(f32::total_cmp);
+        println!("nearest {size} to spawn: median {:.0}, each {d:.0?}", d[d.len() / 2]);
     }
 }
 
@@ -924,7 +946,7 @@ fn plans_keep_to_their_squares_and_rules() {
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
 fn settlements_are_unchanged() {
-    const EXPECTED: u64 = 5509520930946309829;
+    const EXPECTED: u64 = 13394484238960257129;
     let world = shared_world(1);
     let mut text = String::new();
     for cz in -3..3 {
@@ -2853,7 +2875,7 @@ fn site_water_search_stops_after_the_used_prefix() {
                 fixed: world.settlements.fixed.as_ref().unwrap(), seed: world.settlements.seed,
                 spawn, promised: &[], cells: &world.settlements.cells };
             let found = super::plan::site(&ctx, IVec2::ZERO, spawn);
-            let used = if spawn.is_some() { 8 } else { 1 };
+            let used = if spawn.is_some() { 8 } else { def.site.others + 1 };
             assert_eq!(found.len(), if wet && usable { used } else { 0 }, "spawn {spawn:?}, wet {wet}, usable {usable}");
             assert!(found.iter().all(|s| s.1), "every selected site has fresh water");
             let expected = if !wet { tries * def.site.look } else if usable { used } else { tries };
@@ -3249,4 +3271,31 @@ fn interiors_load_checks_refuse_strangers_and_unclaimed_beds() {
     let mut bag = s.interiors.clone();
     bag.pieces.iter_mut().find(|p| p.role == Role::Bed).unwrap().block = "base:sleeping_bag".into();
     assert!(bag.check(&content.blocks).is_err(), "a bed that is no furnishing was let through");
+}
+
+/// Trails come into a walled place through its gates: none runs over a column of its wall.
+#[test]
+fn trails_never_cross_a_wall() {
+    let (mut places, mut trails) = (0, 0);
+    let mut over = Vec::new();
+    for seed in [0x5eedu64, 7] {
+        let world = shared_world(seed);
+        let spawn = world.spawn_point();
+        for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 9000).into_iter().filter(|s| !s.walls.is_empty()) {
+            places += 1;
+            let walls: rustc_hash::FxHashSet<IVec2> = s.walls.iter().map(|w| w.0).collect();
+            let (lo, hi) = (walls.iter().fold(IVec2::MAX, |a, &b| a.min(b)), walls.iter().fold(IVec2::MIN, |a, &b| a.max(b)));
+            let (lines, _) = world.trails_in(lo - 8, hi + 8);
+            trails += lines.len();
+            for &(p, _) in lines.iter().flatten() {
+                if walls.contains(&p.round().as_ivec2()) {
+                    let c = p.round().as_ivec2();
+                    let gate = s.gates.iter().map(|g| (*g - c).abs().max_element()).min().unwrap_or(-1);
+                    over.push(format!("{} at {c}, {gate} from a gate", s.name.0));
+                }
+            }
+        }
+    }
+    assert!(places >= 6 && trails >= 20, "only {places} walled places and {trails} trails by them to judge");
+    assert!(over.is_empty(), "{} trail points on a wall: {:?}", over.len(), &over);
 }

@@ -103,7 +103,8 @@
     //     of its middle; firm: blocks round its middle that must be dry land; caves: how far
     //     it keeps from sinkholes and ravines.
     //   step: blocks between the spots weighed in its square; tries: how many of the best
-    //     are tried; score: what a spot scores (luck, less its spread and relief, more for
+    //     are tried; others: how many of the next best are laid out in turn where the best
+    //     will not lay out (its climate rolled once, on the best); score: what a spot scores (luck, less its spread and relief, more for
     //     water, less per block over sea level); where water is needed, a closer look for
     //     creeks goes through `look` times `tries` of the best, sampling every `creek` blocks.
     //   glade: no trees within glade.0 blocks of a house, fewer out to glade.1, glade_trees.0
@@ -120,7 +121,7 @@
         water: 48, bank: 3,
         fertility: 0.3, poor: {"cold": 0.15, "desert": 0.15},
         height: (3, 90), relief: 14, reach: 48, firm: 24, caves: 150,
-        step: 16, tries: 6, look: 6, creek: 4, score: (luck: 3.0, spread: 1.2, relief: 0.25, water: 3.0, height: 0.02),
+        step: 16, tries: 6, others: 2, look: 6, creek: 4, score: (luck: 3.0, spread: 1.2, relief: 0.25, water: 3.0, height: 0.02),
         glade: (5, 16), glade_trees: (0.08, 0.1), eaves: 1,
         levels: (5, 0.7),
     ),

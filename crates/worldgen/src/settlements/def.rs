@@ -383,6 +383,10 @@ pub struct SiteDef {
     pub reach: i32,
     pub firm: i32,
     pub tries: usize,
+    /// How many of its next best spots a square lays out in turn where its best cannot be
+    /// laid out (no level ground for the well, too few homes fit), before it is left
+    /// empty: its climate roll is still made once, on its best.
+    pub others: usize,
     /// Where water is needed, the closer look for creeks goes through `look` times
     /// `tries` of the best spots, sampling every `creek` blocks.
     pub look: usize,
@@ -415,6 +419,7 @@ impl Default for SiteDef {
             reach: 48,
             firm: 24,
             tries: 6,
+            others: 0,
             look: 6,
             creek: 4,
             score: ScoreDef::default(),
@@ -1576,7 +1581,7 @@ impl SettlementsDef {
         }
         let site = &self.site;
         let within = |(a, b): (f32, f32), (lo, hi): (f32, f32)| a <= b && a >= lo && b <= hi;
-        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || !(0.0..=1.0).contains(&site.levels.1) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.bank < 0 || site.water < 0 {
+        if !within(site.mild, site.temperature) || !(0.0..=1.0).contains(&site.taper) || !(0.0..=1.0).contains(&site.levels.1) || site.step < 4 || site.firm > site.reach || site.reach < site.step || site.tries == 0 || site.others >= site.tries || site.bank < 0 || site.water < 0 {
             return fail(format!("the site needs mild temperatures within its temperatures, a taper and a chance above its levels in [0, 1], a step of 4 or more, a firm ground no wider than its reach, and tries: {site:?}"));
         }
         let rules = &self.rules;

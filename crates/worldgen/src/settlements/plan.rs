@@ -382,6 +382,11 @@ impl Rect {
     }
 }
 
+/// How far past a wall the lanes leading out of a walled place run, so the trails that
+/// join them meet them clear of it: a trail may cross anything built in the cells of its
+/// 8-block grid next to its end's, up to 15 blocks off.
+const GATE_ROAD: f32 = 17.0;
+
 /// A lane: its centre line and half its width.
 #[derive(Clone, Debug)]
 pub struct Lane {
@@ -679,13 +684,18 @@ fn site_with_water(ctx: &Ctx, cell: IVec2, spawn: Option<IVec2>, water: &mut cra
         // above `taper`.
         let climate = site.climate(ground_site.temperature) * site.level(ctx.world.biomes().get(ground_site.home).level);
         if spawn.is_none() {
-            #[cfg(test)]
-            report_close_scratch(water);
-            if unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
+            if found.is_empty() && unit(hash3(ctx.seed ^ 0xc11a, cell.x, 0, cell.y)) >= climate {
+                #[cfg(test)]
+                report_close_scratch(water);
                 give_up::<()>(2);
                 return Vec::new();
             }
-            return vec![(at, fresh)];
+            // The best, then `others` more in turn should it not lay out.
+            found.push((at, fresh));
+            if found.len() > site.others {
+                break;
+            }
+            continue;
         }
         found.push((at, fresh));
         if found.len() >= spawn_tries {
@@ -1785,6 +1795,48 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
         #[cfg(test)]
         WALL_ON_LOTS.fetch_add(cells.iter().filter(|&&p| on_lot(p)).count() as u32, std::sync::atomic::Ordering::Relaxed);
         let blocked = |ground: &mut Ground, p: IVec2| !bounds.holds(p) || on_lot(p) || !standing(&ground.at(p));
+        // A lane leading out that ends within the ring (or just past it) runs on out, to
+        // `GATE_ROAD` blocks past the wall, so the trail joining its end comes in at a gate
+        // and not over the wall: never over a lot, nor out of the place's bounds.
+        let cross = |o: Vec2, a: Vec2, b: Vec2| (a - o).perp_dot(b - o);
+        let inside = |p: Vec2| corners.len() >= 3 && {
+            let sides: Vec<f32> = (0..corners.len()).map(|i| cross(corners[i].as_vec2(), corners[(i + 1) % corners.len()].as_vec2(), p)).collect();
+            sides.iter().all(|&c| c >= 0.0) || sides.iter().all(|&c| c <= 0.0)
+        };
+        // Straight on if it can, else turning a little at a time; a lane that cannot get
+        // out no longer leads out (no trail joins it), so long as another does.
+        let mut shut = Vec::new();
+        for (i, lane) in lanes.iter_mut().enumerate().filter(|(_, l)| l.main) {
+            let n = lane.points.len();
+            let near = |p: Vec2| inside(p) || cells.iter().any(|c| c.as_vec2().distance(p) < GATE_ROAD);
+            if n < 2 || !near(lane.points[n - 1]) {
+                continue;
+            }
+            let (end, ahead) = (lane.points[n - 1], (lane.points[n - 1] - lane.points[n - 2]).normalize_or_zero());
+            let half = lane.half;
+            let out = [0.0f32, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0].into_iter().filter(|_| ahead != Vec2::ZERO).find_map(|turn| {
+                let dir = Vec2::from_angle(turn.to_radians()).rotate(ahead);
+                let out = (1..=96).map(|t| end + dir * t as f32).find(|&p| !inside(p) && cells.iter().all(|c| c.as_vec2().distance(p) >= GATE_ROAD))?;
+                let steps = end.distance(out).ceil() as i32;
+                (0..=steps)
+                    .map(|k| end.lerp(out, k as f32 / steps.max(1) as f32))
+                    .all(|q| bounds.holds(q.round().as_ivec2()) && lots.iter().all(|l| l.rect.distance(q) > half + 0.5))
+                    .then_some(out)
+            });
+            match out {
+                Some(out) => {
+                    let mut points = lane.points.clone();
+                    points.push(out);
+                    *lane = Lane::new(points, lane.half, lane.paved, lane.main);
+                }
+                None => shut.push(i),
+            }
+        }
+        if lanes.iter().filter(|l| l.main).count() > shut.len() {
+            for i in shut {
+                lanes[i].main = false;
+            }
+        }
         let crossed = |p: IVec2, by: f32| lanes.iter().any(|l| l.distance(p.as_vec2()) <= l.half + by);
         let gates: Vec<bool> = cells.iter().map(|&p| crossed(p, 1.0)).collect();
         for (i, &p) in cells.iter().enumerate() {
@@ -2761,6 +2813,17 @@ fn place(
         let road = ground.at(at.round().as_ivec2()).height;
         if (road - floor).abs() > rules.lots.road {
             return town.reject(spec, 6);
+        }
+    }
+    // Its pad is cut level a block round it, but the ground is never cut below the water
+    // beside it (`Settlements::apply`): where that water stands over the floor, the ground
+    // would stay up against its walls and in its door.
+    let pad = rect.grow(1);
+    for z in pad.min.y..=pad.max.y {
+        for x in pad.min.x..=pad.max.x {
+            if ground.at(IVec2::new(x, z)).water > floor {
+                return town.reject(spec, 4);
+            }
         }
     }
     // Adapt only a placed house. Chimney removal and wall/storey reductions do not

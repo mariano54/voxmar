@@ -49,7 +49,11 @@ it is poor, and of its foundation stone (4 high, a merlon on every other block) 
 lintel over it with three blocks clear where the wall is high enough; a tower three
 blocks square stands at each corner and every `towers.0` (24) blocks along it, `towers.1`
 (2) higher. The wall stands on the ground of each column, leaves out any column in water
-or against a building, and no tree or prop stands in or against it. Plans report each
+or against a building, and no tree or prop stands in or against it. Each lane leading out
+runs on to 17 blocks past the wall (straight on, else turned up to 90°, never over a lot);
+one that cannot no longer leads out, while another does. Trails treat the wall as built,
+and no trail's sight stands on or beside anything built, so a trail comes in at a gate and
+never over the wall. Plans report each
 column and its height (`walls`, `wall_block`) for maps and the gate.
 
 A new player finds one within `rules.spawn_settlement_within` (1024) blocks of where they
