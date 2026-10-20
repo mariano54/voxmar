@@ -311,7 +311,7 @@ Each new feature has a quest that teaches it, in two parts the book counts one b
 
 | Quest | Age, path, after | Parts |
 |---|---|---|
-| A Chopping Block | Nomad, start; An Axe to It and A Bed of Your Own (Crafting 2 by then) | one set down; twelve planks split by it |
+| A Chopping Block | Nomad, start; An Axe to It, A Bed of Your Own (Crafting 2 by then) and Timber | one set down; twelve planks split by it |
 | Set a Snare | Nomad, hunter; Twine and Thong | one set down; a catch taken from a trap |
 | Old Tusk | Nomad, hunter; Hide and Seek and Raise Your Guard | a flint spear made; Old Tusk killed |
 | Light in the Window | Farm, home; A Homely Home | two hide windows made; two set down |
