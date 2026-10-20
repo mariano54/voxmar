@@ -568,7 +568,7 @@ impl Server {
     fn planned_bed(&self, bed: IVec3) -> bool {
         let Some(now) = self.block(bed) else { return false };
         self.content.blocks.def(now).has_tag("bed")
-            && self.overworld.settlements_near(IVec2::new(bed.x, bed.z), 64).iter().any(|s| s.buildings.iter().any(|b| b.beds.contains(&bed)))
+            && self.overworld.settlement_holding(IVec2::new(bed.x, bed.z)).is_some_and(|s| s.buildings.iter().any(|b| b.beds.contains(&bed)))
             && voxmar_worldgen::Generator::generate(&*self.overworld, voxmar_engine::coords::ColumnPos::of_block(bed)).block(bed) == now
     }
 
