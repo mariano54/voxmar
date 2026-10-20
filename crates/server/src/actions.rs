@@ -46,6 +46,9 @@ struct Timed {
     due: Instant,
     /// The player's client shows it done: nothing cancels it now.
     finished: bool,
+    /// What the player held when their client showed it done: what it is judged and done
+    /// by at its time, whatever they take in hand meanwhile (the next block's tool).
+    held: Option<BlockId>,
 }
 
 impl Timed {
@@ -82,13 +85,15 @@ impl Server {
 
 /// The validation view of the world from `agent`'s point of view.
 pub(crate) fn context(server: &Server, agent: PlayerId) -> impl ActionContext + '_ {
-    Context { server, agent }
+    Context { server, agent, held: None }
 }
 
 /// Validation view of the world from one agent's point of view.
 struct Context<'a> {
     server: &'a Server,
     agent: PlayerId,
+    /// What the agent is taken to hold in place of what is in their hand now.
+    held: Option<Option<BlockId>>,
 }
 
 impl ActionContext for Context<'_> {
@@ -125,7 +130,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn actor_held(&self) -> Option<BlockId> {
-        self.server.players[&self.agent].held()
+        self.held.unwrap_or_else(|| self.server.players[&self.agent].held())
     }
 
     fn actor_pouched(&self) -> Vec<BlockId> {
@@ -200,13 +205,13 @@ impl Server {
             std::thread::sleep(stall);
         }
         let Some(def) = self.action_def(action) else { return };
-        let context = Context { server: self, agent };
+        let context = Context { server: self, agent, held: None };
         let seconds = def.seconds(&context, target);
         let timed = seconds >= INSTANT;
         if timed {
             self.supersede_action(agent, at);
         }
-        let context = Context { server: self, agent };
+        let context = Context { server: self, agent, held: None };
         if let Err(why) = def.validate(&context, target) {
             tracing::debug!("player {agent}: {} refused at {target:?}: {why:?}", def.name);
             self.reject(agent, target);
@@ -217,7 +222,7 @@ impl Server {
                 self.bite_started(agent);
             }
             let due = at + Duration::from_secs_f32(seconds);
-            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false });
+            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false, held: None });
         }
     }
 
@@ -235,9 +240,11 @@ impl Server {
         };
         if self.executor.timed[i].mostly_done(at) {
             let timed = self.executor.timed.swap_remove(i);
-            self.finish(timed.agent, timed.action, timed.target);
+            self.finish(&timed);
         } else {
-            self.executor.timed[i].finished = true;
+            let held = self.players[&agent].held();
+            let timed = &mut self.executor.timed[i];
+            (timed.finished, timed.held) = (true, held);
         }
     }
 
@@ -247,17 +254,20 @@ impl Server {
         let Some(i) = self.executor.timed.iter().position(|t| t.agent == agent && !t.finished) else { return };
         let timed = self.executor.timed.swap_remove(i);
         if timed.mostly_done(at) {
-            self.finish(timed.agent, timed.action, timed.target);
+            self.finish(&timed);
         }
     }
 
-    /// Commits an action whose time is up, if its requirements still hold.
-    fn finish(&mut self, agent: PlayerId, action: ActionId, target: ActionTarget) {
+    /// Commits an action whose time is up, if its requirements still hold: with what the
+    /// player held when their client showed it done, if it did, else what they hold now.
+    fn finish(&mut self, timed: &Timed) {
+        let (agent, target) = (timed.agent, timed.target);
         if !self.players.contains_key(&agent) {
             return;
         }
-        let Some(def) = self.action_def(action) else { return };
-        if def.validate(&Context { server: self, agent }, target).is_ok() {
+        let Some(def) = self.action_def(timed.action) else { return };
+        let held = timed.finished.then_some(timed.held);
+        if def.validate(&Context { server: self, agent, held }, target).is_ok() {
             self.commit(agent, &def, target);
         } else {
             self.reject(agent, target);
@@ -285,7 +295,7 @@ impl Server {
         self.executor.timed = rest;
         due.sort_by_key(|t| (t.due, t.agent));
         for timed in due {
-            self.finish(timed.agent, timed.action, timed.target);
+            self.finish(&timed);
         }
     }
 
@@ -318,7 +328,7 @@ impl Server {
                 (Effect::DropLoot, ActionTarget::Block { block, .. }) => {
                     // What a player put there teaches, counts and forages nothing: taken
                     // before `picked` and `reward_break` clear the mark.
-                    let plants = supported_by(&Context { server: self, agent }, block);
+                    let plants = supported_by(&Context { server: self, agent, held: None }, block);
                     let placed: Vec<IVec3> = std::iter::once(block).chain(plants.iter().copied()).filter(|p| self.placed.contains(p)).collect();
                     if let Some(broken) = self.block(block).filter(|_| !placed.contains(&block)) {
                         self.discover_broken(agent, broken);
@@ -342,18 +352,18 @@ impl Server {
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
                 (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
-                    let plants = supported_by(&Context { server: self, agent }, block);
+                    let plants = supported_by(&Context { server: self, agent, held: None }, block);
                     for pos in std::iter::once(block).chain(plants) {
                         self.set_block(pos, BlockId::AIR);
                     }
                 }
                 (Effect::PlaceHeld, ActionTarget::Block { block, face }) => {
-                    let cell = placement_cell(&Context { server: self, agent }, block, face);
+                    let cell = placement_cell(&Context { server: self, agent, held: None }, block, face);
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
-                    let placed = placed_block(&Context { server: self, agent }, item, block, face);
+                    let placed = placed_block(&Context { server: self, agent, held: None }, item, block, face);
                     self.set_block(cell, placed);
                     // Its upper half goes in above with it (a door's top).
                     if let Some(upper) = self.content.blocks.upper(placed) {
@@ -412,7 +422,7 @@ impl Server {
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
                 (Effect::Swap, ActionTarget::Block { block, .. }) => {
                     // Opened or shut here first: the clients follow what the server holds.
-                    let changes = voxmar_engine::action::swapping(&Context { server: self, agent }, block);
+                    let changes = voxmar_engine::action::swapping(&Context { server: self, agent, held: None }, block);
                     self.set_blocks(&changes);
                 }
                 (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
@@ -772,5 +782,90 @@ mod tests {
             .count();
         assert_eq!(sticks, 0, "placed leaves gave a stick");
         assert!(!server.placed.contains(&pos), "the mark goes with the break");
+    }
+}
+
+#[cfg(test)]
+mod finished_tests {
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use voxmar_engine::action::ActionTarget;
+    use voxmar_engine::coords::{ColumnPos, Face};
+    use voxmar_engine::glam::{IVec3, Vec3};
+    use voxmar_engine::inventory::ItemStack;
+    use voxmar_engine::world::Column;
+
+    const FLOOR: i32 = 199;
+
+    /// A stone floor, and player 1 on it with a stone pickaxe in the first slot.
+    fn fixture() -> crate::Server {
+        let mut server = crate::test_server();
+        server.world = Default::default();
+        let stone = server.content.blocks.expect("base:stone");
+        let mut column = Column::default();
+        for x in 0..32 {
+            for z in 0..32 {
+                column.set_block(IVec3::new(x, FLOOR, z), stone);
+            }
+        }
+        server.world.insert(ColumnPos::new(0, 0), Arc::new(column));
+        let (client, connection) = voxmar_protocol::local_pair();
+        std::mem::forget(client);
+        let at = Vec3::new(7.5, (FLOOR + 1) as f32, 8.5);
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        let pick = server.content.blocks.expect("base:stone_pickaxe");
+        player.inventory.slots[0] = Some(ItemStack { item: pick, count: 1 });
+        player.selected = 0;
+        server.players.insert(1, player);
+        server
+    }
+
+    /// A block the client shows broken before most of its time is up (its proposal reached
+    /// the server late) still breaks when its time comes, whatever the player takes in hand
+    /// next: the next block's tool, or the bare hand once the pickaxe is put away. Stone
+    /// refuses the bare hand, so judged by what is held at its time, it came back.
+    #[test]
+    fn a_break_shown_done_early_stays_broken_whatever_is_held_next() {
+        let take_up: [(&str, fn(&mut crate::player::Player)); 2] = [
+            ("the next slot's bare hand", |p| p.selected = 1),
+            ("the pickaxe put away", |p| p.inventory.slots[0] = None),
+        ];
+        for (next, take_up) in take_up {
+            let mut server = fixture();
+            let cell = IVec3::new(10, FLOOR, 8);
+            let target = ActionTarget::Block { block: cell, face: Face::PosY };
+            let mine = server.content.actions.expect("core:mine");
+            let at = Instant::now();
+            server.propose(1, mine, target, at);
+            let due = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break").due;
+            server.finished_action(1, target, at + (due - at).mul_f32(0.3));
+            assert!(server.executor.timed.iter().any(|t| t.target == target && t.finished), "shown done early, it waits for its time");
+            take_up(server.players.get_mut(&1).unwrap());
+            server.complete_actions(due);
+            let now = server.block(cell).map(|b| server.content.blocks.def(b).name.clone());
+            assert_eq!(now.as_deref(), Some("core:air"), "the stone came back with {next}");
+        }
+    }
+
+    /// What the player held when the client showed it done is what the break is judged by,
+    /// not a pass: begun with the pickaxe but shown done by hand, stone still refuses it,
+    /// though the pickaxe is back in hand at its time.
+    #[test]
+    fn a_break_shown_done_is_judged_by_what_was_held_then() {
+        let mut server = fixture();
+        let cell = IVec3::new(10, FLOOR, 8);
+        let target = ActionTarget::Block { block: cell, face: Face::PosY };
+        let mine = server.content.actions.expect("core:mine");
+        let at = Instant::now();
+        server.propose(1, mine, target, at);
+        let due = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break").due;
+        server.players.get_mut(&1).unwrap().selected = 1;
+        server.finished_action(1, target, at + (due - at).mul_f32(0.3));
+        server.players.get_mut(&1).unwrap().selected = 0;
+        server.complete_actions(due);
+        let now = server.block(cell).map(|b| server.content.blocks.def(b).name.clone());
+        assert_eq!(now.as_deref(), Some("base:stone"), "stone broke by hand once the pickaxe was taken up");
     }
 }
