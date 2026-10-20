@@ -66,8 +66,9 @@ pub enum Method {
     /// Given for finishing the quest `quest`.
     Reward { quest: String },
     /// Left when `from` burns out, set down or in hand (a torch's stub), or, `relit`, what
-    /// `from` is lit again into (a lamp filled with fat).
-    Burn { from: BlockId, relit: bool },
+    /// `from` is lit again into (a lamp filled with fat), using up an item tagged `fuel`
+    /// if lighting it does.
+    Burn { from: BlockId, relit: bool, fuel: Option<String> },
     /// Found in the world (its generator lays it) and broken loose as itself, with `tool`
     /// (the least that does) if it needs one, from `level` in `skill`.
     Found { tool: Option<BlockId>, skill: Option<crate::skill::SkillId>, level: u8 },
@@ -350,22 +351,24 @@ impl RecipeBook {
         let mut fire = Vec::new();
         for b in blocks.ids() {
             if let Some((_, to)) = content.flames.burns_out(blocks, b) {
-                fire.push((held(b), held(to), false));
+                fire.push((held(b), held(to), false, None));
             }
             if let Some(to) = content.flames.relit(blocks, b) {
-                fire.push((held(b), held(to), true));
+                fire.push((held(b), held(to), true, content.flames.relit_with(b)));
             }
             if let Some(to) = content.tools.burnt(b) {
-                fire.push((Some(b), held(to), false));
+                fire.push((Some(b), held(to), false, None));
             }
         }
         let mut seen = std::collections::HashSet::new();
-        for (from, output, relit) in fire {
+        for (from, output, relit, fuel) in fire {
             if let (Some(from), Some(output)) = (from, output)
                 && from != output
                 && seen.insert((from, output, relit))
             {
-                book.add(blocks, Entry { method: Method::Burn { from, relit }, output, count: (1, 1) }, vec![from]);
+                // The fuel it uses up is among what it takes, so fat looked up shows the lamp.
+                let takes = std::iter::once(from).chain(fuel.into_iter().flat_map(|tag| blocks.tagged(tag))).collect();
+                book.add(blocks, Entry { method: Method::Burn { from, relit, fuel: fuel.map(str::to_owned) }, output, count: (1, 1) }, takes);
             }
         }
         book
@@ -669,11 +672,13 @@ mod tests {
         // Fire: a torch burnt out leaves its stub, a firebrand burnt in hand a charred stick,
         // and an empty lamp filled is a lit one; a guttering torch, picked up as a torch, is
         // no way to itself.
-        let burnt = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Burn { from, relit } = m { Some((from, relit)) } else { None }).collect::<Vec<_>>();
+        let burnt = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Burn { from, relit, .. } = m { Some((from, relit)) } else { None }).collect::<Vec<_>>();
         assert_eq!(burnt("base:torch_stub"), [(id("base:torch"), false)]);
         assert_eq!(burnt("base:charred_stick"), [(id("base:firebrand"), false)]);
         assert_eq!(burnt("base:clay_oil_lamp"), [(id("base:clay_oil_lamp_empty"), true)]);
         assert!(burnt("base:torch_guttering").is_empty());
+        let fat = content.blocks.tagged("fat").next().expect("something is fat");
+        assert!(book.using(fat).iter().any(|e| matches!(&e.method, Method::Burn { relit: true, fuel: Some(tag), .. } if tag == "fat") && e.output == id("base:clay_oil_lamp")));
         // Food left too long: the cooking entries it burns in make it.
         let burnt = book.making(id("base:burnt_food"));
         assert!(!burnt.is_empty() && burnt.iter().all(|e| matches!(e.method, Method::Cook { burnt: Some(b), .. } if b == id("base:burnt_food"))));
