@@ -355,7 +355,8 @@ fn break_and_place(
             let context = ClientContext { world: &world, player: &player, content };
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             if actions.0.get(open_store).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
-                net.propose_from(&player, open_store, action_target);
+                // Heard by what is opened (a barrel, a jar: `sounds.ron`'s ways).
+                net.propose_from_with(&player, open_store, action_target, worked(&context, hit.block));
                 target.used_right = true;
                 player.store_asked = true;
                 return;
@@ -780,6 +781,21 @@ mod tests {
         assert_eq!(app.world().resource::<ClientWorld>().block(block), Some(stone));
         let proposed = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).count();
         assert_eq!(proposed, 0);
+    }
+
+    /// A store opened is proposed with the block opened, so it is heard as what it is (a
+    /// barrel's lid, a jar's).
+    #[test]
+    fn a_store_is_opened_with_what_it_is() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, _server_side) = app(content.actions.clone());
+        let barrel = content.blocks.expect("base:barrel");
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, barrel);
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        let open_store = content.actions.id("base:open_store").unwrap();
+        let proposed = app.world().resource::<Net>().take_proposed();
+        assert!(proposed.iter().any(|p| p.action == open_store && p.with == [barrel]), "{:?}", proposed.iter().map(|p| (p.action, p.with.clone())).collect::<Vec<_>>());
     }
 
     /// A ripe crop that fruits again, above the player's Farming level: right click says

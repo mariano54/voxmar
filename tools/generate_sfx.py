@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Synthesizes the everyday action sounds: eating, crafting, lighting a fire, opening a
-chest, a door, a gate, shutters, a hatch or a curtain, cooking, lying down to sleep,
+chest, a barrel, a cupboard, a jar or a basket, a door (and shutting it), a gate,
+shutters, a hatch or a curtain, cooking, lying down to sleep (on a wooden bed too),
+sitting on a wooden seat,
 casting a line, picking an item up, feeding an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
 spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, food
 coming off the fire done or burnt; for the interface, a quest book's page turned and a
@@ -1039,6 +1041,80 @@ def honey(rng):
     return out
 
 
+def shut(rng):
+    """A wooden door pushed shut: a short creak on its hinges, the door meeting its frame
+    with a deep thud, and the latch dropping into its keeper."""
+    out = np.zeros(int(0.8 * RATE))
+    swing = rng.uniform(0.22, 0.3)
+    place(out, 0.0, creak(rng, swing, 40, 90, rng.uniform(380, 460)), 0.6)
+    place(out, swing, knock(rng, rng.uniform(95, 120)), 1.0)
+    place(out, swing, thud(rng, 0.15, 0.025, 0.04), 0.8)
+    n = int(0.03 * RATE)
+    latch = modes(rng.uniform(1700, 2100), 0.05, [(1.0, 0.6, 0.012), (2.6, 0.3, 0.006)], attack=0.0003)[:n]
+    place(out, swing + rng.uniform(0.06, 0.09), latch + bandpass(rng.standard_normal(n) * envelope(n, 0.0002, 0.003), 3000, 1.0), 0.4)
+    return out
+
+
+def store_barrel(rng):
+    """A barrel's lid prised up: wood scraping on the staves, and the hollow, low boom of
+    the cask as the lid is set against it."""
+    out = np.zeros(int(0.7 * RATE))
+    place(out, 0.0, scrape(rng, rng.uniform(0.14, 0.2), rng.uniform(900, 1200)), 0.5)
+    cask = modes(rng.uniform(85, 105), 0.4, [(1.0, 1.0, 0.12), (1.58, 0.5, 0.08), (2.4, 0.3, 0.05), (3.9, 0.12, 0.02)], attack=0.001)
+    at = rng.uniform(0.17, 0.22)
+    place(out, at, cask, 0.7)
+    place(out, at, knock(rng, rng.uniform(200, 240)), 0.5)
+    return out
+
+
+def store_cupboard(rng):
+    """A cupboard door opened: a little latch, then a small, quick creak of its hinges."""
+    out = np.zeros(int(0.5 * RATE))
+    n = int(0.025 * RATE)
+    latch = modes(rng.uniform(2300, 2700), 0.04, [(1.0, 0.6, 0.008), (2.8, 0.3, 0.004)], attack=0.0003)[:n]
+    place(out, 0.0, latch, 0.3)
+    place(out, 0.04, creak(rng, rng.uniform(0.2, 0.26), 70, 150, rng.uniform(750, 900)), 0.7)
+    return out
+
+
+def store_jar(rng):
+    """A jar's clay lid lifted: a gritty scrape of glaze on glaze and a ringing clink as it
+    is set down beside it."""
+    out = np.zeros(int(0.5 * RATE))
+    place(out, 0.0, scrape(rng, 0.08, rng.uniform(2800, 3400)), 0.35)
+    place(out, rng.uniform(0.1, 0.14), tile(rng), 0.9)
+    place(out, 0.12, modes(rng.uniform(1300, 1600), 0.25, [(1.0, 0.5, 0.07), (2.7, 0.2, 0.03)], attack=0.0003), 0.35)
+    return out
+
+
+def store_basket(rng):
+    """A lidded basket opened: the dry, crackling creak of wicker flexing and a soft rustle
+    of what lies inside."""
+    out = np.zeros(int(0.6 * RATE))
+    place(out, 0.0, crackles(rng, 0.28, 90, 0.5), 0.8)
+    place(out, 0.0, creak(rng, 0.25, 120, 220, rng.uniform(1300, 1600)), 0.25)
+    place(out, 0.2, rustle(rng, 0.3, rng.uniform(1800, 2300)), 0.5)
+    return out
+
+
+def bed_frame(rng):
+    """Lying down on a wooden bed: the frame creaking under the weight, the straw tick
+    rustling, and a low settling."""
+    out = sleep(rng)
+    place(out, 0.28, creak(rng, rng.uniform(0.35, 0.45), 25, 55, rng.uniform(260, 330)), 0.5)
+    return out
+
+
+def seat_wood(rng):
+    """Sitting on a wooden seat: a quick knock of its legs on the floor and a short creak
+    as it takes the weight."""
+    out = np.zeros(int(0.5 * RATE))
+    place(out, 0.0, knock(rng, rng.uniform(160, 200)), 0.6)
+    place(out, 0.04, creak(rng, rng.uniform(0.18, 0.24), 35, 75, rng.uniform(420, 520)), 0.55)
+    place(out, 0.02, rustle(rng, 0.2, 1500), 0.25)
+    return out
+
+
 def finish(mono, rng, width=0.15):
     """The clip made stereo (a hair of width from a short delay), faded, and brought to
     its loudness."""
@@ -1132,6 +1208,13 @@ SOUNDS = {
     "shutters": (shutters, 2),
     "hatch": (hatch, 2),
     "curtain": (curtain, 2),
+    "shut": (shut, 2),
+    "store_barrel": (store_barrel, 2),
+    "store_cupboard": (store_cupboard, 2),
+    "store_jar": (store_jar, 2),
+    "store_basket": (store_basket, 2),
+    "bed_frame": (bed_frame, 2),
+    "seat_wood": (seat_wood, 2),
 }
 
 

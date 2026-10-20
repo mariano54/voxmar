@@ -169,7 +169,20 @@
             ],
         ),
         // A lid lifted: a short creak and the lid knocking back.
-        "base:open_store": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.8),
+        "base:open_store": (
+            sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.8,
+            // By what is opened, the block worked.
+            ways: [
+                // A barrel's lid prised up: a scrape and the cask's hollow boom.
+                (name: "barrel", with: ["tag:barrel"], sounds: ["sounds/store_barrel_1.ogg", "sounds/store_barrel_2.ogg"], volume: 0.8),
+                // A cupboard or wardrobe: a little latch and a quick creak.
+                (name: "cupboard", with: ["tag:cupboard"], sounds: ["sounds/store_cupboard_1.ogg", "sounds/store_cupboard_2.ogg"], volume: 1.1),
+                // A jar's clay lid lifted off and set down with a clink.
+                (name: "jar", with: ["tag:jar"], sounds: ["sounds/store_jar_1.ogg", "sounds/store_jar_2.ogg"], volume: 0.7),
+                // A basket: wicker creaking and a rustle inside.
+                (name: "basket", with: ["tag:basket"], sounds: ["sounds/store_basket_1.ogg", "sounds/store_basket_2.ogg"], volume: 0.7),
+            ],
+        ),
         // The latch, then a slow creak on the hinges; quieter than the rest at its loudest, so
         // played louder.
         "base:open": (
@@ -184,6 +197,9 @@
                 (name: "hatch", with: ["tag:hatch"], sounds: ["sounds/hatch_1.ogg", "sounds/hatch_2.ogg"], volume: 0.9),
                 // A curtain drawn: a cloth swish and its rings ticking along the pole.
                 (name: "curtain", with: ["tag:curtain"], sounds: ["sounds/curtain_1.ogg", "sounds/curtain_2.ogg"], volume: 0.6),
+                // A door pushed shut (one standing open): a short creak, the thud of it meeting
+                // the frame, and the latch dropping.
+                (name: "shut", with: ["tag:door_open"], sounds: ["sounds/shut_1.ogg", "sounds/shut_2.ogg"], volume: 1.0),
             ],
         ),
         // A hiss settling into a sizzle as food meets the fire.
@@ -203,10 +219,18 @@
                 (name: "smelt", with: ["tag:crucible"], sounds: ["sounds/work/smelt_1.ogg", "sounds/work/smelt_2.ogg"], volume: 0.9),
             ],
         ),
-        // Lying down: rustles of cloth and straw.
-        "base:sleep": (sounds: ["sounds/sleep_1.ogg"], volume: 0.7),
-        // Settling onto a seat: the same rustle, softer.
-        "base:sit": (sounds: ["sounds/sleep_1.ogg"], volume: 0.6),
+        // Lying down: rustles of cloth and straw (a sleeping bag on the ground).
+        "base:sleep": (
+            sounds: ["sounds/sleep_1.ogg"], volume: 0.7,
+            // A bed of wood: its frame creaks as it takes the weight.
+            ways: [(name: "bed_frame", with: ["tag:furniture"], sounds: ["sounds/bed_frame_1.ogg", "sounds/bed_frame_2.ogg"], volume: 0.7)],
+        ),
+        // Settling onto a seat: the same rustle, softer (a cushion).
+        "base:sit": (
+            sounds: ["sounds/sleep_1.ogg"], volume: 0.6,
+            // A stool, chair, bench or settle: a knock of its legs and a creak.
+            ways: [(name: "wooden_seat", with: ["tag:wood"], sounds: ["sounds/seat_wood_1.ogg", "sounds/seat_wood_2.ogg"], volume: 0.6)],
+        ),
         // A line whipped out over the water (the plop is the water's own).
         // A line cast, and what it lands: a fish breaking the water and flapping on the bank.
         "base:fish": (
