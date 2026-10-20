@@ -132,6 +132,13 @@
             "................", "................", "................", "................",
         ])]),
         "block/horn": (base: "block/fang", palettes: {"fruit": "horn_dark"}),
+        // The charge charm: a tusk tip hung on a leather cord.
+        "block/charge_charm": (base: "shape/plant", palettes: {"fruit": "bone_pale", "wood": "leather"}, layers: [Grid(rows: [
+            "................", "....kkkkkkkk....", "...k........k...", "..k..........k..",
+            "..k..........k..", "...k........k...", "....k......k....", ".....kk..kk.....",
+            ".......jj.......", "......jhhf......", "......hhhf......", "......hhhf......",
+            ".......hhf......", ".......hf.......", "........f.......", "................",
+        ])]),
         // A great tusk: a long ivory curve, thick at the root.
         "block/great_tusk": (base: "shape/plant", palettes: {"fruit": "bone_pale"}, layers: [Grid(rows: [
             "................", "..........jj....", ".........jhhf...", "........jhhhf...",
