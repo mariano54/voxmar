@@ -924,6 +924,10 @@ impl Server {
     /// one axis at a time). A player the world has closed in on (a block placed on them)
     /// is judged by where they end up only, so they can always step out.
     fn clear_between(&self, from: Vec3, to: Vec3) -> bool {
+        // Standing still goes into nothing, even in a wall or in land not loaded yet.
+        if from == to {
+            return true;
+        }
         if self.inside(from) {
             return !self.inside(to);
         }
@@ -1105,6 +1109,50 @@ mod tests {
     use voxmar_protocol::{ClientConnection, local_pair};
     use crate::items::{Items, owner_of};
     use crate::save::WorldSave;
+
+    /// The same case as the client's `an_unloaded_cell_stops_a_player_as_a_whole_cube`: a
+    /// cell in a loaded column of air stops nothing; one in the next column, not loaded, and
+    /// one under the world stop a player as a whole cube, so the server's move checks agree
+    /// with the client's prediction at the edge of the loaded world. Before: the server took
+    /// them for empty, so a player the client held at the edge could walk or fall on there.
+    #[test]
+    fn an_unloaded_cell_stops_a_player_as_a_whole_cube() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        // Far from spawn, where nothing is loaded.
+        let base = IVec3::new(1 << 16, 0, 1 << 16);
+        let loaded = base + IVec3::new(1, 64, 1);
+        server.world.insert(ColumnPos::of_block(loaded), std::sync::Arc::new(voxmar_engine::world::Column::default()));
+        assert!(!server.world.contains(ColumnPos::of_block(loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE)), "the fixture means the next column unloaded");
+        assert!(server.boxes(loaded).is_empty());
+        for unloaded in [loaded + IVec3::X * voxmar_engine::coords::CHUNK_SIZE, IVec3::new(loaded.x, -1, loaded.z)] {
+            assert_eq!(server.boxes(unloaded), &voxmar_engine::physics::CUBE, "{unloaded}");
+        }
+        // A player at the edge, stepping over it, would be in a wall there.
+        let size = voxmar_engine::coords::CHUNK_SIZE;
+        let edge = Vec3::new((loaded.x - loaded.x.rem_euclid(size) + size) as f32 - 0.1, loaded.y as f32, loaded.z as f32 + 0.5);
+        assert!(server.inside(edge + Vec3::X * 0.5) && !server.inside(edge - Vec3::X * 0.5));
+    }
+
+    /// A player standing still where their own column is not loaded yet (at login, after a
+    /// long teleport) is in a whole cube there; standing still is no move into anything.
+    /// Before: each input was refused and sent a teleport back to where they stood.
+    #[test]
+    fn a_player_standing_still_in_land_not_loaded_is_not_teleported() {
+        let mut server = crate::test_server();
+        let _connection = join(&mut server, 1, "Ada");
+        let far = Vec3::new((1 << 16) as f32 + 0.5, 70.0, (1 << 16) as f32 + 0.5);
+        assert!(!server.world.contains(ColumnPos::of_block(far.floor().as_ivec3())), "the fixture means their column unloaded");
+        let player = server.players.get_mut(&1).unwrap();
+        (player.position, player.accepted) = (far, far);
+        let before = player.teleports;
+        for _ in 0..20 {
+            let teleport = server.players[&1].teleports;
+            server.input(1, PlayerInput { position: far, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false, teleport });
+        }
+        assert_eq!(server.players[&1].teleports, before, "standing still was refused");
+        assert_eq!(server.players[&1].position, far);
+    }
 
     fn join(server: &mut Server, id: PlayerId, name: &str) -> ClientConnection {
         let (connection, server_side) = local_pair();

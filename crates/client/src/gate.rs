@@ -399,8 +399,11 @@ steps! {
     /// Every creature's blow told (`fight_fx`'s tells): a wolf this side alone winds up in
     /// reach and coils, its snarl waiting to land with the blow without dipping the music,
     /// while the player swings at it (`Gate::swing`); then a creature with no tell of its own,
-    /// first seen already winding up, coils and is told by its style's. Each frame a fixed
-    /// step of their time (`Creatures::watch_step`). Shot with the wolf coiled.
+    /// first seen already winding up, coils and is told by its style's; then the first
+    /// creature in the content that never hunts, fights back when struck and runs once
+    /// badly hurt (`flees_below`: a wild boar) coils, told by its own tell (its gore)
+    /// without dipping the music. Each frame a fixed step of their
+    /// time (`Creatures::watch_step`). Shots with the wolf coiled and with that one coiled.
     FirstFights,
     /// A cancelled swing's shot strikes nothing (`fight_fx`'s shots): a bow's arrow drawn
     /// at a deer this side alone is loosed from the hand, and the swing is cancelled (as
@@ -841,9 +844,18 @@ struct Gate {
     /// logs they had before a click.
     was_creative: bool,
     counted: u32,
-    /// Real frame times so far (milliseconds), and the longest in each step.
+    /// Real frame times so far (milliseconds), and the longest in each step with the
+    /// milliseconds our threads waited for a core in it (`slow_frames::waited_for_cores`)
+    /// and of those, the share other work on the machine caused
+    /// (`slow_frames::waited_for_others`), and the frame with the most of the game's own time
+    /// in it (`frame_work`), which the smooth checks judge: a frame waiting longer on other
+    /// work can be the longest by the wall's clock and hide a shorter real hitch. Each frame
+    /// is timed from one run of the gate to the next, by the wall's clock, the waiting so far
+    /// and the core times (`frame_at`).
     frame_ms: Vec<f32>,
-    longest: FxHashMap<Step, f32>,
+    longest: FxHashMap<Step, (f32, f32, f32)>,
+    hardest: FxHashMap<Step, (f32, f32, f32)>,
+    frame_at: Option<(Instant, Option<std::time::Duration>, Option<crate::slow_frames::CoreTimes>)>,
     /// The machine's one-minute load average read about once a second, with the session's
     /// real seconds at each read, over the last `LOAD_SPAN` (`Gate::load_now`).
     loads: std::collections::VecDeque<(f32, f64)>,
@@ -1052,6 +1064,8 @@ impl Gate {
             counted: 0,
             frame_ms: Vec::new(),
             longest: default(),
+            hardest: default(),
+            frame_at: None,
             loads: default(),
             overlay_ms: default(),
             server_now: 0.0,
@@ -1194,6 +1208,15 @@ impl Gate {
     }
 
     fn next(&mut self, step: Step, now: f32) {
+        // The step left: its longest frame by the wall's clock, what our threads waited for a
+        // core in it, and how much of that other work on the machine caused (the share the
+        // smooth checks take off).
+        if let Some(&(wall, waited, others)) = self.longest.get(&self.step) {
+            info!("gate: {:?} longest frame {wall:.0} ms, our threads waiting {waited:.0} ms for a core in it, {others:.0} ms of that for other work", self.step);
+        }
+        if let Some(&(wall, waited, others)) = self.hardest.get(&self.step).filter(|h| Some(*h) != self.longest.get(&self.step)) {
+            info!("gate: {:?} most game time in a frame {:.0} ms, of a {wall:.0} ms frame with our threads waiting {waited:.0} ms for a core, {others:.0} ms of that for other work", self.step, frame_work(wall, others));
+        }
         info!("gate: {step:?} at {now:.1}s, server {:.1}s", self.server_now);
         if !self.entered.contains(&step) {
             self.entered.push(step);
@@ -1426,10 +1449,24 @@ fn run(world: &mut World) {
     if screen == Screen::InGame && !matches!(gate.step, Step::Fit | Step::FitJournal | Step::FitMenus | Step::Leave | Step::Done) {
         watch_health(world, &mut gate);
     }
-    let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
-    gate.frame_ms.push(frame_ms);
-    let longest = gate.longest.entry(gate.step).or_default();
-    *longest = longest.max(frame_ms);
+    let now_at = (Instant::now(), crate::slow_frames::waited_for_cores(), crate::slow_frames::core_times());
+    if let Some((then, waited_then, times_then)) = gate.frame_at.replace(now_at) {
+        let ms = |d: std::time::Duration| d.as_secs_f32() * 1000.0;
+        let frame_ms = ms(now_at.0.saturating_duration_since(then));
+        let waited_ms = waited_then.zip(now_at.1).map_or(0.0, |(then, now)| ms(now.saturating_sub(then)));
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get()) as f32;
+        let others_ms = times_then.zip(now_at.2).map_or(0.0, |(then, now)| {
+            let (ours, busy) = (ms(now.ours.saturating_sub(then.ours)), ms(now.machine_busy.saturating_sub(then.machine_busy)));
+            crate::slow_frames::waited_for_others(frame_ms, waited_ms, ours, busy, cores)
+        });
+        gate.frame_ms.push(frame_ms);
+        let frame = (frame_ms, waited_ms, others_ms);
+        let longest = gate.longest.entry(gate.step).or_default();
+        if frame_ms > longest.0 {
+            *longest = frame;
+        }
+        keep_if_harder(gate.hardest.entry(gate.step).or_default(), frame);
+    }
     let real = world.resource::<Time<Real>>().elapsed_secs();
     if gate.loads.back().is_none_or(|&(at, _)| real - at >= 1.0) {
         gate.loads.push_back((real, load_average()));
@@ -2256,7 +2293,7 @@ fn breaks(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 wrong.push(format!("{differ} blocks around differ between client and server"));
             }
             let tools = gate.breaks.row.iter().filter(|(.., holder)| matches!(holder, Holder::Tool(_))).count();
-            let longest = gate.longest.get(&Step::Breaks).copied().unwrap_or(0.0);
+            let longest = gate.longest.get(&Step::Breaks).map_or(0.0, |&(wall, ..)| wall);
             let result = if wrong.is_empty() {
                 Ok(format!("{} blocks of {} hardnesses broke with the bare hand, planks and {tools} tools under load (frames up to {longest:.0} ms), and stayed broken on both sides", gate.breaks.row.len(), BREAK_BLOCKS.len()))
             } else {
@@ -6663,6 +6700,10 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         gate.check("make: list", Err("the content lacks the oak log, its planks or the stone pickaxe".into()));
         return leave(world, gate);
     };
+    // A cooked thing that takes more than what is held (bronze: copper ingots held, a tin
+    // ore carried), picked from the data by that: its held input, and what else it wants.
+    let content = world.resource::<Launch>().content.clone();
+    let alloy = content.cooking.iter().find(|(_, r)| !r.with.is_empty()).map(|(input, r)| (content.blocks.item_of(input), r.def.uses, r.with.clone(), r.output));
     let cell_of = |world: &mut World, item: BlockId| {
         let drawn = world.resource::<Drawn>().0.clone();
         world.query::<(Entity, &MakeCell)>().iter(world).find(|(_, cell)| drawn.get(cell.0).is_some_and(|m| m.output == item)).map(|(entity, _)| entity)
@@ -6674,6 +6715,15 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             for line in ["clear oak_log", "give oak_log 1", "clear cobblestone", "give cobblestone 3"] {
                 net.command(line);
             }
+            // As many as one go of the alloy holds, and none of what goes with it.
+            if let Some((input, uses, with, _)) = &alloy {
+                let short = |item: BlockId| content.blocks.def(item).name.split_once(':').map_or(String::new(), |(_, n)| n.to_owned());
+                net.command(&format!("clear {}", short(*input)));
+                net.command(&format!("give {} {uses}", short(*input)));
+                for (item, _) in with {
+                    net.command(&format!("clear {}", short(*item)));
+                }
+            }
             let mut ui = world.resource_mut::<UiState>();
             (ui.recipes_open, ui.quests_open, ui.menu_open, ui.character_open) = (false, false, false, false);
             ui.inventory_open = true;
@@ -6684,12 +6734,23 @@ fn makeable(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         1 => {
             let drawn = world.resource::<Drawn>().0.clone();
             let ready = drawn.iter().find(|m| m.output == planks).is_some_and(|m| m.reach == Reach::Ready);
+            let alloy_held = alloy.as_ref().is_none_or(|(input, uses, with, _)| {
+                let inventory = &world.resource::<LocalPlayer>().inventory;
+                inventory.count(*input) == *uses as u32 && with.iter().all(|&(item, _)| inventory.count(item) == 0)
+            });
             let cell = cell_of(world, planks);
             match cell {
-                Some(_) if ready && holding(world, "base:oak_log").0 >= 1 => {
+                Some(_) if ready && holding(world, "base:oak_log").0 >= 1 && alloy_held => {
                     let first_not = drawn.iter().position(|m| m.reach != Reach::Ready).unwrap_or(drawn.len());
                     let order = drawn[first_not..].iter().all(|m| m.reach != Reach::Ready);
                     gate.check("make: list", if order { Ok(format!("a log in the pack shows planks ready; {first_not} of {} ready, all first", drawn.len())) } else { Err(format!("a ready one comes after one not ready: {:?}", drawn.iter().map(|m| m.reach.rank()).collect::<Vec<_>>())) });
+                    // The alloy's input in hand, what goes with it not: short of exactly that.
+                    if let Some((input, uses, with, output)) = &alloy {
+                        let wanted = Reach::Short(with.iter().map(|&(item, n)| (item, n as u32)).collect());
+                        let reach = drawn.iter().find(|m| m.output == *output).map(|m| m.reach.clone());
+                        let name = |item: BlockId| content.blocks.def(item).name.clone();
+                        gate.check("make: cooked with", if reach.as_ref() == Some(&wanted) { Ok(format!("{uses} {} in the pack show {} short of what goes with it, {wanted:?}", name(*input), name(*output))) } else { Err(format!("{uses} {} in the pack show {} as {reach:?}, not {wanted:?}", name(*input), name(*output))) });
+                    }
                     gate.count_before = world.resource::<LocalPlayer>().inventory.craft.iter().flatten().filter(|s| s.item == log).map(|s| s.count as u32).sum();
                     gate.advance(now);
                 }
@@ -10766,8 +10827,9 @@ const FEEL_LAG_SETTLE: u32 = 9;
 const FEEL_BEARS: u32 = 3;
 
 /// Where the fight-feel step stands: when the bear's wind-up was first seen (by the wall's
-/// clock, as the server times blows), how long after that the answer comes, and what has
-/// been tried.
+/// clock, the players' clock the server judges blows by: a blow lands on its due tick, and
+/// is judged a wind-up after it began on that clock, or sooner), how long after that the
+/// answer comes, and what has been tried.
 #[derive(Default)]
 struct FeelRun {
     seen: Option<Instant>,
@@ -12077,7 +12139,8 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
     match gate.phase {
         0 => {
             // In creative while it is built: level ground, the step across it a block high
-            // from the edge on, and the wolf summoned below it, two blocks out.
+            // from the edge on, the wild creatures about it sent away, and the wolf summoned
+            // below it, two blocks out.
             gate.climb = ClimbRun { before: world.resource::<crate::creatures::Creatures>().views().filter(|v| v.species == species).map(|v| v.id).collect(), highest: f32::MIN, ..default() };
             let net = world.resource::<Net>();
             net.command("gamemode creative");
@@ -12085,6 +12148,9 @@ fn climb(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 6, at.y - 1, at.z - 6, at.x + 6, at.y - 1, at.z + 6));
             net.command(&format!("fill {} {} {} {} {} {} stone", at.x - 6, at.y, at.z, at.x + 6, at.y, at.z + 6));
             net.command(&format!("tp {:.2} {:.2} {:.2}", edge.x, edge.y, edge.z));
+            // No wild creature about the course but the wolf summoned next: any other near
+            // could strike the player or stand in the wolf's way.
+            net.command("creatures disperse");
             // /summon sets the first one 1.8 blocks west of the cell's middle (`summon`):
             // asked two east, it lands about on the edge's line.
             net.command(&format!("summon {} 1 {} {} {}", WOLF.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
@@ -13318,6 +13384,9 @@ fn ranged_feel(world: &mut World, gate: &mut Gate) {
 const FIGHTER: u32 = u32::MAX - 10;
 const FIGHTER_SPECIES: &str = "wolf";
 const FALLBACK: u32 = u32::MAX - 11;
+/// The creature that only fights back (a wild boar) the FirstFights step winds up last, an
+/// id the server never gives.
+const DEFENDER: u32 = u32::MAX - 13;
 
 /// The FirstFights step (see [`Step::FirstFights`]).
 fn first_fights(world: &mut World, gate: &mut Gate) {
@@ -13341,6 +13410,17 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
     let plain_style = plain_creature.def.attack.map(|a| a.style).unwrap_or(voxmar_engine::combat::Style::Crush);
     let plain_tell = look.tell_for("", plain_style).map(|t| t.sound.clone()).unwrap_or_default();
     let wolf_tell = look.tells.get(FIGHTER_SPECIES).map(|t| (t.sound.clone(), t.ducks));
+    // The first creature that never hunts, fights back when struck and runs once badly hurt
+    // (its own `flees_below`: a wild boar), and its own tell (its gore).
+    let defender = launch.content.creatures.iter().find(|(_, c)| {
+        use voxmar_engine::creature::Behaviour;
+        !c.def.boss && c.def.attack.is_some() && c.def.flees_below.is_some() && c.behaviours.iter().any(|b| b.behaviour == Behaviour::Defend) && !c.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Hunt { .. }))
+    });
+    let defender = defender.map(|(species, c)| {
+        let name = c.def.name.rsplit(':').next().unwrap_or(&c.def.name).to_owned();
+        let tell = look.tells.get(&name).map(|t| (t.sound.clone(), t.ducks));
+        (species, c.def.health, name, tell)
+    });
     let health = |species| launch.content.creatures.get(species).def.health;
     let (wolf_health, plain_health) = (health(wolf), health(plain));
     let at = gate.feet.as_vec3() + Vec3::new(0.0, 0.0, 2.2);
@@ -13430,10 +13510,48 @@ fn first_fights(world: &mut World, gate: &mut Gate) {
                 Ok(format!("{name}, first seen mid-wind-up, coils and is told by its style's {plain_tell}"))
             };
             gate.check("first fights: style tell", result);
+            // Then one that fights back when struck (a wild boar), winding up its blow.
+            gate.feel_asked = world.resource::<Heard>().asked.clone();
             let mut creatures = world.resource_mut::<Creatures>();
-            creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: FALLBACK, died: false }]);
-            (creatures.watch, creatures.watch_step) = (None, None);
-            gate.next(Step::ShotCancel, now);
+            let defender = defender.as_ref().map(|(species, health, ..)| view(DEFENDER, *species, Pose::Attacking, *health));
+            creatures.receive(defender.into_iter().collect(), vec![voxmar_protocol::CreatureGone { id: FALLBACK, died: false }]);
+            creatures.watch = Some(DEFENDER);
+            gate.advance(now);
+        }
+        // The frame after: coiling, its gore waiting to land with the blow, the music left
+        // alone.
+        5 => {
+            let Some((_, _, name, tell)) = defender.clone() else {
+                gate.check("first fights: defender", Ok("no creature in the content fights back when struck and runs once badly hurt, so none to wind up".into()));
+                gate.advance(now);
+                return;
+            };
+            let Some((sound, ducks)) = tell else {
+                gate.check("first fights: defender", Err(format!("the {name}, which fights back then runs, has no tell of its own in combat_fx.ron")));
+                gate.advance(now);
+                return;
+            };
+            let winding = world.resource::<Creatures>().winding(DEFENDER);
+            let cue = world.resource::<Pending>().0.iter().find(|c| c.id == DEFENDER).map(|c| (c.due - now, c.ducks));
+            let result = if !winding {
+                Err(format!("the {name} shows no wind-up"))
+            } else if asked(world, &sound) <= before(gate, &sound) {
+                Err(format!("the {name}'s wind-up asked for no {sound}"))
+            } else if ducks || cue.is_some_and(|(_, ducks)| ducks) {
+                Err(format!("the {name}'s blow dips the music, as only a boss's may"))
+            } else {
+                Ok(format!("the {name}, which only fights back, coils with {sound}, its loudest {:.2} s on as the blow lands, the music left alone", cue.map_or(0.0, |(wait, _)| wait.max(0.0))))
+            };
+            gate.check("first fights: defender", result);
+            gate.advance(now);
+        }
+        6 => {
+            if defender.is_none() || gate.shot(world, "defender-blow").is_some() {
+                let mut creatures = world.resource_mut::<Creatures>();
+                creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: DEFENDER, died: false }]);
+                (creatures.watch, creatures.watch_step) = (None, None);
+                gate.next(Step::ShotCancel, now);
+            }
         }
         _ => {}
     }
@@ -16065,12 +16183,15 @@ const HITCH_FACTOR: f32 = 6.0;
 
 /// Checks that `step` (placing or digging) ran without a hitch: no frame over
 /// max(`HITCH_MS`, `HITCH_FACTOR` × the session's median frame), times how far the load
-/// now (`Gate::load_now`) asks for more than the cores.
+/// now (`Gate::load_now`) asks for more than the cores. A frame is judged by the game's own
+/// time in it (`frame_work`): what our threads spent waiting for a core because other work
+/// on the machine ran is the machine's, not the game's; waiting on our own pools is the
+/// game's.
 fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     let mut sorted = gate.frame_ms.clone();
     sorted.sort_by(f32::total_cmp);
     let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0.0);
-    let longest = gate.longest.get(&step).copied().unwrap_or(0.0);
+    let (longest, waited, others) = gate.hardest.get(&step).copied().unwrap_or_default();
     // A machine asked for more than all its cores (other threads' builds) stretches every
     // frame's waits by about how far over it is: the bar rises with it rather than the
     // check being skipped, for the machine is rarely calm enough to wait for. Pipelines
@@ -16080,16 +16201,38 @@ fn smooth(gate: &mut Gate, name: &str, step: Step, known: Option<&str>) {
     let crowded = (load / cores).max(1.0) as f32;
     let limit = HITCH_MS.max(HITCH_FACTOR * median) * crowded;
     let on = if crowded > 1.0 { format!(", the bar {crowded:.1}× higher at load {load:.0} on {cores} cores") } else { String::new() };
-    let result = if longest <= limit {
-        Ok(format!("its longest frame took {longest:.0} ms (median {median:.0} ms{on})"))
+    let work = frame_work(longest, others);
+    let queued = if waited > 0.0 { format!(", our threads waiting {waited:.0} ms for a core in it, {others:.0} ms of that for other work") } else { String::new() };
+    let result = if work <= limit {
+        Ok(format!("its hardest frame took {longest:.0} ms{queued} (median {median:.0} ms{on})"))
     } else {
-        Err(format!("a frame took {longest:.0} ms, over {limit:.0} ms (median {median:.0} ms{on})"))
+        Err(format!("a frame took {longest:.0} ms{queued}, over {limit:.0} ms (median {median:.0} ms{on})"))
     };
     let known = if std::env::var_os("VOXMAR_GATE_STALL").is_some() { Some("frames stalled on purpose (VOXMAR_GATE_STALL)") } else { known };
     match known {
         Some(why) => gate.known(&format!("{name}: smooth"), result, why),
         None => gate.check(&format!("{name}: smooth"), result),
     }
+}
+
+/// Keeps `frame` (wall, waited, waited for other work) as a step's hardest when it gave the
+/// game more time than the one kept: the smooth checks judge that frame, not the longest by
+/// the wall, which a shorter frame wholly the game's can outdo.
+fn keep_if_harder(kept: &mut (f32, f32, f32), frame: (f32, f32, f32)) {
+    if frame_work(frame.0, frame.2) > frame_work(kept.0, kept.2) {
+        *kept = frame;
+    }
+}
+
+/// The game's own milliseconds in a frame of `wall` ms in which our threads waited `others`
+/// ms for a core because other work ran (`slow_frames::waited_for_others`): that waiting
+/// taken off. On a calm machine other work runs nothing, so it is the whole frame; a frame
+/// stretched by a burst of other work (247 ms at an instant load of 104 on 18 cores, with
+/// the minute's average still under the cores) is held to the same bar for what is left.
+/// Waiting is summed over all our threads, so it can only take off as much as the frame
+/// lasted.
+fn frame_work(wall: f32, others: f32) -> f32 {
+    wall - others.clamp(0.0, wall)
 }
 
 /// How far back `Gate::load_now` reads the load average, and the least span it judges a
@@ -16433,6 +16576,46 @@ mod tests {
     /// A bear sweep reads how many a `/creatures kill` killed from its reply, in each of its
     /// counted forms ("1 creature", "3 creatures", "0 creatures"), in English and in
     /// Japanese, and only a reply since the kill was sent.
+    /// A frame is judged by the game's own time in it: a calm machine's frame whole, a frame
+    /// stretched by other work with the waiting it caused taken off, never below nothing;
+    /// waiting on our own pools is never taken off.
+    #[test]
+    fn a_frame_is_judged_by_the_time_the_game_had_in_it() {
+        assert_eq!(frame_work(247.0, 0.0), 247.0, "a frame other work did not slow is all the game's");
+        assert!(frame_work(247.0, 0.0) > HITCH_MS, "a hitch on a calm machine still fails");
+        assert_eq!(frame_work(247.0, 200.0), 47.0);
+        assert!(frame_work(247.0, 200.0) <= HITCH_MS, "a frame stretched by other work passes on what is left");
+        assert_eq!(frame_work(247.0, 900.0), 0.0, "waiting summed over threads takes off no more than the frame");
+        assert_eq!(frame_work(247.0, -1.0), 247.0);
+        // Over a 0.247 s frame on 18 cores (4.446 core seconds).
+        let others = |waited, ours, busy| crate::slow_frames::waited_for_others(0.247, waited, ours, busy, 18.0);
+        // Our own pools filling every core with nothing else on the machine: no excuse.
+        assert_eq!(others(0.9, 4.446, 4.446), 0.0, "waiting on our own pools was set down to other work");
+        // A burst of other work filling the cores we did not use: all our waiting is theirs.
+        assert!((others(0.2, 1.0, 4.446) - 0.2).abs() < 1e-6);
+        // Both: what we asked past every core is ours, the rest, no more than they ran, theirs.
+        assert!((others(1.0, 4.0, 4.446) - 0.446).abs() < 1e-4, "{}", others(1.0, 4.0, 4.446));
+        assert!((others(1.0, 4.4, 4.446) - 0.046).abs() < 1e-4, "{}", others(1.0, 4.4, 4.446));
+        // A step's judged frame is the one with the most game time, not the longest.
+        let mut kept = default();
+        for frame in [(247.0, 900.0, 240.0), (180.0, 0.0, 0.0), (120.0, 0.0, 0.0)] {
+            keep_if_harder(&mut kept, frame);
+        }
+        assert_eq!(kept, (180.0, 0.0, 0.0), "a long frame other work stretched hid a hitch wholly the game's");
+        assert!(frame_work(kept.0, kept.2) > HITCH_MS, "that hitch still fails");
+    }
+
+    /// The machine's busy core time is read on this system, and holds our own CPU time.
+    #[test]
+    fn the_machine_says_how_busy_its_cores_have_been() {
+        let spin = Instant::now();
+        while spin.elapsed() < Duration::from_millis(30) {
+            std::hint::black_box(0);
+        }
+        let times = crate::slow_frames::core_times().expect("the machine's core times");
+        assert!(times.ours > Duration::ZERO && times.machine_busy >= times.ours, "{times:?}");
+    }
+
     #[test]
     fn a_kill_is_counted_from_its_reply_in_every_form() {
         use bevy::prelude::World;
