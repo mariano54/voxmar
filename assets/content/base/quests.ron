@@ -282,7 +282,7 @@
             why: "Wool makes beds, cloth and sleeping bags. Right-click a kept sheep with shears in hand whenever its wool has grown back, and gather six. Wool grows back in about six minutes: dye the first of it into cloth meanwhile, for a rug once the home is homely, or go after milk (The Milk Pail).",
             tasks: [[Have("wool", 6)]],
             after: ["a_woolly_flock"],
-            rewards: [Xp("farming", 120.0), Xp("crafting", 60.0), Xp("hunter", 160.0)],
+            rewards: [Xp("farming", 120.0), Xp("crafting", 60.0), Xp("hunter", 170.0)],
         ),
         (
             name: "ducks_on_the_pond", age: "farm", branch: "husbandry", title: "Ducks on the Pond",
