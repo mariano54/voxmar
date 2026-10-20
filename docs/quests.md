@@ -24,7 +24,9 @@ reward, shown first), tasks, after, rewards. A book of its own can go in a
 the topics follow in byte order (uppercase before lowercase), and the quests are held in that
 order. A quest may come `after` one in any file. A quest name written twice, in one file or
 two, fails the load naming both files, across packages too: a mod cannot replace a quest by
-writing its name.
+writing its name. A file no part of the game reads (a misspelt `quest.ron`) still loads, and
+the load notes it with the likeliest name meant (`zz_mod/quest.ron is read by nothing (meant
+quests.ron?)`); the names other crates read are `content::READ_ELSEWHERE`.
 Goals:
 
 | Goal | Reads |
@@ -391,8 +393,8 @@ that quest needs.
 | Milk | 5 min | The Milk Pail | A Full Pen |
 | A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
 | Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
-| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole; An Earth Clamp smoulders beside it |
-| An earth clamp smouldering | 1 min a load | An Earth Clamp | Firing clay by hand at the pit kiln, digging the next load, Red Metal |
+| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+| A charcoal clamp smouldering | 2 game hours (about 150 s of the quest-book bot's time, which runs about 75 s a game hour) | Charcoal | Brick by Brick: firing clay at the pit kiln to A Kiln Load's forty and crafting kiln bricks; A Second Clamp |
 | A drying rack drying | 10 min (5 by a fire) | Hung to Dry | Hunting for the next load; Trail Rations |
 | A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed, the compost's next part |
 

@@ -36,6 +36,16 @@ impl Server {
         let selected = player.selected;
         let Some(item) = player.held() else { return };
         let Some(recipe) = cooking.for_item(item, &tags) else { return };
+        // A tool it asks for is carried (`CookingTool` refused the click without it): not
+        // taken.
+        let blocks = &self.content.blocks;
+        if let Some(tag) = recipe.def.tool.as_deref()
+            && !player.inventory.slots.iter().flatten().any(|s| blocks.def(s.item).has_tag(tag))
+        {
+            let named = blocks.tagged(tag).next().map(|item| Words::Block(blocks.def(item).name.clone())).unwrap_or_else(|| Words::Text(tag.to_owned()));
+            self.refuse(agent, Words::key("cooking.needs_tool").with("tool", named));
+            return;
+        }
         let level = recipe.skill.map_or(1, |skill| skills.level(player.skills.xp(skill)));
         // Everything one go takes, from the held stack first, or nothing is cooked: a
         // crucible's bronze wants three copper ingots and a tin ore.

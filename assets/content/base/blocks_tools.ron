@@ -115,9 +115,9 @@
         // scares what fears fire, but burns while carried (`burns:N` seconds, counted like a
         // tool's wear) and leaves a charred stick (`burns_to:`). It `kindles`: lights a torch's
         // stub again (flame.rs).
-        (template: "drop", name: "firebrand", tags: ["fire", "kindles", "burns:90", "burns_to:charred_stick", "held_light:8"], all: (color: (240, 140, 40))),
+        (template: "drop", name: "firebrand", tags: ["fire", "firelighter", "kindles", "burns:90", "burns_to:charred_stick", "held_light:8"], all: (color: (240, 140, 40))),
         (template: "drop", name: "charred_stick", tags: ["charred", "fuel"], all: (color: (60, 46, 36))),
-        // Charcoal: a log burnt at a campfire (cooking.ron), fuel and torches.
+        // Charcoal: from a charcoal clamp (multiblocks.ron), fuel and torches.
         // Pouches: one slot for many herbs, or many seeds (right click one to empty it).
         (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb", "holds_each:1000"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
         (template: "drop", name: "coin_purse", tags: ["pouch", "holds:currency", "holds_each:1000"], all: (color: (140, 100, 60), action: Some("base:empty_pouch"))),
@@ -134,6 +134,8 @@
         (template: "drop", name: "flint", tags: ["flint", "sharp"], all: (color: (60, 60, 66))),
         (template: "drop", name: "bronze_ingot", tags: ["ingot", "metal:bronze"], all: (color: (200, 140, 70))),
         (template: "drop", name: "charcoal", tags: ["charcoal", "coal", "fuel"], all: (color: (40, 36, 34))),
+        // Part-burnt wood, from a clamp opened before its time: firewood's heat, not charcoal's.
+        (template: "drop", name: "charred_wood", tags: ["charred", "fuel"], all: (color: (70, 52, 40))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),
         (template: "drop", name: "iron_ingot", tags: ["ingot", "metal:iron"], all: (color: (200, 205, 215))),
