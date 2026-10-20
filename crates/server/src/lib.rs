@@ -1394,11 +1394,18 @@ impl Server {
                         player.sent.insert(pos);
                         sent += 1;
                     }
-                } else if self.generating.len() < MAX_GENERATING && self.generating.insert(pos) {
+                } else if self.generating.len() < MAX_GENERATING
+                    && !self.generating.contains(&pos)
+                    // Generating on fewer workers than there are, when a game playing on this
+                    // machine asks it to (voxmar_engine::jobs).
+                    && let Some(slot) = voxmar_engine::jobs::start(voxmar_engine::jobs::Kind::Columns)
+                {
+                    self.generating.insert(pos);
                     let (generator, save, registry) = (self.generator.clone(), self.save.clone(), self.content.blocks.clone());
                     let (wear, today) = (self.wear_rules.clone(), wear::day(self.day));
                     let tx = self.generated_tx.clone();
                     rayon::spawn(move || {
+                        let _slot = slot;
                         let _ = tx.send((pos, load_column(save.as_ref(), &*generator, &registry, &wear, today, pos)));
                     });
                 }
