@@ -212,7 +212,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
     };
     // A click on it is a click on the inventory's screen, not one outside to throw with.
     let card = super::inventory::InventoryCard;
-    commands.spawn((CataloguePanel, card, panel, Piece::Panel.image(), RelativeCursorPosition::default(), Visibility::Hidden, GlobalZIndex(2))).with_children(|panel| {
+    commands.spawn((CataloguePanel, card, super::screens::UnderBar(space::OUTER), panel, Piece::Panel.image(), RelativeCursorPosition::default(), Visibility::Hidden, GlobalZIndex(2))).with_children(|panel| {
         spawn_text_field(panel, font, "", "creative.search", 32, 0, false, SearchField);
         panel.spawn((Node { column_gap: Val::Px(PX), ..default() }, TabRow)).with_children(|tabs| {
             for tab in TABS {
