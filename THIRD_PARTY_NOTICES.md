@@ -433,7 +433,7 @@ Kenney anyway. Licence checked in the pack's License.txt on 5 October 2026. Unch
 | `assets/ui/sounds/micro_switch_click.ogg` | `switch13.ogg` |
 | `assets/ui/sounds/micro_switch_item.ogg` | `switch14.ogg` |
 
-## FluidR3 GM sound font (the quest and level fanfares, the home motif)
+## FluidR3 GM sound font (the quest and level fanfares, the home and settlement motifs)
 
 The quest-finished, level-up and tenth-level fanfares (`assets/content/base/sounds/quest_done_1.ogg`,
 `level_up_1.ogg`, `level_milestone_1.ogg`) are our own tunes, written as notes in
@@ -442,7 +442,9 @@ sound font, Copyright (c) 2000-2002, 2008 Frank Wen and (c) 2008 Toby Smithe, re
 the MIT licence (the font's README and COPYING; checked in the Ubuntu fluid-soundfont-gm
 package on 14 October 2026). The font itself is not shipped. The home motif
 (`assets/music/home/hearth_welcome.ogg`) is our own lullaby, written in
-`tools/generate_home_motif.py` and played the same way.
+`tools/generate_home_motif.py` and played the same way, as is the settlement motif
+(`assets/music/settlement/market_day.ogg`), our own tune in `tools/generate_settlement_motif.py`,
+which records the font that played it (its name and SHA-256) in the clip's comment tag.
 
 > Permission is hereby granted, free of charge, to any person obtaining a copy of this
 > software and associated documentation files (the "Software"), to deal in the Software

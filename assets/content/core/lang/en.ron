@@ -242,6 +242,8 @@
 
     // In game.
     "screen.inventory": "Inventory",
+    "screen.look.recipes": "Recipes",
+    "screen.look.uses": "Uses",
     "screen.character": "Character",
     "screen.menu": "Menu",
 
@@ -398,6 +400,7 @@
     "prayer.effect.last_breath": "Left under {below}% health by a blow, you heal {heal}% of it, and every prayer point goes.",
     "prayer.restored": "Your prayer points are full again.",
     "bed.rested": "You sleep soundly: {name}. {what}",
+    "bed.night_rest": "A night's sleep here would rest you better: {name}.",
     "bed.not_tired": "You are rested already, so there is no new rest, but this is your bed.",
     "bed.threatened": "You cannot sleep with something hunting you so near.",
     "bed.just_hurt": "You cannot sleep with your wounds so fresh: catch your breath first.",
@@ -454,7 +457,7 @@
     "screen.quests": "Quests",
     "settings.key.quests": "Quests key",
     "settings.key.quests.hint": "Opens the quest book.",
-    "quest.hint": "Click a quest to read it. Drag the space between to look around, and turn the wheel to zoom. Pin a quest to follow it on screen. A glowing quest has its reward waiting.",
+    "quest.hint": "Click a quest to read it. Drag the space between to look around, and turn the wheel or press + and - to zoom. Pin a quest to follow it on screen. A glowing quest has its reward waiting.",
     "quest.current": "Current Quest",
     "quest.pick": "Pick a quest to read why it is worth doing.",
     "quest.empty": "No quests here yet.",
@@ -644,7 +647,6 @@
     "inventory.craft": "Craft",
     "inventory.craft.take": "Click to craft one, Shift-click for all",
     "inventory.craft.nothing": "Nothing to make",
-    "inventory.craft.lookup": "Press {key} over an item for its recipes",
     "skills.full": "You are at full health",
     // Why an action was refused (refusals.ron), said by the crosshair.
     "refusal.in_the_way": "Something is in the way",
