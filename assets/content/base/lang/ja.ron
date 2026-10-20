@@ -67,7 +67,7 @@
     "home.tag.crafting_table": "作業台",
     "home.tag.heat": "熱源",
     "home.tag.drying": "干している薬草か肉",
-    "home.tag.drape": "壁に掛けた布（壁掛け）",
+    "home.tag.drape": "壁や窓に掛けた布（壁掛けかカーテン）",
     "home.tag.hive": "ミツバチのいる巣箱",
     "home.tag.flower": "花",
     "station.loaded": "{item}を{count}個のせた。とどまっても離れても、約{minutes}分で仕上がる。",

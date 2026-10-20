@@ -70,7 +70,7 @@
     "home.tag.crafting_table": "crafting table",
     "home.tag.heat": "heat source",
     "home.tag.drying": "herbs or meat hung to dry",
-    "home.tag.drape": "cloth hung on a wall (a wall hanging)",
+    "home.tag.drape": "cloth hung on a wall or at a window (a wall hanging or a curtain)",
     "home.tag.hive": "skep of bees",
     "home.tag.flower": "flowers",
     "station.loaded": "You put on {count} {item}: done in about {minutes} min, whether you stay or go.",

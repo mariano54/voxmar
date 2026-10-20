@@ -443,7 +443,11 @@ impl Server {
                 (Effect::Swap, ActionTarget::Block { block, .. }) => {
                     // Opened or shut here first: the clients follow what the server holds.
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent, held: None }, block);
+                    // A swap is the same thing in another state: a player's door or curtain
+                    // stays theirs (it gives itself back when broken), a wild one stays wild.
+                    let placed: Vec<IVec3> = changes.iter().map(|&(pos, _)| pos).filter(|pos| self.placed.contains(pos)).collect();
                     self.set_blocks(&changes);
+                    self.placed.extend(placed);
                 }
                 (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {

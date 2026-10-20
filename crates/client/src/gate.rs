@@ -6732,28 +6732,17 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
                 }
             }
         }
-        // The curtain drawn back, as the server turned it.
-        3 => {
+        // The curtain drawn back, as the server turned it, and at midnight, indoors at home
+        // by the hearth, an evening in, its chip, and its line (told once a session, so seen
+        // at any point in the run): one wait for both, so the step keeps its headroom.
+        _ => {
             let client = world.resource::<ClientWorld>();
             let shown = client.block(curtain).map(|b| client.registry.def(b).name.clone());
-            if shown.as_deref() == Some("base:red_curtain_open") {
-                gate.check("home: curtain", Ok("a curtain hung drawn across a window inside the room was drawn back by a right click, as the server turned it".into()));
-                gate.advance(now);
-            } else if gate.waited_out(WALLS_WAIT) {
-                gate.check("home: curtain", Err(format!("{waited:.1} server s after hanging a curtain at {curtain} and a right click on it, the client shows {shown:?}")));
-                gate.advance(now);
-            }
-        }
-        // At midnight, indoors at home by the hearth: an evening in, its chip, and its line
-        // (told once a session, so seen at any point in the run).
-        _ => {
+            let drawn = shown.as_deref() == Some("base:red_curtain_open");
             let (evening, told) = (has(world, "base:evening_in"), gate.evening_told);
-            if evening && told {
-                gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()));
-                world.resource::<Net>().command("time set noon");
-                leave(world, gate);
-            } else if gate.waited_out(WALLS_WAIT) {
-                gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")));
+            if (drawn && evening && told) || gate.waited_out(WALLS_WAIT) {
+                gate.check("home: curtain", if drawn { Ok("a curtain hung drawn across a window inside the room was drawn back by a right click, as the server turned it".into()) } else { Err(format!("{waited:.1} server s after hanging a curtain at {curtain} and a right click on it, the client shows {shown:?}")) });
+                gate.check("home: evening in", if evening && told { Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()) } else { Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")) });
                 world.resource::<Net>().command("time set noon");
                 leave(world, gate);
             }

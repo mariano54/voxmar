@@ -26,6 +26,27 @@ fn made(content: &Content) -> Vec<BlockId> {
         .collect()
 }
 
+/// A state one swaps into and comes back as (a curtain drawn back) is the same piece: its
+/// partner's colour, family and furnishing tags, and it gives the partner back.
+#[test]
+fn a_swap_state_keeps_its_partners_colour_and_tags() {
+    let content = content();
+    let mut states = 0;
+    for id in content.blocks.ids() {
+        let def = content.blocks.def(id);
+        if !(def.has_tag("decor") && def.form_of().is_none() && def.swaps.is_some() && def.drops == def.swaps) {
+            continue;
+        }
+        let partner = content.blocks.def(content.blocks.id(def.swaps.as_deref().unwrap()).expect("its partner loads"));
+        assert_eq!(partner.swaps.as_deref(), Some(def.name.as_str()), "{} and {} swap both ways", def.name, partner.name);
+        assert_eq!(def.tint, partner.tint, "{}'s colour", def.name);
+        assert_eq!(def.family, partner.family, "{}'s family", def.name);
+        assert_eq!(def.tags, partner.tags, "{}'s tags", def.name);
+        states += 1;
+    }
+    assert!(states >= 12, "the twelve dyes' drawn-back curtains, at least: {states}");
+}
+
 #[test]
 fn the_templates_make_every_family_in_full() {
     let content = content();

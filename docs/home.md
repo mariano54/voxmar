@@ -117,7 +117,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
 | Bright room | a roof, 2 windows (`window`: hide window, glass) | heal x1.05, learn x1.05 |
-| Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging) | 1° warmer |
+| Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging or a curtain) | 1° warmer |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
 beside the sleeping bag. Before any roof or hearth it is the warmer night and the better rest
@@ -127,8 +127,8 @@ The herb nook is the Farm age's: two herbs tied with twine hang to dry (Crafting
 bunches); two bunches and a jar, basket or crate make it. Its farming level counts where it
 is felt, sowing the kitchen garden at the door (a crop a level early) and harvesting it, and
 its alchemy level at the bench.
-Soft furnishings keep the draught off: a rug underfoot and cloth hung on a wall (`drape`: a
-wall hanging, two cloths over two sticks, Crafting 4, any dye) under the home's roof, 1°
+Soft furnishings keep the draught off: a rug underfoot and cloth hung on a wall or at a window
+(`drape`: a wall hanging, two cloths over two sticks, Crafting 4, any dye, or a curtain) under the home's roof, 1°
 warmer; two rugs are not enough
 (`a_rug_and_a_hanging_under_a_roof_are_soft_furnishings`, the server's
 `a_rug_and_a_hanging_make_soft_furnishings`, the gate's walls step: "home: soft furnishings").

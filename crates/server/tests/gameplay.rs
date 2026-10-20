@@ -1062,6 +1062,39 @@ fn a_village_rug_gives_nothing_but_a_players_comes_back_whole_across_restarts() 
     furnishing_drops_across_restarts("rug", "red_rug", "red_rug", 1);
 }
 
+#[test]
+fn a_players_door_or_curtain_opened_still_gives_itself_back() {
+    swapped_furnishing_gives_itself_back("door", "wooden_door", "wooden_door_open");
+    swapped_furnishing_gives_itself_back("curtain", "red_curtain", "red_curtain_open");
+}
+
+/// A swap (opening a door, drawing a curtain back) is the same thing in another state: the
+/// player's piece, opened and broken, still drops itself.
+fn swapped_furnishing_gives_itself_back(label: &str, name: &str, open: &str) {
+    let dir = world_dir(label);
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() });
+    let feet = client.position.floor().as_ivec3();
+    let own = feet + IVec3::new(-1, 0, 1);
+    for line in ["/clear".to_owned(), format!("/give {name} 1"), "/fill ~-1 ~ ~1 ~-1 ~1 ~1 air".to_owned(), "/fill ~-1 ~-1 ~1 ~-1 ~-1 ~1 stone".to_owned()] {
+        client.ok(&line);
+    }
+    let (shut, opened) = (client.content.blocks.expect(&format!("base:{name}")), client.content.blocks.expect(&format!("base:{open}")));
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == shut));
+    client.propose("core:place", ActionTarget::Block { block: own - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(shut));
+    client.propose("base:open", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(opened));
+    client.propose("core:mine", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(BlockId::AIR));
+    let back = |c: &Client| {
+        c.inventory.slots.iter().flatten().filter(|s| s.item == shut).map(|s| s.count as usize).sum::<usize>()
+            + c.items.values().filter(|i| i.stack.item == shut).map(|i| i.stack.count as usize).sum::<usize>()
+    };
+    assert_eq!(client.quiet(back), 1, "a player's {name}, opened and broken, gave nothing back");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 fn furnishing_drops_across_restarts(label: &str, name: &str, material: &str, count: usize) {
     let dir = world_dir(label);
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
