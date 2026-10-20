@@ -159,11 +159,20 @@ pub enum Synth {
     Flue,
     /// Rain falling into a fire: drops hissing on the embers, a spit now and then.
     Sizzle,
+    /// A kiln firing: a deep, steady roar of the fire shut in the brick, the draught
+    /// howling through its flue, a hot tick of the brick now and then.
+    Kiln,
+    /// A smith's bellows worked: two or three long breaths of air into the fire, the
+    /// leather creaking on each.
+    Bellows,
+    /// A quern turned: the upper stone grinding round on the lower, grain crunching
+    /// between.
+    Quern,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 55] = [
+    pub const ALL: [Synth; 58] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -219,6 +228,9 @@ impl Synth {
         Synth::Grunt,
         Synth::Flue,
         Synth::Sizzle,
+        Synth::Kiln,
+        Synth::Bellows,
+        Synth::Quern,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -248,6 +260,7 @@ impl Synth {
                 | Synth::Murmur
                 | Synth::Hum
                 | Synth::Flue
+                | Synth::Kiln
         )
     }
 
@@ -315,6 +328,8 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Settle => settle(&mut noise),
         Synth::Grunt => grunt(&mut noise),
         Synth::Sizzle => sizzle(&mut noise),
+        Synth::Bellows => bellows(&mut noise),
+        Synth::Quern => quern(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -340,6 +355,7 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Lava => lava(noise, len),
         Synth::Hum => hum(noise, len),
         Synth::Flue => flue(noise, len),
+        Synth::Kiln => kiln(noise, len),
         Synth::Waterfall => waterfall(noise, len),
         Synth::Fire => fire(noise, len),
         Synth::ThatchPatter => thatch_patter(noise, len),
@@ -623,6 +639,33 @@ fn sizzle(noise: &mut Noise) -> Vec<f32> {
     if noise.unit() < 0.5 {
         let at = between(noise, 0.2, 0.9);
         crack(&mut out, noise, at, (0.001, 0.003), (2500.0, 4500.0), 0.4);
+    }
+    out
+}
+
+/// A kiln firing: the fire shut in the brick heard as a deep, steady roar (low-passed
+/// noise that breathes slowly), the draught howling through the flue over it (a band
+/// wandering a little), and now and then a hot tick of the brick.
+fn kiln(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let (breath, howl) = (Drift::new(noise, 0.2), Drift::new(noise, 0.13));
+    let mut roar = Svf::new(110.0, 0.7);
+    let mut flue = Svf::new(320.0, 6.0);
+    let mut out = Vec::with_capacity(len);
+    let (mut b, mut h) = (0.0, 0.0);
+    for i in 0..len {
+        if i % 64 == 0 {
+            let t = i as f32 / SR;
+            (b, h) = (breath.unit(t), howl.unit(t));
+            flue.tune(280.0 + 90.0 * h);
+        }
+        let white = noise.next();
+        out.push(roar.low(white) * (0.75 + 0.25 * b) + flue.band(white) * 0.25 * (0.4 + 0.6 * h));
+    }
+    let mut t = between(noise, 0.5, 2.0);
+    while t < len as f32 / SR {
+        let gain = between(noise, 0.1, 0.25);
+        crack(&mut out, noise, t, (0.001, 0.003), (2500.0, 4000.0), gain);
+        t += gap(noise, 0.4);
     }
     out
 }
@@ -1765,6 +1808,55 @@ fn grunt(noise: &mut Noise) -> Vec<f32> {
         for j in 0..count {
             out[start + j] += 0.5 * note_envelope(j as f32 / count as f32, 0.05) * snout.band(noise.next());
         }
+    }
+    out
+}
+
+/// A smith's bellows worked: two or three long breaths, each a swell of soft, low air
+/// (the push quicker than the draw back), and a creak of the leather as it turns.
+fn bellows(noise: &mut Noise) -> Vec<f32> {
+    let pumps = 2 + (noise.unit() * 2.0) as usize;
+    let every = between(noise, 1.0, 1.3);
+    let mut out = vec![0.0f32; seconds(pumps as f32 * every + 0.6)];
+    let mut air = Svf::new(between(noise, 500.0, 750.0), 0.9);
+    for pump in 0..pumps {
+        let (start, count) = (seconds(0.02 + pump as f32 * every), seconds(every * 0.8));
+        for j in 0..count {
+            let x = j as f32 / count as f32;
+            // A quick push, then a slow fall away.
+            let swell = if x < 0.3 { (x / 0.3).powi(2) } else { (1.0 - (x - 0.3) / 0.7).powi(2) };
+            if let Some(sample) = out.get_mut(start + j) {
+                *sample += 0.8 * swell * air.band(noise.next());
+            }
+        }
+        let leather = creak(noise);
+        for (sample, c) in out.iter_mut().skip(start + count).zip(leather.iter().take(seconds(0.25))) {
+            *sample += 0.2 * c;
+        }
+    }
+    fade_ends(&mut out, 0.002, 0.05);
+    out
+}
+
+/// A quern turned: the upper stone grinding round on the lower, a rough, low rumble that
+/// swells and eases once each turn, and the crunch of the grain between, fine ticks.
+fn quern(noise: &mut Noise) -> Vec<f32> {
+    let turns = 2.0 + noise.unit() * 2.0;
+    let turn = between(noise, 0.7, 0.9);
+    let count = seconds(turns * turn);
+    let mut out = vec![0.0f32; count + seconds(0.1)];
+    let mut stone = Svf::new(between(noise, 220.0, 320.0), 1.2);
+    let mut grit = Svf::new(between(noise, 1800.0, 2600.0), 1.5);
+    for (i, sample) in out.iter_mut().enumerate().take(count) {
+        let t = i as f32 / SR;
+        let round = 0.6 + 0.4 * (TAU * t / turn).sin();
+        *sample = note_envelope(i as f32 / count as f32, 0.08) * round * (stone.band(noise.next()) + 0.3 * grit.band(noise.next()));
+    }
+    let mut t = between(noise, 0.02, 0.06);
+    while t < turns * turn - 0.1 {
+        let gain = between(noise, 0.05, 0.15);
+        crack(&mut out, noise, t, (0.0005, 0.0015), (3000.0, 5000.0), gain);
+        t += between(noise, 0.01, 0.05);
     }
     out
 }

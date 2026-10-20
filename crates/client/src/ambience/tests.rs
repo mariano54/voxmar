@@ -136,17 +136,18 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
     (timeline, levels)
 }
 
-/// A hearth or a Crucible Kiln is heard as a fire only while it burns; a campfire or a pit
-/// kiln, always a fire, always.
+/// A hearth is heard as a fire only while it burns, and a Crucible Kiln as a kiln; a
+/// campfire or a pit kiln, always a fire, always.
 #[test]
 fn structures_are_heard_as_fires_only_while_lit() {
     let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
     let ambience = base();
     let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content));
-    let fire = ambience.groups.iter().position(|g| g.name == "fire").unwrap() as u8;
-    for (name, lit_only) in [("base:hearthstone", true), ("base:crucible", true), ("base:campfire", false), ("base:pit_kiln", false)] {
+    let group = |name: &str| ambience.groups.iter().position(|g| g.name == name).unwrap() as u8;
+    let (fire, kiln) = (group("fire"), group("kiln"));
+    for (name, heard, lit_only) in [("base:hearthstone", fire, true), ("base:crucible", kiln, true), ("base:campfire", fire, false), ("base:pit_kiln", fire, false)] {
         let id = content.blocks.expect(name).0 as usize;
-        assert_eq!(kinds.group[id], Some(fire), "{name} is not heard as a fire");
+        assert_eq!(kinds.group[id], Some(heard), "{name} is not heard as a {}", ambience.groups[heard as usize].name);
         assert_eq!(kinds.lit_only[id], lit_only, "{name}");
     }
 }
@@ -1039,6 +1040,34 @@ fn a_fire_hears_the_weather() {
     assert_eq!(heard_by(&rain, false).1, 0, "a hearth under its roof, the player out in the rain");
     assert_eq!(heard_by(&[&rain[..], &INDOORS[..]].concat(), false).1, 0, "a hearth under its roof");
     assert_eq!(heard(&[("fire", 1.0)]).1, 0, "a dry night");
+}
+
+/// The Farm age's fires: a Crucible Kiln firing roars as a kiln, never as a hearth; an
+/// earth clamp burning hisses low and its soil ticks as it settles. And the village's
+/// smith works the bellows and its bakers turn the quern by day, never at night.
+#[test]
+fn a_kiln_roars_a_clamp_hisses_and_the_village_grinds() {
+    let ambience = base();
+    let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("no bed {name}"));
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let heard = |set: &[(&str, f32)]| {
+        let (timeline, levels) = run(&ambience, &scene(&ambience, "farm", &["plains", "temperate"], set), 300.0);
+        let played = |name: &str| timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count();
+        (levels, ["clamp_settle", "bellows", "quern", "hearth_settle"].map(played))
+    };
+    let full = |name: &str, levels: &[f32]| levels[bed(name)] > 0.8 * ambience.beds[bed(name)].volume;
+    let quiet = |name: &str, levels: &[f32]| levels[bed(name)] < 1e-3;
+    let (kiln, [_, _, _, settles]) = heard(&[("kiln", 1.0)]);
+    assert!(full("kiln_roar", &kiln) && quiet("fire", &kiln) && settles == 0, "a kiln firing is a kiln, not a hearth");
+    let (clamp, [ticks, ..]) = heard(&[("clamp", 1.0)]);
+    assert!(full("clamp_hiss", &clamp) && ticks > 0 && quiet("kiln_roar", &clamp), "a clamp burning: {ticks} ticks");
+    let (nothing, [ticks, ..]) = heard(&[]);
+    assert!(quiet("kiln_roar", &nothing) && quiet("clamp_hiss", &nothing) && ticks == 0, "no kiln, no clamp");
+    let village = |sun: f32| [("settlement", 10.0), ("settlementedge", 0.0), ("settlementpeople", 30.0), ("sun", sun)];
+    let (_, [_, bellows, quern, _]) = heard(&village(0.8));
+    assert!(bellows > 0 && quern > 0, "the village at work: {bellows} bellows, {quern} quern");
+    let (_, [_, bellows, quern, _]) = heard(&village(-0.8));
+    assert!(bellows == 0 && quern == 0, "the village at night: {bellows} bellows, {quern} quern");
 }
 
 /// Every recorded bed's files are there; one a mod mistyped is not, and fails the launch.

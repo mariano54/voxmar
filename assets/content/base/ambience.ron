@@ -77,11 +77,16 @@
         (name: "wood", tags: ["log"], range: (5, 60)),
         // Boards: a timber floor, walls and roof (`planks`), as a home is built of them.
         (name: "timber", tags: ["planks"], range: (20, 200)),
-        // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a
-        // kiln is stone to the step. One within five blocks is a fire fully heard; by ten
-        // blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth or a
-        // Crucible Kiln (a structure's core) is heard only while its fire burns.
-        (name: "fire", tags: ["campfire", "hearth", "pit_kiln", "crucible"], range: (3, 10), lit: true),
+        // A Crucible Kiln firing (its core, heard only while its fire burns): before the
+        // fire, so it roars as a kiln, not a hearth. Fully within five blocks.
+        (name: "kiln", tags: ["crucible"], range: (3, 10), lit: true),
+        // An earth clamp burning (`clamp_burning`): logs charring under the soil.
+        (name: "clamp", tags: ["clamp_burning"], range: (1, 4)),
+        // A fire to sit by: a campfire, a hearth, a pit kiln. Before rock, as a hearthstone
+        // or a kiln is stone to the step. One within five blocks is a fire fully heard; by
+        // ten blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth
+        // (a structure's core) is heard only while its fire burns.
+        (name: "fire", tags: ["campfire", "hearth", "pit_kiln"], range: (3, 10), lit: true),
         // Lava and falling water sound like water to the step, so they come first.
         (name: "lava", tags: ["lava"], range: (4, 80)),
         // A pot on the boil (`simmering`): one within five blocks is full.
@@ -289,6 +294,16 @@
         (
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},
+        ),
+        // A kiln firing: a deep roar shut in the brick, the draught howling in its flue.
+        (
+            name: "kiln_roar", sound: Kiln, volume: 0.32, fade: 2,
+            when: {"kiln": (min: 0.6, fade: 0.55)},
+        ),
+        // An earth clamp burning: a low, close hiss of the logs charring under the soil.
+        (
+            name: "clamp_hiss", sound: Smoulder, volume: 0.18, fade: 2,
+            when: {"clamp": (min: 0.3, fade: 0.25)},
         ),
         // By the hearth on a stormy night: the wind moaning low over the chimney, louder
         // in the gusts.
@@ -504,6 +519,13 @@
             pitch: (0.9, 1.15), reach: 6,
             when: {"fire": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2)},
         ),
+        // The soil of a burning clamp settling as the logs char: a few fine grains ticking
+        // down.
+        (
+            name: "clamp_settle", sound: Grit, volume: 0.2, at: Block("clamp"), per_minute: 3, cooldown: 8,
+            pitch: (0.7, 0.9), reach: 5,
+            when: {"clamp": (min: 0.3, fade: 0.25)},
+        ),
         // A log settling in a fire now and then: a soft fall, sparks and a hiss, so a hearth
         // sat by for a while is never one loop.
         (
@@ -560,6 +582,18 @@
             pitch: (0.95, 1.08), reach: 18,
             when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
             duck: {"rain": 0.7},
+        ),
+        // The smith working the bellows between heats.
+        (
+            name: "bellows", sound: Bellows, volume: 0.22, at: Building(buildings: ["smithy"]), per_minute: 1.2, cooldown: 15,
+            pitch: (0.95, 1.05), reach: 12,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+        ),
+        // Flour ground by hand at the bakery and the granary.
+        (
+            name: "quern", sound: Quern, volume: 0.22, at: Building(buildings: ["bakery", "granary"]), per_minute: 1.5, cooldown: 12,
+            pitch: (0.95, 1.05), reach: 10,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
         ),
         // The mill wheel turning in its race all day, and the woodyard splitting logs.
         (

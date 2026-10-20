@@ -38,7 +38,7 @@
         // from, within its leash of home (`trough`; server/src/troughs.rs).
         (name: "feed_trough", render: Model, shape: "trough", sound: Wood, textures: All("oak_planks"), hardness: 1.0, color: (140, 105, 65), tags: ["trough", "wood", "drinking_water"]),
         (name: "earth_clamp", sound: Soil, textures: Column(end: "earth_clamp_top", side: "earth_clamp_side"), drops: "earth_clamp", hardness: 0.6, color: (110, 80, 55), tags: ["soil"]),
-        (name: "earth_clamp_lit", sound: Soil, textures: Column(end: "earth_clamp_lit_top", side: "earth_clamp_lit_side"), drops: "earth_clamp", hardness: 0.6, light: 6, color: (150, 70, 40), tags: ["soil", "fire"]),
+        (name: "earth_clamp_lit", sound: Soil, textures: Column(end: "earth_clamp_lit_top", side: "earth_clamp_lit_side"), drops: "earth_clamp", hardness: 0.6, light: 6, color: (150, 70, 40), tags: ["soil", "fire", "clamp_burning"]),
         (name: "earth_clamp_cooled", sound: Soil, textures: Column(end: "earth_clamp_cooled_top", side: "earth_clamp_cooled_side"), drops: "earth_clamp", hardness: 0.6, color: (80, 70, 65), tags: ["soil"]),
     ],
     families: [
