@@ -793,6 +793,19 @@ fn a_draughty_home_whistles_until_daubed() {
     }
     let (some, fainter) = heard(&patched, IVec3::new(0, 11, 0), under_thatch);
     assert!(some > 0.0 && fainter > 0.0 && fainter < wattle, "one wattle wall left plays at {fainter:.3}, not under the {wattle:.3} of four");
+    // Windows whistle too: a daubed room with a wall of open-shuttered lattice windows plays
+    // the draught, and the same windows shuttered are quiet.
+    let windowed = |window: &str| {
+        let mut room = room("base:daub", true);
+        for x in -2..=2 {
+            room.set_block(IVec3::new(x, 11, -3), id(window));
+        }
+        room
+    };
+    let (gaps, open) = heard(&windowed("base:oak_shuttered_window"), IVec3::new(0, 11, 0), under_thatch);
+    assert!(gaps > 0.0 && open > 0.0, "open shutters (counting {gaps:.2}) play the draught at {open:.3}");
+    let (gaps, shut) = heard(&windowed("base:oak_shuttered_window_shut"), IVec3::new(0, 11, 0), under_thatch);
+    assert!(gaps == 0.0 && shut < 1e-3, "shuttered, the windows count {gaps:.2} and the draught plays at {shut:.3}");
 }
 
 /// A roof block muffles the rain once: thatch, tagged `shelter:sound` for the home's walls,
@@ -927,6 +940,143 @@ fn a_settlement_talks_by_day_comes_home_at_dusk_and_sleeps_at_night() {
     }
 }
 
+/// A timber home creaks as it settles at night, indoors only; after the rain the eaves drip
+/// under a roof until the ground dries, never while it still rains.
+#[test]
+fn a_home_settles_at_night_and_its_eaves_drip_after_rain() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap();
+    let played = |name: &str, set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "home", &["grassland", "temperate", "open"], set), 300.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count()
+    };
+    let home = [&INDOORS[..], &[("timber", 1.0), ("rain", 0.0)]].concat();
+    let at_night = [&home[..], &[("sun", -0.5)]].concat();
+    assert!(played("rafters", &at_night) > 0, "a timber home at night");
+    assert_eq!(played("rafters", &home), 0, "by day");
+    assert_eq!(played("rafters", &[("timber", 1.0), ("sun", -0.5)]), 0, "outdoors by a timber wall");
+    let after_rain = [("roof", 1.0), ("wetness", 0.9), ("raining", 0.0)];
+    assert!(played("eaves_drip", &after_rain) > 0, "under a roof after the rain");
+    assert_eq!(played("eaves_drip", &[("roof", 1.0), ("wetness", 0.9), ("raining", 1.0)]), 0, "while it rains");
+    assert_eq!(played("eaves_drip", &[("roof", 1.0), ("wetness", 0.0)]), 0, "the ground dry");
+    assert_eq!(played("eaves_drip", &[("wetness", 0.9)]), 0, "out in the open");
+}
+
+/// A village at work by day: the anvil ringing at the smithy, the mill wheel turning, logs
+/// split at the woodyard and pigs in the pens, each from its own building; the shrine's
+/// bell at dawn and dusk only; at night none of it. And a fire sat by now and then has a
+/// log settle in it.
+#[test]
+fn a_village_works_by_day_and_rings_its_bell_at_dusk() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let names = ["anvil", "mill_wheel", "chopping", "pen_grunt", "shrine_bell"];
+    let heard = |sun: f32, seconds: f32| {
+        let set = [("settlement", 10.0), ("settlementedge", 0.0), ("settlementpeople", 30.0), ("sun", sun)];
+        let (timeline, _) = run(&ambience, &scene(&ambience, "village", &["plains", "temperate"], &set), seconds);
+        names.map(|name| {
+            let at: Vec<_> = timeline.iter().filter_map(|(_, c)| match c { Cue::Sound { sound: s, at, .. } if *s == sound(name) => Some(*at), _ => None }).collect();
+            assert!(at.iter().all(|at| *at == Some(Vec3::new(12.0, 0.0, 0.0))), "{name} from its building: {at:?}");
+            (name, at.len())
+        })
+    };
+    let day = heard(0.8, 300.0);
+    assert!(day[..4].iter().all(|(_, n)| *n > 0) && day[4].1 == 0, "by day: {day:?}");
+    let dusk = heard(-0.1, 900.0);
+    assert!(dusk[4].1 > 0 && dusk[..4].iter().all(|(_, n)| *n == 0), "at dusk: {dusk:?}");
+    let night = heard(-0.8, 600.0);
+    assert!(night.iter().all(|(_, n)| *n == 0), "at night: {night:?}");
+    let settles = |fire: f32| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "hearth", &["plains"], &[("fire", fire)]), 300.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound("hearth_settle"))).count()
+    };
+    assert!(settles(1.0) > 0 && settles(0.0) == 0, "a log settles in a fire sat by");
+}
+
+/// Every recorded bed's files are there; one a mod mistyped is not, and fails the launch.
+#[test]
+fn recorded_beds_are_there() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    assert_eq!(base().check_recordings(&assets), Ok(()));
+    let source = r#"(beds: [(name: "hum", recording: ["h_1.ogg", "h_2.ogg", "h_3.ogg"], volume: 0.2)])"#;
+    let mistyped = Ambience::load(&[ContentFile { package: "mod".into(), name: FILE.into(), source: source.into() }]).unwrap();
+    assert!(mistyped.check_recordings(&assets).is_err());
+}
+
+/// Bees' blocks, a skep with its swarm or full of honey and a wild nest, are the hive the
+/// drone is heard by; an empty skep is not. Boards of every wood are a home's timber.
+#[test]
+fn hives_and_boards_are_heard_by_their_groups() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let groups = ambience.block_groups(&content.blocks);
+    let group = |name: &str| groups[content.blocks.id(name).unwrap_or_else(|| panic!("{name}")).0 as usize].map(|g| ambience.groups[g as usize].name.as_str());
+    for block in ["base:bee_skep", "base:honey_skep", "base:bee_nest"] {
+        assert_eq!(group(block), Some("hive"), "{block}");
+    }
+    assert_ne!(group("base:skep"), Some("hive"), "an empty skep");
+    let planks: Vec<_> = content.blocks.ids().filter(|&id| content.blocks.def(id).has_tag("planks")).collect();
+    assert!(planks.len() > 3);
+    for id in planks {
+        assert_eq!(groups[id.0 as usize].map(|g| ambience.groups[g as usize].name.as_str()), Some("timber"), "{}", content.blocks.def(id).name);
+    }
+}
+
+/// Caves by their rock and their depth: wet rock (under a moist climate) has its dripping
+/// air and drips, oftener deep and shut in, where a second tier joins the first; dry rock
+/// (under a desert) has still air and grit ticking down instead, nothing dripping; water
+/// seeping into a pool is heard in either.
+/// Bees drone by their hive on a warm day, and keep in at night, in the cold and while it
+/// rains.
+#[test]
+fn bees_hum_by_their_hive_on_a_warm_day() {
+    let ambience = base();
+    let bees = ambience.beds.iter().position(|b| b.name == "base:bees").unwrap();
+    let level = |set: &[(&str, f32)]| run(&ambience, &scene(&ambience, "garden", &["grassland", "temperate", "open"], set), 20.0).1[bees];
+    let by_the_hive = [("grass", 0.6), ("hive", 1.0), ("temperature", 18.0)];
+    assert!(level(&by_the_hive) > 0.8 * ambience.beds[bees].volume, "by a skep on a warm day");
+    assert!(level(&[("grass", 0.6), ("temperature", 18.0)]) < 1e-3, "no hive near");
+    for (weather, value) in [("sun", -0.5), ("temperature", 3.0), ("raining", 1.0)] {
+        let set: Vec<_> = by_the_hive.iter().copied().filter(|(axis, _)| *axis != weather).chain([(weather, value)]).collect();
+        assert!(level(&set) < 0.2 * ambience.beds[bees].volume, "{weather} {value}: the bees keep in");
+    }
+}
+
+#[test]
+fn caves_drip_by_their_rock_and_depth() {
+    let ambience = base();
+    let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("no bed {name}"));
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let (wet, dry, seep) = (bed("cave"), bed("dry_cave"), bed("cave_seep"));
+    let cave = |moisture: f32, depth: f32, reverb: f32, water: f32| {
+        let set = [("rock", 1.0), ("sky", 0.0), ("air", 0.3), ("reverb", reverb), ("depth", depth), ("moisture", moisture), ("water", water)];
+        scene(&ambience, "cave", &["mountain"], &set)
+    };
+    let heard = |scene: &Scene| {
+        let (timeline, levels) = run(&ambience, scene, 300.0);
+        let played = ["drip", "deep_drip", "far_drip", "grit"].map(|name| timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count());
+        (levels, played)
+    };
+    // Wet rock a dozen blocks down: its air and the first drips, not yet the deep ones.
+    let (levels, [drips, deep, _, grit]) = heard(&cave(1.4, 12.0, 0.3, 0.0));
+    assert!(levels[wet] > 0.8 * ambience.beds[wet].volume && levels[dry] < 1e-3, "wet rock's air {:.3}, dry rock's {:.3}", levels[wet], levels[dry]);
+    assert!(drips > 0 && deep == 0 && grit == 0, "shallow wet cave: {drips} drips, {deep} deep, {grit} grit");
+    // Deep and shut in: the deep tier joins, more drips in all.
+    let (_, [deeper, deep, far, _]) = heard(&cave(1.4, 40.0, 0.8, 0.0));
+    assert!(deep > 0 && far > 0 && deeper + deep > 2 * drips, "deep: {deeper} + {deep} drips against {drips} shallow ({far} far)");
+    // Dry rock, as deep: still air and grit, nothing dripping.
+    let (levels, [drips, deep, far, grit]) = heard(&cave(0.2, 40.0, 0.8, 0.0));
+    assert!(levels[dry] > 0.8 * ambience.beds[dry].volume && levels[wet] < 1e-3, "dry rock's air {:.3}, wet rock's {:.3}", levels[dry], levels[wet]);
+    assert!(drips + deep + far == 0 && grit > 0, "dry cave: {drips} + {deep} + {far} drips, {grit} grit");
+    // A pool seeping in, dry rock or wet; none without water.
+    for moisture in [0.2, 1.4] {
+        let (levels, _) = heard(&cave(moisture, 20.0, 0.5, 0.3));
+        assert!(levels[seep] > 0.5 * ambience.beds[seep].volume, "seep at moisture {moisture}: {:.3}", levels[seep]);
+    }
+    assert!(heard(&cave(1.4, 20.0, 0.5, 0.0)).0[seep] < 1e-3);
+}
+
 /// A survey still out when the player leaves a game is of the world left: its answer,
 /// coming back after, is dropped, not heard in the next world (a village's murmur where
 /// there is none), and the next game's first survey does not wait on it.
@@ -958,4 +1108,55 @@ fn recorded_beds_and_their_muffled_twins_start_together() {
     assert!(!super::beds_ready(&beds, |&clip| clip != 2), "a recording still loading");
     assert!(super::beds_ready(&beds, |_| true));
     assert!(super::beds_ready(&Vec::<Vec<u8>>::new(), |_| false), "no beds, nothing to wait on");
+}
+
+/// Leaving a game drops the surveys still out (the `leave` system, not only `Surveys`): an
+/// answer of the world left that comes back after is not taken in the next, and the next
+/// game's first survey goes out without waiting on it.
+#[test]
+fn leaving_drops_the_surveys_still_out() {
+    use bevy::ecs::system::RunSystemOnce;
+    use bevy::prelude::World;
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
+    let mut ambient = super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1);
+    ambient.surveys.out = true;
+    let mut world = World::new();
+    world.insert_resource(ambient);
+    world.insert_resource(super::Surroundings { started: 7, surveyed: 7, ..Default::default() });
+    world.run_system_once(super::leave).unwrap();
+    let mut ambient = world.resource_mut::<super::Ambient>();
+    assert!(!ambient.surveys.out, "the next game's first survey waits on one of the world left");
+    let old = super::Survey { number: 7, enclosure: Default::default(), place: Some(Default::default()) };
+    ambient.surveys.tx.send(old).unwrap();
+    assert!(ambient.surveys.answers().is_empty(), "survey 7, of the world left, is taken in the next");
+}
+
+/// The clips go to the mixer only once the recordings have loaded (`receive_clips`): with
+/// one still loading the beds wait, muffled twins and all.
+#[test]
+fn the_beds_wait_for_their_recordings() {
+    use bevy::asset::{AssetApp, AssetPlugin, Assets, Handle, uuid::Uuid};
+    use bevy::audio::AudioSource;
+    use bevy::ecs::system::RunSystemOnce;
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
+    let mut ambient = super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1);
+    let mut app = bevy::app::App::new();
+    app.add_plugins((bevy::app::TaskPoolPlugin::default(), AssetPlugin::default())).init_asset::<AudioSource>();
+    let clip = || AudioSource { bytes: std::sync::Arc::from(Vec::new()) };
+    let made = app.world_mut().resource_mut::<Assets<AudioSource>>().add(clip());
+    let recorded = Handle::<AudioSource>::Uuid(Uuid::from_u128(2), Default::default());
+    ambient.loading = Some(super::Clips { beds: vec![vec![made.clone()], vec![recorded.clone()]], muffled: vec![vec![], vec![made]], sounds: Vec::new() });
+    app.world_mut().insert_resource(ambient);
+    app.world_mut().run_system_once(super::receive_clips).unwrap();
+    assert!(app.world().resource::<super::Ambient>().clips.is_none(), "the beds play while a recording still loads");
+    app.world_mut().resource_mut::<Assets<AudioSource>>().insert(recorded.id(), clip()).unwrap();
+    app.world_mut().run_system_once(super::receive_clips).unwrap();
+    let ambient = app.world().resource::<super::Ambient>();
+    assert!(ambient.clips.is_some() && ambient.loading.is_none());
 }

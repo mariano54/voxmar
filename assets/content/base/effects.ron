@@ -115,6 +115,12 @@
         (name: "larder", kind: Buff, title: "Larder", description: "Meals heal a fifth more here and their good lasts half again as long.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("storage", 4), HomeHas("cooking", 1), HomeHas("table", 1), Any([HomeHas("hearth", 1), HomeHas("heat", 1)])])),
             replaces: ["pantry"], modifiers: (meal_heal: 1.2, meal_time: 1.5)),
+        // Soft furnishings, the Nomad's to the Farm age's: a rug underfoot and cloth hung on a
+        // wall (`drape`: a wall hanging) under the home's roof keep the draught off the floor
+        // and the walls.
+        (name: "soft_furnishings", kind: Buff, title: "Soft furnishings", description: "A rug underfoot and cloth hung on the wall keep the draught off: 1° warmer here.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("rug", 1), HomeHas("drape", 1)])),
+            replaces: [], modifiers: (warmth: 1.0)),
         // A corner by the bed, a Nomad's first comfort before any roof: a seat and two lights
         // beside it keep the night warmer, and sleeping there is a better rest (the sleeps
         // rules below). A herb nook, the Farm age's: bunches drying overhead and a jar or crate
@@ -125,8 +131,9 @@
         (name: "herb_nook", kind: Buff, title: "Herb nook", description: "Herbs drying overhead: you farm and brew as if a level higher here, and a meal's good lasts a tenth longer.", announce: true,
             when: Some(All([AtHome, HomeHas("drying", 2), HomeHas("storage", 1)])),
             replaces: [], boosts: [("farming", 1), ("alchemy", 1)], modifiers: (meal_time: 1.1)),
-        // A bright room, the Farm age's: two windows (`window`: a hide window, glass, any
-        // pane a package tags so) in the home's walls under its roof, light to work and rest by.
+        // A bright room, the Farm age's: two windows (`window`: a hide window, glass, a lattice
+        // window or an open shuttered one, any pane a package tags so) in the home's walls under
+        // its roof, light to work and rest by.
         (name: "bright_room", kind: Buff, title: "Bright room", description: "Daylight through two windows: you learn a twentieth more here, and heal a twentieth faster.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("window", 2)])),
             replaces: [], modifiers: (xp: 1.05, heal: 1.05)),

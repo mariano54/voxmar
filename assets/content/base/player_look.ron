@@ -1,0 +1,62 @@
+// How other players are drawn (client/src/figures.rs). A player is the same boxes as a
+// villager, skinned and lit as creatures are, in colours given by their name, so a friend
+// looks the same every time they come. They move as the server says, eased in: legs and arms
+// swing with the ground they cover, the head looks up and down with them, and what is in
+// their hand is held in their right fist. The game refuses a look whose boxes name a colour
+// it does not have, have no head, no legs or no right arm, or whose numbers are out of
+// bounds. A later package's file replaces an earlier one's whole.
+#![enable(implicit_some)]
+(
+    body: (
+        size: (0.6, 1.8),
+        model: Boxes([
+            (role: Leg, size: (0.23, 0.76, 0.24), at: (-0.125, 0.38, 0), pivot: (-0.125, 0.76, 0), colour: 1, swing: Leg(phase: 0.0, hind: false)),
+            (role: Leg, size: (0.23, 0.76, 0.24), at: (0.125, 0.38, 0), pivot: (0.125, 0.76, 0), colour: 1, swing: Leg(phase: 0.5, hind: false)),
+            (role: Torso, size: (0.5, 0.7, 0.3), at: (0, 1.07, 0), colour: 0),
+            (role: Torso, size: (0.52, 0.07, 0.32), at: (0, 0.832, 0), colour: 2),
+            (role: Arm, size: (0.13, 0.488, 0.186), at: (-0.315, 1.12, 0), pivot: (-0.315, 1.364, 0), colour: 0, swing: Leg(phase: 0.5, hind: false)),
+            (role: Neck, size: (0.12, 0.172, 0.167), at: (-0.315, 0.79, 0), pivot: (-0.315, 1.364, 0), colour: 0, swing: Leg(phase: 0.5, hind: false)),
+            (role: Arm, size: (0.13, 0.488, 0.186), at: (0.315, 1.12, 0), pivot: (0.315, 1.364, 0), colour: 0, swing: Leg(phase: 0.0, hind: false)),
+            (role: Neck, size: (0.12, 0.172, 0.167), at: (0.315, 0.79, 0), pivot: (0.315, 1.364, 0), colour: 0, swing: Leg(phase: 0.0, hind: false)),
+            (role: Head, size: (0.42, 0.42, 0.42), at: (0, 1.61, -0.017), pivot: (0, 1.42, 0), colour: 0, swing: Head),
+            (role: Head, size: (0.071, 0.109, 0.071), at: (0, 1.555, -0.239), pivot: (0, 1.42, 0), colour: 0, swing: Head),
+            (role: Crest, size: (0.46, 0.126, 0.46), at: (0, 1.772, -0.017), pivot: (0, 1.42, 0), colour: 3, swing: Head),
+            (role: Crest, size: (0.46, 0.311, 0.109), at: (0, 1.665, 0.151), pivot: (0, 1.42, 0), colour: 3, swing: Head),
+            (role: Crest, size: (0.042, 0.143, 0.26), at: (-0.215, 1.631, 0.025), pivot: (0, 1.42, 0), colour: 3, swing: Head),
+            (role: Crest, size: (0.042, 0.143, 0.26), at: (0.215, 1.631, 0.025), pivot: (0, 1.42, 0), colour: 3, swing: Head),
+        ]),
+        // Shirt, trousers, belt, hair; each player's own replace them.
+        colours: [(84, 96, 122), (72, 66, 60), (60, 48, 40), (84, 60, 42)],
+        skin: (eyes: Front, eye: 0.065, iris: (70, 52, 40), fur: 0.03, belly: 0.0, feet: (58, 46, 38)),
+    ),
+    // Each player is given one of each by their name: skin (face and hands), shirt,
+    // trousers and hair. Shirts are bolder than villagers' homespun, so a player stands out
+    // among the folk of a village.
+    skins: [(240, 210, 184), (226, 186, 150), (204, 160, 118), (170, 118, 82), (126, 84, 58), (90, 60, 42)],
+    shirts: [(64, 92, 160), (150, 52, 46), (52, 120, 72), (176, 132, 40), (110, 64, 140), (40, 120, 128), (196, 196, 188)],
+    trousers: [(62, 68, 84), (72, 66, 60), (92, 74, 56), (48, 48, 52), (84, 88, 70)],
+    hair: [(38, 30, 26), (84, 60, 42), (114, 74, 46), (198, 162, 100), (148, 68, 40), (150, 146, 140)],
+    // How closely the body shown follows where the server says they are, and their turn
+    // toward where they face (each a share a second, as creatures follow, 14).
+    follow: 12.0,
+    turn: 14.0,
+    // Ground a whole stride covers (blocks: a step with each foot), how far legs and arms
+    // swing at full stride (degrees), and the pace (blocks a second) at which they do: a
+    // walk swings them part way.
+    stride: 1.9,
+    swing: 38.0,
+    full_pace: 4.3,
+    // The head looks up and down with them, so much of their pitch, at most this far
+    // (degrees).
+    look: 0.8,
+    look_most: 55.0,
+    // An arm with something in it is held forward (degrees) and swings this share of the
+    // other arm's swing.
+    carry: 18.0,
+    carry_swing: 0.35,
+    // What is in their hand: where its middle sits from their right shoulder, in the arm's
+    // frame (blocks; the arm hangs along -y, its front -z), how it is turned there (degrees
+    // about x, y and z, in that order), and how wide it is drawn (blocks): flat items, and
+    // blocks.
+    hand: (at: (0.0, -0.42, -0.2), turn: (0.0, 90.0, 0.0), flat: 0.6, block: 0.28),
+)

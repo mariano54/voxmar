@@ -417,6 +417,14 @@ steps! {
     /// reach of what is held (within touch), is clicked: the hand swings at the air with a
     /// whoosh (`Fighting::whiff`) and no blow is asked of the server.
     ShotCancel,
+    /// Another player, a stand-in no client plays (`RemotePlayers::puppet`), drawn as a
+    /// person (`figures`): painted with every box of `player_look.ron`, they walk past at
+    /// most of the pace their arms and legs swing full at, their legs swing with the ground
+    /// they cover and the body shown trails them no further than its easing allows; stopped,
+    /// it settles where they stand, and what is in their hand (a weapon, found by its class)
+    /// is held in their right fist, the arm held forward as `carry` says. Each frame a fixed
+    /// step (`Figures::step`). Shot with them facing the eye.
+    Others,
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
@@ -561,9 +569,9 @@ steps! {
     /// Every journal page, in English and Japanese: no text reaches past the element it
     /// sits in. Each page has the time a step has, to be drawn and read.
     FitJournal,
-    /// The screens with keys under them, and the recipe viewer on each of `FIT_LOOKUPS`, in a
+    /// The screens under the bar of keys, and the recipe viewer on each of `FIT_LOOKUPS`, in a
     /// window of `SMALL` (the interface at 75%), in English and Japanese: no text reaches past
-    /// the element it sits in, and the keys under each screen are clear of it and of the HUD
+    /// the element it sits in, and the bar of keys is clear of each screen and of the HUD
     /// along the bottom.
     FitSmall,
     /// Leaving the world for the title screen.
@@ -842,7 +850,7 @@ struct Gate {
     cover_checked: bool,
     /// Texts found not to fit, each once per language: what, and where it was first seen.
     spills: Vec<(String, String)>,
-    /// What the keys under a screen ran into on the views of a text-fit step, each once.
+    /// What the bar of the screens' keys ran into on the views of a text-fit step, each once.
     keys_blocked: Vec<String>,
     /// Views of the text-fit tour on which a tool's tooltip showed, whole, on screen.
     fit_tips: usize,
@@ -983,6 +991,8 @@ struct Gate {
     markers_before: u32,
     /// Before the RangedFeel step's shot: shots loosed, trail specks and arrivals.
     shots_before: (u32, u32, u32),
+    /// The Others step's stand-in: the furthest its legs swung (radians) as it walked.
+    other_swung: f32,
     /// Before the ShotCancel step's click out of reach: swings at the air and swings sent;
     /// whether the hand has swung since.
     whiff_from: (u32, u32, bool),
@@ -1176,6 +1186,7 @@ impl Gate {
             puppet: (Vec3::ZERO, 0, false),
             markers_before: 0,
             shots_before: (0, 0, 0),
+            other_swung: 0.0,
             whiff_from: (0, 0, false),
         }
     }
@@ -1707,8 +1718,9 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Party => 60.0,
         // The effects are judged once a second by the server, and a rest is a sleep away.
         Step::Home => 75.0,
-        // Four answers waited on (Hearthside, Snug, the evening in, the dooryard), each up
-        // to `WALLS_WAIT` server seconds only while it does not come.
+        // Four answers waited on (Hearthside, Snug with its rooms, the curtain drawn back with
+        // the evening in, the dooryard), each up to `WALLS_WAIT` server seconds only while it
+        // does not come.
         Step::HomeWalls => STEP_LIMIT + 10.0,
         // A smoulder waited on up to fire.ron's catching time and 4 s (a panel daubed in
         // that wait); then the catch and the burning out, up to their times and 4 s each from
@@ -2048,6 +2060,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::RangedFeel => ranged_feel(world, gate),
         Step::FirstFights => first_fights(world, gate),
         Step::ShotCancel => shot_cancel(world, gate),
+        Step::Others => others(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::HomeMotif => home_motif(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
@@ -6822,10 +6835,11 @@ const WALLS_WAIT: f32 = 8.0;
 /// Walls make the home. About the camp the Home step left (the bag home, a torch beside it),
 /// a hearthstone and a second torch, and a plank roof over the room: open to the outside it
 /// is Hearthside, and `/home` names the walls it lacks; walled in with planks (sound), two
-/// of them hide windows, it turns Snug and is a bright room. Then, set to midnight (`/time`,
-/// no waiting for dark), indoors by the hearth it is an evening in, and noon again after;
-/// with the roof off, an awning, a bench and a hay bale set out about it, a dooryard. All of
-/// it goes again after, the camp left for the way home.
+/// of them hide windows, a rug and a hanging within, it turns Snug, a bright room and soft
+/// furnishings. Then a curtain hung inside a pane is drawn back by a right click; set to
+/// midnight (`/time`, no waiting for dark), indoors by the hearth it is an evening in, and
+/// noon again after; with the roof off, an awning, a bench and a hay bale set out about it, a
+/// dooryard. All of it goes again after, the camp left for the way home.
 fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let waited = gate.server_in_phase();
     let Some(bag) = world.resource::<LocalPlayer>().vitals.home else {
@@ -6838,6 +6852,10 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
     let (low, high) = (bag + IVec3::new(-5, 0, -3), bag + IVec3::new(3, 3, 3));
     let (hearth, light) = (bag + IVec3::new(0, 0, 2), bag + IVec3::new(-3, 0, -2));
     let panes = [IVec3::new(bag.x - 1, bag.y + 1, low.z), IVec3::new(bag.x + 1, bag.y + 1, low.z)];
+    // A rug by the hearth and a hanging inside the west wall: soft furnishings.
+    let soft = [(bag + IVec3::new(-1, 0, 1), "red_rug"), (bag + IVec3::new(-4, 1, 0), "red_wall_hanging")];
+    // A curtain hung inside the first pane, drawn across, then drawn back by a right click.
+    let curtain = panes[0] + IVec3::Z;
     // The yard, set out in the room once its roof is off: an awning over the stand's corner,
     // a bench and a hay bale under the open sky.
     let yard = [(bag + IVec3::new(-2, 2, -2), "red_awning"), (bag + IVec3::new(1, 0, -2), "oak_bench"), (bag + IVec3::new(2, 0, 1), "hay_bale")];
@@ -6856,11 +6874,20 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
         let net = world.resource::<Net>();
         walls(net, "air");
         roof(net, "air");
-        for at in [hearth, light].into_iter().chain(yard.map(|(at, _)| at)) {
+        for at in [hearth, light, curtain].into_iter().chain(soft.map(|(at, _)| at)).chain(yard.map(|(at, _)| at)) {
             net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
         }
         net.command("effect clear");
         gate.next(Step::WayHome, now);
+    };
+    // Midnight, and the curtain hung drawn across the pane with a right click to draw it
+    // back: the server swaps it, as a door.
+    let to_midnight = |world: &mut World| {
+        world.resource::<Net>().command("time set midnight");
+        world.resource::<Net>().command(&format!("setblock {} {} {} red_curtain", curtain.x, curtain.y, curtain.z));
+        aim_at(world, curtain.as_vec3() + Vec3::splat(0.5));
+        let actions = world.resource::<crate::Actions>().0.clone();
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: curtain, face: voxmar_engine::coords::Face::PosZ });
     };
     let has = |world: &World, name: &str| {
         let (player, launch) = (world.resource::<LocalPlayer>(), world.resource::<Launch>());
@@ -6897,38 +6924,50 @@ fn home_walls(world: &mut World, gate: &mut Gate, now: f32) {
                 for pane in panes {
                     net.command(&format!("setblock {} {} {} hide_window", pane.x, pane.y, pane.z));
                 }
+                for (at, block) in soft {
+                    net.command(&format!("setblock {} {} {} {block}", at.x, at.y, at.z));
+                }
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", Err(format!("{waited:.1} server s on, roofed but open to the outside: Hearthside {hearthside}, Snug {snug} (want Hearthside alone), /home asked for \"{wanted}\" walls {asked}; lines since: {lines:?}")));
                 leave(world, gate);
             }
         }
-        // Walled in with planks, two of them hide windows: Snug, and a bright room.
+        // Walled in with planks, two of them hide windows, a rug and a hanging within: Snug, a
+        // bright room and soft furnishings.
         2 => {
-            let (snug, bright) = (has(world, "base:snug"), has(world, "base:bright_room"));
-            if snug && bright {
+            let (snug, bright, cushioned) = (has(world, "base:snug"), has(world, "base:bright_room"), has(world, "base:soft_furnishings"));
+            if snug && bright && cushioned {
                 gate.check("home: walls", Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()));
                 gate.check("home: bright room", Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()));
-                world.resource::<Net>().command("time set midnight");
+                gate.check("home: soft furnishings", Ok("a rug and a wall hanging in the walled room showed the Soft furnishings chip".into()));
+                to_midnight(world);
                 gate.advance(now);
             } else if gate.waited_out(WALLS_WAIT) {
                 gate.check("home: walls", if snug { Ok("roofed but open, the camp with its hearth stayed Hearthside and /home asked for walls; walled in with planks it turned Snug".into()) } else { Err(format!("{waited:.1} server s after walling the room in with planks ({low} to {high}), no Snug: Hearthside {}", has(world, "base:hearthside"))) });
-                gate.check("home: bright room", Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")));
-                leave(world, gate);
+                gate.check("home: bright room", if bright { Ok("two hide windows in the planked walls under the roof showed the Bright room chip".into()) } else { Err(format!("{waited:.1} server s after two hide windows at {panes:?} in the walled room: Bright room chip {bright}")) });
+                gate.check("home: soft furnishings", if cushioned { Ok("a rug and a wall hanging in the walled room showed the Soft furnishings chip".into()) } else { Err(format!("{waited:.1} server s after a rug and a hanging at {soft:?} in the walled room: Soft furnishings chip {cushioned}")) });
+                if snug {
+                    // The rest still judged: on to the curtain, midnight and the evening in.
+                    to_midnight(world);
+                    gate.advance(now);
+                } else {
+                    leave(world, gate);
+                }
             }
         }
-        // At midnight, indoors at home by the hearth: an evening in, its chip, and its line
-        // (told once a session, so seen at any point in the run). Then noon, the roof off, and
-        // the yard set out.
+        // The curtain drawn back, as the server turned it, and at midnight, indoors at home
+        // by the hearth, an evening in, its chip, and its line (told once a session, so seen
+        // at any point in the run): one wait for both, so the step keeps its headroom. Then
+        // noon, the roof off, and the yard set out.
         3 => {
+            let client = world.resource::<ClientWorld>();
+            let shown = client.block(curtain).map(|b| client.registry.def(b).name.clone());
+            let drawn = shown.as_deref() == Some("base:red_curtain_open");
             let (evening, told) = (has(world, "base:evening_in"), gate.evening_told);
-            let done = evening && told;
-            if done {
-                gate.check("home: evening in", Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()));
-            } else if gate.waited_out(WALLS_WAIT) {
-                gate.check("home: evening in", Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")));
-            }
-            if done || gate.waited_out(WALLS_WAIT) {
+            if (drawn && evening && told) || gate.waited_out(WALLS_WAIT) {
+                gate.check("home: curtain", if drawn { Ok("a curtain hung drawn across a window inside the room was drawn back by a right click, as the server turned it".into()) } else { Err(format!("{waited:.1} server s after hanging a curtain at {curtain} and a right click on it, the client shows {shown:?}")) });
+                gate.check("home: evening in", if evening && told { Ok("set to midnight, indoors at home by the hearth showed the Evening in chip, and the chat has named it".into()) } else { Err(format!("{waited:.1} server s after /time set midnight in the walled room by the hearth: Evening in chip {evening}, line told this run {told}")) });
                 let net = world.resource::<Net>();
                 net.command("time set noon");
                 roof(net, "air");
@@ -8768,8 +8807,8 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 return;
             };
             // The book as it stands with a reward waiting: the web filling most of the
-            // window, the picked quest's page in the sidebar at the right with its Claim
-            // button and its rewards.
+            // window, the picked quest's card over its right side with its Claim button and
+            // its rewards.
             if in_phase < 0.5 || gate.shot(world, "quests-claim").is_none() {
                 return;
             }
@@ -9306,9 +9345,9 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         if !menus {
             let blocked = std::mem::take(&mut gate.keys_blocked);
             let result = if blocked.is_empty() {
-                Ok(format!("the keys under every screen are clear of it and of the HUD on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
+                Ok(format!("the bar of keys is clear of every screen and of the HUD on {} views in {}", views.len(), FIT_LANGUAGES.join(" and ")))
             } else {
-                Err(format!("{} times the keys under a screen run into something: {}", blocked.len(), blocked.join("; ")))
+                Err(format!("{} times the bar of keys runs into something: {}", blocked.len(), blocked.join("; ")))
             };
             gate.check(if journal { "keys clear: journal" } else if small { "keys clear: 1280x720" } else { "keys clear" }, result);
         }
@@ -9420,20 +9459,21 @@ fn retarget(world: &mut World, gate: &mut Gate, size: UVec2) {
     state.apply(world);
 }
 
-/// What the keys under the screen shown run into: a panel of the screen beside them, or
-/// anything drawn along the bottom by the HUD, which stays in sight with a screen open.
+/// What the bar of the screens' keys runs into: a panel of the screen shown, or anything
+/// drawn along the bottom by the HUD, which stays in sight with a screen open.
 fn keys_blocked(world: &mut World) -> Vec<String> {
-    use crate::hud::screens::HotkeyBar;
+    use crate::hud::screens::{HotkeyBar, ScreenRoot};
     let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());
     let meets = |a: Rect, b: Rect| {
         let both = a.intersect(b);
         both.width() > 0.5 && both.height() > 0.5
     };
-    let bars: Vec<(Entity, Rect, Entity)> = world
-        .query_filtered::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, &ChildOf), With<HotkeyBar>>()
+    let roots: Vec<Entity> = world.query_filtered::<(Entity, &InheritedVisibility), With<ScreenRoot>>().iter(world).filter(|(_, shown)| shown.get()).map(|(root, _)| root).collect();
+    let bars: Vec<(Entity, Rect)> = world
+        .query_filtered::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<HotkeyBar>>()
         .iter(world)
-        .filter(|(_, node, _, shown, _)| shown.get() && node.size().min_element() > 0.0)
-        .map(|(bar, node, at, _, root)| (bar, rect(node, at), root.parent()))
+        .filter(|(_, node, _, shown)| shown.get() && node.size().min_element() > 0.0)
+        .map(|(bar, node, at, _)| (bar, rect(node, at)))
         .collect();
     let Some(bottom) = world.query_filtered::<Entity, With<crate::hud::Bottom>>().iter(world).next() else { return Vec::new() };
     // Everything drawn of the HUD along the bottom: its pictures and words, wherever shown.
@@ -9455,20 +9495,21 @@ fn keys_blocked(world: &mut World) -> Vec<String> {
         }
     };
     let mut found = Vec::new();
-    for (bar, keys, root) in bars {
-        let panels: Vec<Entity> = world.get::<Children>(root).map_or_else(Vec::new, |children| children.iter().filter(|&child| child != bar).collect());
+    for (_, keys) in bars {
+        let mut panels: Vec<Entity> = roots.iter().flat_map(|&root| world.get::<Children>(root).map_or_else(Vec::new, |children| children.iter().collect())).collect();
+        panels.extend(world.query_filtered::<Entity, With<crate::hud::screens::UnderBar>>().iter(world));
         for panel in panels {
             let (Some(node), Some(at)) = (world.get::<ComputedNode>(panel), world.get::<bevy::ui::UiGlobalTransform>(panel)) else { continue };
             let shown = world.get::<InheritedVisibility>(panel).is_some_and(|v| v.get());
             if shown && node.size().min_element() > 0.0 && meets(keys, rect(node, at)) {
-                found.push("the keys run into the screen's panel".to_owned());
+                found.push("the bar of keys runs into the screen's panel".to_owned());
             }
         }
         for (entity, at, words) in &hud {
             if under(world, *entity, bottom) && meets(keys, *at) {
                 found.push(match words {
-                    Some(words) => format!("the keys run into {words:?} along the bottom"),
-                    None => "the keys run into a picture along the bottom".to_owned(),
+                    Some(words) => format!("the bar of keys runs into {words:?} along the bottom"),
+                    None => "the bar of keys runs into a picture along the bottom".to_owned(),
                 });
             }
         }
@@ -9479,7 +9520,7 @@ fn keys_blocked(world: &mut World) -> Vec<String> {
 }
 
 /// What is wrong with the tooltip [`fit_tool`] shows: not showing or past the screen's edge,
-/// then over the keys under the screen.
+/// then over the bar of the screens' keys.
 fn tip_wrong(world: &mut World) -> (Vec<String>, Vec<String>) {
     use crate::hud::screens::HotkeyBar;
     let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());
@@ -10446,10 +10487,11 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 }
 
 /// The building pieces the pieces step sets (blocks_building.ron), in a facing or two.
-const PIECES: [&str; 25] = [
+const PIECES: [&str; 28] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
-    "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing", "thatch_corner_east", "birch_shingles_inner_corner",
+    "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing", "thatch_corner_east", "birch_shingles_inner_corner", "oak_fence",
+    "birch_fence_corner_east", "dark_oak_fence_gate",
 ];
 /// How many pieces the player judges from one spot before the middle one: three, so the
 /// crosshair turned to a piece beside it reaches it before crossing a neighbour.
@@ -15057,7 +15099,7 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
     let launch = world.resource::<Launch>();
     let (Some(species), Some(shot)) = (launch.content.creatures.find(PUPPET_SPECIES), world.resource::<crate::fight_fx::FightLook>().shots.get(MARK_CLASS).cloned()) else {
         gate.check("shot cancel", Err(format!("no {PUPPET_SPECIES} in the content, or no shot for the {MARK_CLASS}")));
-        gate.next(Step::Cook, now);
+        gate.next(Step::Others, now);
         return;
     };
     let (health, (width, height)) = (launch.content.creatures.get(species).def.health, launch.content.creatures.get(species).def.body.size);
@@ -15092,7 +15134,7 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
         creatures.receive(vec![], vec![voxmar_protocol::CreatureGone { id: SPARED, died: false }]);
         (creatures.watch, creatures.watch_step) = (None, None);
         world.resource_mut::<Shots>().step = None;
-        gate.next(Step::Cook, now);
+        gate.next(Step::Others, now);
     };
     let deer = |position: Vec3| voxmar_protocol::CreatureView {
         id: SPARED,
@@ -15268,6 +15310,137 @@ fn shot_cancel(world: &mut World, gate: &mut Gate) {
             gate.check("whiff", result);
             done(world, gate, now);
         }
+    }
+}
+
+/// The Others step's stand-in player, an id no client is given; frames it walks; and frames
+/// each of its stages may take.
+const OTHER: voxmar_protocol::PlayerId = u32::MAX - 3;
+const OTHER_WALK: u32 = 60;
+const OTHER_FRAMES: u32 = 240;
+/// The share of the pace their limbs swing full at that the stand-in walks.
+const OTHER_PACE: f32 = 0.7;
+/// How far the stand-in looks up (radians; down, below 0).
+const OTHER_PITCH: f32 = -0.2;
+
+/// The Others step (see [`Step::Others`]).
+fn others(world: &mut World, gate: &mut Gate) {
+    use crate::figures::{Figures, PlayerLook};
+    use crate::net::RemotePlayers;
+    let now = world.resource::<Time>().elapsed_secs();
+    let look = world.resource::<PlayerLook>().clone();
+    let launch = world.resource::<Launch>();
+    // A weapon: the first item wielded as another class than the bare fist.
+    let combat = &launch.content.combat;
+    let fists = combat.wielded(None, |_| 1);
+    let weapon = launch.content.blocks.ids().find(|&id| combat.wielded(Some(id), |_| 99).class != fists.class);
+    let Some(weapon) = weapon else {
+        gate.check("others", Err("no item is wielded as a weapon".into()));
+        gate.next(Step::Cook, now);
+        return;
+    };
+    let start = gate.feet.as_vec3() + Vec3::new(-1.5, 0.0, 6.0);
+    let pace = look.full_pace * OTHER_PACE;
+    // Facing the eye, so its front and its right fist show.
+    let view = |at: Vec3| voxmar_protocol::PlayerView { id: OTHER, name: "Gate".into(), position: at, yaw: 0.0, pitch: OTHER_PITCH, held: Some(weapon) };
+    let walked = |frames: u32| start + Vec3::X * pace * PUPPET_STEP * frames as f32;
+    let done = |world: &mut World, gate: &mut Gate, result: Result<String, String>| {
+        gate.check("others", result);
+        world.resource_mut::<RemotePlayers>().forget(OTHER);
+        world.resource_mut::<Figures>().step = None;
+        gate.next(Step::Cook, now);
+    };
+    let frames = gate.puppet.1;
+    let read = world.resource::<Figures>().read(OTHER);
+    match gate.phase {
+        0 => {
+            aim_at(world, walked(OTHER_WALK) + Vec3::Y * 1.2);
+            world.resource_mut::<RemotePlayers>().puppet(view(start));
+            world.resource_mut::<Figures>().step = Some(PUPPET_STEP);
+            (gate.puppet.1, gate.other_swung) = (0, 0.0);
+            gate.advance(now);
+        }
+        // Built and painted, with every box.
+        1 => {
+            gate.puppet.1 = frames + 1;
+            let boxes = look.parts().len();
+            match read {
+                Some(read) if read.painted && read.joints == boxes => {
+                    gate.puppet.1 = 0;
+                    gate.advance(now);
+                }
+                _ if frames >= OTHER_FRAMES => done(world, gate, Err(format!("the stand-in was not drawn painted with its {boxes} boxes in {OTHER_FRAMES} frames: {read:?}"))),
+                _ => {}
+            }
+        }
+        // Walking past: its legs swing, and the body shown trails it no further than easing
+        // at `follow` a second allows at its pace.
+        2 => {
+            gate.puppet.1 = frames + 1;
+            if let Some(read) = read {
+                gate.other_swung = gate.other_swung.max(read.leg.abs());
+            }
+            if frames < OTHER_WALK {
+                world.resource_mut::<RemotePlayers>().puppet(view(walked(frames + 1)));
+                return;
+            }
+            let Some(read) = read else { return done(world, gate, Err("the stand-in was gone as it walked".into())) };
+            let lag = read.position.distance(walked(OTHER_WALK));
+            let most_lag = pace / look.follow * 1.3 + 0.05;
+            let least_swing = look.swing.to_radians() * OTHER_PACE * 0.6;
+            if lag > most_lag || gate.other_swung < least_swing {
+                return done(world, gate, Err(format!("walking {pace:.2} blocks a second, the body shown trailed {lag:.2} blocks ({most_lag:.2} at most) and its legs swung {:.2} radians at most ({least_swing:.2} wanted)", gate.other_swung)));
+            }
+            info!("gate: others: walking {pace:.2} blocks a second the body trailed {lag:.2} blocks and its legs swung {:.2} radians", gate.other_swung);
+            gate.puppet.1 = 0;
+            gate.advance(now);
+        }
+        // Stopped: it settles where they stand, legs hanging, the weapon in its right fist.
+        3 => {
+            gate.puppet.1 = frames + 1;
+            let at = walked(OTHER_WALK);
+            let Some(read) = read else { return done(world, gate, Err("the stand-in was gone as it stopped".into())) };
+            let settled = read.position.distance(at) < 0.02 && read.leg.abs() < 0.05;
+            if !settled {
+                if frames >= OTHER_FRAMES {
+                    done(world, gate, Err(format!("stopped at {at:.2}, the body shown was at {:.2} with its legs swung {:.2} radians {OTHER_FRAMES} frames on", read.position, read.leg)));
+                }
+                return;
+            }
+            let shoulder = look.parts().iter().find(|p| p.role == voxmar_engine::creature::Role::Arm && p.pivot.x > 0.0).map(|p| p.pivot).unwrap_or_default();
+            let shoulder = read.position + Quat::from_rotation_y(read.yaw) * shoulder;
+            let reach = Vec3::new(look.hand.at.0, look.hand.at.1, look.hand.at.2).length() + 0.05;
+            let drawn = world.resource::<crate::render::items::ItemModels>().0.iter().any(|m| m.posed.is_some() && read.held_at.is_some_and(|h| m.center.distance(h) < 1e-3));
+            let carried = look.carry.to_radians();
+            // Looking down as told (`OTHER_PITCH`): the head tilted `look` of it.
+            let tilt = (OTHER_PITCH.to_degrees() * look.look).clamp(-look.look_most, look.look_most).to_radians();
+            let result = match read.held_at {
+                _ if (read.arm - carried).abs() > 0.05 => Err(format!("the arm holding the weapon was swung {:.2} radians standing, {carried:.2} (`carry`) wanted", read.arm)),
+                _ if (read.head - tilt).abs() > 0.02 => Err(format!("told they look {OTHER_PITCH:.2} radians up, its head was tilted {:.2} radians, {tilt:.2} (`look`) wanted", read.head)),
+                Some(held) if held.distance(shoulder) <= reach && drawn => Ok(format!(
+                    "painted with its {} boxes, walking {pace:.2} blocks a second it trailed by the easing and its legs swung {:.2} radians; stopped, it settled in {frames} frames with the weapon {:.2} blocks from its right shoulder and its head tilted {:.2} radians as it looks",
+                    read.joints,
+                    gate.other_swung,
+                    held.distance(shoulder),
+                    read.head
+                )),
+                Some(held) => Err(format!("the weapon was drawn {} at {held:.2}, {:.2} blocks from the right shoulder ({reach:.2} at most)", if drawn { "held" } else { "not" }, held.distance(shoulder))),
+                None => Err("nothing was drawn in the stand-in's hand".into()),
+            };
+            if result.is_err() {
+                return done(world, gate, result);
+            }
+            gate.check("others", result);
+            gate.advance(now);
+        }
+        4 => {
+            if gate.shot(world, "other-player").is_some() {
+                world.resource_mut::<RemotePlayers>().forget(OTHER);
+                world.resource_mut::<Figures>().step = None;
+                gate.next(Step::Cook, now);
+            }
+        }
+        _ => {}
     }
 }
 

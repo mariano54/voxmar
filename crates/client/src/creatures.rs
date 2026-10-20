@@ -106,7 +106,7 @@ fn heart_image() -> Image {
 }
 
 /// One clear texel of skin, worn while the real one is painted.
-fn blank_skin() -> Image {
+pub(crate) fn blank_skin() -> Image {
     Image::new(Extent3d { width: 1, height: 1, depth_or_array_layers: 1 }, TextureDimension::D3, vec![0; 4], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::RENDER_WORLD)
 }
 
@@ -128,7 +128,7 @@ const SPAWNS: usize = 3;
 const DRAWN_WITHIN: f32 = 96.0;
 /// Steps a creature's light is rounded to, so the slow change of daylight rewrites its
 /// material now and then rather than every frame.
-const LIGHT_STEPS: f32 = 128.0;
+pub(crate) const LIGHT_STEPS: f32 = 128.0;
 
 pub struct CreaturesPlugin;
 
@@ -185,13 +185,13 @@ impl MaterialExtension for CreatureSkin {
 }
 
 /// A species' body: its mesh, weighted to one joint per part, and its shape for painting.
-struct SpeciesBody {
-    mesh: Handle<Mesh>,
-    binds: Handle<SkinnedMeshInverseBindposes>,
+pub(crate) struct SpeciesBody {
+    pub(crate) mesh: Handle<Mesh>,
+    pub(crate) binds: Handle<SkinnedMeshInverseBindposes>,
     shape: std::sync::Arc<Shape>,
     /// The skin's volume: its corner and size in texels.
-    origin: Vec3,
-    dims: [u32; 3],
+    pub(crate) origin: Vec3,
+    pub(crate) dims: [u32; 3],
 }
 
 /// A boss's wind-up begun: which creature, its blow's name (`rootmother.grasp`, or its
@@ -807,7 +807,7 @@ fn body_mesh(body: &BodyMesh) -> Mesh {
 }
 
 /// Builds a species' body from its parts.
-fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<SkinnedMeshInverseBindposes>) -> SpeciesBody {
+pub(crate) fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mesh>, binds: &mut Assets<SkinnedMeshInverseBindposes>) -> SpeciesBody {
     let anatomy = creature::anatomy::of(model, parts);
     let body = volume::build(parts, anatomy.as_ref());
     let shape = std::sync::Arc::new(Shape::new(parts, anatomy.as_ref()));
@@ -821,7 +821,7 @@ fn species_body(model: &creature::Model, parts: &[Part], meshes: &mut Assets<Mes
 
 /// Paints an individual's skin through its species' body volume, off the main thread, so
 /// a herd coming into view never holds a frame: the body shows once its skin is ready.
-fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32, inspect: bool) -> Task<Image> {
+pub(crate) fn paint_skin(def: creature::BodyDef, parts: Vec<Part>, body: &SpeciesBody, seed: u32, inspect: bool) -> Task<Image> {
     let (shape, origin, dims) = (body.shape.clone(), body.origin, body.dims);
     AsyncComputeTaskPool::get().spawn(async move {
         let shell = shape.cell * 0.75 + 1.5 / skin::TEXELS;
