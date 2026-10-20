@@ -8,7 +8,7 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use glam::{IVec3, Vec3};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use super::motion::{SAFE_DROP, Surroundings};
 
@@ -69,46 +69,40 @@ impl Walker {
 /// for open.
 pub const OPEN_FLOOR: usize = 64;
 
+/// What a fill out of a drop learnt of each square it reached: the highest square it
+/// reached from there and how many (capped past `OPEN_FLOOR`). A walker goes up and down
+/// alike there (no further than it climbs), so every square a fill reached reaches the
+/// same, and a later fill from any of them is answered at once.
+type Outs = std::cell::RefCell<FxHashMap<IVec3, (i32, usize)>>;
+
 /// Whether a walker come down to the square with corner `from` gets back up to `top` (the
 /// level it came down from) or out onto open ground: a fill over the squares it can go to
 /// from there, going down no further than it climbs, reaching a square at `top` or above, or
 /// more than `OPEN_FLOOR` of them. Down into a pit it would never get out of, a walker does
 /// not go of its own accord.
 pub fn way_out(world: &impl Surroundings, walker: &Walker, from: IVec3, top: i32) -> bool {
-    let looker = Looker { deep: false, ..Looker::new(world, Walker { drop: walker.climb(), ..*walker }, None) };
-    let mut seen = FxHashSet::from_iter([from]);
-    let mut queue = vec![from];
-    while let Some(cell) = queue.pop() {
-        if cell.y >= top || seen.len() > OPEN_FLOOR {
-            return true;
-        }
-        for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
-            if let Some(next) = looker.step(cell, dx, dz)
-                && seen.insert(next)
-            {
-                queue.push(next);
-            }
-        }
-    }
-    false
+    Looker::new(world, *walker, None).way_out(from, top)
 }
 
 /// What a search has learnt of one cell, as bits: `OPEN_KNOWN` and `OPEN` (the column from
 /// it up is open as high as the walker stands), `GROUND_KNOWN` and the rest (what is in it
 /// and under it), and `STANDS_KNOWN` and `STANDS` (of the square it is the corner of).
-const OPEN_KNOWN: u8 = 1;
-const OPEN: u8 = 2;
-const GROUND_KNOWN: u8 = 4;
+const OPEN_KNOWN: u16 = 1;
+const OPEN: u16 = 2;
+const GROUND_KNOWN: u16 = 4;
 /// Solid under the cell.
-const FLOOR: u8 = 8;
+const FLOOR: u16 = 8;
 /// Water in the cell.
-const WET: u8 = 16;
+const WET: u16 = 16;
 /// Water in the cell and under or over it (two deep for a land animal, from its top or
 /// from its bed), or lava in it.
-const DEEP: u8 = 32;
+const DEEP: u16 = 32;
 /// Whether it stands in the square with its corner at the cell, once known.
-const STANDS_KNOWN: u8 = 64;
-const STANDS: u8 = 128;
+const STANDS_KNOWN: u16 = 64;
+const STANDS: u16 = 128;
+/// Whether the cell is in the way, once known.
+const SOLID_KNOWN: u16 = 256;
+const SOLID: u16 = 512;
 
 /// How far up and down from where a search starts it keeps what it learns; beyond that it
 /// looks again each time.
@@ -121,10 +115,11 @@ struct Looker<'a, W> {
     walker: Walker,
     /// The grid's least corner, and what it holds of each cell.
     origin: IVec3,
-    known: Vec<std::cell::Cell<u8>>,
-    /// Whether it goes down further than `Walker::drop` onto open ground (`way_out`): not
-    /// while it is itself looking for a way out.
+    known: Vec<std::cell::Cell<u16>>,
+    /// Whether it goes down further than `Walker::drop` onto open ground (`way_out`).
     deep: bool,
+    /// What its fills out of drops have learnt, for the length of a search.
+    outs: Outs,
 }
 
 /// Cells across the grid a search keeps.
@@ -136,11 +131,11 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         let span = walker.span.max(1);
         let origin = about.map_or(IVec3::ZERO, |at| at - IVec3::new(RANGE + 2, DEPTH, RANGE + 2));
         let size = about.map_or(0, |_| ((ACROSS + span) * (ACROSS + span) * 2 * DEPTH) as usize);
-        Self { world, walker, origin, known: vec![std::cell::Cell::new(0); size], deep: true }
+        Self { world, walker, origin, known: vec![std::cell::Cell::new(0); size], deep: true, outs: Outs::default() }
     }
 
     /// Where the grid keeps `cell`, if it does.
-    fn slot(&self, cell: IVec3) -> Option<&std::cell::Cell<u8>> {
+    fn slot(&self, cell: IVec3) -> Option<&std::cell::Cell<u16>> {
         let across = ACROSS + self.walker.span.max(1);
         let d = cell - self.origin;
         if d.x < 0 || d.z < 0 || d.y < 0 || d.x >= across || d.z >= across || d.y >= 2 * DEPTH {
@@ -149,13 +144,26 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         self.known.get(((d.y * across + d.z) * across + d.x) as usize)
     }
 
+    /// Whether `cell` is in the way (`Surroundings::solid`).
+    fn solid(&self, cell: IVec3) -> bool {
+        let slot = self.slot(cell);
+        if let Some(bits) = slot.map(|s| s.get()).filter(|b| b & SOLID_KNOWN != 0) {
+            return bits & SOLID != 0;
+        }
+        let solid = self.world.solid(cell);
+        if let Some(slot) = slot {
+            slot.set(slot.get() | SOLID_KNOWN | if solid { SOLID } else { 0 });
+        }
+        solid
+    }
+
     /// Whether the column from `cell` up is open as high as it stands.
     fn open(&self, cell: IVec3) -> bool {
         let slot = self.slot(cell);
         if let Some(bits) = slot.map(|s| s.get()).filter(|b| b & OPEN_KNOWN != 0) {
             return bits & OPEN != 0;
         }
-        let open = (0..self.walker.height).all(|h| !self.world.solid(cell + IVec3::Y * h));
+        let open = (0..self.walker.height).all(|h| !self.solid(cell + IVec3::Y * h));
         if let Some(slot) = slot {
             slot.set(slot.get() | OPEN_KNOWN | if open { OPEN } else { 0 });
         }
@@ -163,14 +171,14 @@ impl<'a, W: Surroundings> Looker<'a, W> {
     }
 
     /// What is in `cell` and under it (`FLOOR`, `WET`, `DEEP`).
-    fn ground(&self, cell: IVec3) -> u8 {
+    fn ground(&self, cell: IVec3) -> u16 {
         let slot = self.slot(cell);
         if let Some(bits) = slot.map(|s| s.get()).filter(|b| b & GROUND_KNOWN != 0) {
             return bits;
         }
         let wet = self.world.water(cell);
         let deep = wet && (self.world.water(cell - IVec3::Y) || self.world.water(cell + IVec3::Y)) || self.world.lava(cell);
-        let bits = if self.world.solid(cell - IVec3::Y) { FLOOR } else { 0 } | if wet { WET } else { 0 } | if deep { DEEP } else { 0 };
+        let bits = if self.solid(cell - IVec3::Y) { FLOOR } else { 0 } | if wet { WET } else { 0 } | if deep { DEEP } else { 0 };
         if let Some(slot) = slot {
             slot.set(slot.get() | GROUND_KNOWN | bits);
         }
@@ -198,19 +206,57 @@ impl<'a, W: Surroundings> Looker<'a, W> {
             return bits & STANDS != 0;
         }
         let wary = self.walker.wary;
+        // Lava is in no walker's way (`DEEP` for one wary of water).
         let stands = self.clear(cell)
             && self.square(cell).any(|c| self.ground(c) & if wary { FLOOR } else { FLOOR | WET } != 0)
-            && !(wary && self.square(cell).any(|c| self.ground(c) & DEEP != 0));
+            && !self.square(cell).any(|c| self.ground(c) & DEEP != 0 && (wary || self.world.lava(c)));
         if let Some(slot) = slot {
             slot.set(slot.get() | STANDS_KNOWN | if stands { STANDS } else { 0 });
         }
         stands
     }
 
+    /// `way_out` from the square at `from` down to which it came from `top`, answered from
+    /// what an earlier fill learnt where one reached `from`, and keeping what this one
+    /// learns; looking at cells through what the search keeps of them.
+    fn way_out(&self, from: IVec3, top: i32) -> bool {
+        let open = |(high, count): (i32, usize)| high >= top || count > OPEN_FLOOR;
+        if let Some(&known) = self.outs.borrow().get(&from) {
+            return open(known);
+        }
+        let mut seen = vec![from];
+        let mut queue = vec![from];
+        while let Some(cell) = queue.pop() {
+            if seen.len() > OPEN_FLOOR {
+                break;
+            }
+            for (dx, dz) in [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)] {
+                if let Some(next) = self.step_as(cell, dx, dz, self.walker.climb(), false)
+                    && !seen.contains(&next)
+                {
+                    seen.push(next);
+                    queue.push(next);
+                }
+            }
+        }
+        let known = (seen.iter().map(|c| c.y).max().unwrap_or(from.y), seen.len());
+        let mut outs = self.outs.borrow_mut();
+        for cell in seen {
+            outs.insert(cell, known);
+        }
+        open(known)
+    }
+
     /// Where it can go in one step from the square at `cell` toward (dx, dz): level, a
     /// block up, or down a short drop; diagonals only where it could stand in the squares to
     /// either side, so it cuts no corner of a wall or of a pit.
     fn step(&self, cell: IVec3, dx: i32, dz: i32) -> Option<IVec3> {
+        self.step_as(cell, dx, dz, self.walker.drop, self.deep)
+    }
+
+    /// As `step`, going down of its own accord no further than `drop`, and further onto open
+    /// ground only if `deep`.
+    fn step_as(&self, cell: IVec3, dx: i32, dz: i32, drop: i32, deep: bool) -> Option<IVec3> {
         if dx != 0 && dz != 0 && !(self.stands(cell + IVec3::new(dx, 0, 0)) && self.stands(cell + IVec3::new(0, 0, dz))) {
             return None;
         }
@@ -218,16 +264,16 @@ impl<'a, W: Surroundings> Looker<'a, W> {
         if self.stands(flat) {
             return Some(flat);
         }
-        if self.square(flat).any(|c| self.world.solid(c)) {
+        if self.square(flat).any(|c| self.solid(c)) {
             // Up a block: room over its head where it stands to jump, and the square up.
             let up = flat + IVec3::Y;
-            let headroom = || self.square(cell).all(|c| !self.world.solid(c + IVec3::Y * self.walker.height));
+            let headroom = || self.square(cell).all(|c| !self.solid(c + IVec3::Y * self.walker.height));
             return (self.walker.climbs && dx * dz == 0 && headroom() && self.stands(up)).then_some(up);
         }
         // Over the edge: it drops while the square is clear, as far as a short drop; further
         // than it goes of its own accord only onto open ground.
         let down = (1..=SAFE_DROP).map(|d| flat - IVec3::Y * d).take_while(|&c| self.clear(c)).find(|&c| self.stands(c))?;
-        (cell.y - down.y <= self.walker.drop || self.deep && way_out(self.world, &self.walker, down, cell.y)).then_some(down)
+        (cell.y - down.y <= drop || deep && self.way_out(down, cell.y)).then_some(down)
     }
 }
 
@@ -363,6 +409,40 @@ mod tests {
         assert!(into(&Hole { deep: 2, open: true }, &wanderer).is_some(), "a wanderer kept off open ground two down");
         assert!(into(&Hole { deep: 2, open: false }, &WOLF).is_some(), "a chaser kept out of the pit");
         assert!(!way_out(&Hole { deep: 3, open: false }, &wanderer, IVec3::new(3, -3, 0), 0));
+    }
+
+    /// Ground cut by endless trenches a block across and two deep every other block, its
+    /// cells looked at counted.
+    struct Trenches {
+        looks: std::cell::Cell<u64>,
+    }
+
+    impl Surroundings for Trenches {
+        fn solid(&self, c: IVec3) -> bool {
+            self.looks.set(self.looks.get() + 1);
+            c.y < if c.x.rem_euclid(2) == 1 { -2 } else { 0 }
+        }
+        fn water(&self, _: IVec3) -> bool {
+            self.looks.set(self.looks.get() + 1);
+            false
+        }
+    }
+
+    /// A search by a wanderer (going down only onto open ground) over trenches looks at no
+    /// more cells than a search may at its most (`BUDGET` squares, eight ways, two looks
+    /// each): what a fill out of a drop learns, every square it reached answers, and its
+    /// looks go through what the search keeps. Before: each drop it looked at filled afresh,
+    /// 277 thousand looks to a chaser's 2.9 thousand.
+    #[test]
+    fn a_wanderers_search_over_trenches_is_bounded() {
+        let cost = |walker: &Walker| {
+            let world = Trenches { looks: std::cell::Cell::new(0) };
+            let _ = find(&world, walker, IVec3::new(0, 0, 0), IVec3::new(0, 0, 40));
+            world.looks.get()
+        };
+        let wanderer = Walker { drop: WOLF.climb(), ..WOLF };
+        let (chaser, wanders) = (cost(&WOLF), cost(&wanderer));
+        assert!(wanders <= (BUDGET * 8 * 2) as u64, "a wanderer's search looked {wanders} times, a chaser's {chaser}");
     }
 
     #[test]

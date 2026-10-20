@@ -716,6 +716,8 @@ impl Server {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species = self.content.creatures.get(creature.species);
         let mut body = creature.body;
+        // In a chase it goes down after what it chases where it could not climb back.
+        body.bold = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
         let mut decision = creature.decision;
         let held = self.tick < creature.held_until;
         // A land animal out of its depth makes for the nearest shore, whatever it had in mind
@@ -784,9 +786,8 @@ impl Server {
                 // Its way is of squares as wide as it is, and it makes for each one's middle.
                 let span = path::Walker::span_of(body.size.0);
                 // Down a drop deeper than it climbs back only in a chase, or onto open ground.
-                let chasing = creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
                 let climbs = movement.jump > 0.0;
-                let drop = if chasing { motion::SAFE_DROP } else { climbs as i32 };
+                let drop = if body.bold { motion::SAFE_DROP } else { climbs as i32 };
                 let walker = path::Walker { height: body.size.1.ceil() as i32, climbs, wary: water == Water::Land, span, drop };
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
                     let found = path::find(&Ground::of(self), &walker, walker.corner(body.position + Vec3::Y * 0.01), walker.corner(goal));
@@ -4427,30 +4428,45 @@ mod fight_tests {
         }
     }
 
-    /// Walks a land kind east across a pen at `pace` for long enough to cross it, turning as
-    /// it steers; where its feet got to lowest, and whether any of it was ever in a cell
-    /// `bad` says.
-    fn walk_east(server: &Server, c: IVec3, species: &voxmar_engine::creature::Creature, pace: f32, bad: impl Fn(IVec3) -> bool) -> (f32, bool) {
+    /// Walks a kind east across a pen from `from` at `pace`, `bold` as in a chase, for long
+    /// enough to cross it, turning as it steers; where its feet got to lowest, and whether
+    /// any of it was ever in a cell `bad` says; and where it ended.
+    fn walk_from(server: &Server, from: Vec3, species: &voxmar_engine::creature::Creature, pace: f32, bold: bool, bad: impl Fn(IVec3) -> bool) -> (f32, bool, Vec3) {
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ground = Ground::of(server);
-        let movement = species.def.movement;
-        let mut body = Body::new(c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), motion::yaw_of(Vec3::X), species.def.body.size);
-        (body.reach, body.head, body.on_ground) = (species.reach, species.head, true);
+        let (movement, water) = (species.def.movement, species.def.habitat.water);
+        let mut body = Body::new(from, motion::yaw_of(Vec3::X), species.def.body.size);
+        (body.reach, body.head, body.on_ground, body.bold) = (species.reach, species.head, true, bold);
         let (mut side, mut lowest, mut touched) = (0.0, body.position.y, false);
         for _ in 0..((12.0 / pace + 4.0) * TICKS_PER_SECOND as f32) as u32 {
-            let (heading, turned) = motion::steer(&body, &ground, &movement, Water::Land, Vec3::X, side, pace, dt);
+            let (heading, turned) = motion::steer(&body, &ground, &movement, water, Vec3::X, side, pace, dt);
             side = turned;
-            motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: heading, speed: pace, face: None }, dt);
+            motion::step(&mut body, &ground, &movement, water, Drive { wish: heading, speed: pace, face: None }, dt);
+            if std::env::var("VOXMAR_TRACE").is_ok_and(|v| v == species.def.name) {
+                println!("at {:.2} v {:.2} ground {} wall {} heading {:.2} water {}", body.position - from, body.velocity, body.on_ground, body.against_wall, heading, body.in_water);
+            }
             lowest = lowest.min(body.position.y);
             touched |= body.aabb().intersects(&bad);
         }
+        (lowest, touched, body.position)
+    }
+
+    /// As `walk_from`, from the pen's west side, and not in a chase unless `bold`.
+    fn walk_east(server: &Server, c: IVec3, species: &voxmar_engine::creature::Creature, pace: f32, bold: bool, bad: impl Fn(IVec3) -> bool) -> (f32, bool) {
+        let (lowest, touched, _) = walk_from(server, c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), species, pace, bold, bad);
         (lowest, touched)
     }
 
-    /// The land kinds that walk (not fliers or drifters).
+    /// The kinds that walk on land, amphibians too (not fliers, drifters or swimmers).
     fn walkers(server: &Server) -> Vec<&voxmar_engine::creature::Creature> {
         use voxmar_engine::creature::Style;
-        server.content.creatures.iter().map(|(_, s)| s).filter(|s| s.def.habitat.water == Water::Land && !matches!(s.def.movement.style, Style::Flier | Style::Drifter)).collect()
+        server
+            .content
+            .creatures
+            .iter()
+            .map(|(_, s)| s)
+            .filter(|s| matches!(s.def.habitat.water, Water::Land | Water::Amphibious) && !matches!(s.def.movement.style, Style::Flier | Style::Drifter))
+            .collect()
     }
 
     /// A closed pit four across and five along, `deep` blocks deep, dug in a pen's floor
@@ -4462,8 +4478,9 @@ mod fight_tests {
         }
     }
 
-    /// A hole two or three deep that a player digs is a trap no kind gets out of: at a walk,
-    /// none goes down into it. Before: 73 of 73 walked in, villagers too, and stayed there.
+    /// A hole two or three deep that a player digs is a trap no kind gets out of: out of a
+    /// chase, at any pace, none goes down into it. Before: 73 of 73 walked in, villagers
+    /// too, and stayed there; and then any wander quicker than a walk did.
     #[test]
     fn wanderers_never_walk_into_a_pit_they_cannot_climb_out_of() {
         for deep in 2..=3 {
@@ -4473,9 +4490,11 @@ mod fight_tests {
             let kinds = walkers(&server);
             assert!(kinds.len() > 10, "too few kinds walk");
             for species in kinds {
-                // At its walk, and at the liveliest one's wander (`Personality::pace`).
-                for pace in [1.0, 1.2] {
-                    let (lowest, _) = walk_east(&server, c, species, species.def.movement.walk * pace, |_| false);
+                // At its walk, at the liveliest one's wander (`Personality::pace` and the
+                // wander's own share, 1.44 its walk), and running (in flight).
+                let movement = species.def.movement;
+                for pace in [1.0, 1.2, 1.44, movement.run.max(movement.walk) / movement.walk] {
+                    let (lowest, _) = walk_east(&server, c, species, movement.walk * pace, false, |_| false);
                     assert!(lowest > c.y as f32 - 0.5, "{} walked into a pit {deep} deep at {pace} its walk: down to {:.2}", species.def.name, lowest - c.y as f32);
                 }
             }
@@ -4512,20 +4531,25 @@ mod fight_tests {
         }
     }
 
-    /// A chase above a walk still goes down into the pit after what it chases.
+    /// A chase still goes down into the pit after what it chases, running or at a walk.
     #[test]
     fn a_chaser_still_drops_into_a_pit() {
         let mut server = crate::test_server();
         let c = pen(&mut server, 9);
         closed_pit(&mut server, c, 2);
-        let wolf = server.content.creatures.get(server.content.creatures.id("base:wolf").expect("a wolf"));
-        assert!(wolf.def.movement.run > wolf.def.movement.walk);
-        let (lowest, _) = walk_east(&server, c, wolf, wolf.def.movement.run, |_| false);
-        assert!(lowest < c.y as f32 - 1.5, "a running wolf kept out of the pit: down to {:.2}", lowest - c.y as f32);
+        for name in ["base:wolf", "base:brown_bear"] {
+            let species = server.content.creatures.get(server.content.creatures.id(name).expect("a fighter"));
+            let movement = species.def.movement;
+            for pace in [movement.run, movement.walk] {
+                let (lowest, _) = walk_east(&server, c, species, pace, true, |_| false);
+                assert!(lowest < c.y as f32 - 1.5, "{name} in a chase at {pace} kept out of the pit: down to {:.2}", lowest - c.y as f32);
+            }
+        }
     }
 
-    /// Lava, even one deep, is a wall to a land animal, walking or running. Before: 71 of
-    /// 71 walked into it.
+    /// Lava, even one deep, is a wall to anything that walks, amphibians too, walking,
+    /// running or in a chase. Before: 71 of 71 land kinds walked into it, and every
+    /// amphibian.
     #[test]
     fn land_animals_keep_out_of_lava() {
         let mut server = crate::test_server();
@@ -4536,10 +4560,27 @@ mod fight_tests {
         let kinds = walkers(&server);
         for species in kinds {
             let movement = species.def.movement;
-            for (run, pace) in [(false, movement.walk), (true, movement.run.max(movement.walk))] {
-                let (_, touched) = walk_east(&server, c, species, pace, lava);
-                assert!(!touched, "{} went into lava ({})", species.def.name, if run { "running" } else { "walking" });
+            for (how, pace, bold) in [("walking", movement.walk, false), ("running", movement.run.max(movement.walk), false), ("in a chase", movement.run.max(movement.walk), true)] {
+                let (_, touched) = walk_east(&server, c, species, pace, bold, lava);
+                assert!(!touched, "{} went into lava ({how})", species.def.name);
             }
+        }
+    }
+
+    /// One standing in a pool of lava a block deep gets out of it, running as one burning
+    /// would: lava is a wall only to one not already in it. Before: every way out was lava, so it stood there for good.
+    #[test]
+    fn one_standing_in_lava_walks_out() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        set(&mut server, "base:stone", (-3..=3).flat_map(|x| (-3..=3).map(move |z| c + IVec3::new(x, -2, z))));
+        set(&mut server, "base:lava", (-2..=2).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, -1, z))));
+        for name in ["base:wolf", "base:brown_bear", "base:rabbit"] {
+            let species = server.content.creatures.get(server.content.creatures.id(name).expect("a walker"));
+            // Running, as one burning would.
+            let movement = species.def.movement;
+            let (_, _, end) = walk_from(&server, c.as_vec3() + Vec3::new(0.5, -1.0, 0.5), species, movement.run.max(movement.walk), false, |_| false);
+            assert!(end.x > c.x as f32 + 3.0 && end.y > c.y as f32 - 0.5, "{name} stayed in the lava: at {:.2}", end - c.as_vec3());
         }
     }
 

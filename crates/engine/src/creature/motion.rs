@@ -18,11 +18,6 @@ const TERMINAL: f32 = 60.0;
 const DRIFT_HEIGHT: f32 = 1.6;
 /// A flier takes wing when asked to go faster than this many times its walk.
 pub const TAKES_WING: f32 = 1.5;
-/// The most a wander, graze or stroll goes over its walk: its walk at the liveliest
-/// personality's pace (`Personality::pace`, 1.2), and a little. Faster is a chase or a
-/// flight.
-pub const AMBLE: f32 = 1.25;
-
 /// How fast a flier climbs and comes down in flight, and flutters down to land, in blocks
 /// per second; and how far ahead it looks for rising land.
 const CLIMB: f32 = 5.0;
@@ -54,11 +49,15 @@ pub struct Body {
     /// again rather than spin round.
     pub turn_way: f32,
     pub turn_to: f32,
+    /// Whether it goes down where it could not climb back of its own accord: in a chase
+    /// (the server's say), after what it chases. Otherwise it walks into no pit it could
+    /// not get out of (`path::way_out`), however lively its pace.
+    pub bold: bool,
 }
 
 impl Body {
     pub fn new(position: Vec3, yaw: f32, size: (f32, f32)) -> Self {
-        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0 }
+        Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0, bold: false }
     }
 
     pub fn aabb(&self) -> Aabb {
@@ -273,6 +272,8 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // wading in the shallows, it does not walk on into the deep.
     let feet = body.position.floor().as_ivec3();
     let wary = water == Water::Land && !(body.in_water && world.water(feet - IVec3::Y));
+    // Lava is a wall to anything that walks, unless it is already in it: then it walks out.
+    let burns = matches!(water, Water::Land | Water::Amphibious) && !world.lava(feet) && !world.lava(feet - IVec3::Y);
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
     // Down into a space it would hang in (a trench too short for a long head to come down
@@ -295,11 +296,11 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         if open < body.size.0 {
             return false;
         }
-        // Deeper than it could climb back, at a wander (however lively), only onto open
+        // Deeper than it could climb back, unless in a chase (`Body::bold`), only onto open
         // ground: never into a pit it would not get out of (a hole a player dug two or three
-        // deep).
+        // deep), at any pace.
         let climb = (movement.jump > 0.0) as i32;
-        if pace <= movement.walk * AMBLE && feet - then.y > climb {
+        if !body.bold && feet - then.y > climb {
             let walker = Walker {
                 height: body.size.1.ceil() as i32,
                 climbs: climb > 0,
@@ -356,7 +357,7 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
                 let first_down = then.y < feet && !std::mem::replace(&mut judged, true);
                 now - then.y <= SAFE_DROP
                     && !(wary && world.water(then) && world.water(then - IVec3::Y))
-                    && !(water == Water::Land && world.lava(then))
+                    && !(burns && world.lava(then))
                     && !(first_down && held(middle, then))
             }
         }
