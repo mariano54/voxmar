@@ -909,6 +909,11 @@ pub struct Tended {
     had: u32,
     answer: Sound,
     until: f32,
+    /// The player's actions proposed, and tends among them, as of its own: one proposed
+    /// since that is no tend (seeds sown, a carrot eaten) may change the count itself, so
+    /// it no longer waits.
+    proposals: u64,
+    tends: u64,
 }
 
 /// Seconds a tended animal waits on the server's word to answer.
@@ -922,7 +927,7 @@ impl Tended {
             Some(product) => (species.products[product], Sound::Idle),
             None => (held, Sound::Graze),
         };
-        Tended { id, watched, had: count(watched), answer, until: now + TEND_ANSWER_WITHIN }
+        Tended { id, watched, had: count(watched), answer, until: now + TEND_ANSWER_WITHIN, proposals: 0, tends: 0 }
     }
 
     /// Whether the pack now holding `count` of what is watched says it was done.
@@ -937,9 +942,9 @@ impl Tended {
 /// The animals among `waiting` the server has now done, in the order they were tended: as
 /// the server takes them in turn, each change of a watched item's count answers the
 /// earliest still waiting on it, and those after it wait on from the new count. Ones past
-/// their time are dropped unanswered.
-fn answer_tended(waiting: &mut Vec<Tended>, now: f32, count: impl Fn(voxmar_engine::block::BlockId) -> u32) -> Vec<Tended> {
-    waiting.retain(|t| now <= t.until);
+/// their time, or with something else done `meanwhile`, are dropped unanswered.
+fn answer_tended(waiting: &mut Vec<Tended>, now: f32, meanwhile: impl Fn(&Tended) -> bool, count: impl Fn(voxmar_engine::block::BlockId) -> u32) -> Vec<Tended> {
+    waiting.retain(|t| now <= t.until && !meanwhile(t));
     let mut answered = Vec::new();
     let mut i = 0;
     while i < waiting.len() {
@@ -1872,6 +1877,7 @@ pub fn aim(
     mut fighting: ResMut<crate::fight::Fighting>,
     mut sounds: ResMut<CreatureSounds>,
     mut tended: Local<Vec<Tended>>,
+    mut tends: Local<u64>,
 ) {
     // What the right button did this frame, if anything, is said afresh: here, then in
     // `interact::break_and_place`; `fight::guard` raises no guard if it did something.
@@ -1879,7 +1885,8 @@ pub fn aim(
     // An animal tended answers once the server has done it (its product in the pack, the
     // food gone from hand), never on the click alone.
     let now = time.elapsed_secs();
-    for answered in answer_tended(&mut tended, now, |item| player.inventory.count(item)) {
+    let meanwhile = |t: &Tended| net.proposals() - t.proposals > *tends - t.tends;
+    for answered in answer_tended(&mut tended, now, meanwhile, |item| player.inventory.count(item)) {
         if let Some(shown) = creatures.shown.get(&answered.id) {
             sounds.push(CreatureSound { answering: true, ..sound(answered.answer, answered.id, &shown.view, shown.position, 0.0) });
         }
@@ -1947,7 +1954,9 @@ pub fn aim(
             if Some(action) == actions.0.id("base:tend")
                 && let Some(item) = held
             {
-                tended.push(Tended::new(id, species, item, &launch.content.blocks, |item| player.inventory.count(item), now));
+                *tends += 1;
+                let (proposals, tends) = (net.proposals(), *tends);
+                tended.push(Tended { proposals, tends, ..Tended::new(id, species, item, &launch.content.blocks, |item| player.inventory.count(item), now) });
             }
         }
     }
@@ -2044,7 +2053,8 @@ mod tests {
     #[test]
     fn a_flock_tended_answers_in_turn() {
         let wool = voxmar_engine::block::BlockId(5);
-        let ewe = |id: u32, had: u32| Tended { id, watched: wool, had, answer: Sound::Idle, until: 3.0 };
+        let ewe = |id: u32, had: u32| Tended { id, watched: wool, had, answer: Sound::Idle, until: 3.0, proposals: 0, tends: 0 };
+        let answer_tended = |waiting: &mut Vec<Tended>, now: f32, count: fn(voxmar_engine::block::BlockId) -> u32| answer_tended(waiting, now, |_| false, count);
         let mut waiting = vec![ewe(1, 0), ewe(2, 0)];
         assert_eq!(answer_tended(&mut waiting, 0.5, |_| 0), []);
         let first = answer_tended(&mut waiting, 0.6, |_| 2);
@@ -2055,6 +2065,12 @@ mod tests {
         let mut late = vec![ewe(3, 0)];
         assert_eq!(answer_tended(&mut late, 3.5, |_| 1), [], "past its time");
         assert!(late.is_empty());
+        // Fed, then seeds of the same sown before the server's word: the food's count may
+        // fall by the sowing, so it answers nothing.
+        let fed = Tended { id: 4, watched: wool, had: 5, answer: Sound::Graze, until: 3.0, proposals: 1, tends: 1 };
+        let mut sown = vec![fed];
+        assert_eq!(super::answer_tended(&mut sown, 0.5, |t| t.proposals < 2, |_| 4), [], "something else done meanwhile");
+        assert!(sown.is_empty());
     }
 
     /// A roaming boss nicked once is in a fight, and out of it once it has gone back to

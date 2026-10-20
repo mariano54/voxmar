@@ -250,6 +250,11 @@ struct Sfx {
     /// The actions heard as the server does them ([`ActionSound::when_done`]), not as
     /// proposed.
     when_done: FxHashSet<voxmar_engine::action::ActionId>,
+    /// How long each action that brings something waits for it, if not [`BROUGHT_WITHIN`].
+    brought_within: FxHashMap<voxmar_engine::action::ActionId, f32>,
+    /// Clicks of actions heard when done, with what they were done with, until when: a
+    /// [`Done`] is heard only for one the player clicked.
+    clicked: Vec<(voxmar_engine::action::ActionId, Vec<BlockId>, f32)>,
     /// The ways of doing them that sound their own, in order, by what each is done with.
     ways: FxHashMap<voxmar_engine::action::ActionId, Vec<(FxHashSet<BlockId>, Vec<Clip>)>>,
     counter: u64,
@@ -463,7 +468,8 @@ fn synthesize(
         })
         .collect();
     let when_done = recorded.actions.iter().filter(|(_, sound)| sound.when_done).filter_map(|(name, _)| launch.content.actions.id(name)).collect();
-    commands.insert_resource(Sfx { clips, materials, material, thunder, actions, brings, awaiting: Vec::new(), when_done, catch, ways, counter: 0 });
+    let brought_within = recorded.actions.iter().filter_map(|(name, sound)| Some((launch.content.actions.id(name)?, sound.brought_within?))).collect();
+    commands.insert_resource(Sfx { clips, materials, material, thunder, actions, brings, awaiting: Vec::new(), when_done, brought_within, clicked: Vec::new(), catch, ways, counter: 0 });
 }
 
 /// How loud a synthesized cue's clips are on average.
@@ -541,6 +547,10 @@ pub(crate) struct ActionSound {
     /// Heard as the server does it, from where it is done, never on the click: a refused one
     /// is silent. Only for an action the client sees done ([`SEEN_DONE`]).
     pub(crate) when_done: bool,
+    /// Seconds after the click that what it brings may still land and be heard (if not
+    /// said, [`BROUGHT_WITHIN`], for a line's five seconds in the water): an action the
+    /// server answers at once waits less, so a later pickup is not taken for it.
+    pub(crate) brought_within: Option<f32>,
 }
 
 /// The actions the client sees done, by the block they work changing (see [`Done`]): bees
@@ -781,6 +791,15 @@ impl Recordings {
             if sound.when_done && (sound.sounds.is_empty() || !SEEN_DONE.contains(&name.as_str())) {
                 return Err(format!("{RECORDINGS}: `{name}` is heard when done, which needs its own sounds and an action the client sees done ({})", SEEN_DONE.join(", ")));
             }
+            // One the client sees done is heard then, or its sounds would play on the click too.
+            if SEEN_DONE.contains(&name.as_str()) && !sound.sounds.is_empty() && !sound.when_done {
+                return Err(format!("{RECORDINGS}: `{name}` has sounds but is not heard when done (`when_done: true`), as the client sees it done"));
+            }
+            if let Some(within) = sound.brought_within
+                && (sound.brings.is_empty() || !(within > 0.0 && within <= 30.0))
+            {
+                return Err(format!("{RECORDINGS}: `{name}` waits {within} s for what it brings: it must bring something, and wait above 0 and up to 30 s"));
+            }
             for brought in &sound.brings {
                 if brought.sounds.is_empty() || !(brought.volume > 0.0 && brought.volume <= 2.0) {
                     return Err(format!("{RECORDINGS}: what `{name}` brings needs sounds, at a volume above 0 and up to 2"));
@@ -881,7 +900,7 @@ impl Recordings {
             ("fire".into(), catch),
         ];
         for (action, sound) in actions {
-            let ActionSound { sounds, volume: _, silent: _, heard: _, ways, brings, when_done: _ } = sound;
+            let ActionSound { sounds, volume: _, silent: _, heard: _, ways, brings, when_done: _, brought_within: _ } = sound;
             lists.push((format!("`{action}`"), sounds));
             for WaySound { name, with: _, sounds, volume: _, silent: _ } in ways {
                 lists.push((format!("`{action}`'s way `{name}`"), sounds));
@@ -1109,18 +1128,26 @@ fn play_catches(
     }
 }
 
-/// Plays an action the client sees done, from where it is done, as the server does it.
+/// Plays an action the client sees done, from where it is done, as the server does it for
+/// a click of the player's.
 fn play_done(
     mut commands: Commands,
+    time: Option<Res<Time>>,
     mut done: MessageReader<Done>,
     sfx: Option<ResMut<Sfx>>,
     settings: Res<Settings>,
     listener: Query<&GlobalTransform, With<Camera3d>>,
 ) {
     let Some(mut sfx) = sfx else { return };
+    let now = time.map_or(0.0, |time| time.elapsed_secs());
+    sfx.clicked.retain(|&(_, _, until)| until >= now);
     let master = MASTER * settings.sound_volume as f32 / 100.0;
     let listener = listener.single().map(|t| t.translation()).ok();
     for &Done { at, action, with } in done.read() {
+        // Only what the player clicked, and only once: a bear's raid on a skep is not
+        // the player's cut.
+        let Some(click) = sfx.clicked.iter().position(|(a, done_with, _)| *a == action && done_with.contains(&with)) else { continue };
+        sfx.clicked.remove(click);
         let gain = falloff(listener.map_or(0.0, |ear| at.distance(ear)), HEARD_WITHIN);
         let (pick, jitter) = (sfx.random(), sfx.random());
         let way = sfx.ways.get(&action).and_then(|ways| way_of(ways, &[with]));
@@ -1181,9 +1208,12 @@ fn play_actions(
     for proposed in proposed {
         let action = proposed.action;
         if sfx.brings.contains_key(&action) && awaits(sfx.ways.get(&action).map_or(&[], Vec::as_slice), &proposed.with) {
-            sfx.awaiting.push((action, now + BROUGHT_WITHIN));
+            let within = sfx.brought_within.get(&action).copied().unwrap_or(BROUGHT_WITHIN);
+            sfx.awaiting.push((action, now + within));
         }
+        // Heard when the server does it (`play_done`), never on the click.
         if sfx.when_done.contains(&action) {
+            sfx.clicked.push((action, proposed.with, now + DONE_WITHIN));
             continue;
         }
         let (pick, jitter) = (sfx.random(), sfx.random());
@@ -1197,6 +1227,10 @@ fn play_actions(
 /// Seconds after an action is done that what it brings may still land and be heard: a
 /// line's five seconds in the water, and the server's word coming back.
 const BROUGHT_WITHIN: f32 = 10.0;
+
+/// Seconds after the click on an action heard when done that the server's doing it is
+/// taken for that click.
+const DONE_WITHIN: f32 = 3.0;
 
 fn play_clip(commands: &mut Commands, clip: &Clip, master: f32, jitter: f32) {
     let speed = clip.speed * (0.96 + 0.08 * jitter);
@@ -1696,7 +1730,7 @@ mod tests {
             let rolls = [vec![Handle::default()], vec![Handle::default()], vec![Handle::default()]];
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips, materials: Vec::new(), material: Vec::new(), thunder: rolls, actions: FxHashMap::default(), brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), when_done: FxHashSet::default(), catch: Vec::new(), counter: 0 })
+                .insert_resource(Sfx { clips, materials: Vec::new(), material: Vec::new(), thunder: rolls, actions: FxHashMap::default(), brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), when_done: FxHashSet::default(), brought_within: FxHashMap::default(), clicked: Vec::new(), catch: Vec::new(), counter: 0 })
                 .add_message::<SoundCue>()
                 .add_message::<Thunder>()
                 .configure_sets(Update, Audible.run_if(sound_on))
@@ -1809,7 +1843,7 @@ mod tests {
         assert_eq!(recorded.actions["core:eat"], ActionSound { sounds: vec!["content/mod/x.ogg".into()], volume: 1.5, ..Default::default() });
         assert_eq!(recorded.actions["core:craft"], ActionSound { sounds: vec!["content/base/c.ogg".into()], volume: 0.5, ..Default::default() });
         assert_eq!(recorded.check(&content.actions), Ok(()));
-        for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], silent: true)})"#, r#"(actions: {"core:eat": (silent: true, heard: Some(Block))})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: ["x"], sounds: [])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: [""], sounds: ["b.ogg"])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(sounds: ["b.ogg"])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: ["x"], sounds: ["b.ogg"], volume: 3.0)])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], when_done: true)})"#, r#"(actions: {"base:tend_bees": (silent: true, when_done: true)})"#] {
+        for wrong in [r#"(actions: {"core:juggle": (sounds: ["a.ogg"])})"#, r#"(actions: {"core:eat": (sounds: [])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], volume: 0.0)})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], silent: true)})"#, r#"(actions: {"core:eat": (silent: true, heard: Some(Block))})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: ["x"], sounds: [])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: [""], sounds: ["b.ogg"])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(sounds: ["b.ogg"])])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brings: [(tags: ["x"], sounds: ["b.ogg"], volume: 3.0)])})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], when_done: true)})"#, r#"(actions: {"base:tend_bees": (silent: true, when_done: true)})"#, r#"(actions: {"base:tend_bees": (sounds: ["a.ogg"])})"#, r#"(actions: {"base:fish": (sounds: ["a.ogg"], brings: [(tags: ["x"], sounds: ["b.ogg"])], brought_within: Some(0.0))})"#, r#"(actions: {"core:eat": (sounds: ["a.ogg"], brought_within: Some(2.0))})"#] {
             assert!(Recordings::load(&[file("mod", wrong)]).unwrap().check(&content.actions).is_err(), "{wrong}");
         }
         // Every action must say how it sounds: the base package's do; a package that adds
@@ -2251,7 +2285,7 @@ mod tests {
             let mut app = App::new();
             app.insert_resource(GlobalVolume::new(global))
                 .insert_resource(Settings::default())
-                .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), when_done: FxHashSet::default(), catch: Vec::new(), counter: 0 })
+                .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), when_done: FxHashSet::default(), brought_within: FxHashMap::default(), clicked: Vec::new(), catch: Vec::new(), counter: 0 })
                 .insert_resource(net)
                 .add_systems(Update, play_actions);
             // Crafting has no sound here: nothing plays for it.
@@ -2263,6 +2297,40 @@ mod tests {
             assert_eq!(playing, started, "volume {global:?}");
             assert!(app.world().resource::<crate::net::Net>().take_proposed().is_empty());
         }
+    }
+
+    /// A full skep's honey is silent on the click and heard as the server cuts it, once;
+    /// a skep emptied with no click of the player's (a bear's raid) is not heard.
+    #[test]
+    fn honey_is_heard_as_cut_never_on_the_click() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let tend_bees = content.actions.expect("base:tend_bees");
+        let skep = content.blocks.id("base:honey_skep").unwrap();
+        let (connection, _server_side) = voxmar_protocol::local_pair();
+        let net = crate::net::Net::new(connection, None, "tester".into(), content.fingerprint(), None);
+        let mut actions = FxHashMap::default();
+        actions.insert(tend_bees, vec![Clip { source: Handle::default(), gain: 1.0, speed: 1.0 }]);
+        let mut app = App::new();
+        app.insert_resource(GlobalVolume::new(Volume::Linear(1.0)))
+            .insert_resource(Settings::default())
+            .insert_resource(Sfx { clips: FxHashMap::default(), materials: Vec::new(), material: Vec::new(), thunder: Default::default(), actions, brings: FxHashMap::default(), ways: FxHashMap::default(), awaiting: Vec::new(), when_done: [tend_bees].into_iter().collect(), brought_within: FxHashMap::default(), clicked: Vec::new(), catch: Vec::new(), counter: 0 })
+            .insert_resource(net)
+            .add_message::<Done>()
+            .add_systems(Update, (play_actions, play_done).chain());
+        let playing = |app: &mut App| app.world_mut().query::<&AudioPlayer>().iter(app.world()).count();
+        let cut = Done { at: Vec3::ZERO, action: tend_bees, with: skep };
+        app.world_mut().write_message(cut);
+        app.update();
+        assert_eq!(playing(&mut app), 0, "no click: a bear's raid");
+        app.world().resource::<crate::net::Net>().propose_with(tend_bees, voxmar_engine::action::ActionTarget::None, vec![skep]);
+        app.update();
+        assert_eq!(playing(&mut app), 0, "the click is silent");
+        app.world_mut().write_message(cut);
+        app.update();
+        assert_eq!(playing(&mut app), 1, "the cut is heard");
+        app.world_mut().write_message(cut);
+        app.update();
+        assert_eq!(playing(&mut app), 1, "once for the click");
     }
 
     /// `cargo test -p voxmar_client minecraft_sounds_decode -- --ignored` checks that every
