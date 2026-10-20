@@ -77,13 +77,23 @@ fn silent_runs_drain_and_play_nothing() {
         .init_resource::<Heard>()
         .add_message::<SoundCue>()
         .add_systems(Update, play);
-    let sound = CreatureSound { kind: Kind::Hurt, id: 1, species: rabbit, position: Vec3::ZERO, speed: 0.0, scale: 1.0, young: false };
+    let sound = CreatureSound { kind: Kind::Hurt, id: 1, species: rabbit, position: Vec3::ZERO, speed: 0.0, scale: 1.0, young: false, answering: false };
     app.world_mut().resource_mut::<CreatureSounds>().push(sound);
     app.update();
     assert!(app.world().resource::<CreatureSounds>().0.is_empty());
     assert_eq!(app.world().resource::<Heard>().asked[&Kind::Hurt], 1);
     assert_eq!(app.world().resource::<Heard>().played, 0);
     assert_eq!(app.world_mut().query::<&AudioPlayer>().iter(app.world()).count(), 0);
+}
+
+/// A munch heard by chance when a ewe grazes unbidden is always heard when she eats from
+/// the player's hand.
+#[test]
+fn an_answer_to_the_hand_is_never_thinned() {
+    assert!(super::thinned(0.7, false, || 0.9));
+    assert!(!super::thinned(0.7, false, || 0.5));
+    assert!(!super::thinned(0.7, true, || 0.9));
+    assert!(!super::thinned(1.0, false, || unreachable!("a sure sound draws nothing")));
 }
 
 /// `cargo test --profile iter -p voxmar_client creature_sound_preview -- --ignored` writes
