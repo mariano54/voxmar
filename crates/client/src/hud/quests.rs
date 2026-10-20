@@ -63,7 +63,7 @@ impl Plugin for QuestsPlugin {
                     shown.set_if_neq(Visibility::Hidden);
                 }
             })
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, show_card, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw, fit_lines.after(crate::ui::widgets::scroll_lists), run_light, swell, breathe, lay_ground).chain().after(ScreenSystems), (seed_pins, retire, track, measure_room, squeeze).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, show_card, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw).chain().after(ScreenSystems), (fit_lines.after(crate::ui::widgets::scroll_lists), run_light, swell, breathe, lay_ground).chain().after(draw).run_if(book_shown), (seed_pins, retire, track, measure_room, squeeze).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -598,6 +598,10 @@ struct QuestCard;
 /// Closes the card, leaving no quest picked.
 #[derive(Component)]
 pub(crate) struct CloseCard;
+/// Where the web stands, its card over its right side: the web is laid out to the whole of
+/// it, so opening the card moves no quest.
+#[derive(Component)]
+struct Stage;
 /// The web's dotted ground, moved with the canvas a dot's step at a time.
 #[derive(Component)]
 struct Ground;
@@ -616,6 +620,11 @@ struct QuestName;
 pub(crate) struct Flow {
     length: f32,
     shown: (f32, f32),
+}
+/// The light running along a [`Flow`] line: its soft halo, or its bright core.
+#[derive(Component)]
+struct Spark {
+    core: bool,
 }
 /// Each shape drawn at a size, face, rim and the whole of it, kept for the next draw.
 #[derive(Resource, Default)]
@@ -656,6 +665,8 @@ const PINCH_STEP: f32 = 0.15;
 /// The width of a lane's header, at the left of the canvas, which stays as it is dragged:
 /// room for the longest path name (First Steps) on one line, its count under it.
 const HEADER: f32 = 88.0 * PX;
+/// The card's close button, a square.
+const CLOSE: f32 = 11.0 * PX;
 /// A lane's path icon in its header.
 const PATH_ICON: f32 = 14.0 * PX;
 /// The width of the Current Quest button.
@@ -692,7 +703,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) 
                 // The web fills the rest, over its dotted ground (which `fit_lines` moves with
                 // it); the picked quest's card stands over its right side.
                 let stage = Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, overflow: Overflow::clip(), ..default() };
-                columns.spawn((stage, Piece::Well.image())).with_children(|stage| {
+                columns.spawn((Stage, stage, Piece::Well.image())).with_children(|stage| {
                     let ground = Node { position_type: PositionType::Absolute, left: Val::ZERO, top: Val::ZERO, right: Val::ZERO, bottom: Val::ZERO, ..default() };
                     stage.spawn((ground, Ground));
                     // Beside the card while it shows (`show_card`), so no quest stands under it.
@@ -739,8 +750,13 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) 
 
 fn show(ui: Res<UiState>, mut root: Query<&mut Visibility, With<QuestScreen>>) {
     if let Ok(mut visibility) = root.single_mut() {
-        visibility.set_if_neq(if ui.quests_open && !ui.recipes_open { Visibility::Inherited } else { Visibility::Hidden });
+        visibility.set_if_neq(if book_shown(ui) { Visibility::Inherited } else { Visibility::Hidden });
     }
+}
+
+/// Whether the book is on screen: what only moves what it shows waits on it.
+fn book_shown(ui: Res<UiState>) -> bool {
+    ui.quests_open && !ui.recipes_open
 }
 
 #[allow(clippy::type_complexity)]
@@ -863,7 +879,7 @@ fn draw(
     settings: Res<Settings>,
     viewer: Res<super::recipes::RecipeViewer>,
     chapters_column: Query<Entity, With<Chapters>>,
-    mut web: Query<(Entity, &ComputedNode, &mut ScrollPosition), With<Web>>,
+    (mut web, stage): (Query<(Entity, &mut ScrollPosition), With<Web>>, Query<&ComputedNode, With<Stage>>),
     detail: Query<Entity, With<Detail>>,
     (mut recentre, mut zoom_at): (ResMut<Recentre>, ResMut<ZoomAt>),
     mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool, IVec2)>>,
@@ -873,8 +889,8 @@ fn draw(
         return;
     }
     // The web's room inside its well, as laid out for this window: drawn again when the
-    // window changes it.
-    let room = web.single().map_or(Vec2::ZERO, |(_, computed, _)| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
+    // window changes it. The card over its right side leaves the layout as it is.
+    let room = stage.single().map_or(Vec2::ZERO, |computed| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
     let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some(), room.as_ivec2());
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() && !recentre.0 {
         return;
@@ -884,6 +900,7 @@ fn draw(
     // when Current Quest asks.
     let arrived = drawn.as_ref().is_none_or(|(was, .., was_room)| was.chapter != view.chapter || *was_room == IVec2::ZERO) || std::mem::take(&mut recentre.0);
     let zoomed = zoom_at.0.take();
+    let refit = drawn.as_ref().is_none_or(|(was, ..)| was.picked != view.picked);
     *drawn = Some(wanted);
     let content = &launch.content;
     let font = &font.0;
@@ -940,7 +957,7 @@ fn draw(
     let step = Vec2::new(lanes_room.x / columns as f32, lanes_room.y / tallest as f32).clamp(side + GAP_LEAST * zoom, side + GAP_MOST * zoom);
     let place = |i: usize| Vec2::X * HEADER + cells[i] * step + (step - Vec2::splat(side)) / 2.0;
     let centre = |i: usize| place(i) + Vec2::splat(side / 2.0);
-    if let Ok((web, _, mut scroll)) = web.single_mut() {
+    if let Ok((web, mut scroll)) = web.single_mut() {
         let size = Vec2::new(HEADER + columns as f32 * step.x, tallest as f32 * step.y);
         // Centred in the well by its margins; a web too big for the well has none that way,
         // and is dragged about in it rather than cut off.
@@ -954,6 +971,14 @@ fn draw(
             // the canvas from `scroll - margin`.
             let at = Vec2::new(HEADER + point.x * step.x, point.y * step.y);
             scroll.0 = (at + margin - pointer).clamp(Vec2::ZERO, (size + margin - room).max(Vec2::ZERO));
+        } else if let Some(i) = view.picked.as_deref().and_then(|name| quests.iter().position(|q| q.name == name))
+            && refit
+        {
+            // A quest newly picked stays in what the well shows beside its card (from
+            // `scroll - margin`), scrolled no further than needed.
+            // What shows of it beside the card.
+            let seen = room - Vec2::X * (SIDEBAR + 2.0 * space::HAIR);
+            scroll.0 = kept_in_view(scroll.0, place(i), side, margin, seen, size);
         }
         commands.entity(web).despawn_children().with_children(|web| {
             if ours == 0 {
@@ -984,7 +1009,12 @@ fn draw(
                         let mut line = area.spawn((line, UiTransform::default(), WebLine { from: centre(j), to: centre(i) }, BackgroundColor(colour)));
                         // Into a quest that is open, from one done: a light runs along it.
                         if done && i < ours && standing(content, &player, quests[i]) == Standing::Open {
-                            line.insert((Flow { length: centre(j).distance(centre(i)), ..default() }, BackgroundGradient::default()));
+                            line.insert(Flow { length: centre(j).distance(centre(i)), ..default() }).with_children(|line| {
+                                for core in [false, true] {
+                                    let spark = Node { position_type: PositionType::Absolute, display: Display::None, top: Val::ZERO, bottom: Val::ZERO, ..default() };
+                                    line.spawn((Spark { core }, spark, BackgroundColor(Color::NONE)));
+                                }
+                            });
                         }
                     }
                 }
@@ -1004,7 +1034,7 @@ fn draw(
                     let tones = look.tones(tone);
                     let first = before(content, quest).iter().all(|f| f.branch != quest.branch || f.age != quest.age);
                     let (shape_name, shape) = look.shape_of(quest, first, followers(content, quest));
-                    let texels = (side / PX).round() as u32;
+                    let texels = texels_of(side);
                     let (face, rim, whole_shape) = shapes
                         .0
                         .entry((shape_name.to_owned(), texels))
@@ -1111,7 +1141,8 @@ fn draw(
                 };
                 top.spawn((text(font, status.0, BODY, status.1), TightLine));
                 // Closed, the card goes and the quest is no longer picked.
-                top.spawn((Button, CloseCard, Node { padding: UiRect::horizontal(Val::Px(PX)), ..default() })).with_child((shadowed(font, "×", BODY, MUTED), TightLine));
+                let close = Node { width: Val::Px(CLOSE), height: Val::Px(CLOSE), flex_shrink: 0.0, justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() };
+                top.spawn((Button, CloseCard, close, Piece::Button.image())).with_child((shadowed(font, "×", BODY, TEXT), TightLine));
             });
             let ready = claimable(&player, &quest.name);
             // Only an open quest is followed on screen.
@@ -1214,6 +1245,14 @@ fn draw(
 /// A line's colour on the web: in the accent when it ends at the quest picked; faint when
 /// it runs from one path to another; else the look's `done` once what it comes from is
 /// done, `ahead` before.
+/// The scroll that keeps a quest at `at` on the canvas, `side` across, wholly in what the
+/// well shows beside the lanes' headers (the canvas from `scroll - margin`, `room` across),
+/// moving `scroll` no further than needed and never past the canvas.
+fn kept_in_view(scroll: Vec2, at: Vec2, side: f32, margin: Vec2, room: Vec2, size: Vec2) -> Vec2 {
+    let (least, most) = (at + Vec2::splat(side) + margin - room, at + margin - Vec2::X * HEADER);
+    scroll.clamp(least.min(most), most.max(least)).clamp(Vec2::ZERO, (size + margin - room).max(Vec2::ZERO))
+}
+
 fn line_colour(look: &QuestLook, picked: bool, across: bool, done: bool) -> Color {
     let colour = if done { look.lines.done.color() } else { look.lines.ahead.color().with_alpha(0.8) };
     if picked {
@@ -1238,6 +1277,18 @@ fn zoom_of(style: &InterfaceStyle, zoom: i8) -> (f32, f32) {
 pub(crate) fn cell_side(style: &InterfaceStyle, zoom: i8) -> f32 {
     // An even count of texels, so the shape has a middle pixel line either way.
     ((zoom_of(style, zoom).0 * SHAPE_ROOM / (2.0 * PX)).round() * 2.0 * PX).max(zoom_of(style, zoom).0 + 2.0 * RIM)
+}
+
+/// A quest's cell, `side` pixels across, in texels: the size its shape is drawn at.
+fn texels_of(side: f32) -> u32 {
+    (side / PX).round() as u32
+}
+
+/// Every size, in texels, the book draws a quest's shape at, zoomed out to in.
+#[cfg(test)]
+pub(crate) fn shape_texels(style: &InterfaceStyle) -> Vec<u32> {
+    let (out, inn) = zoom_range(style);
+    (out..=inn).map(|zoom| texels_of(cell_side(style, zoom))).collect()
 }
 
 /// The furthest the web zooms out and in from the usual, in steps.
@@ -1407,31 +1458,30 @@ fn fit_lines(
 }
 
 /// The light along each line into an open quest runs from the quest before it, `flow`
-/// lengths of the line a second, as a band of the rim's colour `glow` of the line long,
-/// fading out either side.
-fn run_light(time: Res<Time>, look: Res<QuestLook>, mut lines: Query<(&Flow, &BackgroundColor, &mut BackgroundGradient)>) {
+/// lengths of the line a second: a halo `glow` of the line long in the light's colour, its
+/// middle third bright, each as clear as the line it runs on. Plain coloured nodes, cut to
+/// the part of the line the well shows.
+fn run_light(time: Res<Time>, look: Res<QuestLook>, lines: Query<(&Flow, &BackgroundColor, &Children)>, mut sparks: Query<(&Spark, &mut Node, &mut BackgroundColor), Without<Flow>>) {
     let lines_look = look.lines;
-    let lit = look.open.rim.color();
     let phase = (time.elapsed_secs() * lines_look.flow).fract();
-    for (flow, base, mut gradient) in &mut lines {
+    for (flow, base, children) in &lines {
         let (start, shown) = flow.shown;
-        if shown <= 0.0 || flow.length <= 0.0 {
-            continue;
+        for &child in children {
+            let Ok((spark, mut node, mut colour)) = sparks.get_mut(child) else { continue };
+            // Where the band's middle is along the part shown, from nought to one, and its
+            // half length in the same terms; the band enters before nought and leaves past one.
+            let reach = 1.0 + lines_look.glow;
+            let middle = ((phase * reach - lines_look.glow / 2.0) * flow.length - start) / shown.max(f32::EPSILON);
+            let half = lines_look.glow / 2.0 * flow.length / shown.max(f32::EPSILON) / if spark.core { 3.0 } else { 1.0 };
+            let (from, to) = ((middle - half).clamp(0.0, 1.0), (middle + half).clamp(0.0, 1.0));
+            let display = if shown > 0.0 && to > from { Display::Flex } else { Display::None };
+            let (left, width) = (Val::Percent(from * 100.0), Val::Percent((to - from) * 100.0));
+            if node.display != display || node.left != left || node.width != width {
+                (node.display, node.left, node.width) = (display, left, width);
+            }
+            let lit = lines_look.light.color().with_alpha(base.0.alpha() * if spark.core { 1.0 } else { 0.45 });
+            colour.set_if_neq(BackgroundColor(lit));
         }
-        // Where the band's middle is along the part shown, from nought to one, and its half
-        // length in the same terms; the band enters before nought and leaves past one.
-        let reach = 1.0 + lines_look.glow;
-        let middle = ((phase * reach - lines_look.glow / 2.0) * flow.length - start) / shown;
-        let half = lines_look.glow / 2.0 * flow.length / shown;
-        let at = |t: f32| Val::Percent((t * 100.0).clamp(0.0, 100.0));
-        let stops = vec![
-            ColorStop::new(base.0, Val::Percent(0.0)),
-            ColorStop::new(base.0, at(middle - half)),
-            ColorStop::new(lit, at(middle)),
-            ColorStop::new(base.0, at(middle + half)),
-            ColorStop::new(base.0, Val::Percent(100.0)),
-        ];
-        *gradient = BackgroundGradient::from(LinearGradient::to_right(stops));
     }
 }
 
@@ -1444,6 +1494,7 @@ fn swell(
     mut quests: Query<(&QuestNode, &Interaction, &mut UiTransform, &ComputedNode, &bevy::ui::UiGlobalTransform), With<Swell>>,
     mut name: Query<(&mut Node, &mut Visibility, &Children, &ComputedNode), With<QuestName>>,
     mut words: Query<&mut Text>,
+    stage: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform), (With<Stage>, Without<QuestName>, Without<Swell>)>,
 ) {
     let ease = 1.0 - (-time.delta_secs() * 18.0).exp();
     let mut over = None;
@@ -1471,9 +1522,18 @@ fn swell(
             text.0 = title;
         }
     }
-    // Over the quest, centred on it.
+    // Over the quest, centred on it; under it at the well's top, and never past its sides.
     let size = own.size() * own.inverse_scale_factor();
-    let (left, top) = (Val::Px(middle.x - size.x / 2.0), Val::Px(middle.y - tall / 2.0 - size.y - space::HAIR));
+    let (mut left, mut top) = (middle.x - size.x / 2.0, middle.y - tall / 2.0 - size.y - space::HAIR);
+    if let Ok((well, at)) = stage.single() {
+        let (centre, half) = (at.translation * well.inverse_scale_factor(), well.size() * well.inverse_scale_factor() / 2.0);
+        let (least, most) = (centre - half, centre + half);
+        left = left.min(most.x - size.x).max(least.x);
+        if top < least.y {
+            top = middle.y + tall / 2.0 + space::HAIR;
+        }
+    }
+    let (left, top) = (Val::Px(left), Val::Px(top));
     if node.left != left || node.top != top {
         (node.left, node.top) = (left, top);
     }
@@ -1850,7 +1910,7 @@ fn squeeze(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// Two pinned cards of three 20-pixel goals each run 45 pixels past the tracker's foot.
@@ -2120,6 +2180,20 @@ mod tests {
     /// A line between paths is faint unless it ends at the quest picked; a line along a
     /// path is not.
     #[test]
+    fn a_picked_quest_stays_in_view_beside_its_card() {
+        let (side, margin, size) = (40.0, Vec2::ZERO, Vec2::new(1200.0, 400.0));
+        // The card narrows the well from 900 to 600: a quest at 700 scrolls just into view.
+        let room = Vec2::new(600.0, 400.0);
+        let kept = kept_in_view(Vec2::ZERO, Vec2::new(700.0, 100.0), side, margin, room, size);
+        assert_eq!(kept, Vec2::new(140.0, 0.0));
+        // One already in view moves nothing; one left of it comes back clear of the headers.
+        assert_eq!(kept_in_view(Vec2::new(50.0, 0.0), Vec2::new(300.0, 100.0), side, margin, room, size), Vec2::new(50.0, 0.0));
+        assert_eq!(kept_in_view(Vec2::new(500.0, 0.0), Vec2::new(HEADER + 200.0, 100.0), side, margin, room, size), Vec2::new(200.0, 0.0));
+        // Never past the canvas.
+        assert_eq!(kept_in_view(Vec2::ZERO, Vec2::new(1190.0, 100.0), side, margin, room, size), Vec2::new(600.0, 0.0));
+    }
+
+    #[test]
     fn lines_between_paths_are_faint() {
         let look = look();
         assert!(line_colour(&look, false, true, true).alpha() <= ACROSS);
@@ -2135,7 +2209,7 @@ mod tests {
     }
 
     /// The book's zooms as `interface.ron` gives them.
-    fn style() -> InterfaceStyle {
+    pub(crate) fn style() -> InterfaceStyle {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/core/interface.ron");
         let source = std::fs::read_to_string(path).expect("core interface.ron");
         InterfaceStyle::load(&[voxmar_engine::content::ContentFile { package: "core".into(), name: InterfaceStyle::FILE.into(), source }]).expect("loads")

@@ -40,8 +40,8 @@ pub struct Tones {
 }
 
 /// The lines between quests: `width` interface pixels thick, `done` once the first is done
-/// and `ahead` before; a light runs `flow` lengths of a line a second into an open quest,
-/// lit over `glow` of the line.
+/// and `ahead` before; a light of `light` runs `flow` lengths of a line a second into an
+/// open quest, lit over `glow` of the line.
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lines {
@@ -50,6 +50,7 @@ pub struct Lines {
     pub ahead: Rgb,
     pub flow: f32,
     pub glow: f32,
+    pub light: Rgb,
 }
 
 /// The web's ground: a dot every `spacing` interface pixels.
@@ -239,11 +240,14 @@ fn outline(shape: &Shape, p: Vec2) -> f32 {
     }
     let n = f32::from(shape.sides);
     if shape.teeth > 0.0 {
-        // A wheel and its teeth: each side's middle stands out, the corners between cut in.
-        let angle = p.y.atan2(p.x);
-        let tooth = (angle * n).cos() > -0.15;
-        let radius = if tooth { 1.0 } else { 1.0 - shape.teeth };
-        return p.length() - radius;
+        // A wheel and its teeth, one a side: the wheel `teeth` short of the edge, and each
+        // tooth the wedge of the whole disc a little over half its side wide, measured
+        // across along the arc, so its flanks are edges as its top is.
+        let (radius, angle) = (p.length(), p.y.atan2(p.x));
+        let from_tooth = ((angle * n + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI).abs();
+        let flank = (from_tooth - TOOTH) / n * radius;
+        let tooth = (radius - 1.0).max(flank);
+        return tooth.min(radius - (1.0 - shape.teeth));
     }
     // A regular polygon of circumradius `r`, its corners rounded by `round`: the polygon
     // drawn that much smaller, grown back by it.
@@ -255,6 +259,10 @@ fn outline(shape: &Shape, p: Vec2) -> f32 {
     q.y += (-q.y).clamp(0.0, r * sin);
     q.length() * q.x.signum() - shape.round
 }
+
+/// How far round a cog's tooth reaches either side of its middle, in a side's turn (pi):
+/// a little over half the side.
+const TOOTH: f32 = 1.72;
 
 /// The texels of the rim, inside the outline.
 pub const RIM: f32 = 2.0;
@@ -328,8 +336,10 @@ mod tests {
     #[test]
     fn every_shape_draws_a_face_in_a_rim_at_every_size() {
         let look = shipped();
+        let sizes = crate::hud::quests::shape_texels(&crate::hud::quests::tests::style());
+        assert!(sizes.len() >= 3, "{sizes:?}");
         for (name, shape) in &look.shapes {
-            for texels in [20, 28, 36, 52, 68] {
+            for &texels in &sizes {
                 let (face, rim) = draw(shape, texels);
                 let (face, rim) = (filled(&face), filled(&rim));
                 assert!(face.len() > (texels * texels / 5) as usize, "{name} at {texels}: a face of {} texels", face.len());
@@ -374,14 +384,27 @@ mod tests {
     fn a_later_package_restyles_and_bad_looks_fail() {
         let core = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/core").join(FILE)).unwrap();
         let file = |package: &str, source: &str| ContentFile { package: package.into(), name: FILE.into(), source: source.into() };
-        let look = QuestLook::load(&[file("core", &core), file("star", r#"(shapes: {"star": (sides: 5), "circle": (sides: 12)}, quests: {"base:a": "star"}, lines: (width: 3, done: (1, 2, 3), ahead: (4, 5, 6), flow: 1, glow: 0.2))"#)]).unwrap();
+        let look = QuestLook::load(&[file("core", &core), file("star", r#"(shapes: {"star": (sides: 5), "circle": (sides: 12)}, quests: {"base:a": "star"}, lines: (width: 3, done: (1, 2, 3), ahead: (4, 5, 6), flow: 1, glow: 0.2, light: (7, 8, 9)))"#)]).unwrap();
         assert_eq!(look.shapes["star"].sides, 5);
         assert_eq!(look.shapes["circle"].sides, 12);
         assert_eq!(look.quests["base:a"], "star");
         assert_eq!(look.lines.width, 3.0);
         assert_eq!(look.shape, "rounded", "what it leaves is the earlier package's");
-        for bad in [r#"(quests: {"base:a": "blob"})"#, r#"(shapes: {"line": (sides: 2)})"#, r#"(shapes: {"spiky": (sides: 6, teeth: 0.7)})"#, r#"(shape: "blob")"#, r#"(hub_after: 1)"#, r#"(grid: (spacing: 2, dot: (1, 1, 1), alpha: 0.5))"#, r#"(lines: (width: 9, done: (1, 2, 3), ahead: (4, 5, 6), flow: 1, glow: 0.2))"#, r#"(sparkle: true)"#] {
-            assert!(QuestLook::load(&[file("core", &core), file("bad", bad)]).is_err(), "{bad} loaded");
+        // Each fails naming what is wrong, in the file's name.
+        for (bad, says) in [
+            (r#"(quests: {"base:a": "blob"})"#, "base:a takes the shape blob, which is not one of its shapes"),
+            (r#"(shapes: {"line": (sides: 2)})"#, "the shape line has 2 sides"),
+            (r#"(shapes: {"spiky": (sides: 6, teeth: 0.7)})"#, "has teeth 0.7 (0 to 0.4)"),
+            (r#"(shapes: {"bare": (teeth: 0.2)})"#, "the shape bare has teeth but no sides"),
+            (r#"(shape: "blob")"#, "shape takes the shape blob"),
+            (r#"(hub_after: 1)"#, "hub_after 1 is not 2 or more"),
+            (r#"(grid: (spacing: 2, dot: (1, 1, 1), alpha: 0.5))"#, "grid dots 2 apart (4 to 64)"),
+            (r#"(lines: (width: 9, done: (1, 2, 3), ahead: (4, 5, 6), flow: 1, glow: 0.2, light: (7, 8, 9)))"#, "lines 9 wide (1 to 4)"),
+            (r#"(lines: (width: 2, done: (1, 2, 3), ahead: (4, 5, 6), flow: 1, glow: 0.2))"#, "bad/quest_book.ron"),
+            (r#"(sparkle: true)"#, "bad/quest_book.ron"),
+        ] {
+            let error = QuestLook::load(&[file("core", &core), file("bad", bad)]).err().unwrap_or_else(|| panic!("{bad} loaded"));
+            assert!(error.contains(FILE) && error.contains(says), "{bad}: {error}");
         }
         assert!(look.unknown_quests(|name| name == "base:homestead_hearth" || name == "base:crucible_kiln").eq(["base:a"]));
     }
