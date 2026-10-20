@@ -976,4 +976,36 @@ fn caves_drip_by_their_rock_and_depth() {
         assert!(levels[seep] > 0.5 * ambience.beds[seep].volume, "seep at moisture {moisture}: {:.3}", levels[seep]);
     }
     assert!(heard(&cave(1.4, 20.0, 0.5, 0.0)).0[seep] < 1e-3);
+
+/// A survey still out when the player leaves a game is of the world left: its answer,
+/// coming back after, is dropped, not heard in the next world (a village's murmur where
+/// there is none), and the next game's first survey does not wait on it.
+#[test]
+fn a_survey_of_the_world_left_is_not_heard_in_the_next() {
+    let answer = |number: u64, temperature: f32| super::Survey { number, enclosure: Default::default(), place: Some(super::Place { temperature, ..Default::default() }) };
+    let mut surveys = super::Surveys::new();
+    // Survey 3 goes out in the first world, and the player leaves before it comes back.
+    surveys.out = true;
+    surveys.leave(3);
+    assert!(!surveys.out, "the next game's first survey waits on one of the world left");
+    // In the next world survey 4 goes out; 3's answer comes back first, then 4's.
+    surveys.out = true;
+    surveys.tx.send(answer(3, 0.9)).unwrap();
+    assert!(surveys.answers().is_empty(), "the answer of a survey of the world left is taken");
+    assert!(surveys.out, "an old answer is no answer to the survey out now");
+    surveys.tx.send(answer(4, 0.2)).unwrap();
+    let answers = surveys.answers();
+    assert_eq!(answers.iter().map(|s| (s.number, s.place.as_ref().map(|p| p.temperature))).collect::<Vec<_>>(), [(4, Some(0.2))]);
+    assert!(!surveys.out);
+}
+
+/// The beds wait for every recorded clip to load (or fail) before any plays, so a muffled
+/// twin, made at once from the same recording, never starts ahead of its dry clip.
+#[test]
+fn recorded_beds_and_their_muffled_twins_start_together() {
+    // Bed 0 synthesized (there at once), bed 1 recorded in two clips.
+    let beds = vec![vec![0], vec![1, 2]];
+    assert!(!super::beds_ready(&beds, |&clip| clip != 2), "a recording still loading");
+    assert!(super::beds_ready(&beds, |_| true));
+    assert!(super::beds_ready(&Vec::<Vec<u8>>::new(), |_| false), "no beds, nothing to wait on");
 }
