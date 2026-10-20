@@ -14,7 +14,8 @@
 //!   water), panned by direction, and ring in caves with a reverb as wet as the place is
 //!   enclosed.
 //!
-//! Nothing here runs per voxel per frame: the scan runs on a worker about once a second
+//! Nothing here runs per voxel per frame: the scan runs on a worker about once a second,
+//! the roof look a few times a second over the handful of columns the player passed under,
 //! and the rest is a few dozen numbers per frame.
 
 pub mod defs;
@@ -27,6 +28,7 @@ pub(crate) mod tests;
 use std::sync::{Arc, OnceLock};
 
 use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, AudioSource, GlobalVolume, PlaybackSettings, Volume};
+use bevy::math::Vec3Swizzles;
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rayon::prelude::*;
@@ -53,6 +55,8 @@ use crate::world::ClientWorld;
 
 /// Seconds between scans of the surroundings.
 const SURVEY_INTERVAL: f32 = 1.0;
+/// Seconds between looks for a roof overhead.
+pub const ROOF_LOOK: f32 = 0.25;
 /// Seconds over which the environment follows a new scan.
 const SETTLE: f32 = 2.0;
 /// How far from the player settlements are looked for, in blocks: past this, none is heard.
@@ -131,9 +135,28 @@ struct Survey {
     place: Option<Place>,
 }
 
+/// The ambience as the launch checks loaded it, and each block's roof patter they worked
+/// out (see [`Ambience::roof_patters`]), handed on so neither is made twice.
+#[derive(Resource)]
+pub struct Checked(pub Ambience, pub Vec<Option<u8>>);
+
+/// The roof the player is under, looked for every [`ROOF_LOOK`] seconds.
+#[derive(Default)]
+struct RoofLook {
+    since: f32,
+    /// Where the player's feet were at the last look.
+    from: Option<Vec3>,
+    /// The roof found then: the block, under any column the player passed beneath since the
+    /// look before.
+    under: Option<voxmar_engine::block::BlockId>,
+}
+
 #[derive(Resource)]
 struct Ambient {
     ambience: Arc<Ambience>,
+    /// Each block's roof patter (see [`Ambience::roof_patters`]).
+    roof_patters: Vec<Option<u8>>,
+    roof: RoofLook,
     kinds: Arc<Kinds>,
     content: Content,
     clips: Option<Clips>,
@@ -159,12 +182,21 @@ struct Ambient {
 struct BedSegment(usize);
 
 /// Reads the ambience definitions and starts synthesizing what they use.
-fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>) {
-    let ambience = match Ambience::load(&launch.content.files) {
-        Ok(ambience) => ambience,
-        Err(e) => {
-            error!("no ambience: {e}");
-            Ambience::default()
+fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, checked: Option<ResMut<Checked>>) {
+    let (ambience, roof_patters) = match checked {
+        Some(mut checked) => {
+            commands.remove_resource::<Checked>();
+            (std::mem::take(&mut checked.0), std::mem::take(&mut checked.1))
+        }
+        None => {
+            let ambience = Ambience::load(&launch.content.files).unwrap_or_else(|e| {
+                error!("no ambience: {e}");
+                Ambience::default()
+            });
+            // Without the launch's check (and the sound effects' building materials), roofs
+            // patter by their family sound, or not at all.
+            let patters = ambience.roof_patters(&world.registry, &[], |id| defs::family(world.registry.info(id).sound)).unwrap_or_default();
+            (ambience, patters)
         }
     };
     let kinds = Arc::new(kinds(&ambience, &world.registry, &launch.content.multiblocks));
@@ -192,9 +224,11 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>) {
             .collect();
         let _ = tx.send(Synthesized { beds, sounds });
     });
-    let groups = ambience.groups.len();
+    let axes = ambience.axes();
     commands.insert_resource(Ambient {
         mixer: Mixer::new(&ambience, 0x616d_6269),
+        roof_patters,
+        roof: RoofLook::default(),
         ambience: Arc::new(ambience),
         kinds,
         content: launch.content.clone(),
@@ -207,7 +241,7 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>) {
         enclosure: Enclosure::default(),
         place: None,
         smooth: Enclosure::default(),
-        env: Environment::new(groups),
+        env: Environment::new(axes),
         cues: Vec::new(),
         logged: String::new(),
     });
@@ -286,6 +320,14 @@ fn survey(
         }
     }
 
+    ambient.roof.since += dt;
+    if player.joined && ambient.roof.since >= ROOF_LOOK {
+        ambient.roof.since = 0.0;
+        let to = player.position;
+        let from = ambient.roof.from.replace(to).unwrap_or(to);
+        ambient.roof.under = roof_over(|p| world.voxels.block(p), from, to, ambient.ambience.roofs.height, |b| defs::is_roof(&world.registry, b));
+    }
+
     ambient.since_survey += dt;
     if !player.joined || ambient.surveying || ambient.since_survey < SURVEY_INTERVAL {
         return;
@@ -323,6 +365,91 @@ fn survey(
     });
 }
 
+/// The roof over a player who walked from `from` to `to` (feet) since the last look: the
+/// lowest roof block (`is_roof`) within `height` blocks above the head over any column the
+/// body passed beneath, so stepping under an eave, or under a beam and out again between
+/// two looks, is not missed. A few columns, a dozen blocks each.
+pub fn roof_over(block: impl Fn(IVec3) -> Option<voxmar_engine::block::BlockId>, from: Vec3, to: Vec3, height: i32, is_roof: impl Fn(voxmar_engine::block::BlockId) -> bool) -> Option<voxmar_engine::block::BlockId> {
+    use voxmar_engine::physics::player::{HEIGHT, WIDTH};
+    let half = WIDTH / 2.0;
+    // Every column the body's footprint covered, sampled along the way a little closer
+    // than its width.
+    let steps = (from.xz().distance(to.xz()) / (WIDTH * 0.9)).ceil().clamp(0.0, 64.0) as usize;
+    let mut columns: Vec<(i32, i32)> = Vec::new();
+    for i in 0..=steps {
+        let at = from.lerp(to, if steps == 0 { 1.0 } else { i as f32 / steps as f32 });
+        for (dx, dz) in [(-half, -half), (half, -half), (-half, half), (half, half)] {
+            let column = ((at.x + dx).floor() as i32, (at.z + dz).floor() as i32);
+            if !columns.contains(&column) {
+                columns.push(column);
+            }
+        }
+    }
+    let head = (from.y.min(to.y) + HEIGHT).floor() as i32;
+    let mut found: Option<(i32, voxmar_engine::block::BlockId)> = None;
+    for (x, z) in columns {
+        for y in head..=head + height {
+            if found.is_some_and(|(lowest, _)| y >= lowest) {
+                break;
+            }
+            match block(IVec3::new(x, y, z)) {
+                Some(b) if is_roof(b) => {
+                    found = Some((y, b));
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    found.map(|(_, b)| b)
+}
+
+/// What the gate hears of the roof overhead: the patter chosen (its name, from the roof
+/// block's material), how much the open rain is muffled (`sheltered`), and how fully each
+/// bed playing on a patter would play here now. Nothing before the ambience has started.
+pub fn roof_heard(world: &World) -> Option<RoofHeard> {
+    let ambient = world.get_resource::<Ambient>()?;
+    let roofs = &ambient.ambience.roofs;
+    let patter = (0..roofs.patters.len()).find(|&p| ambient.env.values[ambient.ambience.patter_axis(p)] > 0.0).map(|p| roofs.patters[p].clone());
+    let beds = ambient
+        .ambience
+        .beds
+        .iter()
+        .filter(|bed| (0..roofs.patters.len()).any(|p| bed.when.uses_axis(ambient.ambience.patter_axis(p))))
+        .map(|bed| (short(&bed.name).to_owned(), bed.when.weight(&ambient.env)))
+        .collect();
+    // The beds outside that a roof turns down (`duck` by `sheltered`), and how far now.
+    let sheltered = ambient.env.get(Fixed::Sheltered);
+    let muffled = ambient
+        .ambience
+        .beds
+        .iter()
+        .filter_map(|bed| {
+            let amount = bed.duck.iter().find(|(by, _)| *by == defs::DuckBy::Axis(Fixed::Sheltered as usize))?.1;
+            Some((short(&bed.name).to_owned(), 1.0 - amount * sheltered.clamp(0.0, 1.0)))
+        })
+        .collect();
+    Some(RoofHeard { under: ambient.roof.under, patter, sheltered, beds, muffled })
+}
+
+/// See [`roof_heard`].
+#[derive(Debug)]
+pub struct RoofHeard {
+    pub under: Option<voxmar_engine::block::BlockId>,
+    pub patter: Option<String>,
+    pub sheltered: f32,
+    pub beds: Vec<(String, f32)>,
+    /// Each bed a roof turns down, and the share of it left.
+    pub muffled: Vec<(String, f32)>,
+}
+
+/// The patter a roof of `block` makes in rain, by name, as the ambience data says.
+pub fn patter_of(world: &World, block: voxmar_engine::block::BlockId) -> Option<String> {
+    let ambient = world.get_resource::<Ambient>()?;
+    let p = (*ambient.roof_patters.get(block.0 as usize)?)?;
+    Some(ambient.ambience.roofs.patters[p as usize].clone())
+}
+
 /// The climate, biome and lie of the land at `eye`.
 fn place(generator: &Overworld, eye: IVec3) -> Place {
     let site = generator.site(eye.x, eye.z);
@@ -338,6 +465,9 @@ fn place(generator: &Overworld, eye: IVec3) -> Place {
         .settlements_near(eye.xz(), SETTLEMENTS_HEARD)
         .iter()
         .map(|s| s.centre.xz().as_vec2().distance(eye.xz().as_vec2() + 0.5))
+        // The search gives every settlement planned in the regions it touches, some far
+        // past hearing.
+        .filter(|&distance| distance <= SETTLEMENTS_HEARD as f32)
         .fold(NO_SETTLEMENT, f32::min);
     Place {
         settlement,
@@ -359,12 +489,14 @@ fn place(generator: &Overworld, eye: IVec3) -> Place {
 /// Fills in the environment vector from the scan, the place, the weather and the time.
 fn listen(
     player: Res<LocalPlayer>,
+    world: Res<ClientWorld>,
     weather: Res<ClientWeather>,
     cycle: Res<DayCycle>,
     mut ambient: ResMut<Ambient>,
     mut surroundings: ResMut<Surroundings>,
 ) {
     let ambient = &mut *ambient;
+    let registry = &world.registry;
     let (env, smooth) = (&mut ambient.env, &ambient.smooth);
     env.set(Fixed::Air, smooth.air);
     env.set(Fixed::Sky, smooth.sky);
@@ -417,6 +549,15 @@ fn listen(
     env.set(Fixed::Cover, shown.cover);
     env.set(Fixed::Sun, voxmar_engine::calendar::sun_height((cycle.ticks / TICKS_PER_DAY as f64).rem_euclid(1.0)) as f32);
     env.set(Fixed::Underwater, cycle.underwater as u8 as f32);
+    // Rain on the roof overhead, by what the roof is made of; and the open rain muffled.
+    let roofs = &ambient.ambience.roofs;
+    let patter = ambient.roof.under.and_then(|b| ambient.roof_patters.get(b.0 as usize).copied().flatten());
+    for p in 0..roofs.patters.len() {
+        let axis = ambient.ambience.patter_axis(p);
+        ambient.env.values[axis] = if patter == Some(p as u8) { falling } else { 0.0 };
+    }
+    let sheltered = ambient.roof.under.map_or(0.0, |b| roofs.sheltered(|tag| registry.def(b).has_tag(tag), patter.map(usize::from)));
+    ambient.env.set(Fixed::Sheltered, sheltered);
 }
 
 /// Runs the mixer and carries out what it asks for.
@@ -535,11 +676,12 @@ fn leave(
     // The next world starts from nothing found, not deep under the last one.
     *surroundings = Surroundings::default();
     let Some(mut ambient) = ambient else { return };
-    let groups = ambient.ambience.groups.len();
+    let axes = ambient.ambience.axes();
     ambient.mixer = Mixer::new(&ambient.ambience, 0x616d_6269);
+    ambient.roof = RoofLook::default();
     ambient.enclosure = Enclosure::default();
     ambient.smooth = Enclosure::default();
     ambient.place = None;
-    ambient.env = Environment::new(groups);
+    ambient.env = Environment::new(axes);
     ambient.since_survey = SURVEY_INTERVAL;
 }

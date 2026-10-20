@@ -760,6 +760,9 @@ mod tests {
         // mending an iron pickaxe asks the level making one does.
         let knife = id("base:wooden_knife");
         assert_eq!((tools.mend_share(pick), tools.mend_share(knife)), (0.5, 1.0));
+        // A trophy is kept by care: the tusk club by its twine bindings, half at a time.
+        let club = id("base:tusk_club");
+        assert_eq!((tools.mends(club), tools.mend_share(club)), (&[id("base:twine")][..], 0.5));
         let engineering = content.skills.id("core:engineering").unwrap();
         assert_eq!(tools.mend_skill(id("base:iron_pickaxe")), Some((engineering, 15)));
         // Met as making one is: boosts count, as a schematic would.
@@ -811,6 +814,29 @@ mod tests {
             .map(|b| content.blocks.def(b).name.as_str())
             .collect();
         assert!(others.is_empty(), "only dead logs break to sticks, not {others:?}");
+    }
+
+    /// Each tier of each kind is felt (Oct 14 tier audit, docs/tools-and-crafting.md): on
+    /// the blocks tools are for (a log, cobblestone, an ore), a block with the next tier
+    /// takes at most 1/1.35 of the time with the one before, counting the quarter second the
+    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to wood, wood to
+    /// stone, stone to copper, copper to iron.
+    #[test]
+    fn every_tool_tier_is_felt() {
+        const BREAK_WAIT: f32 = 0.25;
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        for (kind, blocks) in [("axe", ["oak_log"].as_slice()), ("pickaxe", ["cobblestone", "coal_ore"].as_slice())] {
+            for block in blocks {
+                let hardness = content.blocks.info(id(block)).hardness;
+                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["wooden", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
+                let seconds: Vec<f32> = held.iter().map(|&item| hardness / content.tools.speed(item, id(block)) + BREAK_WAIT).collect();
+                for (step, pair) in seconds.windows(2).enumerate() {
+                    assert!(pair[0] / pair[1] >= 1.35, "{block}: tier {step} to {} with a {kind} is only {:.2}x ({seconds:?})", step + 1, pair[0] / pair[1]);
+                }
+            }
+        }
     }
 
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower
