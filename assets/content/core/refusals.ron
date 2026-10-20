@@ -57,6 +57,8 @@
         "husbandry.kept_full", "husbandry.no_room_to_breed", "husbandry.world_full", "husbandry.too_poorly_kept", "husbandry.too_poorly_kept_wants",
         // A hearth or kiln that is cold, or lit with no fuel in hand.
         "multiblock.fuel", "multiblock.cold",
+        // A later age's recipe, crafted or laid before its rite.
+        "craft.age",
         // Home stations.
         "station.level", "station.too_few", "station.nothing_grows", "station.needs.sky", "station.needs.spot", "station.needs.water",
         // The land around a station or structure still loading: judged once it is there.

@@ -72,6 +72,13 @@ impl Server {
             })
         });
         let Some(grid) = laid else {
+            // A later age's way, before its rite: said as a refusal, as the grid's is.
+            if usable.is_empty()
+                && let Some(age) = making.iter().find_map(|r| self.age_closed(agent, r))
+            {
+                self.refuse_age(agent, &age);
+                return;
+            }
             let words = match usable.first() {
                 Some(recipe) => short_words(recipe, &have, &self.content.blocks),
                 None => Words::key("craft.lay.cannot"),
@@ -139,7 +146,8 @@ impl Server {
     }
 
     /// Which recipes `agent` may craft where they are: a table's within reach of one, one
-    /// made near a block within reach of such a block, and those whose level they have.
+    /// made near a block within reach of such a block, those whose level they have, and a
+    /// later age's only once they have done its rite.
     pub(crate) fn allowed_recipes(&self, agent: PlayerId) -> impl Fn(&Recipe) -> bool + use<> {
         let at_table = self.at_table(agent);
         let near = self.near_tags(agent);
@@ -149,11 +157,26 @@ impl Server {
             skills.ids().map(|skill| (skill, (skills.level(player.skills.xp(skill)), voxmar_engine::level::check_level(&skills, &effects, &player.skills, &player.vitals.effects, skill)))).collect()
         }).unwrap_or_default();
         let inventory = player.map(|p| p.inventory.clone()).unwrap_or_default();
+        // The ages whose rite they have done: a later age's recipes wait for it.
+        let done = player.map(|p| p.quests_done.clone()).unwrap_or_default();
+        let quests = self.content.quests.clone();
         move |r: &Recipe| {
-            (at_table || !r.needs_table())
+            r.age.as_deref().is_none_or(|age| quests.opened(age, &|quest| done.iter().any(|d| d == quest)))
+                && (at_table || !r.needs_table())
                 && r.near.as_deref().is_none_or(|tag| near.iter().any(|t| t == tag))
                 && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
         }
+    }
+
+    /// The later age `recipe` opens in, while `agent` has not done its rite.
+    pub(crate) fn age_closed(&self, agent: PlayerId, recipe: &Recipe) -> Option<String> {
+        let done = &self.players.get(&agent)?.quests_done;
+        recipe.age.clone().filter(|age| !self.content.quests.opened(age, &|quest| done.iter().any(|d| d == quest)))
+    }
+
+    /// Tells `agent` what they tried opens in a later age.
+    pub(crate) fn refuse_age(&self, agent: PlayerId, age: &str) {
+        self.refuse(agent, Words::key("craft.age").with("age", Words::key(&format!("quest.age.{age}"))));
     }
 
     /// The stores in `agent`'s home, while they stand in it, nearest first.
@@ -298,7 +321,7 @@ mod tests {
             .making(item)
             .iter()
             .find_map(|entry| match &entry.method {
-                voxmar_engine::recipe_book::Method::Craft { variants, first, .. } => Some((*first as u16, variants.len() as u8)),
+                voxmar_engine::recipe_book::Method::Craft { first, ways, .. } => Some((*first as u16, *ways as u8)),
                 _ => None,
             })
             .expect("a crafting way");
@@ -388,6 +411,47 @@ mod tests {
         assert_eq!(grid(&server), vec![(planks, 1); 4]);
         assert_eq!(laid(&server), 1, "only a lay that took from a store counts");
     }
+    /// A later age's station (a pit kiln, `age: "farm"`) is refused until its rite is done,
+    /// whatever lies in the grid; then it is made as any other.
+    #[test]
+    fn a_later_ages_station_waits_for_its_rite() {
+        let mut server = fixture();
+        let (cobble, campfire, kiln) = (id(&server, "base:cobblestone"), id(&server, "base:campfire"), id(&server, "base:pit_kiln"));
+        let table = IVec3::new(10, FLOOR + 1, 8);
+        server.set_block(table, id(&server, "base:crafting_table"));
+        server.players.get_mut(&1).unwrap().station = Some(table);
+        assert!(server.at_table(1), "at the table, so only the age stands in the way");
+        let craft = server.content.actions.expect("core:craft");
+        let made = |server: &mut Server| {
+            let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
+            inventory.craft = [None; GRID];
+            for (cell, item) in [(0, cobble), (2, cobble), (3, cobble), (4, campfire), (5, cobble)] {
+                inventory.craft[cell] = Some(ItemStack { item, count: 1 });
+            }
+            server.propose(1, craft, ActionTarget::Slot(0), Instant::now());
+            server.players[&1].inventory.slots.iter().flatten().filter(|s| s.item == kiln).count()
+        };
+        let rite = server.content.quests.rite("farm").expect("a rite opens the Farm age").name.clone();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        let refused = || {
+            let mut keys = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let voxmar_protocol::ServerMessage::Refused { why: Words::Key(key, _) } = message {
+                    keys.push(key);
+                }
+            }
+            keys
+        };
+        assert_eq!(made(&mut server), 0, "the Farm age is not open");
+        assert_eq!(refused(), ["craft.age"], "the grid's craft says why");
+        server.players.get_mut(&1).unwrap().inventory.craft = [None; GRID];
+        lay(&mut server, "base:pit_kiln", 1);
+        assert_eq!(refused(), ["craft.age"], "laying it from the book says why");
+        server.players.get_mut(&1).unwrap().quests_done.push(rite);
+        assert_eq!(made(&mut server), 1, "its rite done, the kiln is made");
+    }
+
     /// A log split near a chopping block gives six planks, away from one the grid's four;
     /// the way made near one lays only near one.
     #[test]
@@ -406,6 +470,8 @@ mod tests {
         server.set_block(block, id(&server, "base:chopping_block"));
         split(&mut server);
         assert_eq!(carried(&server), 10, "two more by one");
+        let tallies = &server.players[&1].tallies;
+        assert_eq!((tallies.get("crafted:base:oak_planks"), tallies.get("crafted_near:chopping_block:base:oak_planks")), (Some(&10), Some(&6)), "made near it, tallied for quests");
         // Its way in the recipe book lays only near one.
         let book = voxmar_engine::recipe_book::RecipeBook::new(&server.content);
         let first = book
