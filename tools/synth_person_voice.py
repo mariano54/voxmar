@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Synthesizes the stand-in voice of settlements' people (`person` in
-creature_sounds.ron): hums, a surprised "oh", grunts when struck and a falling cry.
+creature_sounds.ron): hums, a surprised "oh", grunts when struck and a falling cry; and
+the barks (a greeting, an alarm, a content sigh).
 
 A source-filter voice: a glottal pulse train with a little jitter and breath, shaped by
 formant resonators for each vowel, under an envelope. It stands in until recordings of
 real voices replace it. Writes ogg files with ffmpeg.
 
-    python3 tools/synth_person_voice.py assets/content/base/sounds/creatures/person
+    python3 tools/synth_person_voice.py assets/content/base/sounds/creatures/person [names...]
 """
 
 import math
@@ -115,13 +116,26 @@ CLIPS = {
     "hurt_3": lambda: voice(0.2, glide(170, 130), "o", burst, breath=0.7, seed=10),
     # A falling cry.
     "death_1": lambda: voice(0.9, glide(200, 90), "a", swell(0.06, 0.7), breath=0.4, seed=11),
+    # Barks (Server::bark). A greeting: a bright "mm-hm!" rising, a "heh" and a hum up.
+    "greet_1": lambda: mix(voice(0.14, glide(132, 140), "m", swell(0.2, 0.3), seed=12), voice(0.24, glide(150, 182), "m", swell(0.1, 0.45), seed=13), gap=0.05),
+    "greet_2": lambda: voice(0.24, glide(150, 178), "e", swell(0.1, 0.5), breath=0.25, seed=14),
+    "greet_3": lambda: mix(voice(0.12, glide(140, 146), "m", swell(0.2, 0.3), seed=15), voice(0.28, glide(160, 150), "a", swell(0.1, 0.5), breath=0.15, seed=16), gap=0.03),
+    # Alarm: a sharp "hey!" rising, and a "hey, hey!".
+    "alarm_1": lambda: voice(0.32, glide(190, 270), "e", swell(0.04, 0.35), breath=0.3, seed=17),
+    "alarm_2": lambda: mix(voice(0.18, glide(200, 250), "e", swell(0.04, 0.4), breath=0.3, seed=18), voice(0.24, glide(220, 285), "a", swell(0.04, 0.4), breath=0.3, seed=19), gap=0.07),
+    # Content: a slow, breathy sigh falling away, and a settled "mm".
+    "content_1": lambda: voice(0.7, glide(135, 92), "a", swell(0.3, 0.6), breath=0.9, seed=20),
+    "content_2": lambda: voice(0.55, glide(120, 98), "m", swell(0.25, 0.6), breath=0.5, seed=21),
 }
 
 
 def main():
     out = sys.argv[1]
+    only = set(sys.argv[2:])
     os.makedirs(out, exist_ok=True)
     for name, make in CLIPS.items():
+        if only and name not in only:
+            continue
         samples = finish(make())
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             path = tmp.name
