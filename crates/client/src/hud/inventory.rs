@@ -481,7 +481,7 @@ fn craft(
     let (title, how) = match made {
         _ if let Some(age) = &locked => {
             let age = locale.get(&format!("quest.age.{age}")).to_owned();
-            (locale.format("inventory.craft.age", &[("age", &age)]), locale.format("inventory.craft.lookup", &[("key", &settings.recipes_key.name(&locale))]))
+            (locale.format("inventory.craft.age", &[("age", &age)]), String::new())
         }
         _ if let Some((skill, level)) = lacking => {
             let skill = locale.skill(skills.get(skill));

@@ -395,7 +395,7 @@ impl QuestRegistry {
                 if *age == quest.age {
                     return Err(RegistryError(format!("quest {} opens its own age `{age}`", quest.name)));
                 }
-                if let Some(other) = quests.iter().find(|q| q.name != quest.name && q.opens.as_ref() == Some(age)) {
+                if let Some(other) = written.iter().map(|(q, _)| q).find(|q| q.name != quest.name && q.opens.as_ref() == Some(age)) {
                     return Err(RegistryError(format!("quests {} and {} both open the age `{age}`", quest.name, other.name)));
                 }
             }
@@ -406,8 +406,8 @@ impl QuestRegistry {
                     Goal::Capstones(age, n) => (age, *n, true),
                     _ => continue,
                 };
-                let held = quests.iter().filter(|q| q.age == *age && q.name != quest.name && (!capstones || q.capstone)).count() as u32;
-                if !quests.iter().any(|q| q.age == *age) {
+                let held = written.iter().map(|(q, _)| q).filter(|q| q.age == *age && q.name != quest.name && (!capstones || q.capstone)).count() as u32;
+                if !written.iter().map(|(q, _)| q).any(|q| q.age == *age) {
                     return Err(RegistryError(format!("quest {} counts quests of the age `{age}`, which no quest is in", quest.name)));
                 }
                 if want == 0 || want > held {
@@ -416,6 +416,7 @@ impl QuestRegistry {
                 }
             }
         }
+        let quests: Vec<QuestDef> = written.into_iter().map(|(q, _)| q).collect();
         // Every quest of an age a rite opens follows that rite on every route: one done
         // shows the age reached (`behind`), so none may be finished before it.
         for rite in quests.iter().filter(|q| q.opens.is_some()) {
@@ -424,7 +425,6 @@ impl QuestRegistry {
                 return Err(RegistryError(format!("quest {} is of the age `{age}`, yet a way to it skips its rite {}: one `after` must be the rite or follow it", quest.name, rite.name)));
             }
         }
-        let quests: Vec<QuestDef> = written.into_iter().map(|(q, _)| q).collect();
         if start_pins.len() > tracker.pins {
             return Err(RegistryError(format!("{pins_from}: {} start pins, but the tracker follows {} ({tracker_from})", start_pins.len(), tracker.pins)));
         }
