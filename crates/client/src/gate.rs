@@ -446,7 +446,8 @@ steps! {
     Tarns,
     /// `/locate settlement` finds a hamlet or village, and the server's world there has
     /// what its plan says: a well on its square, doors open onto a floor, and houses dry;
-    /// and the ambience hears it at work by day, not by night.
+    /// its people come, and one greets the player in its own voice; and the ambience hears
+    /// it at work by day, not by night.
     Settlements,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
@@ -1643,7 +1644,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Tame => STEP_LIMIT + TROUGH_WAIT,
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
-        Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + STEP_LIMIT,
+        Step::Settlements => SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
         Step::Weather => STEP_LIMIT + 10.0 + ROOF_RAIN,
         _ => STEP_LIMIT,
@@ -15235,13 +15236,16 @@ const SETTLEMENT_REACH: i32 = 40;
 const SETTLEMENT_LOAD: f32 = 120.0;
 /// Server seconds a settlement's people have to reach a player standing in its square.
 const SETTLEMENT_PEOPLE: f32 = 20.0;
+/// Server seconds for a greeting asked of one of them to reach the client.
+const SETTLEMENT_BARK: f32 = 3.0;
 
 /// `/locate settlement` names the nearest hamlet or village; the player and the observer go
 /// there, and once the server's world around it has loaded, its blocks are judged against
 /// the plan worldgen gives for it (`Overworld::settlements_near`): its well stands on the
 /// square, every door within reach is open with a floor under it and space behind it, and
-/// no house holds water, and its people come to the player and draw, and the ambience hears
-/// the settlement at work. Then the player goes back to the test ground.
+/// no house holds water, and its people come to the player and draw, the ambience hears
+/// the settlement at work, and the nearest greets them (`/creatures bark greet`) with its
+/// voice's greeting. Then the player goes back to the test ground.
 fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     match gate.phase {
         0 => {
@@ -15310,6 +15314,19 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             gate.check("settlement people", if people > 0 { Ok(format!("{people} people of the settlement drawn")) } else { Err("no one of the settlement came to the player standing in its square".into()) });
             gate.check("settlement sounds", heard);
+            // The nearest of them greets the player (`Server::bark`, by its command).
+            world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
+            world.resource::<Net>().command("creatures bark greet");
+            gate.advance(now);
+        }
+        // The greeting asked for its voice's own greeting clips (silently: asked, not heard).
+        4 => {
+            let asked: Vec<_> = world.resource::<crate::creature_sounds::Heard>().barks.iter().cloned().collect();
+            if asked.is_empty() && gate.server_in_phase() < SETTLEMENT_BARK {
+                return;
+            }
+            let greeted = settlement_greeted(world, &asked);
+            gate.check("settlement bark", greeted);
             let feet = gate.feet;
             world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
             gate.advance(now);
@@ -15324,6 +15341,27 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.next(Step::Recipes, now);
             }
         }
+    }
+}
+
+/// Whether one of the settlement's people greeted, asking for its own voice's greeting
+/// clips (`creature_sounds.ron`'s `greet`, not a hum it falls back to).
+fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind, Vec<String>)]) -> Result<String, String> {
+    use crate::creature_sounds::{Kind, Voices};
+    let Some((id, kind, clips)) = asked.first() else { return Err("no greeting was heard of anyone (asked with /creatures bark greet)".into()) };
+    let content = &world.resource::<Launch>().content;
+    let Some(view) = world.resource::<crate::creatures::Creatures>().views().find(|v| v.id == *id).copied() else {
+        return Err(format!("creature {id} greeted but is not drawn"));
+    };
+    let name = &content.creatures.get(view.species).def.name;
+    let voices = world.get_resource::<Voices>().ok_or("no creature sound bank")?;
+    let own: Vec<String> = voices.bank.voice(view.species).and_then(|v| v.events[Kind::Greet as usize].as_ref()).map(|e| e.clips.iter().map(|&i| voices.bank.clips[i].path.clone()).collect()).unwrap_or_default();
+    if *kind != Kind::Greet {
+        Err(format!("{name} was asked to greet but made {kind:?}"))
+    } else if own.is_empty() || *clips != own {
+        Err(format!("{name} greeted with {clips:?}, not its voice's greeting {own:?}"))
+    } else {
+        Ok(format!("{name} greeted the player with its own clips ({})", clips.join(", ")))
     }
 }
 
