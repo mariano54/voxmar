@@ -563,7 +563,9 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     {
         let gone = |b: &Aabb| (b.min - start_box.min).with_y(0.0).length_squared();
         let freed = [0, 2].into_iter().any(|k| blocked[k] && !across[k]);
-        if freed || (stepped.min.y > start_box.min.y && gone(&stepped) > gone(&aabb) + 1e-8) {
+        // Only where it rose onto something: risen, it may be stopped another way (a long
+        // body under a lintel) and slide where the walk at its level would not have taken it.
+        if stepped.min.y > start_box.min.y + 1e-4 && (freed || gone(&stepped) > gone(&aabb) + 1e-8) {
             aabb = stepped;
             blocked = [across[0], true, across[2]];
         }

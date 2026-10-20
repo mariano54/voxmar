@@ -1270,6 +1270,23 @@ mod tests {
     }
 
     #[test]
+    fn a_step_is_from_a_slab_to_a_block() {
+        let mut defs = CreatureRegistry::read("base", RABBIT).unwrap().defs;
+        defs[0].diet = Default::default();
+        defs[0].loot.clear();
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        for step in [0.5, 0.5625, 1.0] {
+            defs[0].movement.step = step;
+            assert!(CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).is_ok(), "{step} refused");
+        }
+        for step in [0.0, 0.49, 1.01, f32::NAN, f32::INFINITY] {
+            defs[0].movement.step = step;
+            let error = CreatureRegistry::new(defs.clone(), Rules::default(), &blocks, &SkillRegistry::default()).unwrap_err();
+            assert!(error.0.contains("`step`"), "{step}: {error:?}");
+        }
+    }
+
+    #[test]
     fn limits_load_from_the_file_and_are_checked() {
         let source = RABBIT.replacen("(creatures:", "(limits: (wild_most: 20, kept_each: 5, spawn_unseen_angle: 45.0), creatures:", 1);
         let set = CreatureRegistry::read("base", &source).unwrap().limits.expect("set");

@@ -189,7 +189,13 @@ for a land animal not already out of its depth, is as shut as a wall (wading in 
 shallows too). So prey runs along a cliff
 edge or a lake shore rather than off it, and a boxed-in creature stands rather than press.
 Anything that jumps gets up a single block, however low its jump (the hop is lifted to
-clear it), and no higher. A land animal out of its depth (water under its feet and below)
+clear it), and no higher. Building pieces count by their shapes, not as whole blocks: a
+creature walks up a slab, a stair's tread or a roof's rise without a hop, as a player
+steps (`Movement::step`, 0.5625 blocks by default, from 0.5 to 1 in data), from the low
+side only; the way-finder takes those for open ground too. A hopper (a rabbit) hops up
+them instead. A hop goes over a piece only where the raised box meets no solid part of it
+(over a fence, not through a lattice window). A long head held low may lift (up to half a
+block, `Body::lift`) to clear a riser as it climbs; its head is never inside a block. A land animal out of its depth (water under its feet and below)
 makes for the nearest dry cell within 12 blocks, whatever it had in mind, keeps on through
 the shallows, and hauls itself up the bank.
 
