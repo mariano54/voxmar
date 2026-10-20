@@ -773,6 +773,9 @@ struct Gate {
     /// The walled town nearest the one `/locate settlement town` found, where the observer
     /// judges walls, roofs and jetties: the middle of its square.
     town: IVec3,
+    /// The look for the walled town nearest the town `/locate` found, off the frame: it
+    /// plans every square nearer than the answer, seconds of work.
+    town_search: Option<std::thread::JoinHandle<Option<IVec3>>>,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// The snail struck, so a fallen mark on another creature cannot end its watch.
@@ -1067,6 +1070,7 @@ impl Gate {
             settlement: IVec3::ZERO,
             settlement_reply: String::new(),
             town: IVec3::ZERO,
+            town_search: None,
             ore: IVec3::ZERO,
             quarry: Vec3::ZERO,
             quarry_id: None,
@@ -16653,13 +16657,16 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 return;
             };
             // Not every town is walled (a size's `walls` chance): the walls are judged at
-            // the walled town nearest the one found.
-            let walled = world
-                .resource::<crate::render::lod::WorldGenerator>()
-                .get()
-                .cloned()
-                .and_then(|g| g.settlements_near(at.xz(), TOWN_RADIUS).into_iter().filter(|s| s.size == "town" && s.wall_block.is_some()).min_by_key(|s| (s.centre.xz() - at.xz()).length_squared()));
-            let Some(walled) = walled else {
+            // the walled town nearest the one found, looked for on a thread of its own, as
+            // planning the squares on the way held a frame for seconds.
+            let Some(search) = gate.town_search.take_if(|search| search.is_finished()) else {
+                if gate.town_search.is_none() {
+                    let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned();
+                    gate.town_search = Some(std::thread::spawn(move || generator?.nearest_settlement(at.xz(), TOWN_RADIUS, |s| s.size == "town" && s.wall_block.is_some()).map(|s| s.centre)));
+                }
+                return;
+            };
+            let Some(walled) = search.join().ok().flatten() else {
                 gate.check("town walls", Err(format!("no walled town within {TOWN_RADIUS} of the town /locate found at {at}")));
                 gate.check("settlement roofs", Err("no town to judge the roofs of".into()));
                 gate.check("settlement jetties", Err("no town to judge the jetties of".into()));
@@ -16667,7 +16674,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.advance(now);
                 return;
             };
-            let at = walled.centre;
+            let at = walled;
             gate.town = at;
             if let Some(observer) = gate.observer.as_mut() {
                 observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 60, at.z) });
