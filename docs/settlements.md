@@ -381,6 +381,28 @@ unripe in P50b so a village is not a free food source. Settlement witnesses and 
 roles remain follow-ups. Single-valued people data and same-named routines follow the
 package layering rule, with load notes naming each replaced field and its earlier setter.
 
+## Homes inside
+
+A home is furnished for the people drawn to live in it (`settlements/interior.rs`,
+`interiors` in settlements.ron), so a look through the door tells you who they are: a bed
+for each, upstairs first, its head to a wall and away from the door; a table with a seat
+facing it for each of them and a guest; cupboards, shelves and crockery against the walls,
+more of them where the place is wealthy and the home roomy; and a corner of what they do
+for a living (sacks and baskets for a farmer, nets and barrels for a fisher, a loom for a
+weaver, books for an elder or a priest, a quern for a miller). Cloth and crockery take one
+dye and one glaze per home, drawn leaning on the levers and the culture's axes like any
+list, so a rich martial hold hangs banners and a festive one paper lanterns and cushions.
+Pieces never stand in the doorway or at the foot of a stair, and none cuts a part of a
+floor off from the door: the floor is walked from the door (and from each stairwell
+upstairs) before every solid piece is set. A home with a lit hearth needs no stove; one
+without may get one. Only plain homes are furnished: inns, temples and workshops keep their
+own insides.
+
+Every piece is a furnishing (P58a), so breaking it in a village gives nothing, and a bed in
+someone's home will not take as yours: sleeping in a bed where the plan put one is refused
+(`bed.someones`). Any other bed works, one you place in its stead included. Each building reports where its beds and seats stand
+(`Building::beds`, `seats`), for villagers to sleep and sit at their own.
+
 ## What else knows about them
 
 - Trails join settlements' gates (the ends of their main lanes) to each other and to

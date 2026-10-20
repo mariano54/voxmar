@@ -1928,6 +1928,8 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
                 _ => lot.spec.kind.name().to_string(),
             },
             work: lot.house.and_then(|i| def.houses[i].work.clone()),
+            beds: Vec::new(),
+            seats: Vec::new(),
         });
     }
     // Ground held level round props that hold water.
@@ -1983,6 +1985,23 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     #[cfg(test)]
     let detail_time = phase_start();
     let gates: Vec<IVec2> = lanes.iter().filter(|l| l.main).map(|l| l.points.last().unwrap().round().as_ivec2()).collect();
+    // Its people, and their homes furnished for them (`interiors`): drawn last, over the
+    // houses as they stand.
+    let size_name = &def.sizes[size_index].name;
+    let people = super::people::residents(&def.people, &def.houses, size_name, &levers, &buildings, &gates, hash3(ctx.seed, cell.x, 7, cell.y));
+    if let Some(interiors) = &ctx.fixed.interiors {
+        for (i, lot) in lots.iter().enumerate() {
+            if lot.spec.kind != Kind::House || !lot.spec.inside.is_empty() {
+                continue;
+            }
+            let work = |w: Option<usize>| w.map(|w| buildings[w].work.clone().unwrap_or_else(|| buildings[w].kind.name().to_owned()));
+            let home = super::interior::Household { people: people.iter().filter(|r| r.home == i).map(|r| (r.species.clone(), work(r.work))).collect() };
+            let hearth = lot.spec.chimney().is_some();
+            let furnished = super::interior::furnish(interiors, &lot.spec, &lot.frame, &kit.wood, &levers, &home, hearth, &mut canvas);
+            buildings[i].beds = furnished.beds;
+            buildings[i].seats = furnished.seats;
+        }
+    }
     let voxels = canvas.into_columns();
     #[cfg(test)]
     phase_end("voxel columns", detail_time);
@@ -2001,8 +2020,6 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     };
     #[cfg(test)]
     phase_end("name", name_time);
-    let size_name = &def.sizes[size_index].name;
-    let people = super::people::residents(&def.people, &def.houses, size_name, &levers, &buildings, &gates, hash3(ctx.seed, cell.x, 7, cell.y));
     Some(Plan {
         id: hash3(ctx.seed, cell.x, 0, cell.y),
         size: def.sizes[size_index].name.clone(),
