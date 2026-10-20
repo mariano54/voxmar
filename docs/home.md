@@ -12,7 +12,7 @@ engine's `effect.rs`):
 
 | Condition | Holds when |
 | --- | --- |
-| `AtHome` | the player stands within `home_reach` blocks of the home (and `home_up`/`home_down`) |
+| `AtHome` | the player stands within `home_reach` blocks of the home (and `home_up`/`home_down`), or of another online player's lit hearth as a guest |
 | `Indoors` | something solid is overhead |
 | `HomeHas(tag, n)` | at home, with at least n blocks carrying the tag around it |
 
@@ -201,6 +201,22 @@ as if you stood in it: "Camp reached. Next, Hearthside: it needs hearth 0/1." Wh
 lacks is read off its own condition (`Condition::lacks`), so a mod's steps are covered with no
 extra work; a block tag shows by `home.tag.<tag>` in the language files, else as the tag.
 It is a console command, so it needs no protocol change.
+
+## A guest at a friend's hearth
+
+A player away from their own home who stands within reach of another online player's lit
+hearth (never a bed) is that home's guest (guests.rs `guest_survey`): `AtHome` holds for them
+and `HomeHas` counts the host's home and kept animals, so they are Hearthside, Snug or Cosy
+as it is. Their own quest perks (`Done(..)`) still need their own quests. A guest's steps
+are never announced to them nor counted as felt for their quests (so their own hearth
+announces them later), and a host's stores are not theirs to draw on (`home_stores` keeps to
+what the guest placed). If two hosts' reaches overlap, the lower-numbered one's home counts.
+A guest who sleeps in a bed there, their own hearth burning elsewhere, rests as the home
+gives (Well rested by a friend's Bedside or in a Snug home at night, Deep rest in a Cosy
+one). Tests (guests.rs): `a_guest_by_a_friends_hearth_is_hearthside_unannounced`,
+`a_guest_loses_the_comfort_away_from_it_or_with_the_host_gone`,
+`a_guest_sleeps_as_well_as_the_home_they_are_a_guest_in`. No gate step: the gate runs one
+player.
 
 ## The way home
 
@@ -687,9 +703,22 @@ Company at Camp and A Lit Corner (Nomad), A Proper Workshop, A Larder, A Kitchen
 A Full House and A Herb Nook (Farm). Callers at the Door (Farm, after A Homely Home) asks
 for a supper or a talk with fireside guests.
 
+## Room to store (a tier perk)
+
+A home that climbs the ladder holds more. A store (barrel, crate, cupboard, jar, rack,
+chest) in its keeper's home, opened by the keeper, grows to its slots times the home's
+`store_room`. Homely and Cosy double it, and the Heart of the Home triples it, up to the
+screen's 54. A barrel of 9 holds 18 in a Homely home and 27 at its heart. It is a modifier
+on the ladder's steps (effects.ron, `store_room`, 1 to 6, checked at launch; steps replace
+each other, so one counts), so a mod's step or room can give it too. A guest opening a
+friend's store does not grow it. A store only grows, never shrinks: one filled while the
+home was Homely keeps what it holds if the home slips, and a save keeps its size
+(`Factory::insert_state` keeps a bin larger than its machine's). Broken and set down
+again, it starts at its own size. It needs no protocol change: a store's slots go as a
+list, and the screen shows as many as come. Tests: server `stores.rs`, engine `effect.rs`.
+The gate's Home step gives Homely before opening its barrel ("home: store room").
+
 ## Not built (ideas)
 
-- Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
-  protocol to take a slot count.
 - Passing the night by sleeping (sleep stays a rest, not a skip).
 - Sleeping, and the ladder, for villagers' houses.

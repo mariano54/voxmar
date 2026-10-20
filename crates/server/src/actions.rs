@@ -527,7 +527,8 @@ impl Server {
             return;
         }
         let effects = self.content.effects.clone();
-        let home = self.home_survey(agent);
+        // At home, or a guest at a friend's lit hearth: their home's comfort is the rest's.
+        let home = self.home_survey(agent).or_else(|| self.guest_survey(agent));
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;

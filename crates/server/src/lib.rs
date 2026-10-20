@@ -19,6 +19,7 @@ mod death;
 mod doors;
 #[cfg(test)]
 mod seats;
+mod guests;
 mod hearth;
 mod journal;
 mod lairs;

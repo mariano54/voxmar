@@ -6494,8 +6494,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             } else if !shown {
                 let within = world.resource::<crate::hud::inventory::InterfaceStyle>().home_hidden_within;
                 gate.check("home: near", Ok(format!("within {within} blocks of home the mark was gone")));
-                // A barrel at home, four planks in it and none in the pack.
+                // A barrel at home, four planks in it and none in the pack; the home Homely
+                // for a while, so the barrel holds twice its slots.
                 let net = world.resource::<Net>();
+                net.command("effect homely 120");
                 net.command("clear oak_planks");
                 net.command(&format!("give oak_planks {lay_planks}"));
                 net.command(&format!("setblock {} {} {} barrel", barrel.x, barrel.y, barrel.z));
@@ -6535,6 +6537,16 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             } else if stored == lay_planks && held == 0 && ready && counted >= lay_planks {
                 gate.check("home: can make", Ok(format!("with {stored} planks in the home barrel and none in the pack, the server counted {counted} and the Can Make plan (drawn under the open barrel) has the crafting table ready")));
+                // Opened Homely, the barrel came as its slots times Homely's store_room.
+                let content = &world.resource::<Launch>().content;
+                let machine = content.blocks.id("base:barrel").and_then(|b| content.machines.get(b));
+                let room = content.effects.id("base:homely").map(|h| content.effects.get(h).modifiers.store_room);
+                let want = machine.zip(room).map(|(m, room)| (m.bin_slots(), m.grown_bin(room)));
+                let came = world.resource::<LocalPlayer>().inventory.store.as_ref().map(|s| s.slots.len());
+                gate.check("home: store room", match want {
+                    Some((own, grown)) if came == Some(grown) && grown > own => Ok(format!("the home barrel, opened Homely, held {grown} slots against its own {own}")),
+                    _ => Err(format!("the home barrel opened Homely with {came:?} slots, not its own and Homely's store_room ({want:?})")),
+                });
                 // The crafting table's recipe in the viewer, over the open inventory.
                 // Opened as a click in it does: a trail with the viewer shut reads as Esc.
                 if let Some(table) = table {
@@ -6551,8 +6563,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             } else if gate.server_now - gate.machines_asked >= 1.0 {
                 if player.inventory.store.is_none() {
-                    // Whatever is in hand: a store opens to anything but a machine.
-                    if world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
+                    // Whatever is in hand: a store opens to anything but a machine. Opened
+                    // once the server has the home Homely (its chip shows), so it grows.
+                    let homely = world.resource::<Launch>().content.effects.id("base:homely").is_some_and(|h| player.vitals.effects.iter().any(|a| a.effect == h));
+                    if homely && world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
                         world.resource_mut::<LocalPlayer>().store_asked = true;
                         let actions = world.resource::<crate::Actions>().0.clone();
                         world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: barrel, face: voxmar_engine::coords::Face::PosY });

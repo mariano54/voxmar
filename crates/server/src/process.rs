@@ -163,7 +163,11 @@ impl Survival {
         let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
         let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
         let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
-        let home = server.home_survey(id);
+        // At home, or else a guest at another player's lit hearth (guests.rs).
+        let own = server.home_survey(id);
+        let guest = own.is_none();
+        let home = own.or_else(|| server.guest_survey(id));
+        let guest = guest && home.is_some();
         let home_stores = server.home_store_tally(id);
         // What effects ask of the item in hand (`Holding`) and of the blocks near
         // (`Near`).
@@ -212,8 +216,11 @@ impl Survival {
         situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
         let active = effects.active(&situation, &player.timed_effects);
         let modifiers = effects.modifiers(&active);
+        // A guest's own: what they would have away from the home they are a guest in. Only
+        // these are counted for their quests and announced.
+        let own_effects = guest.then(|| effects.active(&Situation { home: None, ..situation }, &player.timed_effects));
         // Quests ask whether an effect was ever felt (`Felt`), not how often.
-        for a in &active {
+        for a in own_effects.as_ref().unwrap_or(&active) {
             player.tallies.entry(format!("felt:{}", effects.get(a.effect).name)).or_insert(1);
         }
         player.modifiers = modifiers;
@@ -268,12 +275,12 @@ impl Survival {
         player.vitals.seated = seated;
         player.vitals.home_stores = home_stores;
         // What kept animals laid into the home's stores is told once the keeper is home.
-        if home.is_some() && !player.nested.is_empty() {
+        if home.is_some() && !guest && !player.nested.is_empty() {
             let items = std::mem::take(&mut player.nested).into_iter().map(|(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(item))).collect();
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("home.nested").with("items", Words::List(items)) });
         }
-        // The steps of a ladder say so when first reached.
-        let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
+        // The steps of a ladder say so when first reached, at the player's own home.
+        let gained: Vec<EffectId> = own_effects.as_ref().unwrap_or(&player.vitals.effects).iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
         player.announced.extend(&gained);
         for effect in gained {
             let def = effects.get(effect);
@@ -327,7 +334,7 @@ impl Server {
     }
 
     /// Whether `at` lies in the home box around `anchor`.
-    fn in_home_box(&self, anchor: IVec3, at: Vec3) -> bool {
+    pub(crate) fn in_home_box(&self, anchor: IVec3, at: Vec3) -> bool {
         let rules = &self.survival;
         let feet = at.floor().as_ivec3();
         let near = (feet - anchor).abs();
