@@ -14,6 +14,10 @@
 //! client turns into [`Controls::sprint`]) starts it, and it lasts while forward is held,
 //! until the player runs head-on into a wall.
 //!
+//! A ladder (a block tagged `climbable`) is climbed as in Minecraft: with the feet in its
+//! cell, pressing against it (or against the wall behind) or holding jump goes up it at
+//! [`Tuning::climb_speed`], and letting go slides down no faster than that.
+//!
 //! The speeds, gravity, jump and these depths and heights come from the content's
 //! `movement.ron` ([`Tuning`]).
 
@@ -60,6 +64,9 @@ pub struct Tuning {
     /// onto a slab, up a stair, over a low roof's courses, but not a whole block. The client
     /// steps by it and the server's move checks allow for it.
     pub step_up: f32,
+    /// How fast a player climbs a ladder, and the fastest they slide down one, in blocks a
+    /// second.
+    pub climb_speed: f32,
     /// How much the server lets a player's moves get away with.
     pub checks: Checks,
 }
@@ -126,6 +133,7 @@ pub struct SetTuning {
     pub jump_delay: Option<f32>,
     pub head_on: Option<f32>,
     pub step_up: Option<f32>,
+    pub climb_speed: Option<f32>,
     pub checks: Option<SetChecks>,
 }
 
@@ -142,7 +150,7 @@ impl crate::content::Settable for Tuning {
                 }
             )*};
         }
-        lay!(walk_speed, sprint_speed, sprint_jump_boost, jump_velocity, gravity, terminal_velocity, water_speed, fly_speed, fly_sprint_speed, wade_depth, step_out, climb_out_speed, jump_delay, head_on, step_up);
+        lay!(walk_speed, sprint_speed, sprint_jump_boost, jump_velocity, gravity, terminal_velocity, water_speed, fly_speed, fly_sprint_speed, wade_depth, step_out, climb_out_speed, jump_delay, head_on, step_up, climb_speed);
         if let Some(checks) = &set.checks {
             let (laid, names) = self.checks.with(checks);
             self.checks = laid;
@@ -213,8 +221,8 @@ impl Tuning {
     }
 
     fn check(&self) -> Result<(), String> {
-        let Tuning { wade_depth, step_out, climb_out_speed, jump_delay, head_on, step_up, .. } = *self;
-        let named = [("wade_depth", wade_depth), ("step_out", step_out), ("climb_out_speed", climb_out_speed), ("jump_delay", jump_delay), ("head_on", head_on), ("step_up", step_up)];
+        let Tuning { wade_depth, step_out, climb_out_speed, jump_delay, head_on, step_up, climb_speed, .. } = *self;
+        let named = [("wade_depth", wade_depth), ("step_out", step_out), ("climb_out_speed", climb_out_speed), ("jump_delay", jump_delay), ("head_on", head_on), ("step_up", step_up), ("climb_speed", climb_speed)];
         if let Some((name, _)) = named.iter().find(|(_, n)| !n.is_finite() || *n <= 0.0) {
             Err(format!("{name} must be more than 0"))
         } else if jump_delay > 1.0 {
@@ -223,6 +231,9 @@ impl Tuning {
             Err("head_on must be at most 1 (a share of the way the player runs), or a sprint would never stop at a wall".into())
         } else if step_up > 1.0 {
             Err("step_up must be at most 1 block".into())
+        } else if climb_speed > self.jump_velocity {
+            // The server lets a player on a ladder rise as fast as a jump, no faster.
+            Err("climb_speed must be at most jump_velocity".into())
         } else {
             Ok(())
         }
@@ -312,6 +323,21 @@ pub trait Surroundings {
     /// How deep the water around a box is over its feet (0 out of water), and its mean
     /// flow (blocks per second along x, z).
     fn water(&self, aabb: &Aabb) -> (f32, Vec2);
+    /// Whether a cell holds a ladder (see [`crate::block::BlockInfo::climbable`]): by
+    /// default none does.
+    fn climbable(&self, _cell: IVec3) -> bool {
+        false
+    }
+}
+
+/// Whether a body's feet are in a ladder's cell: the cells its footprint covers at the
+/// height of its feet, so it climbs off the top of a ladder rather than a body's height
+/// past it.
+pub fn on_ladder(body: &Body, world: &impl Surroundings) -> bool {
+    let aabb = body.aabb();
+    let (lo, hi) = ((aabb.min + 1e-4).floor().as_ivec3(), (aabb.max - 1e-4).floor().as_ivec3());
+    let y = body.position.y.floor() as i32;
+    (lo.x..=hi.x).any(|x| (lo.z..=hi.z).any(|z| world.climbable(IVec3::new(x, y, z))))
 }
 
 /// Advances `body` by `dt` seconds (split into substeps of at most [`SUBSTEP`]).
@@ -376,6 +402,12 @@ pub fn step(body: &mut Body, world: &impl Surroundings, tuning: &Tuning, control
                 }
             }
             body.velocity.y = (body.velocity.y - tuning.gravity * dt).max(-tuning.terminal_velocity);
+        }
+        // On a ladder: pressing against it or holding jump climbs; otherwise a slow slide,
+        // and nobody goes up one faster than they climb it (the server's checks hold them
+        // to that).
+        if !swimming && on_ladder(body, world) {
+            body.velocity.y = if jump || (body.against_wall && wish != Vec3::ZERO) { tuning.climb_speed } else { body.velocity.y.clamp(-tuning.climb_speed, tuning.climb_speed) };
         }
         // Pushing against a bank low enough to step onto lifts a swimmer out.
         if body.in_water && body.against_wall && wish != Vec3::ZERO && can_step_out(body, world, wish, tuning.step_out) {
@@ -505,7 +537,7 @@ mod tests {
         let t = tuning();
         assert_eq!([t.wade_depth, t.step_out, t.climb_out_speed, t.jump_delay, t.head_on, t.step_up], [0.4, 0.6, 6.0, 0.5, 0.35, 0.5 + 1.0 / 16.0]);
         let source = include_str!("../../../assets/content/core/movement.ron");
-        for (from, to) in [("wade_depth: 0.4", "wade_depth: 0.0"), ("climb_out_speed: 6.0", "climb_out_speed: -6.0"), ("jump_delay: 0.5", "jump_delay: 1.5"), ("head_on: 0.35", "head_on: 0.0"), ("head_on: 0.35", "head_on: 1.5"), ("step_up: 0.5625", "step_up: 2.0")] {
+        for (from, to) in [("wade_depth: 0.4", "wade_depth: 0.0"), ("climb_out_speed: 6.0", "climb_out_speed: -6.0"), ("jump_delay: 0.5", "jump_delay: 1.5"), ("head_on: 0.35", "head_on: 0.0"), ("head_on: 0.35", "head_on: 1.5"), ("step_up: 0.5625", "step_up: 2.0"), ("climb_speed: 3.0", "climb_speed: 0.0"), ("climb_speed: 3.0", "climb_speed: 10.0")] {
             assert!(source.contains(from), "{from}");
             assert!(Tuning::from_ron(&source.replace(from, to)).is_err(), "{to} loads");
         }
@@ -664,6 +696,10 @@ mod tests {
         fn water(&self, _: &Aabb) -> (f32, Vec2) {
             (0.0, Vec2::ZERO)
         }
+
+        fn climbable(&self, cell: IVec3) -> bool {
+            self.cells.get(&cell).is_some_and(|&id| self.blocks.info(id).climbable)
+        }
     }
 
     fn content() -> crate::content::Content {
@@ -792,6 +828,65 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A ladder against a wall three blocks high: walked into, the player climbs it and
+    /// steps off its top onto the wall, at any frame rate, never inside either, as they do
+    /// up a shaft a block across onto the floor round its top; let go of
+    /// halfway up, they slide down no faster than `climb_speed` to the ground; and holding
+    /// jump climbs a ladder standing on its own, with nothing to press against.
+    #[test]
+    fn a_ladder_is_climbed_onto_the_wall_behind_and_slid_down_when_let_go() {
+        let content = content();
+        let blocks = &content.blocks;
+        let tuning = tuning();
+        let mut cells = rustc_hash::FxHashMap::default();
+        for y in 0..3 {
+            cells.insert(IVec3::new(0, y, 0), blocks.expect("base:oak_ladder"));
+            for x in -2..=2 {
+                for z in 1..=6 {
+                    cells.insert(IVec3::new(x, y, z), blocks.expect("base:oak_planks"));
+                }
+            }
+        }
+        let wall = Built { blocks, cells, floor: |_| 0 };
+        for fps in [30.0, 60.0, 144.0] {
+            let (body, inside) = run(&wall, Body { on_ground: true, ..at(0.5, 0.0, -1.5) }, walking(Vec3::Z, false), 3.0, fps);
+            assert!(!inside && body.on_ground && body.position.y == 3.0 && body.position.z > 1.0, "did not climb the ladder onto the wall at {fps} fps: {body:?}");
+        }
+        let mut body = at(0.5, 2.0, 0.5);
+        let mut fastest = 0.0f32;
+        for _ in 0..240 {
+            advance(&mut body, &wall, &tuning, Controls::default(), 1.0 / 120.0);
+            fastest = fastest.max(-body.velocity.y);
+        }
+        assert!(body.on_ground && body.position.y == 0.0, "did not slide down the ladder to the ground: {body:?}");
+        assert!(fastest <= tuning.climb_speed + 1e-4, "slid down a ladder at {fastest} blocks a second");
+        let mut cells = rustc_hash::FxHashMap::default();
+        for y in 0..3 {
+            cells.insert(IVec3::new(0, y, 0), blocks.expect("base:oak_ladder"));
+        }
+        let alone = Built { blocks, cells, floor: |_| 0 };
+        // Up a shaft a block across, walled about, out onto the floor at its top.
+        let mut cells = rustc_hash::FxHashMap::default();
+        for y in 0..4 {
+            for x in -2..=2 {
+                for z in -2..=12 {
+                    let cell = IVec3::new(x, y, z);
+                    if (x, z) != (0, 0) {
+                        cells.insert(cell, blocks.expect("base:oak_planks"));
+                    }
+                }
+            }
+            cells.insert(IVec3::new(0, y, 0), blocks.expect("base:oak_ladder"));
+        }
+        let shaft = Built { blocks, cells, floor: |_| 0 };
+        for fps in [30.0, 60.0, 144.0] {
+            let (body, inside) = run(&shaft, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, walking(Vec3::Z, false), 3.0, fps);
+            assert!(!inside && body.on_ground && body.position.y == 4.0 && body.position.z > 1.0, "did not climb out of the shaft at {fps} fps: {body:?}");
+        }
+        let (body, _) = run(&alone, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, Controls { jump: true, ..Controls::default() }, 0.5, 60.0);
+        assert!(body.position.y > 1.0 && body.velocity.y == tuning.climb_speed, "holding jump did not climb a ladder: {body:?}");
     }
 
     /// A whole block is no step: walking into it without jumping stops at it, as does a slab

@@ -594,6 +594,16 @@
             (from: (2, 6, 0), to: (3.5, 11, 1.5)),
             (from: (2, 6, 5.5), to: (3.5, 11, 7)),
         ]),
+        // A ladder against the wall behind it (south, away from whoever set it): two rails
+        // and four rungs between them, standing out two texels from the wall.
+        "ladder": (boxes: [
+            (from: (1, 0, 14), to: (3, 16, 16)),
+            (from: (13, 0, 14), to: (15, 16, 16)),
+            (from: (3, 2, 14.5), to: (13, 3.5, 15.5)),
+            (from: (3, 6, 14.5), to: (13, 7.5, 15.5)),
+            (from: (3, 10, 14.5), to: (13, 11.5, 15.5)),
+            (from: (3, 14, 14.5), to: (13, 15.5, 15.5)),
+        ]),
         "railing_corner": (boxes: [
             (from: (0, 0, 13.5), to: (16, 2, 16), cull: true),
             (from: (0, 13, 13), to: (16, 16, 16), cull: true),
