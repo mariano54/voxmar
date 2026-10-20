@@ -60,9 +60,14 @@ impl Lang {
         for (package, _, source) in read_files(content_dir, "lang/readings", |file_code| file_code == code) {
             match parse(&source) {
                 // As with strings, the first package to give a reading keeps it.
-                Ok(readings) => readings.into_iter().for_each(|(key, reading)| {
-                    lang.readings.entry(key).or_insert(reading);
-                }),
+                Ok((readings, again)) => {
+                    for key in again {
+                        tracing::warn!("{package}/lang/readings/{code}.ron: `{key}` is given twice; the first is kept");
+                    }
+                    readings.into_iter().for_each(|(key, reading)| {
+                        lang.readings.entry(key).or_insert(reading);
+                    })
+                }
                 Err(e) => tracing::warn!("{package}/lang/readings/{code}.ron: {e}"),
             }
         }
@@ -83,7 +88,8 @@ impl Lang {
                 continue;
             };
             match parse(source) {
-                Ok(strings) => {
+                Ok((strings, again)) => {
+                    problems.extend(again.into_iter().map(|key| format!("{package}/lang/{file_code}.ron: `{key}` is given twice; the first is kept")));
                     for (key, text) in strings {
                         // The first package (in name order) to define a key keeps it, so
                         // which wins never depends on how files happen to load.
@@ -343,7 +349,7 @@ pub fn has_kanji(text: &str) -> bool {
 pub fn languages(content_dir: &Path) -> Vec<Language> {
     let mut names: FxHashMap<String, Option<String>> = FxHashMap::default();
     for (_, code, source) in read_files(content_dir, "lang", |_| true) {
-        let name = parse(&source).ok().and_then(|mut strings| strings.remove(NAME_KEY));
+        let name = parse(&source).ok().and_then(|(mut strings, _)| strings.remove(NAME_KEY));
         let entry = names.entry(code).or_default();
         if entry.is_none() {
             *entry = name;
@@ -492,14 +498,15 @@ pub fn arguments(text: &str) -> Vec<&str> {
     names
 }
 
-fn parse(source: &str) -> Result<FxHashMap<String, String>, String> {
+fn parse(source: &str) -> Result<(FxHashMap<String, String>, Vec<String>), String> {
     parse_map(source)
 }
 
-/// A language file (its strings, readings or pins) as key to value. A key given twice is
-/// an error, not the later one quietly winning.
-pub fn parse_map<V: serde::de::DeserializeOwned>(source: &str) -> Result<FxHashMap<String, V>, String> {
-    struct Map<V>(FxHashMap<String, V>);
+/// A language file (its strings, readings or pins) as key to value, with the keys given
+/// again after their first: the first keeps the key, and the repeats are for the caller to
+/// report, so one slip never drops the whole file nor lets the later text quietly win.
+pub fn parse_map<V: serde::de::DeserializeOwned>(source: &str) -> Result<(FxHashMap<String, V>, Vec<String>), String> {
+    struct Map<V>(FxHashMap<String, V>, Vec<String>);
     impl<'de, V: Deserialize<'de>> Deserialize<'de> for Map<V> {
         fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
             struct Visit<V>(std::marker::PhantomData<V>);
@@ -509,20 +516,21 @@ pub fn parse_map<V: serde::de::DeserializeOwned>(source: &str) -> Result<FxHashM
                     f.write_str("a map of keys")
                 }
                 fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Map<V>, A::Error> {
-                    let mut entries = FxHashMap::default();
+                    let (mut entries, mut again) = (FxHashMap::default(), Vec::new());
                     while let Some((key, value)) = map.next_entry::<String, V>()? {
                         if entries.contains_key(&key) {
-                            return Err(serde::de::Error::custom(format!("`{key}` is given twice")));
+                            again.push(key);
+                        } else {
+                            entries.insert(key, value);
                         }
-                        entries.insert(key, value);
                     }
-                    Ok(Map(entries))
+                    Ok(Map(entries, again))
                 }
             }
             deserializer.deserialize_map(Visit(std::marker::PhantomData))
         }
     }
-    ron::from_str::<Map<V>>(source).map(|m| m.0).map_err(|e| e.to_string())
+    ron::from_str::<Map<V>>(source).map(|m| (m.0, m.1)).map_err(|e| e.to_string())
 }
 
 /// `(package, language, source)` of every language file whose language `wanted` accepts,
@@ -627,10 +635,13 @@ mod tests {
     }
 
     #[test]
-    fn a_key_given_twice_in_one_file_is_refused() {
-        let error = parse(r#"{ "k": "first", "j": "other", "k": "second" }"#).unwrap_err();
-        assert!(error.contains("`k` is given twice"), "{error}");
-        assert_eq!(parse(r#"{ "k": "first", "j": "other" }"#).unwrap().len(), 2);
+    fn a_key_given_twice_in_one_file_keeps_the_first_and_is_reported() {
+        let (strings, again) = parse(r#"{ "k": "first", "j": "other", "k": "second" }"#).unwrap();
+        assert_eq!((strings["k"].as_str(), strings.len()), ("first", 2));
+        assert_eq!(again, ["k"]);
+        let (lang, problems) = Lang::from_files("en", [("base", "en", r#"{ "k": "first", "j": "other", "k": "second" }"#)]);
+        assert_eq!((lang.get("k"), lang.get("j")), ("first", "other"));
+        assert!(matches!(problems.as_slice(), [p] if p.contains("`k` is given twice")), "{problems:?}");
     }
 
     /// A family's block placed in another form (stairs turned east, upside down) is named

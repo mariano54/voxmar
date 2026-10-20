@@ -1018,6 +1018,7 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             Method::Reward { .. } => add(locale.get("tooltip.from.quest").to_owned()),
             Method::Burn { relit: false, .. } => add(locale.get("tooltip.from.burn").to_owned()),
             Method::Burn { relit: true, .. } => add(locale.get("tooltip.from.relit").to_owned()),
+            Method::Smoulder { .. } => add(locale.get("tooltip.from.smoulder").to_owned()),
             Method::Found { .. } => add(locale.get("tooltip.from.found").to_owned()),
         }
     }
