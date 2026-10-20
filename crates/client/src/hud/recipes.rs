@@ -444,8 +444,8 @@ fn draw(
         .skip(lookup.page * PER_PAGE)
         .take(PER_PAGE)
         .map(|entry| {
-            let Method::Craft { variants, first, .. } = &entry.method else { return None };
-            let near = content.recipes.iter().skip(*first).take(variants.len()).map(|recipe| super::makeable::reach(recipe, &have, player.station.is_some(), &lacks).unwrap_or_else(|| super::makeable::Reach::Short(recipe.short(&have)))).min_by_key(super::makeable::Reach::rank)?;
+            let Method::Craft { first, ways, .. } = &entry.method else { return None };
+            let near = content.recipes.iter().skip(*first).take(*ways).map(|recipe| super::makeable::reach(recipe, &have, player.station.is_some(), &lacks).unwrap_or_else(|| super::makeable::Reach::Short(recipe.short(&have)))).min_by_key(super::makeable::Reach::rank)?;
             let colour = if near == super::makeable::Reach::Ready { GOLD } else { SOFT };
             Some((super::makeable::words(&locale, content, entry.output, &near), colour))
         })
@@ -517,9 +517,9 @@ fn draw(
                 });
                 // Over the inventory, where its grid is, a crafting way can be laid in it.
                 if ui.inventory_open
-                    && let Method::Craft { variants, first, .. } = &entry.method
+                    && let Method::Craft { first, ways, .. } = &entry.method
                 {
-                    let lay = LayButton { output: entry.output, first: *first as u16, ways: variants.len().min(u8::MAX as usize) as u8 };
+                    let lay = LayButton { output: entry.output, first: *first as u16, ways: (*ways).min(u8::MAX as usize) as u8 };
                     // As wide as its word needs in every language, never squeezed by the
                     // words beside it.
                     card.spawn(Node { min_width: Val::Px(36.0 * PX), flex_shrink: 0.0, ..default() }).with_children(|cell| {

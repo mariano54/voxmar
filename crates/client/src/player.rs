@@ -577,6 +577,10 @@ impl Surroundings for Around<'_> {
     fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
         movement::water_around(&self.world.registry, |p| self.world.block(p), aabb)
     }
+
+    fn climbable(&self, cell: IVec3) -> bool {
+        self.world.block(cell).is_some_and(|b| self.world.registry.info(b).climbable)
+    }
 }
 
 pub(crate) fn follow_camera(

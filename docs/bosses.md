@@ -69,7 +69,9 @@ counter, no knockback. What it adds, in `creature.rs` and `creature/moves.rs`:
 Any attack may be a charge (`charge: (speed, distance, stun)` on the attack,
 `creature::moves::Charge`). Its wind-up shows as usual; then the creature runs straight
 the way it faced, its aim locked, at `speed` blocks a second for up to `distance` blocks,
-held from thinking until the run ends (`fight::Charging`, `Server::charge_ran`). It does not
+held from thinking until the run ends (`fight::Charging`, `Server::charge_ran`). A charge
+fits only a target level with it (`Creature::level`): at a player down a hole it walks to the
+rim and uses its other moves, rather than run over them. It does not
 turn and does not look where it goes, so the land answers it, for any charger:
 
 | Rule | Test |

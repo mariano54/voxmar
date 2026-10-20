@@ -209,6 +209,8 @@ pub fn worth_in(content: &crate::content::Content, item: BlockId, known: &mut Ha
 }
 
 /// Whether `item` is a raw material: worth no set price, and nothing makes, wears or wields it.
+/// Cobblestone is not, since four loose stones make two: what is made of it (a campfire,
+/// about 3 to 6; a stone sword, about 4 to 8) is worth a little more for what death keeps.
 fn raw(content: &crate::content::Content, item: BlockId) -> bool {
     !content.value.fixed.contains_key(&content.blocks.def(item).name)
         && content.combat.wear_level(item).is_none()

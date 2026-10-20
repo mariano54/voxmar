@@ -81,6 +81,29 @@
                 name: "{name}_fence_gate_open", render: Model, shape: "fence_gate_open", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"),
                 swaps: "{name}_fence_gate", drops: "{name}_fence_gate", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "fence", "gate", "wood", "building", "fuel"],
             ),
+            // A ladder, set against a wall facing whoever sets it: with your feet in its cell,
+            // pressing against it or holding jump climbs it, letting go slides you down
+            // slowly (`climbable`; engine movement.rs). One over another climbs a shaft to a
+            // loft or up onto a roof.
+            (name: "{name}_ladder", render: Model, shape: "ladder", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["timber", "climbable", "ladder", "wood", "building", "fuel"]),
+            // A hatch for a loft: set in a hole in the floor, boards level with the floor round
+            // it, a sound bit of ceiling to the room below that keeps the light out as a roof
+            // does. A right click swings it open (`swaps`) to hang against the back of its
+            // cell, and open it is climbed as a ladder is (`climbable`), so a ladder under it
+            // climbs on up through it into the loft;
+            // it lets a draught down. Set it with its back over the ladder's.
+            (
+                name: "{name}_hatch", render: Model, shape: "hatch", facing: true, light_filter: 14, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_hatch_open", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "hatch", "wood", "building", "fuel", "shelter:sound"],
+            ),
+            (
+                name: "{name}_hatch_open", render: Model, shape: "hatch_open", facing: true, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_hatch", drops: "{name}_hatch", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "hatch", "climbable", "wood", "building", "fuel", "shelter:draughty"],
+            ),
+            // A stair with a cupboard in its riser: a step to walk up like any stair (`stairs`),
+            // and doors in its front to keep things behind (`storage`, as a cupboard counts for
+            // a pantry or a larder). A flight of them puts the space under a stair to use.
+            (name: "{name}_stair_cupboard", render: Model, shape: "stair_cupboard", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["timber", "stairs", "cupboard", "storage", "wood", "building", "fuel", "shelter:sound"]),
             // A newel post: a stout post with a cap, at the foot or the turn of a stair.
             (name: "{name}_newel_post", render: Model, shape: "newel_post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "newel", "wood", "building", "fuel", "shelter:sound"]),
             // A landing: boards on two joists, its top level with a stair's, for the turn of a

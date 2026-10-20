@@ -27,7 +27,7 @@
             needs: [OpenSky],
             faster: [(Near("fire", 3), 2.0)],
         ),
-        // A cooking pot (Nomad): over a hob (a campfire, or on the hearthstone) with water near,
+        // A cooking pot (a Farm age station, once its rite is done): over a hob (a campfire, or on the hearthstone) with water near,
         // two grain simmer to porridge (Cooking 3) and, in the Farm age, three meat, roots or
         // vegetables to a stew (Cooking 14), warm going down.
         (
