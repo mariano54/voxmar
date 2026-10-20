@@ -254,6 +254,8 @@ struct Shown {
     view: CreatureView,
     /// When the view arrived, in seconds since startup.
     told_at: f32,
+    /// When it last showed a fight (attacking, a tell, or hurt), in seconds since startup.
+    fought_at: Option<f32>,
     position: Vec3,
     yaw: f32,
     entity: Entity,
@@ -455,6 +457,8 @@ pub struct Creatures {
     waiting: Vec<CreatureView>,
     /// Creatures our blows landed on since the last frame, to cry out.
     cries: Vec<u32>,
+    /// Barks the server told of since the last frame (`ServerMessage::Bark`): who, and which.
+    barks: Vec<(u32, voxmar_engine::creature::Bark)>,
     /// Our blows the server answered since the last frame: at whom, for how much, what kind,
     /// and whether it killed. Each jolts its creature (`fight_fx`).
     jolts: Vec<(u32, u16, Blow, bool)>,
@@ -547,6 +551,21 @@ pub enum Keeper {
 }
 
 impl Creatures {
+    /// Creature `id` barked, as the server says: heard next frame, if it is shown.
+    pub fn bark(&mut self, id: u32, bark: voxmar_engine::creature::Bark) {
+        self.barks.push((id, bark));
+    }
+
+    /// The barks to hear now, of creatures shown; those of creatures told of but not yet
+    /// built (with their first view, or behind the spawns a frame allows) wait for them,
+    /// and those of creatures not here at all are dropped.
+    fn barks_heard(&mut self) -> Vec<(u32, voxmar_engine::creature::Bark)> {
+        let (heard, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.barks).into_iter().partition(|(id, _)| self.shown.contains_key(id));
+        let coming = |id: u32| self.waiting.iter().chain(&self.inbox).any(|view| view.id == id);
+        self.barks = rest.into_iter().filter(|&(id, _)| coming(id)).collect();
+        heard
+    }
+
     /// Takes what the server sent.
     pub fn receive(&mut self, changed: Vec<CreatureView>, gone: Vec<CreatureGone>) {
         self.inbox.extend(changed);
@@ -582,6 +601,14 @@ impl Creatures {
     /// Every living creature shown, by id: its species and where its feet are.
     pub fn living(&self) -> impl Iterator<Item = (u32, CreatureId, Vec3)> + '_ {
         self.shown.iter().filter(|(_, shown)| shown.dying.is_none()).map(|(&id, shown)| (id, shown.view.species, shown.position))
+    }
+
+    /// Whether creature `id` is in a fight at `now` (seconds since startup): winding up or
+    /// charging, or it attacked, showed a tell or was hurt within the last `calm_after`
+    /// seconds (a roaming boss's fight music waits for one, and ends once it has calmed:
+    /// one nicked that goes back to grazing is no fight, though it never mends).
+    pub fn stirred(&self, id: u32, now: f32, calm_after: f32) -> bool {
+        self.shown.get(&id).is_some_and(|shown| in_fight(&shown.view, shown.fought_at, now, calm_after))
     }
 
     pub fn sighting(&self, id: u32) -> Option<Sighting> {
@@ -989,6 +1016,11 @@ fn show(
             sounds.push(sound(Sound::Hurt, id, &shown.view, shown.position, 0.0));
         }
     }
+    for (id, bark) in creatures.barks_heard() {
+        if let Some(shown) = creatures.shown.get(&id) {
+            sounds.push(sound(Sound::of_bark(bark), id, &shown.view, shown.position, 0.0));
+        }
+    }
     // Our blows that landed: a freeze, a white flash and a flinch away from us, as large as
     // the share of its health the blow took (`combat_fx.ron`'s `hit`). Bleeding only reddens.
     let eye = player.eye();
@@ -1083,6 +1115,9 @@ fn show(
                 Turn::Ends => shown.coiling = None,
                 Turn::Same => {}
             }
+            if shows_fight(Some(&shown.view), &view) {
+                shown.fought_at = Some(now);
+            }
             shown.view = view;
             shown.told_at = now;
             continue;
@@ -1111,11 +1146,13 @@ fn show(
         let joints: Vec<(Entity, Part)> = species.parts.iter().map(|&part| (commands.spawn((Transform::from_translation(part.pivot), ChildOf(entity))).id(), part)).collect();
         let skinned = SkinnedMesh { inverse_bindposes: body.binds.clone(), joints: joints.iter().map(|(e, _)| *e).collect() };
         let body = commands.spawn((Mesh3d(body.mesh.clone()), MeshMaterial3d(material.clone()), skinned, Transform::default(), Visibility::default(), ChildOf(entity))).id();
+        let fought_at = shows_fight(None, &view).then_some(now);
         creatures.shown.insert(
             view.id,
             Shown {
                 view,
                 told_at: now,
+                fought_at,
                 position: view.position,
                 yaw: view.yaw,
                 entity,
@@ -1847,6 +1884,11 @@ pub fn aim(
         net.propose_from(&player, attack, ActionTarget::Creature(id));
         fighting.strikes += 1;
     }
+    // A left click at one out of reach swings at the air (`Fighting::whiff`): the hand and
+    // a whoosh say the click was heard, and nothing is struck.
+    if target.creature.is_some() && !in_reach && ui.cursor_locked && !player.dead && mouse.just_pressed(MouseButton::Left) {
+        fighting.whiff(time.elapsed_secs_f64(), &combat.timing(&weapon));
+    }
 }
 
 /// A wind-up begun: the coil starts (its end is the blow), and it is told by sound and,
@@ -1880,9 +1922,45 @@ pub(crate) fn ray_box(origin: Vec3, direction: Vec3, aabb: &Aabb) -> Option<f32>
     (far >= near.max(0.0)).then_some(near.max(0.0))
 }
 
+/// Whether `view` shows a creature in a fight, after the view `before` it: attacking,
+/// winding up a move (its tell), or hurt since.
+fn shows_fight(before: Option<&CreatureView>, view: &CreatureView) -> bool {
+    view.pose == Pose::Attacking || view.tell != 0 || before.is_some_and(|before| view.health < before.health)
+}
+
+/// Whether a creature shown as `view`, last in a fight at `fought_at`, is in one at `now`:
+/// attacking now, or within `calm_after` seconds of its last fight.
+fn in_fight(view: &CreatureView, fought_at: Option<f32>, now: f32, calm_after: f32) -> bool {
+    view.pose == Pose::Attacking || fought_at.is_some_and(|at| now - at < calm_after)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A roaming boss nicked once is in a fight, and out of it once it has gone back to
+    /// grazing for `calm_after`, though it never mends: its fight music ends.
+    #[test]
+    fn a_nicked_boss_that_calms_down_is_no_longer_in_a_fight() {
+        let calm_after = 12.0;
+        let (grazing, full) = (Pose::Grazing, 60);
+        let at = |pose: Pose, tell: u8, health: u16| CreatureView { health, ..view_of(pose, tell) };
+        let mut fought = None;
+        let mut before = at(grazing, 0, full);
+        let mut step = |view: CreatureView, now: f32, fought: &mut Option<f32>| {
+            if shows_fight(Some(&before), &view) {
+                *fought = Some(now);
+            }
+            before = view;
+            in_fight(&before, *fought, now, calm_after)
+        };
+        assert!(!step(at(grazing, 0, full), 0.0, &mut fought), "grazing unhurt: no fight");
+        assert!(step(at(Pose::Alert, 0, full - 1), 1.0, &mut fought), "nicked: a fight");
+        assert!(step(at(grazing, 0, full - 1), 1.0 + calm_after - 0.5, &mut fought), "still in it a while after");
+        assert!(!step(at(grazing, 0, full - 1), 1.0 + calm_after + 0.5, &mut fought), "calmed and grazing, still hurt: the fight is over");
+        assert!(step(at(Pose::Idle, 3, full - 1), 20.0, &mut fought), "a move wound up: a fight again");
+        assert!(in_fight(&at(Pose::Attacking, 0, full), None, 100.0, calm_after), "attacking is always a fight");
+    }
 
     fn bear() -> Vec<Part> {
         creature::Model::Quadruped {
@@ -2030,6 +2108,14 @@ mod tests {
         creatures.receive(vec![], vec![CreatureGone { id: 2, died: false }]);
         creatures.receive(vec![view(2)], vec![]);
         assert_eq!(creatures.inbox.iter().map(|v| v.id).collect::<Vec<_>>(), [2]);
+        // A bark from one told of but not yet built waits for it; one from a stranger goes.
+        creatures.bark(2, voxmar_engine::creature::Bark::Greet);
+        creatures.bark(9, voxmar_engine::creature::Bark::Alarm);
+        assert_eq!(creatures.barks_heard(), []);
+        assert_eq!(creatures.barks, [(2, voxmar_engine::creature::Bark::Greet)]);
+        creatures.inbox.clear();
+        assert_eq!(creatures.barks_heard(), []);
+        assert!(creatures.barks.is_empty(), "a bark kept for one never coming");
     }
 
     #[test]

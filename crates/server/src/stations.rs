@@ -181,13 +181,30 @@ impl Server {
             self.refuse(agent, Words::key("station.level").with("skill", skill).with("level", Words::text(work.level)));
             return;
         }
+        // Its needs and what speeds it are judged on the land around it, all of it loaded.
+        let reach = station.needs.iter().chain(station.faster.iter().map(|(spot, _)| spot)).map(|spot| match spot {
+            Spot::OpenSky => 0,
+            Spot::Near(_, reach) | Spot::Water(reach) => *reach,
+        });
+        if !self.land_loaded(pos, reach.max().unwrap_or(0)) {
+            self.refuse(agent, Words::key("station.unloaded"));
+            return;
+        }
         if let Some(lacks) = self.lacks(pos, station) {
             self.refuse(agent, lacks);
             return;
         }
+        // Loaded in the loader's home, the rest of the pack and then the home's stores top
+        // the load up with more of what is in hand (docs/home.md).
+        let topped = station.from_stores && self.in_home_with(agent, pos);
+        let stores = if topped { self.home_stores(agent) } else { Vec::new() };
+        let player = &self.players[&agent];
+        let packed: u32 = if !topped { 0 } else { player.inventory.slots.iter().enumerate().filter(|&(slot, _)| slot != selected).filter_map(|(_, s)| s.filter(|s| s.item == stack.item)).map(|s| s.count as u32).sum() };
+        let stored: u32 = stores.iter().filter_map(|&at| self.factory.get(at)).flat_map(|(_, state)| state.bin.iter().flatten()).filter(|s| s.item == stack.item).map(|s| s.count as u32).sum();
+        let within = (stack.count as u32 + packed + stored).min(station.holds as u32) as u8;
         // Whole batches only: the heap rots four greens to one compost, so a load is a
         // multiple of four.
-        let count = stack.count.min(station.holds) / work.takes * work.takes;
+        let count = within / work.takes * work.takes;
         if count == 0 {
             self.refuse(agent, Words::key("station.too_few").with("count", Words::text(work.takes)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())));
             return;
@@ -195,13 +212,29 @@ impl Server {
         let speed: f32 = station.faster.iter().filter(|(spot, _)| self.spot_holds(pos, spot)).map(|(_, times)| times).product();
         let ticks = (work.minutes * 60.0 * TICKS_PER_SECOND as f32 / speed).round() as u64;
         let player = self.players.get_mut(&agent).expect("checked above");
-        player.inventory.take(selected, count);
+        let mut left = count - player.inventory.take(selected, count).map_or(0, |taken| taken.count);
+        if topped {
+            for slot in (0..player.inventory.slots.len()).filter(|&slot| slot != selected) {
+                if left > 0 && player.inventory.slots[slot].is_some_and(|s| s.item == stack.item) {
+                    left -= player.inventory.take(slot, left).map_or(0, |taken| taken.count);
+                }
+            }
+        }
         player.changed(traits::INVENTORY);
+        let from_stores = self.take_from_stores(&stores, stack.item, left as u32);
+        debug_assert_eq!(from_stores, left as u32, "counted as there");
+        // A store the loader has open shows what was taken with the same update.
+        if from_stores > 0 {
+            self.pull_store(agent);
+        }
         self.stations.loads.insert(pos, Load { item: stack.item, count, due: self.tick + ticks.max(1) });
         self.set_block(pos, station.working);
         let mut words = Words::key("station.loaded").with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())).with("minutes", Words::text(self.minutes_left(self.tick + ticks.max(1))));
         if speed > 1.0 {
             words = Words::key("station.loaded_faster").with("words", words);
+        }
+        if from_stores > 0 {
+            words = Words::key("station.loaded_from_stores").with("words", words).with("count", Words::text(from_stores));
         }
         self.tell_station(agent, words);
     }
@@ -369,6 +402,29 @@ mod tests {
         server.players[&1].skills.xp(server.content.skills.id(skill).unwrap())
     }
 
+    /// A station is judged on the land around it: while a column within its needs' reach is
+    /// still loading, using it is refused with a line saying so and takes nothing; once
+    /// loaded, it works as before.
+    #[test]
+    fn a_station_by_land_still_loading_says_so_and_takes_nothing() {
+        let mut server = fixture(1);
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        // Three blocks from the column to the west: in reach of a fire that speeds it.
+        let rack = IVec3::new(34, 200, 40);
+        server.set_block(rack, block(&server, "base:drying_rack"));
+        hold(&mut server, "base:raw_beef", 8);
+        let west = ColumnPos::new(0, 1);
+        let held = server.world.remove(west).expect("loaded");
+        server.use_station(1, rack);
+        let refused: Vec<Words> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Refused { why } => Some(why), _ => None }).collect();
+        assert_eq!(refused, [Words::key("station.unloaded")]);
+        assert_eq!((at(&server, rack).as_str(), carried(&server, "base:raw_beef")), ("base:drying_rack", 8), "loaded on land still loading");
+        server.world.insert(west, held);
+        server.use_station(1, rack);
+        assert_eq!(at(&server, rack), "base:drying_rack_hung");
+    }
+
     /// The rack: raw meat in hand loads it (up to eight), it hangs while the clock runs,
     /// the look turns it to the dry rack when due, and using it then gives the jerky and
     /// Cooking experience.
@@ -394,6 +450,25 @@ mod tests {
         assert_eq!(at(&server, AT), "base:drying_rack");
         assert!(xp(&server, "core:cooking") > cooking, "taking pays Cooking");
         assert_eq!(server.stations.get(AT), None);
+    }
+
+    /// A raw hide off a beast cures on the rack in ten minutes, and taking it pays Crafting.
+    #[test]
+    fn a_raw_hide_hung_on_a_rack_is_hide_ten_minutes_later() {
+        let mut server = fixture(1);
+        server.set_block(AT, block(&server, "base:drying_rack"));
+        hold(&mut server, "base:raw_hide", 3);
+        server.use_station(1, AT);
+        assert_eq!(at(&server, AT), "base:drying_rack_hung");
+        server.tick += 10 * MINUTE - 1;
+        server.show_done_stations();
+        assert_eq!(at(&server, AT), "base:drying_rack_hung", "not yet");
+        server.tick += 1;
+        server.show_done_stations();
+        let crafting = xp(&server, "core:crafting");
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:hide"), 3);
+        assert_eq!(xp(&server, "core:crafting") - crafting, 60, "taking pays Crafting, 2 a hide (in tenths)");
     }
 
     /// Looked at, a rack at work says what is on it and the seconds left, an empty one

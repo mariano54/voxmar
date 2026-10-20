@@ -42,6 +42,10 @@ pub struct VoiceDef {
     pub attack: Option<EventDef>,
     pub hurt: Option<EventDef>,
     pub death: Option<EventDef>,
+    /// Barks, for a settlement's people: greeting, alarm and contentment.
+    pub greet: Option<EventDef>,
+    pub alarm: Option<EventDef>,
+    pub content: Option<EventDef>,
 }
 
 impl VoiceDef {
@@ -57,6 +61,9 @@ impl VoiceDef {
             Kind::Attack => self.attack.as_ref(),
             Kind::Hurt => self.hurt.as_ref(),
             Kind::Death => self.death.as_ref(),
+            Kind::Greet => self.greet.as_ref(),
+            Kind::Alarm => self.alarm.as_ref(),
+            Kind::Content => self.content.as_ref(),
         }
     }
 }
@@ -226,6 +233,18 @@ impl Bank {
 
     pub fn voice(&self, species: CreatureId) -> Option<&Voice> {
         self.species.get(species.0 as usize).and_then(Option::as_ref)
+    }
+
+    /// Settlements' people (kind `Villager`) whose voice lacks clips of its own for a bark:
+    /// each would be heard as some other sound, a hum for an alarm. The launch fails on any.
+    pub fn unbarked(&self, creatures: &CreatureRegistry) -> Vec<String> {
+        let barks = [Kind::Greet, Kind::Alarm, Kind::Content];
+        creatures
+            .iter()
+            .filter(|(_, c)| c.def.kind == voxmar_engine::creature::Kind::Villager)
+            .filter(|(id, _)| self.voice(*id).is_none_or(|voice| barks.iter().any(|&k| voice.events[k as usize].is_none())))
+            .map(|(_, c)| c.def.name.clone())
+            .collect()
     }
 }
 
