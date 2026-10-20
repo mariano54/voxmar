@@ -3445,6 +3445,14 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         lying + c.inventory.slots.iter().flatten().filter(|s| s.item == wheat || s.item == seeds).map(|s| s.count as u32).sum::<u32>()
     };
     for (hoe, reaped) in [("bare hand", 1), ("flint_knife", 1), ("stone_hoe", 9)] {
+        // The last round's harvest lying in the player's pull is drawn in once its pickup
+        // delay is out, which on a loaded server lands after the /clear and fills a slot the
+        // wait below wants empty: let it come in first. What lies beyond the pull (the
+        // server's own reach) stays where it is.
+        client.pump_until(|c| {
+            let middle = c.position + Vec3::Y * voxmar_engine::physics::player::HEIGHT * 0.5;
+            c.items.values().all(|i| (i.position + Vec3::Y * voxmar_engine::dropped::SIZE / 2.0).distance(middle) >= voxmar_engine::dropped::MAGNET + 1.0)
+        });
         client.ok("/clear");
         client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
         if hoe != "bare hand" {
@@ -8225,12 +8233,16 @@ impl Fresh {
             self.walk_toward(beside, 0.05);
             return true;
         }
-        let spot = (1..=4)
+        // No floor under it and no bank about it: a drop down a hole rather than out on a
+        // pond, for the caller to step down for (or leave).
+        let Some(spot) = (1..=4)
             .flat_map(|ring| (0..16).map(move |i| (ring as f32 * 0.4, (i as f32 * 22.5).to_radians())))
             .map(|(r, a)| Vec3::new(p.x + r * a.cos(), self.at.y, p.z + r * a.sin()))
             .filter(|&q| self.has_room(q))
             .min_by(|a, b| across(*a, self.at).total_cmp(&across(*b, self.at)))
-            .unwrap_or_else(|| panic!("no bank in reach of the drop at {p:?}"));
+        else {
+            return false;
+        };
         if across(spot, self.at) > 0.3 {
             self.c.tp(spot);
             self.at = spot;
