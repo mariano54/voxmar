@@ -672,9 +672,7 @@ impl ActionDef {
             }
             Requirement::Relights => {
                 let (block, _) = block_target()?;
-                ctx.flames().is_some_and(|flames| {
-                    ctx.block(block).is_some_and(|b| flames.relit(ctx.blocks(), b).is_some()) && ctx.actor_held().is_some_and(|item| flames.kindles(item))
-                })
+                ctx.flames().is_some_and(|flames| ctx.block(block).zip(ctx.actor_held()).is_some_and(|(b, item)| flames.lights(ctx.blocks(), b, item)))
             }
             Requirement::Swaps => {
                 let (block, _) = block_target()?;

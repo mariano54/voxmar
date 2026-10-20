@@ -35,12 +35,18 @@ impl Server {
         }
     }
 
-    /// `agent` lit the light gone out at `pos` again (`Effect::Relight`).
-    pub(crate) fn relight(&mut self, _agent: PlayerId, pos: IVec3) {
+    /// `agent` lit the light gone out at `pos` again (`Effect::Relight`), using up one of
+    /// what is in hand if it asks that (an oil lamp's fat).
+    pub(crate) fn relight(&mut self, agent: PlayerId, pos: IVec3) {
         let Some(here) = self.block(pos) else { return };
-        if let Some(lit) = self.content.flames.relit(&self.content.blocks, here) {
-            self.set_block(pos, lit);
+        let Some(lit) = self.content.flames.relit(&self.content.blocks, here) else { return };
+        if self.content.flames.uses_up(here) {
+            let Some(player) = self.players.get_mut(&agent) else { return };
+            let selected = player.selected;
+            player.inventory.take(selected, 1);
+            player.changed(voxmar_engine::traits::INVENTORY);
         }
+        self.set_block(pos, lit);
     }
 
     /// Puts out the lights whose time is up, and those rain falls on. Those in columns
@@ -247,6 +253,32 @@ mod tests {
         server.burn_flames();
         assert_eq!(at(&server, TORCH), "base:torch_stub", "rained out under open sky");
         assert_eq!(at(&server, roofed), "base:torch", "kept dry under a roof");
+    }
+
+    /// A candle burns three game days to its end, never lit again; an oil lamp burns five
+    /// to empty, and fat right clicked on it fills and lights it, one used up.
+    #[test]
+    fn a_candle_burns_to_its_end_and_a_lamp_is_filled_with_fat() {
+        let mut server = fixture("base:lard");
+        let lamp = TORCH + IVec3::X;
+        server.set_block(TORCH, id(&server, "base:candle"));
+        server.set_block(lamp, id(&server, "base:clay_oil_lamp"));
+        let start = server.day;
+        server.day = start + 3.0 * TICKS_PER_DAY as f64;
+        server.burn_flames();
+        assert_eq!((at(&server, TORCH), at(&server, lamp)), ("base:candle_end".into(), "base:clay_oil_lamp".into()), "three days on");
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(id(&server, "base:firebrand"), 1));
+        act(&mut server, "base:relight", TORCH, Face::NegX);
+        assert_eq!(at(&server, TORCH), "base:candle_end", "a candle's end is never lit again");
+        server.day = start + 5.0 * TICKS_PER_DAY as f64;
+        server.burn_flames();
+        assert_eq!(at(&server, lamp), "base:clay_oil_lamp_empty", "five days on, burnt dry");
+        act(&mut server, "base:relight", lamp, Face::NegX);
+        assert_eq!(at(&server, lamp), "base:clay_oil_lamp_empty", "a firebrand does not fill it");
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(id(&server, "base:lard"), 2));
+        act(&mut server, "base:relight", lamp, Face::NegX);
+        assert_eq!(at(&server, lamp), "base:clay_oil_lamp", "filled with fat and lit");
+        assert_eq!(server.players[&1].inventory.slots[0].map(|s| s.count), Some(1), "one lard used up");
     }
 
     /// The burning lights are saved with the world, by name, with when each goes out.

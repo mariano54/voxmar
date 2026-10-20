@@ -7,8 +7,11 @@
 //! - `relights_to:BLOCK`: a right click on it with something that `kindles` in hand (a
 //!   firebrand, a lit torch) lights it again, as `BLOCK` in its facing, for nothing.
 //! - `kindles`: an item that lights what `relights_to:` something.
+//! - `relight_with:TAG`: beside `relights_to:`, it is lit again by an item tagged `TAG`
+//!   instead, one used up (an emptied oil lamp is filled with fat).
 //!
-//! What burns out must be lit again into itself: a torch's stub relights to a torch.
+//! What burns out and is lit again is lit into itself: a torch's stub relights to a torch.
+//! What burns out to something never lit again is used up (a candle to its end).
 
 use crate::block::{BlockId, BlockRegistry, RegistryError};
 
@@ -18,6 +21,8 @@ pub struct Flames {
     /// Each block: game days it burns placed, and what it leaves.
     out: Vec<Option<(f32, BlockId)>>,
     relights: Vec<Option<BlockId>>,
+    /// Each block lit again: the tag of what is used up lighting it, if not a kindling.
+    relight_with: Vec<Option<String>>,
     rain: Vec<bool>,
     kindles: Vec<bool>,
 }
@@ -30,7 +35,7 @@ impl Flames {
             let def = blocks.def(id);
             let tags = &def.tags;
             let bad = |why: String| RegistryError(format!("`{}`: {why}", def.name));
-            for once in ["burns_days:", "burns_out_to:", "relights_to:"] {
+            for once in ["burns_days:", "burns_out_to:", "relights_to:", "relight_with:"] {
                 if tags.iter().filter(|t| t.starts_with(once)).count() > 1 {
                     return Err(bad(format!("more than one `{once}` tag")));
                 }
@@ -63,15 +68,25 @@ impl Flames {
                     return Err(bad(format!("{what} `{}`, which does not turn as it does", blocks.def(to).name)));
                 }
             }
+            let with = tags.iter().find_map(|t| t.strip_prefix("relight_with:")).map(str::to_owned);
+            if let Some(tag) = &with {
+                if relights.is_none() {
+                    return Err(bad(format!("`relight_with:{tag}` but nothing it lights into (`relights_to:`)")));
+                }
+                if !blocks.ids().any(|b| blocks.def(b).has_tag(tag)) {
+                    return Err(bad(format!("`relight_with:{tag}`, which nothing is tagged")));
+                }
+            }
             flames.out.push(out);
+            flames.relight_with.push(with);
             flames.relights.push(relights);
             flames.rain.push(rain);
             flames.kindles.push(tags.iter().any(|t| t == "kindles"));
         }
-        // What burns out is lit again into itself.
+        // What burns out, if it is lit again, is lit into itself.
         for id in blocks.ids() {
             let Some(stub) = flames.burns_out(blocks, id).map(|(_, stub)| stub) else { continue };
-            if flames.relit(blocks, stub) != Some(id) {
+            if flames.relit(blocks, stub).is_some_and(|lit| lit != id) {
                 return Err(RegistryError(format!(
                     "`{}`: burns out to `{}`, which does not relight to it (`relights_to:`)",
                     blocks.def(id).name,
@@ -92,6 +107,21 @@ impl Flames {
     pub fn relit(&self, blocks: &BlockRegistry, block: BlockId) -> Option<BlockId> {
         let to = self.relights.get(block.0 as usize).copied().flatten()?;
         Some(blocks.info(block).facing.map_or(to, |facing| blocks.facing(to, facing)))
+    }
+
+    /// Whether `item` in hand lights `block` again: what its `relight_with:` asks, else a
+    /// kindling.
+    pub fn lights(&self, blocks: &BlockRegistry, block: BlockId, item: BlockId) -> bool {
+        self.relit(blocks, block).is_some()
+            && match self.relight_with.get(block.0 as usize).and_then(Option::as_deref) {
+                Some(tag) => blocks.def(item).has_tag(tag),
+                None => self.kindles(item),
+            }
+    }
+
+    /// Whether lighting `block` again uses up the item it is lit with.
+    pub fn uses_up(&self, block: BlockId) -> bool {
+        self.relight_with.get(block.0 as usize).is_some_and(Option::is_some)
     }
 
     /// Whether rain under open sky puts `block` out.
@@ -128,6 +158,11 @@ mod tests {
             ("wall", &["burns_days:0.5", "burns_out_to:wall_stub"], true),
             ("wall_stub", &["relights_to:wall"], true),
             ("brand", &["kindles"], false),
+            ("lamp", &["burns_days:5", "burns_out_to:empty"], false),
+            ("empty", &["relights_to:lamp", "relight_with:fat"], false),
+            ("lard", &["fat"], false),
+            ("candle", &["burns_days:3", "burns_out_to:end"], false),
+            ("end", &[], false),
         ])
         .unwrap();
         let id = |name: &str| blocks.expect(&format!("t:{name}"));
@@ -137,13 +172,18 @@ mod tests {
         assert_eq!(flames.relit(&blocks, id("wall_stub_west")), Some(id("wall_west")));
         assert!(flames.douses(id("torch")) && !flames.douses(id("wall")));
         assert!(flames.kindles(id("brand")) && !flames.kindles(id("torch")));
+        assert!(flames.lights(&blocks, id("stub"), id("brand")) && !flames.lights(&blocks, id("stub"), id("lard")) && !flames.uses_up(id("stub")));
+        assert!(flames.lights(&blocks, id("empty"), id("lard")) && !flames.lights(&blocks, id("empty"), id("brand")) && flames.uses_up(id("empty")), "filled with fat, used up");
+        assert_eq!((flames.burns_out(&blocks, id("candle")), flames.relit(&blocks, id("end"))), (Some((3.0, id("end"))), None), "a candle burns to its end, never lit again");
         for bad in [
             &[("torch", &["burns_days:1"][..], false)][..],
             &[("torch", &["burns_out_to:torch"][..], false)],
             &[("torch", &["burns_days:0", "burns_out_to:torch"][..], false)],
             &[("torch", &["rain_douses"][..], false)],
             &[("torch", &["relights_to:nothing"][..], false)],
-            &[("torch", &["burns_days:1", "burns_out_to:stub"][..], false), ("stub", &[][..], false)],
+            &[("torch", &["burns_days:1", "burns_out_to:stub"][..], false), ("stub", &["relights_to:other"][..], false), ("other", &[][..], false)],
+            &[("stub", &["relight_with:fat"][..], false)],
+            &[("lamp", &[][..], false), ("stub", &["relights_to:lamp", "relight_with:nothing_has_it"][..], false)],
             &[("torch", &["burns_days:1", "burns_out_to:stub"][..], true), ("stub", &["relights_to:torch"][..], false)],
             &[("torch", &["burns_days:1", "burns_days:2", "burns_out_to:torch"][..], false)],
         ] {
