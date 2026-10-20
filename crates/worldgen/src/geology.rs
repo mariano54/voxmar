@@ -165,7 +165,7 @@ pub const RELIEF_CELL: i32 = 4;
 pub const COAST: f32 = -0.16;
 /// Regional climate tiles, in lattice cells a side: large, as each point's climate reads
 /// the relief around it, which the points of the same tile share.
-const TILE: i32 = 16;
+pub(crate) const TILE: i32 = 16;
 /// Base climate tiles, in lattice cells a side.
 const BASE_TILE: i32 = 8;
 /// Spacing of the climate's base lattice (sea-level temperature and precipitation, which
@@ -195,6 +195,9 @@ pub struct Geology {
     /// The regional climate at the lattice points of each tile, plus the next row and
     /// column, so any position interpolates within one tile.
     lattice: Cache<IVec2, Arc<[Regional]>>,
+    /// The relief at the regional lattice's points, in tiles of `TILE` a side: each point's
+    /// climate reads the relief of the points around it, which neighbouring tiles share.
+    lattice_reliefs: Cache<IVec2, Arc<[Relief]>>,
     /// The climate's base lattice, in tiles the same way.
     bases: Cache<IVec2, Arc<[Base]>>,
     /// Tells this world's tiles apart in the per-thread memo.
@@ -250,6 +253,7 @@ impl Geology {
             climate: Climate::new(seed, dials, &content.climate),
             shapes: Shapes::new(seed, dials, content, rocks),
             lattice: Cache::new(16 << 20),
+            lattice_reliefs: Cache::new(8 << 20),
             bases: Cache::new(4 << 20),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
@@ -576,10 +580,48 @@ impl Geology {
         })
     }
 
+    /// The relief at points of the regional climate's lattice, from the tiles of it shared
+    /// by neighbouring tiles of the climate: the same as `reliefs` there.
+    fn lattice_reliefs_at(&self, points: &[(f32, f32)]) -> Vec<Relief> {
+        let mut tiles: Vec<(IVec2, Arc<[Relief]>)> = Vec::new();
+        points
+            .iter()
+            .map(|&(x, z)| {
+                let point = IVec2::new(x as i32, z as i32).div_euclid(IVec2::splat(climate::CELL));
+                debug_assert!(point * climate::CELL == IVec2::new(x as i32, z as i32) && x.fract() == 0.0 && z.fract() == 0.0, "({x}, {z}) off the lattice");
+                let key = point.div_euclid(IVec2::splat(TILE));
+                let local = point - key * TILE;
+                let i = match tiles.iter().position(|(k, _)| *k == key) {
+                    Some(i) => i,
+                    None => {
+                        let tile = self.lattice_reliefs.get(key, || {
+                            let points: Vec<(f32, f32)> = (0..TILE * TILE)
+                                .map(|i| {
+                                    let p = (key * TILE + IVec2::new(i % TILE, i / TILE)) * climate::CELL;
+                                    (p.x as f32, p.y as f32)
+                                })
+                                .collect();
+                            self.reliefs(&points).into()
+                        });
+                        tiles.push((key, tile));
+                        tiles.len() - 1
+                    }
+                };
+                tiles[i].1[(local.y * TILE + local.x) as usize]
+            })
+            .collect()
+    }
+
+    /// The tile `key` of the regional climate lattice: its `TILE + 1` points a side, row
+    /// by row, `climate::CELL` blocks apart from `key * TILE` lattice cells.
+    pub(crate) fn regional_tile(&self, key: IVec2) -> Arc<[Regional]> {
+        self.with_tile(key, Arc::clone)
+    }
+
     /// Calls `f` with a tile of the regional climate lattice. The tiles this thread used
     /// last are kept at hand, which spares the shared cache's lock and the shared count of
     /// the tile's owners on most calls.
-    fn with_tile<R>(&self, key: IVec2, f: impl FnOnce(&[Regional]) -> R) -> R {
+    fn with_tile<R>(&self, key: IVec2, f: impl FnOnce(&Arc<[Regional]>) -> R) -> R {
         thread_local! {
             static RECENT: Recent<Regional> = const { RefCell::new(Vec::new()) };
         }
@@ -600,7 +642,7 @@ impl Geology {
                                 (p.x as f32, p.y as f32)
                             })
                             .collect();
-                        self.climate.regionals(self, &points).into()
+                        self.climate.regionals_with(self, &points, |around| self.lattice_reliefs_at(around)).into()
                     });
                     recent.insert(0, (self.id, key, tile));
                     recent.truncate(6);

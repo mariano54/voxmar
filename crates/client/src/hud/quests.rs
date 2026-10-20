@@ -193,10 +193,11 @@ fn choose_on_open(
 }
 
 /// The quest the player is on: the first pinned that is not done, else the first open in
-/// the book's order.
+/// the book's order, chapter by chapter.
 pub(crate) fn current<'a>(content: &'a Content, player: &LocalPlayer, settings: &Settings) -> Option<&'a QuestDef> {
     let pinned = settings.pinned_quests.iter().filter_map(|name| content.quests.get(name)).find(|quest| standing(content, player, quest) != Standing::Done);
-    pinned.or_else(|| content.quests.iter().find(|quest| standing(content, player, quest) == Standing::Open))
+    let open = || chapters(content).into_iter().find_map(|age| content.quests.iter().find(|quest| quest.age == age && standing(content, player, quest) == Standing::Open));
+    pinned.or_else(open)
 }
 
 /// Current Quest turns the book to the quest the player is on, picks it, and brings the
@@ -229,15 +230,10 @@ pub enum Standing {
     Waiting,
 }
 
-/// The chapters, by age, in the order the quests first name them.
+/// The chapters, by age, in the order quest_paths.ron lists the ages' paths (every age a
+/// quest names has one), never by the files the quests are written in.
 pub fn chapters(content: &Content) -> Vec<String> {
-    let mut ages: Vec<String> = Vec::new();
-    for quest in content.quests.iter() {
-        if !ages.contains(&quest.age) {
-            ages.push(quest.age.clone());
-        }
-    }
-    ages
+    content.quest_paths.ages().into_iter().map(str::to_owned).collect()
 }
 
 fn state<'a>(player: &'a LocalPlayer, name: &str) -> Option<&'a QuestState> {
@@ -334,7 +330,7 @@ pub(crate) fn quest_icon(content: &Content, images: &HudImages, quest: &QuestDef
     let given = quest.rewards.iter().find_map(|r| if let Reward::Item(name, _) = r { item(name) } else { None });
     let asked = || {
         quest.tasks.iter().flatten().find_map(|goal| match goal {
-            Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item(name),
+            Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item(name),
             _ => None,
         })
     };
@@ -396,6 +392,10 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Ate(food, _) => locale.format("quest.goal.ate", &[("item", &item_words(locale, content, package, food))]),
         Goal::Laid(item, _) => locale.format("quest.goal.laid", &[("item", &item_words(locale, content, package, item))]),
         Goal::Watering(block, _) => locale.format("quest.goal.watering", &[("item", &item_words(locale, content, package, block))]),
+        Goal::Placed(block, _) => locale.format("quest.goal.placed", &[("item", &item_words(locale, content, package, block))]),
+        Goal::Stocked(item, store, _) => locale.format("quest.goal.stocked", &[("item", &item_words(locale, content, package, item)), ("store", &item_words(locale, content, package, store))]),
+        Goal::CraftNear(item, near, _) => locale.format("quest.goal.craft_near", &[("item", &item_words(locale, content, package, item)), ("near", &item_words(locale, content, package, near))]),
+        Goal::Trapped(creature, _) => locale.format("quest.goal.trapped", &[("creature", &creature_words(locale, content, package, creature))]),
         Goal::Felt(effect) => {
             let words = qualified(package, effect).iter().find_map(|name| content.effects.find(name)).map(|id| content.effects.get(id)).map_or_else(|| title_from_id(effect), |def| locale.get_or(&def_key("effect", &def.name), &def.title).to_owned());
             return locale.format("quest.goal.felt", &[("effect", &words)]);
@@ -412,6 +412,8 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
             locale.format("quest.goal.lit", &[("item", &multiblock_words(locale, content, package, name)), ("fuels", &fuels)])
         },
         Goal::LookUp(item) => locale.format("quest.goal.lookup", &[("item", &item_words(locale, content, package, item))]),
+        Goal::QuestsDone(age, _) => locale.format("quest.goal.quests_done", &[("age", &locale.get(&format!("quest.age.{age}")).to_owned())]),
+        Goal::Capstones(age, _) => locale.format("quest.goal.capstones", &[("age", &locale.get(&format!("quest.age.{age}")).to_owned())]),
     };
     if need > 1 { locale.format("quest.progress", &[("goal", &what), ("have", &have.min(need)), ("need", &need)]) } else { what }
 }
@@ -661,6 +663,11 @@ const GAP_LEAST: Vec2 = Vec2::new(12.0 * PX, 6.0 * PX);
 const GAP_MOST: Vec2 = Vec2::new(90.0 * PX, 40.0 * PX);
 /// How far the picked quest's glow reaches past it.
 const GLOW: f32 = 5.0 * PX;
+/// The gold mark on a capstone's corner.
+const CAPSTONE: f32 = 3.0 * PX;
+/// A capstone's mark, by which the gate finds it.
+#[derive(Component)]
+pub(crate) struct CapstoneMark;
 /// Pinch a trackpad this much for one step of zoom.
 const PINCH_STEP: f32 = 0.15;
 /// The width of a lane's header, at the left of the canvas, which stays as it is dragged:
@@ -1079,6 +1086,11 @@ fn draw(
                         cell.spawn((whole, ImageNode::new(rim).with_color(tones.rim.color().with_alpha(faint))));
                         let tint = if dim { Color::srgba(0.75, 0.75, 0.8, 0.45) } else { Color::WHITE };
                         cell.spawn((Node { width: Val::Px(icon), height: Val::Px(icon), ..default() }, ImageNode::new(quest_icon(content, &images, quest)).with_color(tint)));
+                        // A capstone (an age's rite counts them), marked gold at its corner.
+                        if quest.capstone {
+                            let mark = Node { position_type: PositionType::Absolute, right: Val::ZERO, top: Val::ZERO, width: Val::Px(CAPSTONE), height: Val::Px(CAPSTONE), ..default() };
+                            cell.spawn((mark, CapstoneMark, BackgroundColor(GOLD)));
+                        }
                         let mark = match tone {
                             Look::Done => Some(Piece::QuestDone),
                             Look::Ready => Some(Piece::QuestReady),
@@ -1172,6 +1184,9 @@ fn draw(
             // A pixel in from the left: a Japanese line may begin on a glyph that reaches a
             // pixel left of its start.
             detail.spawn((Node { flex_shrink: 0.0, padding: UiRect::left(Val::Px(PX)), ..default() }, text(font, why(&locale, quest), BODY, SOFT)));
+            if quest.capstone {
+                detail.spawn((Node { flex_shrink: 0.0, padding: UiRect::left(Val::Px(PX)), ..default() }, Localized("quest.capstone"), shadowed(font, "", BODY, GOLD)));
+            }
             // What it gives, one line each: an item with its count, or experience in a skill
             // with the skill's mark.
             if !quest.rewards.is_empty() {
@@ -1213,7 +1228,11 @@ fn draw(
                 }
                 for (g, goal) in task.iter().enumerate() {
                     let progress = state.and_then(|s| s.tasks.get(t)?.get(g).copied()).unwrap_or((0, 1));
-                    let met = progress.0 >= progress.1 || standing == Standing::Done;
+                    // Done, its goals read as met, though what they counted has since gone
+                    // (a trough set down, broken after; a carried item, used).
+                    let done = standing == Standing::Done;
+                    let progress = if done { (progress.1, progress.1) } else { progress };
+                    let met = progress.0 >= progress.1 || done;
                     // Waiting, its goals are what is ahead, not progress under way.
                     let color = match (standing, met) {
                         (Standing::Waiting, _) => MUTED,
@@ -1223,7 +1242,7 @@ fn draw(
                     let line = text(font, goal_line(&locale, content, quest, goal, progress, met), BODY, color);
                     // The item it asks for, to click for its recipes (a right click, its uses).
                     let asked = match goal {
-                        Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item_id(content, package(quest), name),
+                        Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item_id(content, package(quest), name),
                         _ => None,
                     };
                     let Some(item) = asked else {
@@ -1236,7 +1255,7 @@ fn draw(
                     });
                     // How to make it, the way the recipe viewer draws it, for what a goal
                     // makes.
-                    if matches!(goal, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::Have(..))
+                    if matches!(goal, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::CraftNear(..) | Goal::Placed(..) | Goal::Have(..))
                         && let Some(book) = viewer.book()
                     {
                         let ways = book.making(item);
@@ -1991,14 +2010,14 @@ pub(crate) mod tests {
             let item = |name: &str| name == "any" || name.starts_with("tag:") || item_id(&content, package, name).is_some();
             for goal in quest.tasks.iter().flatten() {
                 let known = match goal {
-                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
+                    Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Stocked(name, _, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::LookUp(name) => item(name),
                     Goal::Catch(name, _) => name == "Kinds" || item(name),
                     Goal::Kinds(page, name, _) => match page {
                         voxmar_engine::journal::Page::Animals | voxmar_engine::journal::Page::Monsters => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                         voxmar_engine::journal::Page::Plants | voxmar_engine::journal::Page::Ores | voxmar_engine::journal::Page::Fish => item(name),
                         _ => name == "any",
                     },
-                    Goal::Kill(name, _) | Goal::Tame(name, _) | Goal::Lured(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
+                    Goal::Kill(name, _) | Goal::Tame(name, _) | Goal::Lured(name, _) | Goal::Trapped(name, _) => name == "any" || qualified(package, name).iter().any(|name| content.creatures.find(name).is_some()),
                     Goal::Built(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some() || content.effects.step(name).is_some()),
                     Goal::Lit(name, _) => qualified(package, name).iter().any(|name| content.multiblocks.get(name).is_some()),
                     Goal::Level(skill, _) => skill_id(&content, skill).is_some(),
@@ -2018,7 +2037,7 @@ pub(crate) mod tests {
                 }
             }
             let pictured = quest.rewards.iter().any(|r| matches!(r, Reward::Item(..) | Reward::Xp(..)))
-                || quest.tasks.iter().flatten().any(|g| matches!(g, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::Have(..) | Goal::Pick(..) | Goal::Mine(..) | Goal::Catch(..) | Goal::Level(..)));
+                || quest.tasks.iter().flatten().any(|g| matches!(g, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::CraftNear(..) | Goal::Placed(..) | Goal::Have(..) | Goal::Pick(..) | Goal::Mine(..) | Goal::Catch(..) | Goal::Level(..)));
             if !pictured {
                 wrong.push(format!("{}: nothing to draw it with", quest.name));
             }
@@ -2097,8 +2116,11 @@ pub(crate) mod tests {
         // A full tracker takes none.
         let full: Vec<String> = (0..room).map(|i| format!("base:pinned_{i}")).collect();
         assert!(follow_ons(&content, &full, std::slice::from_ref(&first), &done).is_empty());
-        // Opening nothing new: the age's next open quest, only with nothing else pinned.
-        let last = content.quests.iter().find(|q| content.quests.iter().all(|other| !before(&content, other).iter().any(|b| b.name == q.name))).expect("a quest nothing follows");
+        // Opening nothing new: the age's next open quest, only with nothing else pinned. The
+        // quest is of an age a new player has quests open in (in name order the Farm book
+        // may load first, and none of it opens before its rite).
+        let starts = |age: &str| content.quests.iter().any(|q| q.age == age && content.quests.open(q, &|_: &str| false));
+        let last = content.quests.iter().find(|q| starts(&q.age) && content.quests.iter().all(|other| !before(&content, other).iter().any(|b| b.name == q.name))).expect("a quest nothing follows");
         let none = |name: &str| name == last.name;
         let fallback = follow_ons(&content, &[], std::slice::from_ref(&last.name), &none);
         assert_eq!(fallback.len(), 1, "{fallback:?}");
@@ -2170,8 +2192,8 @@ pub(crate) mod tests {
             }
         }
         let farm = layout(&content, "farm");
-        let hearth = farm.quests.iter().position(|q| q.name == "base:homestead_hearth").expect("the farm's web shows the hearth that opens it");
-        assert!(hearth >= farm.ours);
+        let rite = farm.quests.iter().position(|q| q.name == "base:the_farm_age").expect("the farm's web shows the rite that opens it");
+        assert!(rite >= farm.ours);
     }
 
     /// Each path runs along a lane of its own, in `quest_paths.ron`'s order: its quests
@@ -2273,5 +2295,16 @@ pub(crate) mod tests {
             assert!(ja.find(&format!("quest.age.{age}")).is_some(), "no Japanese name for the {age} chapter");
         }
         assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true });
+    }
+
+    /// The Nomad age is the first chapter, and a new player's quest is a Nomad one, though
+    /// the Farm book's file (`quests.ron`) is read before the Nomad's (`quests_nomad.ron`).
+    #[test]
+    fn the_nomad_age_comes_first_whatever_its_file_is_named() {
+        let content = content();
+        assert_eq!(content.quests.iter().next().map(|q| q.age.as_str()), Some("farm"), "the Farm book is read first");
+        assert_eq!(chapters(&content).first().map(String::as_str), Some("nomad"));
+        let quest = current(&content, &LocalPlayer::default(), &Settings::default()).expect("a new player has a quest");
+        assert_eq!(quest.age, "nomad", "{} is a new player's first quest", quest.name);
     }
 }

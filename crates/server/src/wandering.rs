@@ -3313,14 +3313,14 @@ mod tests {
         give_held(&mut server, "base:bone", 1);
         assert!(server.meet(1, captive));
         assert!(server.wandering.active[&id].members.iter().any(|m| m.creature == captive), "still bound");
-        give_held(&mut server, "base:wooden_knife", 1);
+        give_held(&mut server, "base:flint_knife", 1);
         assert!(server.meet(1, captive));
         assert!(server.wandering.active[&id].members.iter().all(|m| m.creature != captive), "free");
         assert_eq!(server.wandering.active[&id].provoked, Some(1), "and the jailers saw");
         assert!(matches!(server.wandering.active[&id].plan, Plan::Avenge { .. }));
         run(&mut server, 10);
         assert!(server.creatures.live[&jailer].mind.anger > 0.0);
-        assert_eq!(count_of(&server, "base:wooden_knife"), 1, "the knife is kept");
+        assert_eq!(count_of(&server, "base:flint_knife"), 1, "the knife is kept");
     }
 
     #[test]

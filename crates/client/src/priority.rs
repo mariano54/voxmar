@@ -7,19 +7,23 @@
 //! waits for (main, render, Bevy's systems) ask for the user-interactive class, which the
 //! scheduler serves before default work (builds, scripts) and keeps on the performance cores,
 //! and every thread a frame never waits for (worldgen, lighting, meshing, Bevy's io and async
-//! pools, file reads) the utility class, below them. Both are requests any process may make;
-//! nothing needs elevated rights.
+//! pools, file reads) the utility class, below them. The in-process server's tick thread,
+//! which runs the world, takes the frame threads' class too (the server's `frame_class`).
+//! Both are requests any process may make; nothing needs elevated rights.
 //!
 //! On Linux, where raising a thread needs privileges, frame threads stay as they are and
-//! background ones are niced by 5. `VOXMAR_THREAD_PRIORITY=off` leaves every thread at the
-//! system's default, for timing one build both ways.
+//! background ones are niced by 5. `VOXMAR_THREAD_PRIORITY=off` gives the threads the
+//! classes they had before this split, for timing one build both ways: the streaming workers
+//! lowered as they always were, every other thread left as it starts. (Leaving the workers at
+//! the default too halved flight's frame rate on a busy Mac: that compares against no build.)
 
 use std::sync::OnceLock;
 
 use bevy::prelude::*;
 use bevy::render::{Render, RenderApp};
 
-/// Whether threads are given a class at all (not with `VOXMAR_THREAD_PRIORITY=off`).
+/// Whether threads other than the streaming workers are given a class (not with
+/// `VOXMAR_THREAD_PRIORITY=off`).
 fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off"))
@@ -37,11 +41,34 @@ pub fn frame_thread() {
     }
 }
 
-/// Lowers the calling thread below the game's frame threads.
-pub fn background_thread() {
+/// Puts the calling thread at the default class, between the two: work a frame does not
+/// wait for but that should not queue behind streaming either. Said outright, since on
+/// macOS whether a new thread takes its creator's class is not promised.
+pub fn default_thread() {
     if !enabled() {
         return;
     }
+    #[cfg(target_os = "macos")]
+    // SAFETY: only changes the scheduling class of the current thread.
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_DEFAULT, 0);
+    }
+}
+
+/// Lowers the calling thread below the game's frame threads.
+pub fn background_thread() {
+    if enabled() {
+        lower();
+    }
+}
+
+/// Lowers a streaming worker (the shared pool's) below the frame threads, with
+/// `VOXMAR_THREAD_PRIORITY=off` too: they were lowered before the frame threads had a class.
+pub fn streaming_worker() {
+    lower();
+}
+
+fn lower() {
     #[cfg(target_os = "macos")]
     // SAFETY: only changes the scheduling class of the current thread.
     unsafe {
@@ -71,6 +98,9 @@ pub struct PriorityPlugin;
 
 impl Plugin for PriorityPlugin {
     fn build(&self, app: &mut App) {
+        if !enabled() {
+            return;
+        }
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else { return };
         render_app.add_systems(Render, |_: &mut World, mut raised: Local<bool>| {
             if !*raised {

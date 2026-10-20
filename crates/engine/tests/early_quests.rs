@@ -33,19 +33,39 @@ fn nomad_and_farm_each_have_thirty_quests_with_words() {
     }
 }
 
-/// The Farm chapter opens with the lit hearth: a Farm quest comes after Farm quests or the
-/// Homestead Hearth, never after a Nomad side quest a player may have passed by.
+/// The Farm chapter opens with its rite, after the lit hearth: a Farm quest comes after Farm
+/// quests or the rite, never after a Nomad side quest a player may have passed by.
 #[test]
-fn farm_quests_come_after_farm_quests_or_the_hearth() {
+fn farm_quests_come_after_farm_quests_or_the_rite() {
     let content = content();
+    let rite = content.quests.rite("farm").expect("a rite opens the Farm age");
+    assert!(rite.after.iter().any(|a| a == "base:homestead_hearth"), "the Farm age's rite comes after the lit hearth");
     let farm: Vec<&str> = content.quests.iter().filter(|q| q.age == "farm").map(|q| q.name.as_str()).collect();
     let wrong: Vec<String> = content
         .quests
         .iter()
         .filter(|q| q.age == "farm")
-        .flat_map(|q| q.after.iter().flat_map(|a| a.split('|')).filter(|a| *a != "base:homestead_hearth" && !farm.contains(a)).map(move |a| format!("{} after {a}", q.name)))
+        .flat_map(|q| q.after.iter().flat_map(|a| a.split('|')).filter(|a| *a != rite.name && !farm.contains(a)).map(move |a| format!("{} after {a}", q.name)))
         .collect();
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A Farm quest that could be finished before the Farm age's rite would grant the rite
+/// to a new player (an old save's way in), so the content refuses to load one: Clay Banks
+/// with its `after` dropped is refused by name.
+#[test]
+fn a_farm_quest_that_skips_the_rite_is_refused() {
+    use voxmar_engine::quest::QuestRegistry;
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+    let source = std::fs::read_to_string(base.join("quests.ron")).unwrap();
+    // The Nomad book, where the rite is.
+    let nomad = || QuestRegistry::read_named("base", "quests_nomad.ron", &std::fs::read_to_string(base.join("quests_nomad.ron")).unwrap()).unwrap();
+    assert!(QuestRegistry::new(vec![QuestRegistry::read("base", &source).unwrap(), nomad()]).is_ok(), "the quests as they ship load");
+    let at = source.find(r#"name: "clay_banks""#).expect("Clay Banks");
+    let after = at + source[at..].find(r#"after: ["the_farm_age"],"#).expect("Clay Banks follows the rite");
+    let skipped = format!("{}after: [],{}", &source[..after], &source[after + r#"after: ["the_farm_age"],"#.len()..]);
+    let refused = QuestRegistry::new(vec![QuestRegistry::read("base", &skipped).unwrap(), nomad()]).err().expect("Clay Banks without its rite loads");
+    assert!(refused.0.contains("base:clay_banks") && refused.0.contains("base:the_farm_age"), "{}", refused.0);
 }
 
 #[test]
@@ -135,12 +155,26 @@ fn reachable(content: &Content) -> rustc_hash::FxHashMap<voxmar_engine::block::B
     };
     // A home station's loaded blocks come only from loading the station, never from the land.
     let loaded = |block: BlockId| content.stations.of(block).is_some_and(|(_, phase)| phase != voxmar_engine::station::Phase::Empty);
+    // Blocks the land gives though something also makes them, by their `natural` tag alone.
+    let mut natural_and_made = Vec::new();
     for block in blocks.ids() {
         let def = blocks.def(block);
-        if !def.item && !made.contains(&blocks.item_of(block)) && blocks.info(block).drops != BlockId(0) && !loaded(block) {
+        // Natural ground is the land's even where something also makes it (stone, which a
+        // kiln fires from cobblestone): breaking it is a way to what it drops.
+        let made_too = made.contains(&blocks.item_of(block));
+        if !def.item && (!made_too || def.has_tag("natural")) && blocks.info(block).drops != BlockId(0) && !loaded(block) {
+            if made_too {
+                natural_and_made.push(def.name.clone());
+            }
             give(&mut ways, blocks.info(block).drops, free);
         }
     }
+    natural_and_made.sort();
+    assert_eq!(
+        natural_and_made,
+        ["base:red_sandstone", "base:sandstone", "base:stone"],
+        "a block a recipe makes counts as the land's by its `natural` tag: add one here only if worldgen places it"
+    );
     for (_, crop) in content.crops.iter() {
         for (item, _) in crop.harvest.iter().chain(&crop.forage) {
             give(&mut ways, *item, free);

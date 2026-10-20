@@ -544,6 +544,7 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
         std::thread::Builder::new()
             .name("server".into())
             .spawn(move || {
+                frame_class();
                 let mut server = Server::new(config, meta, save, state, content, incoming, lines);
                 server.generation_changed = generation_changed;
                 server.lagging = lagging;
@@ -553,6 +554,20 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
             })?
     };
     Ok(ServerHandle { connections, console, stop, thread: Some(thread), tick_times, ticks, lagging, hurried, leash })
+}
+
+/// Puts the server's thread in the class of a game client's frame threads on macOS (the
+/// client's `priority.rs`), said outright, since whether a new thread takes its creator's
+/// class is not promised. Never below them: in a single-player game the server runs the
+/// world, and at the default class, on a machine at a load of 70-90, the gate's creatures
+/// stood still for seconds while the frames went on. `VOXMAR_THREAD_PRIORITY=off` leaves it
+/// as it starts, as it does the client's threads.
+fn frame_class() {
+    #[cfg(target_os = "macos")]
+    if std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off") {
+        // SAFETY: only changes the scheduling class of the current thread.
+        unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0) };
+    }
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -676,6 +691,10 @@ pub(crate) struct Server {
     /// don't regrow by themselves; and furnishings, which give themselves back only from
     /// these cells (see `WorldMeta::placed`).
     placed: FxHashSet<IVec3>,
+    /// Blocks set down that an unfinished quest's `Placed` counts, by cell: whose (their
+    /// name in lower case) and what item. Each counts on their tally while the block in the
+    /// cell still drops that item (`WorldMeta::quest_placed`).
+    quest_placed: FxHashMap<IVec3, (String, String)>,
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
@@ -811,6 +830,7 @@ impl Server {
             crops.iter().find(|(_, c)| c.def.name == name).map(|(id, c)| (id, c.stages.len() as u8))
         });
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
+        let quest_placed = quests::restore_placed(&meta.quest_placed, &content.blocks, &content.quests);
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
         let blazes = blaze::restore(&meta.blazes);
         let lairs = lairs::Lairs::restore(&meta.lairs);
@@ -841,6 +861,7 @@ impl Server {
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
+            quest_placed,
             regrowing,
             blazes,
             blaze_risked: Vec::new(),
@@ -1216,6 +1237,9 @@ impl Server {
         let mut meta = self.meta.clone();
         meta.time = self.tick;
         meta.placed = self.placed.iter().map(|p| p.to_array()).collect();
+        let mut quest_placed: Vec<([i32; 3], String, String)> = self.quest_placed.iter().map(|(cell, (owner, item))| (cell.to_array(), owner.clone(), item.clone())).collect();
+        quest_placed.sort();
+        meta.quest_placed = quest_placed;
         meta.regrowing = self.saved_regrowing();
         meta.blazes = self.saved_blazes();
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
@@ -1408,6 +1432,7 @@ impl Server {
             if let Some(old) = self.world.set_block(pos, block) {
                 self.dirty.insert(ColumnPos::of_block(pos));
                 self.forget_placed(pos);
+                self.unplaced(pos, block);
                 done.push((pos, block));
                 self.machine_changed(pos, old, block);
                 self.hive_changed(pos, old, block);
@@ -1448,6 +1473,7 @@ impl Server {
         if let Some(old) = self.world.set_block(pos, block) {
             self.dirty.insert(column);
             self.forget_placed(pos);
+            self.unplaced(pos, block);
             self.machine_changed(pos, old, block);
             self.hive_changed(pos, old, block);
             self.station_changed(pos, old, block);
