@@ -57,6 +57,10 @@
         // a door and a lattice window.
         (pattern: [["{name}_beam", "{name}_beam", "{name}_beam"], ["stick", "stick", "stick"]], output: "{name}_railing", count: 3, skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_railing", "{name}_railing"]], output: "{name}_railing_corner", skill: "core:construction", level: 3, xp: 1.0),
+        // Field fences of posts and sticks, a corner from two runs, a gate from a run and a slab.
+        (pattern: [["{name}_post", "stick", "{name}_post"], ["{name}_post", "stick", "{name}_post"]], output: "{name}_fence", count: 6, skill: "core:construction", level: 2, xp: 3.0),
+        (pattern: [["{name}_fence", "{name}_fence"]], output: "{name}_fence_corner", skill: "core:construction", level: 2, xp: 1.0),
+        (pattern: [["{name}_fence", "{name}_slab", "{name}_fence"]], output: "{name}_fence_gate", skill: "core:construction", level: 2, xp: 2.0),
         (pattern: [["{name}_slab"], ["{name}_post"]], output: "{name}_newel_post", skill: "core:construction", level: 3, xp: 2.0),
         (pattern: [["{name}_slab", "{name}_slab", "{name}_slab"], ["{name}_beam", "", "{name}_beam"]], output: "{name}_landing", count: 3, skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_lattice_window"], ["wooden_door"]], output: "balcony_door", skill: "core:construction", level: 4, xp: 3.0),

@@ -771,6 +771,29 @@ mod tests {
         }
     }
 
+    /// A row of field fences, of fence corners or of shut gates across a field stops a
+    /// walker at it, walked or sprinted, never inside and never over; a row of open gates
+    /// lets it through.
+    #[test]
+    fn a_fence_or_a_shut_gate_stops_a_walker_and_an_open_gate_lets_it_through() {
+        let content = content();
+        let blocks = &content.blocks;
+        for (name, passes) in [("base:oak_fence_east", false), ("base:oak_fence_corner", false), ("base:oak_fence_gate_east", false), ("base:oak_fence_gate_open_east", true)] {
+            let mut cells = rustc_hash::FxHashMap::default();
+            for z in -3..=3 {
+                cells.insert(IVec3::new(3, 0, z), blocks.expect(name));
+            }
+            let field = Built { blocks, cells, floor: |_| 0 };
+            for sprint in [false, true] {
+                for fps in [30.0, 144.0] {
+                    let (body, inside) = run(&field, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, walking(Vec3::X, sprint), 3.0, fps);
+                    let past = body.position.x > 4.0;
+                    assert!(!inside && past == passes, "walking east (sprint {sprint}) at {fps} fps into a row of {name}: past it {past}, inside it {inside}: {body:?}");
+                }
+            }
+        }
+    }
+
     /// A whole block is no step: walking into it without jumping stops at it, as does a slab
     /// under a ceiling too low to stand under on it.
     #[test]

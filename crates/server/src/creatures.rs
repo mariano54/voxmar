@@ -4237,19 +4237,24 @@ mod fight_tests {
     /// stuck clock.
     #[test]
     fn fighters_at_walls_and_doorways_strike_back_or_give_up_rather_than_press() {
-        for (scene, set) in scenes() {
-            for name in FIGHTERS {
-                let f = fight(name, set, 20.0);
-                if matches!(scene, "past door" | "staggered") && WIDE.contains(&name) {
-                    assert!(f.pressing < 4.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
-                    assert!(f.strikes == 0, "{scene}: {name} struck through a way it cannot pass");
-                    assert!(f.last > 3.5, "{scene}: {name} ended {:.2} blocks from the player, in their reach", f.last);
-                } else {
-                    assert!(f.first.is_some_and(|s| s < 3.0), "{scene}: {name} first struck at {:?}", f.first);
-                    assert!(f.pressing < 2.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
-                }
+        // A scene to a thread: each fight is its own server.
+        std::thread::scope(|threads| {
+            for (scene, set) in scenes() {
+                threads.spawn(move || {
+                    for name in FIGHTERS {
+                        let f = fight(name, set, 20.0);
+                        if matches!(scene, "past door" | "staggered") && WIDE.contains(&name) {
+                            assert!(f.pressing < 4.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
+                            assert!(f.strikes == 0, "{scene}: {name} struck through a way it cannot pass");
+                            assert!(f.last > 3.5, "{scene}: {name} ended {:.2} blocks from the player, in their reach", f.last);
+                        } else {
+                            assert!(f.first.is_some_and(|s| s < 3.0), "{scene}: {name} first struck at {:?}", f.first);
+                            assert!(f.pressing < 2.0, "{scene}: {name} pressed the wall {:.1} s", f.pressing);
+                        }
+                    }
+                });
             }
-        }
+        });
     }
 
     /// On uneven ground (a step, a flight of steps, a slab, logs lying about, tall grass)
@@ -4816,6 +4821,53 @@ mod fight_tests {
                 assert!(inside, "{what} got out of the ring of railings {t} ticks on: at {off:.2} from its middle cell");
             }
         }
+    }
+
+    /// A field fence pens as a railing does: a mouflon led by wheat stays in a ring of fences
+    /// (corners at the corners, a shut gate on the west side) for 10 s; with the gate swung
+    /// open it follows the wheat out through it.
+    #[test]
+    fn a_fenced_pen_holds_a_led_mouflon_until_its_gate_opens() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let middle = c + IVec3::new(3, 0, 0);
+        let mut fences = Vec::new();
+        for i in -1..=1 {
+            fences.push((IVec3::new(i, 0, -2), "base:oak_fence"));
+            fences.push((IVec3::new(i, 0, 2), "base:oak_fence"));
+            fences.push((IVec3::new(2, 0, i), "base:oak_fence_east"));
+            fences.push((IVec3::new(-2, 0, i), if i == 0 { "base:oak_fence_gate_east" } else { "base:oak_fence_east" }));
+        }
+        for (cell, corner) in [((-2, -2), "base:oak_fence_corner_south"), ((2, -2), "base:oak_fence_corner_west"), ((2, 2), "base:oak_fence_corner"), ((-2, 2), "base:oak_fence_corner_east")] {
+            fences.push((IVec3::new(cell.0, 0, cell.1), corner));
+        }
+        for (cell, name) in fences {
+            let id = server.content.blocks.expect(name);
+            server.set_block(middle + cell, id);
+        }
+        let player = join(&mut server, middle.as_vec3() + Vec3::new(-6.5, 0.0, 0.5));
+        let wheat = server.content.blocks.expect("base:wheat");
+        let held = server.players.get_mut(&player).unwrap();
+        held.inventory.add(wheat, 1);
+        held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == wheat)).expect("the wheat is held");
+        let sheep = put(&mut server, "base:mouflon", middle.as_vec3() + Vec3::new(1.5, 0.0, 0.5), -Vec3::X);
+        server.tick = 1000;
+        let off = |server: &Server| server.creatures.live[&sheep].body.position - middle.as_vec3();
+        for t in 0..10 * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.think_and_move();
+            let off = off(&server);
+            assert!((-1.0..2.0).contains(&off.x) && (-1.0..2.0).contains(&off.z), "the mouflon got out of the fenced pen {t} ticks on: at {off:.2} from its middle cell");
+        }
+        let open = server.content.blocks.expect("base:oak_fence_gate_open_east");
+        assert_eq!(server.content.blocks.swapped(server.content.blocks.expect("base:oak_fence_gate_east")), Some(open), "the gate swings open");
+        server.set_block(middle + IVec3::new(-2, 0, 0), open);
+        let out = (0..15 * TICKS_PER_SECOND as u64).find(|_| {
+            server.tick += 1;
+            server.think_and_move();
+            off(&server).x < -2.0
+        });
+        assert!(out.is_some(), "the mouflon never came out through the open gate after the wheat: at {:.2}", off(&server));
     }
 
     /// Prints the table (`cargo test -p voxmar_server --lib fight_table -- --ignored --nocapture`).

@@ -3309,8 +3309,11 @@ fn a_bare_hand_fells_no_tree_and_a_flint_axe_does() {
 // Keeping the locate radius small avoids planning hundreds of squares on the server.
 const VILLAGE_SEED: u64 = 3;
 
+/// The settlement tests' view distance, in columns.
+const SETTLEMENT_VIEW: i32 = 2;
+
 fn settlement_client() -> Client {
-    Client::join_with(ServerConfig { seed: VILLAGE_SEED, view_distance: 2, ..Default::default() })
+    Client::join_with(ServerConfig { seed: VILLAGE_SEED, view_distance: SETTLEMENT_VIEW, ..Default::default() })
 }
 
 /// Goes to the nearby test village within 2000 blocks at `time`, as a creative admin:
@@ -3375,7 +3378,8 @@ fn villagers_sleep_at_night_and_go_about_their_day() {
     let asleep = |c: &Client| villagers(c).iter().filter(|v| v.pose == Pose::Resting).count();
     client.pump_until(|c| asleep(c) * 3 >= villagers(c).len() * 2);
     let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
-    let overworld = voxmar_worldgen::Overworld::with_content(VILLAGE_SEED, client.content.blocks.clone(), &world_content);
+    // The server's own generator (`Overworld::shared`), the village round it already planned.
+    let overworld = voxmar_worldgen::Overworld::shared(VILLAGE_SEED, &client.content, &world_content);
     let towns = overworld.settlements_near(client.position.floor().as_ivec3().xz(), 256);
     let mut resting: Vec<_> = villagers(&client).into_iter().filter(|v| v.pose == Pose::Resting)
         .map(|v| (v.seed, species_name(&client, &v), v.position)).collect();
@@ -3416,7 +3420,7 @@ fn a_settlement_come_back_to_holds_its_people_once() {
     client.ok("/time freeze");
     // A person comes out only onto land the server holds, so on a busy machine they kept
     // coming as the land came in, past twenty looks: the looks begin once it is all in.
-    client.land_within(2);
+    client.land_within(SETTLEMENT_VIEW);
     // Settled: the same people two looks running. On a loaded machine the server can still
     // be bringing them in after three looks, so it looks until they hold still.
     let mut before = census(&client);
@@ -9577,7 +9581,8 @@ fn a_village_bed_is_someones() {
     let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
     let refused = |c: &Client| c.refused.iter().any(|t| t.contains("belongs to someone"));
     let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
-    let overworld = voxmar_worldgen::Overworld::with_content(VILLAGE_SEED, client.content.blocks.clone(), &world_content);
+    // The server's own generator (`Overworld::shared`), the village round it already planned.
+    let overworld = voxmar_worldgen::Overworld::shared(VILLAGE_SEED, &client.content, &world_content);
     let towns = overworld.settlements_near(client.position.floor().as_ivec3().xz(), 256);
     // A ground-floor bed, by the floor its home stands on.
     let (home, bed) = towns.iter().flat_map(|t| &t.buildings).find_map(|b| b.beds.iter().find(|p| p.y == b.floor + 1).map(|&p| (b.clone(), p))).expect("a village home with a bed on its ground floor");
@@ -9658,7 +9663,8 @@ fn a_bed_far_out_in_a_town_is_someones() {
     let mut client = Client::join_with(ServerConfig { seed, view_distance: 2, allow_flight: false, ..Default::default() });
     client.admin = true;
     let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
-    let overworld = voxmar_worldgen::Overworld::with_content(seed, client.content.blocks.clone(), &world_content);
+    // The server's own generator (`Overworld::shared`): the town is planned once, for both.
+    let overworld = voxmar_worldgen::Overworld::shared(seed, &client.content, &world_content);
     let town = overworld.nearest_settlement(client.position.floor().as_ivec3().xz(), 10000, |s| s.size == "town").expect("a town");
     // Its farthest ground-floor bed from the middle, and the home it stands in.
     let (far, home, bed) = town
