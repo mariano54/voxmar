@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use voxmar_engine::block::{BlockId, BlockRegistry, RenderKind, Tint};
 use voxmar_engine::coords::{ColumnPos, WORLD_HEIGHT};
-use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3};
+use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3, Vec3Swizzles};
 use voxmar_engine::world::Column;
 
 use crate::{Generator, Overworld};
@@ -3471,4 +3471,127 @@ fn jettied_storeys_stand_out_on_their_beams() {
     eprintln!("{places} places, {beams} jetty beams");
     assert!(beams >= 10, "only {beams} jetty beams in {places} places");
     assert!(wrong.is_empty(), "jetty beams not under a jetty: {wrong:?}");
+}
+
+/// `/locate settlement` finds what a look at every square in reach would find nearest,
+/// planning only the squares nearer than the answer: every square within thousands of
+/// blocks planned at once held a frame (and the server's tick) for seconds.
+#[test]
+fn the_nearest_settlement_is_found_nearest_first() {
+    let radius = 4000;
+    let every = shared_world(0x5eed);
+    let spawn = every.spawn_point();
+    for (from, size) in [(IVec2::new(spawn.x, spawn.z), None), (IVec2::new(spawn.x, spawn.z), Some("town")), (IVec2::new(spawn.x + 2500, spawn.z - 1800), Some("village"))] {
+        let away = |s: &crate::SettlementInfo| (s.centre.xz() - from).as_i64vec2().length_squared();
+        let wanted = every
+            .settlements_near(from, radius)
+            .iter()
+            .filter(|s| away(s) <= i64::from(radius).pow(2) && size.is_none_or(|size| s.size == size))
+            .min_by_key(|s| (away(s), s.centre.x, s.centre.z))
+            .map(|s| s.id);
+        let fresh = base_world(0x5eed);
+        let found = fresh.nearest_settlement(from, radius, |s| size.is_none_or(|size| s.size == size));
+        assert_eq!(found.as_ref().map(|s| s.id), wanted, "from {from} for {size:?}: {:?}", found.map(|s| (s.name.0, s.centre)));
+        // Planned: the squares whose nearest point is no farther than the answer (all in
+        // reach where there is none), besides those any world plans first for its spawn,
+        // and the rest of the last few planned side by side.
+        let spacing = fresh.settlements.def.grid.spacing;
+        let answer = found.as_ref().map_or(i64::from(radius).pow(2), away);
+        let (lo, hi) = (fresh.settlements.cell_of(from.x - radius, from.y - radius), fresh.settlements.cell_of(from.x + radius, from.y + radius));
+        let squares: Vec<IVec2> = (lo.y..=hi.y).flat_map(|z| (lo.x..=hi.x).map(move |x| IVec2::new(x, z))).collect();
+        let nearer = squares.iter().filter(|&&c| (from.clamp(c * spacing, (c + 1) * spacing - 1) - from).as_i64vec2().length_squared() <= answer).count();
+        let promised = fresh.settlements.promised(&fresh).iter().filter(|c| !squares.contains(c)).count();
+        let planned = fresh.settlements.made();
+        let side_by_side = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8) - 1;
+        assert!(planned <= nearer + promised + side_by_side, "from {from} for {size:?}: {planned} squares planned, only {nearer} as near as the answer (+{promised} for the spawn, +{side_by_side} side by side)");
+        eprintln!("from {from} for {size:?}: {planned} of {} squares in reach planned", squares.len());
+    }
+}
+
+/// A block belongs to the settlement of its own square or none (a settlement never
+/// reaches past its square), so a bed's settlement is found by planning that square
+/// alone, however far the bed stands from the settlement's middle.
+#[test]
+fn a_bed_belongs_to_the_settlement_of_its_square() {
+    let world = shared_world(0x5eed);
+    let spawn = world.spawn_point();
+    let town = world
+        .settlements_near(IVec2::new(spawn.x, spawn.z), 6000)
+        .into_iter()
+        .filter(|s| s.size == "town")
+        .max_by_key(|s| s.buildings.len())
+        .expect("a town");
+    let (far, bed) = town
+        .buildings
+        .iter()
+        .flat_map(|b| b.beds.iter().map(|&p| ((p.xz() - town.centre.xz()).as_vec2().length(), p)))
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .expect("a bed in the town");
+    assert!(far > 64.0, "{}'s farthest bed is only {far:.0} blocks from its middle", town.name.0);
+    let fresh = base_world(0x5eed);
+    let holding = fresh.settlement_holding(bed.xz()).expect("the bed's square settled");
+    assert_eq!(holding.id, town.id, "the bed at {bed} ({far:.0} blocks out) is {}'s, not {}'s", town.name.0, holding.name.0);
+    assert!(holding.buildings.iter().any(|b| b.beds.contains(&bed)));
+}
+
+/// A jettied house of three storeys keeps a floor along its old front line on every storey
+/// over the ground, and a sign board at the top of walls of three is not laid over by the
+/// row of beams under the overhang.
+#[test]
+fn jettied_houses_keep_their_floors_and_their_sign() {
+    use super::def::{Extra, Form, Roof};
+    use super::house::{self, Kind, Mats, Spec};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let def = &world_content.settlements;
+    let fixed = super::fixed(&registry, def).unwrap();
+    let id = |n: &str| registry.id(&format!("base:{n}")).unwrap();
+    let palette = |n: &str| super::canvas::Palette(vec![(id(n), 1.0)]);
+    let (floor, beam) = (id("spruce_planks"), id("stone_bricks"));
+    let mats = Mats {
+        foundation: palette("cobblestone"),
+        floor,
+        wall: id("polished_calcite"),
+        frame: id("dark_oak_log"),
+        roof: id("dark_oak_planks"),
+        trim: id("spruce_planks"),
+        window: Some(id("old_glass")),
+        weathered: palette("mossy_cobblestone"),
+        hedge: palette("oak_leaves"),
+        log: id("oak_log"),
+        chimney: id("cobbled_granite"),
+        crops: Vec::new(),
+        fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: Some(([beam; 4], 1.0)),
+    };
+    let (w, d, wall, storeys) = (7, 7, 3, 3);
+    let mut drawn = 0;
+    for seed in 0..12u64 {
+        let spec = Spec {
+            kind: Kind::House, w, d, wall, storeys, roof: Roof::Gable, pitch: 1, ridge_x: true, door: w / 2, shed: 0, wing: None, stilts: 0,
+            extras: vec![Extra::SignBoard], regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: None, seed,
+        };
+        let (low, high) = spec.envelope();
+        let frame = super::canvas::Frame::fit(low, high, super::canvas::Facing::North, low, 0);
+        let mut canvas = super::canvas::Canvas::default();
+        house::draw(&spec, &frame, &mats, &fixed, &mut canvas);
+        let set = |x: i32, y: i32, z: i32| match canvas.absolute.get(&frame.at(x, y, z)) {
+            Some(super::canvas::Put::Set(b)) => Some(*b),
+            _ => None,
+        };
+        // Jettied: the beams under the first storey's front.
+        if !(0..w).any(|x| set(x, wall, -1) == Some(beam)) {
+            continue;
+        }
+        drawn += 1;
+        for storey in 1..storeys {
+            for x in 1..w - 1 {
+                assert!(set(x, storey * (wall + 1), 0).is_some_and(|b| registry.info(b).solid), "seed {seed}: no floor at {x} on storey {storey} where the front wall stood");
+            }
+        }
+        let sign = if w / 2 + 1 < w - 1 { w / 2 + 1 } else { w / 2 - 1 };
+        assert!(set(sign, 3, -1).is_some_and(|b| b != beam), "seed {seed}: the sign board by the door was laid over by a beam");
+    }
+    assert!(drawn > 0, "no house of the twelve was jettied");
 }

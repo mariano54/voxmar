@@ -48,3 +48,31 @@ fn no_piece_answers_a_recipes_tag_cell() {
         assert!(blocks.def(piece).has_tag("stone") && !hearth.pieces().iter().any(|(cell, _)| cell.contains(&piece)), "{name} stands in for stone in the hearth's ring");
     }
 }
+
+/// A hip is the lower of the two slopes it joins and a valley their union: at every point
+/// of the cell, a corner piece is solid where the roof eaved north and the roof eaved west
+/// (its two sides) are both solid (a hip) or either is (a valley), as the blocks load them.
+#[test]
+fn a_hip_is_where_both_slopes_are_and_a_valley_where_either_is() {
+    let content = content();
+    let blocks = &content.blocks;
+    let inside = |name: &str, at: glam::Vec3| {
+        let shape = blocks.shape(blocks.expect(name)).unwrap_or_else(|| panic!("{name} has no shape"));
+        shape.bounds.iter().any(|&(min, max)| at.cmpgt(min).all() && at.cmplt(max).all())
+    };
+    for (roof, corner, valley) in [
+        ("base:thatch_roof", "base:thatch_corner", "base:thatch_inner_corner"),
+        ("base:oak_shingles", "base:oak_shingles_corner", "base:oak_shingles_inner_corner"),
+    ] {
+        let west = format!("{roof}_west");
+        let mut wrong = Vec::new();
+        for i in 0..32 * 32 * 32 {
+            let at = (glam::Vec3::new((i % 32) as f32, (i / 32 % 32) as f32, (i / 1024) as f32) + 0.5) / 32.0;
+            let (north, west) = (inside(roof, at), inside(&west, at));
+            if inside(corner, at) != (north && west) || inside(valley, at) != (north || west) {
+                wrong.push(at);
+            }
+        }
+        assert!(wrong.is_empty(), "{corner} or {valley} is not made of {roof}'s two slopes at {} points, first {:?}", wrong.len(), wrong.first());
+    }
+}
