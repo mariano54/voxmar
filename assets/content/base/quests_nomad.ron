@@ -107,7 +107,7 @@
         // walk counts no buffs): what fire, food and a home at night give.
         (
             name: "a_hot_meal", age: "nomad", branch: "cooking", title: "A Hot Meal",
-            why: "What you eat does more than fill you. Cooked meat leaves you Hearty, with room for a tenth more health while it lasts, and game roasted over a fire puts a spring in your step. Eat a cooked meat and feel it.",
+            why: "What you eat does more than fill you. Hold a food and use it to eat while you are hurt: a cooked meat leaves you Hearty, with room for a tenth more health while it lasts. Eat a cooked meat when you are hurt and feel it.",
             tasks: [[Felt("hearty")]],
             after: ["first_night"],
             side: true,
@@ -152,7 +152,7 @@
         ),
         (
             name: "an_evening_in", age: "nomad", branch: "home", title: "An Evening In",
-            why: "With the hearth lit, the night is yours to spend at home. After dark, keep a campfire burning inside your home's walls and stay within four blocks of it: in by your own fire you heal a fifth faster and are warmer.",
+            why: "With the hearth lit, the night is yours to spend at home. After dark, stay under your roof within four blocks of your lit hearth: in by your own fire you heal a fifth faster and are warmer.",
             tasks: [[Felt("evening_in")]],
             after: ["homestead_hearth"],
             side: true,

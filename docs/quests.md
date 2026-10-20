@@ -462,9 +462,9 @@ the buff comes to need. They sit on the cooking and home paths: the main line's 
 
 | Quest | Path | After | Teaches | Pays |
 |---|---|---|---|---|
-| A Hot Meal | Cooking | First Night | Cooked meat leaves you Hearty (`hearty`) | Cooking 20, 1 bread |
+| A Hot Meal | Cooking | First Night | Eating when hurt; cooked meat leaves you Hearty (`hearty`) | Cooking 20, 1 bread |
 | By the Fire | Home | First Night, Crafting Table | A stool made, and sitting by the fire (`fireside`): heal half as fast again, warmed | Construction 20, 1 bread |
-| An Evening In | Home | Homestead Hearth | A campfire inside the home after dark (`evening_in`) | Construction 40, 2 bread |
+| An Evening In | Home | Homestead Hearth | After dark, under the roof within four blocks of the lit hearth (`evening_in`) | Construction 40, 2 bread |
 
 A Fence and a Gate counts `plain_fence`, the straight length alone, so gates and corners
 (which carry `fence` too) are not its six fences; `content.rs`
