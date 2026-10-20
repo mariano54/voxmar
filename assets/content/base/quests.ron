@@ -307,7 +307,7 @@
             why: "A shield blocks blows: right-click to raise your guard as a swing lands. A hide buckler (four hide and a stick) is the easy one; a wooden shield (planks) needs Crafting 3.",
             tasks: [[Craft("hide_buckler", 1)], [Craft("wooden_shield", 1)]],
             after: ["hide_wraps"],
-            rewards: [Xp("defence", 80.0)],
+            rewards: [Xp("defence", 80.0), Xp("hitpoints", 100.0)],
         ),
         (
             name: "tools_for_animals", age: "nomad", branch: "farming", title: "Tools for Animals",
