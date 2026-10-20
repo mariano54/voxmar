@@ -21,6 +21,9 @@ struct Client {
     id: PlayerId,
     name: String,
     phase: &'static str,
+    /// Whether the server's pings are answered, as a running game does; a minimized one
+    /// sends nothing from the game itself, only its network thread's keepalives.
+    pongs: bool,
     /// Dropped items in sight, and the ones we picked up.
     items: std::collections::HashMap<u32, ItemView>,
     collected: Vec<u32>,
@@ -235,6 +238,7 @@ impl Client {
             id: 0,
             name: name.to_owned(),
             phase: "welcome",
+            pongs: true,
             items: Default::default(),
             collected: Vec::new(),
             skills: Default::default(),
@@ -446,7 +450,9 @@ impl Client {
                 self.pips.push(pips);
             }
             ServerMessage::Ping { id } => {
-                self.connection.send(ClientMessage::Pong { id });
+                if self.pongs {
+                    self.connection.send(ClientMessage::Pong { id });
+                }
             }
             ServerMessage::Hurt { creature, damage, defended } => {
                 self.hurt.push((damage, defended));
@@ -4296,15 +4302,20 @@ fn preparing_tcp_content_does_not_spend_the_hello_deadline() {
 #[test]
 fn a_player_who_sends_nothing_but_keepalives_is_kept() {
     real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
-    let host = Client::join();
+    // Let go after ten seconds silent, two keepalives' worth, rather than fifteen.
+    let idle = 2 * voxmar_protocol::KEEPALIVE;
+    let host = Client::join_with(ServerConfig { view_distance: 2, idle_timeout: idle, ..Default::default() });
     let addr = tcp::listen("127.0.0.1:0", host._server.as_ref().unwrap().connections()).unwrap();
     let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
-    // Twenty seconds of the server's clock with no input, as from a minimized game: only
-    // the connection's keepalives. (Being let go would end the pump with a panic.)
+    // A keepalive's worth past the idle timeout of the server's clock with no input, as
+    // from a minimized game: only the connection's keepalives. (Being let go would end the
+    // pump with a panic.)
     let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
-    let until = ticks(&host) + 20 * TICKS_PER_SECOND as u64;
+    let until = ticks(&host) + (idle + voxmar_protocol::KEEPALIVE).as_secs() * TICKS_PER_SECOND as u64;
     guest.phase = "keepalive wait";
+    guest.pongs = false;
     guest.pump_until(|_| ticks(&host) >= until);
+    guest.pongs = true;
     assert!(guest.ok("/seed").contains(char::is_numeric), "the guest was let go");
     drop(host);
 }
