@@ -192,7 +192,42 @@ impl CookingRegistry {
             }
             registry.recipes.push(Recipe { def, output, burnt, skill, with });
         }
+        // A station cooks the first recipe for what is held (`for_item`), so two that take
+        // the same item where one station block could cook both leave the second never
+        // cooked: at the same station tag, or at two tags one block carries.
+        let mut inputs: Vec<&BlockId> = registry.by_input.keys().collect();
+        inputs.sort();
+        for input in inputs {
+            let found = &registry.by_input[input];
+            for (k, &a) in found.iter().enumerate() {
+                for &b in &found[k + 1..] {
+                    let (one, two) = (&registry.recipes[a].def, &registry.recipes[b].def);
+                    let shared = blocks.ids().find(|&id| blocks.def(id).has_tag(&one.station) && blocks.def(id).has_tag(&two.station));
+                    let fault = if one.station == two.station {
+                        format!("both cook it at `{}`, and only the first would ever be cooked", one.station)
+                    } else if let Some(block) = shared {
+                        format!("are at `{}` and `{}`, which `{}` both carries: there only the first would be cooked", one.station, two.station, blocks.def(block).name)
+                    } else {
+                        continue;
+                    };
+                    return Err(RegistryError(format!("cooking recipes for `{}`: `{}` and `{}` {fault}; give one another input or station", blocks.def(*input).name, one.output, two.output)));
+                }
+            }
+        }
         Ok(registry)
+    }
+
+    /// Every recipe's station is a tag some block carries, or one a party cooks at for the
+    /// player (`Cook` in wandering.ron, `cooked_elsewhere`): a tag neither has (a misspelt
+    /// station) is a recipe nobody can ever cook.
+    pub fn check_stations(&self, blocks: &BlockRegistry, cooked_elsewhere: &[&str]) -> Result<(), RegistryError> {
+        match self.recipes.iter().find(|r| blocks.tagged(&r.def.station).next().is_none() && !cooked_elsewhere.contains(&r.def.station.as_str())) {
+            Some(recipe) => Err(RegistryError(format!(
+                "cooking recipe for `{}`: no block carries its station's tag `{}`, and no party cooks at it",
+                recipe.def.input, recipe.def.station
+            ))),
+            None => Ok(()),
+        }
     }
 
     /// The recipe that cooks `item` at a station with `tags`, if there is one.
@@ -285,6 +320,52 @@ mod tests {
         for refused in [r#"with: [("tin_ore", 0)]"#, r#"with: [("copper_ingot", 1)]"#, r#"with: [("tin_ore", 1), ("tin_ore", 1)]"#, r#"with: [("tag:ore", 1)]"#, r#"with: [("zinc", 1)]"#, "uses: 0", "count: 0"] {
             assert!(build(refused).is_err(), "{refused}");
         }
+    }
+
+    /// Two recipes for one item where one station block could cook both are refused, at
+    /// one tag or at two tags a block carries; at stations no block shares they stand.
+    #[test]
+    fn recipes_one_station_could_cook_for_the_same_item_are_refused() {
+        let blocks = BlockRegistry::new(vec![
+            BlockDef { name: "base:raw_rabbit".into(), tags: vec!["meat".into()], ..Default::default() },
+            BlockDef { name: "base:cooked_rabbit".into(), ..Default::default() },
+            BlockDef { name: "base:smoked_rabbit".into(), ..Default::default() },
+            BlockDef { name: "base:campfire".into(), tags: vec!["campfire".into()], ..Default::default() },
+            BlockDef { name: "base:smoker".into(), tags: vec!["smoker".into()], ..Default::default() },
+            BlockDef { name: "base:stove".into(), tags: vec!["stove".into(), "oven".into()], ..Default::default() },
+        ])
+        .unwrap();
+        let build = |second: &str| {
+            let source = format!(r#"(recipes: [(input: "raw_rabbit", output: "cooked_rabbit", xp: 1.0), {second}])"#);
+            CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default())
+        };
+        assert!(build(r#"(input: "raw_rabbit", output: "smoked_rabbit", station: "smoker", xp: 1.0)"#).is_ok(), "another station");
+        let refused = build(r#"(input: "raw_rabbit", output: "smoked_rabbit", xp: 1.0)"#).unwrap_err();
+        assert!(refused.0.contains("`base:smoked_rabbit`") && refused.0.contains("only the first would ever"), "{}", refused.0);
+        assert!(build(r#"(input: "tag:meat", output: "smoked_rabbit", xp: 1.0)"#).is_err(), "by its tag, at the same station");
+        let shared = r#"(input: "raw_rabbit", output: "cooked_rabbit", station: "stove", xp: 1.0), (input: "raw_rabbit", output: "smoked_rabbit", station: "oven", xp: 1.0)"#;
+        let source = format!(r#"(recipes: [{shared}])"#);
+        let refused = CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default()).unwrap_err();
+        assert!(refused.0.contains("`base:stove` both carries"), "two tags one block carries: {}", refused.0);
+    }
+
+    /// A station is a tag some block carries, or one a party cooks at; any other is refused.
+    #[test]
+    fn a_station_no_block_or_party_has_is_refused() {
+        let blocks = BlockRegistry::new(vec![
+            BlockDef { name: "base:clay".into(), ..Default::default() },
+            BlockDef { name: "base:fired_clay".into(), ..Default::default() },
+            BlockDef { name: "base:pit_kiln".into(), tags: vec!["pit_kiln".into()], ..Default::default() },
+        ])
+        .unwrap();
+        let at = |station: &str| {
+            let source = format!(r#"(recipes: [(input: "clay", output: "fired_clay", station: "{station}", xp: 1.0)])"#);
+            CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default()).unwrap()
+        };
+        assert!(at("pit_kiln").check_stations(&blocks, &[]).is_ok());
+        assert!(at("village_kiln").check_stations(&blocks, &["village_kiln"]).is_ok(), "a party cooks there");
+        let refused = at("pit_klin").check_stations(&blocks, &["village_kiln"]).unwrap_err();
+        assert!(refused.0.contains("`pit_klin`"), "{}", refused.0);
     }
 
     #[test]
