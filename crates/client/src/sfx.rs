@@ -1871,6 +1871,8 @@ mod tests {
             r#"(quest_claim: ["q.ogg"])"#,
             r#"(level_up: ["l.ogg"])"#,
             r#"(level_milestone: ["l.ogg"])"#,
+            r#"(tool_worn: ["t.ogg"])"#,
+            r#"(tool_break: ["t.ogg"])"#,
             r#"(fire: (catch: ["c.ogg"]))"#,
         ] {
             assert!(Recordings::load(&[file(missing)]).unwrap().check_files(&assets).is_err(), "{missing}");

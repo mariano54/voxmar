@@ -882,6 +882,44 @@ mod tests {
         assert!(proposed(&server_side).contains(&place), "let go and pressed again, it is laid");
     }
 
+    /// A second click while the split still runs is held too: once the cook is over, the
+    /// log is not laid on the chopping block while that click is held on.
+    #[test]
+    fn a_click_while_the_split_runs_lays_nothing_after_it() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        let cook = content.actions.expect("base:cook");
+        let id = |name: &str| content.blocks.expect(name);
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, id("base:chopping_block"));
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(id("base:oak_log"), 2));
+        player.inventory.slots[1] = Some(voxmar_engine::inventory::ItemStack::new(id("base:stone_axe"), 1));
+        player.selected = 0;
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        let proposed = |server_side: &voxmar_protocol::ServerConnection| -> Vec<ActionId> {
+            std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect()
+        };
+        let click = |app: &mut App| {
+            app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+            app.update();
+            app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+        };
+        click(&mut app);
+        let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        mouse.release(MouseButton::Right);
+        mouse.clear();
+        app.update();
+        assert_eq!(proposed(&server_side), [cook], "the split begun");
+        // Clicked again while it runs, and held on past its end.
+        click(&mut app);
+        app.world_mut().resource_mut::<Target>().cooking_until = 0.0;
+        for _ in 0..20 {
+            app.update();
+        }
+        assert_eq!(proposed(&server_side), [], "held on past the split, the log is not laid");
+    }
+
     /// A log held on the chopping block with no axe about says it needs one and is not laid
     /// on it, however long the button is held.
     #[test]
