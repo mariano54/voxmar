@@ -185,10 +185,10 @@
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
         ),
         (
-            name: "straw_for_the_kiln", age: "farm", branch: "farming", title: "Straw for the Kiln",
+            name: "straw_for_the_kiln", age: "farm", branch: "main", title: "Straw for the Kiln",
             why: "Straw in the clay keeps a kiln brick whole in the Crucible Kiln's heat. A ripe wheat plant you break gives one or two straw, and a wild wheat tuft one. Keep six straw in your pack: four fired clay and a straw make two tempered kiln bricks (Crafting 5).",
             tasks: [[Have("straw", 6)]],
-            after: ["first_harvest"],
+            after: ["the_farm_age"],
             rewards: [Xp("farming", 60.0)],
         ),
         (

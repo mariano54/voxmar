@@ -9497,8 +9497,8 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     }
     f.mark("charcoal");
     f.make_room(8);
-    // Plans for the Kiln, with fuel coming: the crucible and kiln bricks looked up.
-    for item in ["base:crucible", "base:kiln_bricks"] {
+    // Plans for the Kiln, with fuel coming: the crucible and tempered kiln bricks looked up.
+    for item in ["base:crucible", "base:tempered_kiln_bricks"] {
         let item = f.c.content.blocks.expect(item);
         f.c.connection.send_at(ClientMessage::LookedUp { item }, f.now());
     }
@@ -9549,18 +9549,14 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, fired, 2), (1, fired, 2), (3, fired, 2), (4, fired, 2)], bricks, 4);
     f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
     f.mark("first_bricks");
-    // Brick by Brick: nineteen kiln bricks shaped in all.
-    let crafts = 19u32.saturating_sub(f.have(bricks)).div_ceil(2);
-    f.fire_clay(&site, crafts * 4);
-    let k = crafts as u8;
-    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
-    f.mark("brick_by_brick");
-
-    // Twelve tempered kiln bricks for the kiln, two from four fired clay and a straw, at
-    // the table (five cells).
-    f.fire_clay(&site, 24);
+    // Brick by Brick: seven plain kiln bricks shaped in all (First Bricks shaped four, so
+    // two crafts more), and twelve tempered, two from four fired clay and a straw, at the
+    // table (five cells).
+    f.fire_clay(&site, 8 + 24);
+    f.craft(&[(0, fired, 2), (1, fired, 2), (3, fired, 2), (4, fired, 2)], bricks, 4);
     f.at_table(site.table);
     f.craft(&[(0, fired, 6), (1, fired, 6), (3, fired, 6), (4, fired, 6), (2, straw, 6)], tempered, 12);
+    f.mark("brick_by_brick");
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10), done
     // once it is set down in the kiln's middle.
