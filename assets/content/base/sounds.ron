@@ -154,6 +154,9 @@
                 (name: "heap", with: ["compost_heap"], sounds: ["sounds/work/heap_1.ogg", "sounds/work/heap_2.ogg"], volume: 0.7),
                 // Clay or logs laid in the clamp and soil shovelled over.
                 (name: "clamp", with: ["earth_clamp"], sounds: ["sounds/work/clamp_1.ogg", "sounds/work/clamp_2.ogg"], volume: 0.7),
+                // Clay or cobble loaded into a pit kiln: a knock into the embers and a breath of
+                // flame.
+                (name: "fire_in_kiln", with: ["pit_kiln"], sounds: ["sounds/work/kiln_load_1.ogg", "sounds/work/kiln_load_2.ogg"], volume: 0.9),
             ],
         ),
         // Taking a catch from a sprung trap (traps.ron): a pouch drawn open and shut.
@@ -183,9 +186,6 @@
                 (tags: ["cooked"], sounds: ["sounds/cooked_1.ogg", "sounds/cooked_2.ogg"], volume: 0.7),
             ],
             ways: [
-                // Clay or cobble set into a pit kiln: a knock into the embers and a breath of
-                // flame.
-                (name: "fire_in_kiln", with: ["tag:pit_kiln"], sounds: ["sounds/work/kiln_load_1.ogg", "sounds/work/kiln_load_2.ogg"], volume: 0.9),
                 // Ore tipped into the hot crucible: a rattle on clay and a deep hiss.
                 (name: "smelt", with: ["tag:crucible"], sounds: ["sounds/work/smelt_1.ogg", "sounds/work/smelt_2.ogg"], volume: 0.9),
             ],
