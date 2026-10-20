@@ -33,6 +33,7 @@
         "CropLevel": (say: "skills.needs"),
         "SkillLevel": (say: "skills.needs"),
         "CookingLevel": (say: "skills.needs"),
+        "CookingTool": (say: "cooking.needs_tool"),
         // Where, and with what.
         "Replaceable": (say: "refusal.in_the_way"),
         "Unobstructed": (say: "refusal.someone_there"),
@@ -48,6 +49,9 @@
         "Bees": (say: "refusal.bees"),
         "Station": (say: "refusal.station"),
         "Swaps": (say: "refusal.doorway"),
+        // Daubing a panel someone leans on: the same words as placing a block on them.
+        "CoatClear": (say: "refusal.someone_there"),
+        "Relights": (say: "refusal.needs_flame"),
     },
     sent: [
         // Sowing where a crop cannot grow (crop.rs `Unsuited`).
@@ -55,8 +59,9 @@
         "farming.planter_needs",
         // Kept animals.
         "husbandry.kept_full", "husbandry.no_room_to_breed", "husbandry.world_full", "husbandry.too_poorly_kept", "husbandry.too_poorly_kept_wants",
-        // A hearth or kiln that is cold, or lit with no fuel in hand.
-        "multiblock.fuel", "multiblock.cold",
+        // A hearth or kiln that is cold, or lit with no fuel in hand; a clamp lit with
+        // nothing that lights it in hand.
+        "multiblock.fuel", "multiblock.cold", "multiblock.lit_by",
         // Home stations.
         "station.level", "station.too_few", "station.nothing_grows", "station.needs.sky", "station.needs.spot", "station.needs.water",
         // The land around a station or structure still loading: judged once it is there.
@@ -65,5 +70,9 @@
         "trap.needs",
         // No sleep with a hunter near or a wound fresh, or in a bed of someone's home.
         "bed.threatened", "bed.just_hurt", "bed.someones",
+        // Daubing a panel another player or a creature leans on, which their client cannot see.
+        "refusal.someone_there",
+        // A station recipe's tool not carried (an axe to split a log on a chopping block).
+        "cooking.needs_tool",
     ],
 )

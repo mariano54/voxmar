@@ -363,7 +363,7 @@ mod tests {
         let mut player = LocalPlayer::default();
         let planks = content.blocks.id("base:oak_planks").unwrap();
         player.vitals.home_stores = vec![(planks, 4)];
-        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack { item: planks, count: 1 });
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(planks, 1));
         assert_eq!(within_reach(&player).get(&planks), Some(&5), "the pack's and the stores' together");
         let made = plan(&content, &book, &within_reach(&player), false, &none);
         assert_eq!(find(&made, &content, "base:crafting_table").map(|m| &m.reach), Some(&Reach::Ready));

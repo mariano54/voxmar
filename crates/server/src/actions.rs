@@ -21,11 +21,13 @@
 //! made or undone, never left standing on one side only.
 //!
 //! A player has at most one timed action going. A new timed proposal replaces it, and an
-//! instant one (placing, throwing, an inventory move) runs alongside it.
+//! instant one (placing, throwing, an inventory move) runs alongside it. One shown done
+//! early still runs to its time, so the next one's time starts only when it is due: a
+//! client that shows breaks done early never mines several blocks side by side.
 
 use std::time::{Duration, Instant};
 
-use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, placed_block, placement_cell, supported_by};
+use voxmar_engine::action::{ActionContext, ActionDef, ActionId, ActionTarget, Effect, Rejection, Requirement, placed_block, placement_cell, supported_by};
 use voxmar_engine::block::{BlockId, BlockInfo, BlockRegistry};
 use voxmar_engine::combat::Slot;
 use voxmar_engine::crop::CropRegistry;
@@ -47,12 +49,18 @@ struct Timed {
     due: Instant,
     /// The player's client shows it done: nothing cancels it now.
     finished: bool,
+    /// The hotbar slot in hand, what was in it and how worn: what the work wears. When it
+    /// began, or for a break shown done with the same kind of tool in hand, then.
+    tool: Tool,
     /// For a break, what the player held when their client showed it done: what it is
     /// judged by at its time, and draws its tool's bonus with, whatever they take in hand
     /// meanwhile (the next block's tool). Anything else (a bite, a cook, a cast) uses what
     /// is in hand when it completes, so it is judged by that.
     held: Option<Option<BlockId>>,
 }
+
+/// A hotbar slot, what was in it and its wear, when an action began.
+pub(crate) type Tool = (usize, Option<voxmar_engine::block::BlockId>, u16);
 
 impl Timed {
     fn mostly_done(&self, at: Instant) -> bool {
@@ -148,6 +156,10 @@ impl ActionContext for Context<'_> {
         self.server.players[&self.agent].inventory.pouched.iter().map(|&(item, _)| item).collect()
     }
 
+    fn actor_carried(&self) -> Vec<BlockId> {
+        self.server.players[&self.agent].inventory.slots.iter().flatten().map(|s| s.item).collect()
+    }
+
     fn actor_hurt(&self) -> bool {
         let health = self.server.players[&self.agent].health;
         health.current < health.max
@@ -162,7 +174,7 @@ impl ActionContext for Context<'_> {
     }
 
     fn creature_in(&self, cell: IVec3) -> bool {
-        self.server.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+        self.server.creature_in(cell)
     }
 
     fn cooking(&self) -> Option<&voxmar_engine::cooking::CookingRegistry> {
@@ -171,6 +183,10 @@ impl ActionContext for Context<'_> {
 
     fn tools(&self) -> Option<&voxmar_engine::tool::ToolRegistry> {
         Some(&self.server.content.tools)
+    }
+
+    fn flames(&self) -> Option<&voxmar_engine::flame::Flames> {
+        Some(&self.server.content.flames)
     }
 
     fn machines(&self) -> Option<&voxmar_engine::machine::MachineRegistry> {
@@ -225,15 +241,20 @@ impl Server {
         let context = Context { server: self, agent, held: None };
         if let Err(why) = def.validate(&context, target) {
             tracing::debug!("player {agent}: {} refused at {target:?}: {why:?}", def.name);
+            self.unforeseen(agent, why);
             self.reject(agent, target);
         } else if !timed {
-            self.commit(agent, &def, target, None);
+            let tool = self.tool_in_hand(agent);
+            self.commit(agent, &def, target, None, tool);
         } else {
             if def.effects.contains(&Effect::EatHeld) {
                 self.bite_started(agent);
             }
-            let due = at + Duration::from_secs_f32(seconds);
-            self.executor.timed.push(Timed { agent, action, target, started: at, due, finished: false, held: None });
+            // After any shown done early that is not yet due: one at a time.
+            let started = self.executor.timed.iter().filter(|t| t.agent == agent).map(|t| t.due).fold(at, Instant::max);
+            let due = started + Duration::from_secs_f32(seconds);
+            let tool = self.tool_in_hand(agent);
+            self.executor.timed.push(Timed { agent, action, target, started, due, finished: false, held: None, tool });
         }
     }
 
@@ -255,8 +276,14 @@ impl Server {
         } else {
             let mining = self.content.actions.get(self.executor.timed[i].action).is_some_and(|def| def.duration == voxmar_engine::action::Duration::TargetHardness);
             let held = mining.then(|| self.players[&agent].held());
+            let tool = self.tool_in_hand(agent);
             let timed = &mut self.executor.timed[i];
             (timed.finished, timed.held) = (true, held);
+            // The same kind of tool as set its time, in hand now (perhaps another copy of
+            // it): that one wears. Anything else keeps the one that set the time.
+            if mining && tool.1 == timed.tool.1 {
+                timed.tool = tool;
+            }
         }
     }
 
@@ -279,10 +306,20 @@ impl Server {
         }
         let Some(def) = self.action_def(timed.action) else { return };
         let held = timed.held;
-        if def.validate(&Context { server: self, agent, held }, target).is_ok() {
-            self.commit(agent, &def, target, held);
-        } else {
-            self.reject(agent, target);
+        match def.validate(&Context { server: self, agent, held }, target) {
+            Ok(()) => self.commit(agent, &def, target, held, timed.tool),
+            Err(why) => {
+                self.unforeseen(agent, why);
+                self.reject(agent, target);
+            }
+        }
+    }
+
+    /// Tells the player why, for a refusal their client could not foresee: it sees no other
+    /// player's or creature's body, so it lets clay to a panel someone leans on through.
+    fn unforeseen(&self, agent: PlayerId, why: Rejection) {
+        if why == Rejection::Unmet(Requirement::CoatClear) {
+            self.refuse(agent, Words::key("refusal.someone_there"));
         }
     }
 
@@ -311,20 +348,26 @@ impl Server {
         }
     }
 
+    /// The hotbar slot `agent` has in hand and what is in it.
+    pub(crate) fn tool_in_hand(&self, agent: PlayerId) -> Tool {
+        self.players.get(&agent).map_or((0, None, 0), |p| (p.selected, p.held(), p.inventory.get(p.selected).map_or(0, |s| s.wear)))
+    }
+
     /// Applies an action's effects, as `agent`'s doing (`fire_origin`, `changed_by`) whenever
     /// it commits: as their message arrives or later, when it falls due in the run loop.
-    /// `held`, if given, is what the agent is taken to hold (`Timed::held`).
-    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>) {
+    /// `held`, if given, is what the agent is taken to hold (`Timed::held`), and `tool` the
+    /// slot in hand and what was in it, what the work wears (`Timed::tool`).
+    fn commit(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>, tool: Tool) {
         let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
         let fire_was = std::mem::replace(&mut self.fire_origin, by.clone());
         let changed_was = std::mem::replace(&mut self.changed_by, by);
-        self.commit_effects(agent, def, target, held);
+        self.commit_effects(agent, def, target, held, tool);
         self.fire_origin = fire_was;
         self.changed_by = changed_was;
     }
 
     /// Applies an action's effects. Validation already guaranteed they can all apply.
-    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>) {
+    fn commit_effects(&mut self, agent: PlayerId, def: &ActionDef, target: ActionTarget, held: Option<Option<BlockId>>, tool: Tool) {
         for &effect in &def.effects {
             match (effect, target) {
                 (Effect::GiveDrop, ActionTarget::Block { block, .. }) => {
@@ -374,10 +417,13 @@ impl Server {
                     let cell = placement_cell(&Context { server: self, agent, held: None }, block, face);
                     let player = self.players.get_mut(&agent).unwrap();
                     let selected = player.selected;
+                    let wear = player.inventory.get(selected).map_or(0, |s| s.wear);
                     let Some(item) = player.inventory.take_one(selected) else { continue };
                     player.changed(traits::INVENTORY);
                     let placed = placed_block(&Context { server: self, agent, held: None }, item, block, face);
                     self.set_block(cell, placed);
+                    // A light picked up burning burns on from where it was.
+                    self.set_down_burnt(cell, item, wear);
                     // Its upper half goes in above with it (a door's top).
                     if let Some(upper) = self.content.blocks.upper(placed) {
                         self.set_block(cell + IVec3::Y, upper);
@@ -440,6 +486,7 @@ impl Server {
                 (Effect::Craft, ActionTarget::Slot(times)) => self.craft(agent, times == 0),
                 (Effect::LayRecipe, ActionTarget::Recipe { first, ways, count }) => self.lay_recipe(agent, first as usize, ways as usize, count),
                 (Effect::Fish, ActionTarget::Block { block, .. }) => self.fish(agent, block),
+                (Effect::Relight, ActionTarget::Block { block, .. }) => self.relight(agent, block),
                 (Effect::Swap, ActionTarget::Block { block, .. }) => {
                     // Opened or shut here first: the clients follow what the server holds.
                     let changes = voxmar_engine::action::swapping(&Context { server: self, agent, held: None }, block);
@@ -449,6 +496,7 @@ impl Server {
                     self.set_blocks(&changes);
                     self.placed.extend(placed);
                 }
+                (Effect::WearHeld, ActionTarget::Block { block, .. }) => self.wear_on_block(agent, block, def.effects.contains(&Effect::Till), tool),
                 (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
@@ -622,6 +670,23 @@ impl Server {
         let near = self.near_tags(agent);
         let near = |tag: &str| near.iter().any(|t| t == tag);
         let player = self.players.get_mut(&agent).unwrap();
+        // A worn tool and what mends it, by the block it is mended at, mend it, at the level
+        // its recipe asks.
+        if let Some(mended) = self.content.tools.mended(&player.inventory.craft, near) {
+            let item = mended.item;
+            let content = &self.content;
+            let level = |skill| {
+                let boosted = voxmar_engine::level::check_level(&content.skills, &content.effects, &player.skills, &player.vitals.effects, skill);
+                (content.skills.level(player.skills.xp(skill)), boosted)
+            };
+            let able = voxmar_engine::level::lacks_for_mend(&content.tools, item, level, &player.inventory, &content.blocks).is_none();
+            if able && player.inventory.mend(mended, all) {
+                let name = self.content.blocks.def(item).name.clone();
+                self.tally(agent, "mended", &name, 1);
+            }
+            self.players.get_mut(&agent).unwrap().changed(traits::INVENTORY);
+            return;
+        }
         // Crafting all goes on only while the grid still makes the same recipe: experience
         // and tallies are this recipe's, once for each one made.
         let first = recipes.find_near(&player.inventory.grid(), near).filter(|r| allowed(r));
@@ -671,7 +736,7 @@ impl Server {
         let [a, b, c] = self.meta.next_pop(pos, agent ^ 0xd1ce);
         // Never a furnishing's: it gives itself back only where a player placed it.
         if roll < bonus && !info.drops.is_air() && info.drop_count > 0 && !self.content.blocks.def(block).has_tag("furnishing") {
-            let stack = voxmar_engine::inventory::ItemStack { item: info.drops, count: 1 };
+            let stack = voxmar_engine::inventory::ItemStack::new(info.drops, 1);
             let body = voxmar_engine::dropped::popped(pos, [a, b, c]);
             self.items.spawn(stack, body, voxmar_engine::dropped::PICKUP_DELAY);
         }
@@ -681,7 +746,7 @@ impl Server {
         match rule.instead {
             Some((item, chance)) if other < chance => {
                 let body = voxmar_engine::dropped::popped(pos, [b, c, a]);
-                self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body, voxmar_engine::dropped::PICKUP_DELAY);
+                self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, 1), body, voxmar_engine::dropped::PICKUP_DELAY);
                 true
             }
             _ => false,
@@ -699,7 +764,7 @@ impl Server {
     /// reach has.
     pub(crate) fn near_tags(&self, agent: PlayerId) -> Vec<String> {
         let Some(player) = self.players.get(&agent) else { return Vec::new() };
-        let tags = self.content.recipes.near_tags();
+        let tags = self.content.near_tags();
         voxmar_engine::craft::tags_near(&tags, &self.content.blocks, player.eye(), |pos| self.block(pos))
     }
 
@@ -852,7 +917,7 @@ mod finished_tests {
         let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
         player.joined = true;
         let pick = server.content.blocks.expect("base:stone_pickaxe");
-        player.inventory.slots[0] = Some(ItemStack { item: pick, count: 1 });
+        player.inventory.slots[0] = Some(ItemStack::new(pick, 1));
         player.selected = 0;
         server.players.insert(1, player);
         server
@@ -933,8 +998,8 @@ mod finished_tests {
         let mut server = fixture();
         let (stew, stone) = (server.content.blocks.expect("base:stew"), server.content.blocks.expect("base:stone"));
         let player = server.players.get_mut(&1).unwrap();
-        player.inventory.slots[0] = Some(ItemStack { item: stew, count: 1 });
-        player.inventory.slots[1] = Some(ItemStack { item: stone, count: 1 });
+        player.inventory.slots[0] = Some(ItemStack::new(stew, 1));
+        player.inventory.slots[1] = Some(ItemStack::new(stone, 1));
         // Hurt, or a bite is refused.
         player.health.current = 1;
         let eat = server.content.actions.expect("core:eat");
@@ -945,7 +1010,89 @@ mod finished_tests {
         server.players.get_mut(&1).unwrap().selected = 1;
         server.complete_actions(due);
         let slots = &server.players[&1].inventory.slots;
-        assert_eq!((slots[0], slots[1]), (Some(ItemStack { item: stew, count: 1 }), Some(ItemStack { item: stone, count: 1 })), "a bite swapped for stone ate something");
+        assert_eq!((slots[0], slots[1]), (Some(ItemStack::new(stew, 1)), Some(ItemStack::new(stone, 1))), "a bite swapped for stone ate something");
         assert_eq!(server.players[&1].health.current, 1, "a bite swapped for stone healed");
+    }
+
+    /// Breaks shown done early run one after another: the next one's time starts when the
+    /// one before is due, so five stones shown done at three tenths of their time each take
+    /// as long as five broken honestly.
+    #[test]
+    fn breaks_shown_done_early_never_run_side_by_side() {
+        let mut server = fixture();
+        let mine = server.content.actions.expect("core:mine");
+        let start = Instant::now();
+        let mut at = start;
+        let mut dues = Vec::new();
+        for x in 0..5 {
+            let target = ActionTarget::Block { block: IVec3::new(5 + x, FLOOR, 10), face: Face::PosY };
+            server.propose(1, mine, target, at);
+            let timed = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break");
+            let (started, due) = (timed.started, timed.due);
+            dues.push(due);
+            at += (due - started).mul_f32(0.3);
+            server.finished_action(1, target, at);
+        }
+        let each = dues[0] - start;
+        for (i, due) in dues.iter().enumerate() {
+            assert_eq!(*due - start, each * (i as u32 + 1), "break {i} is due after the one before");
+        }
+        server.complete_actions(dues[1]);
+        let broken = (0..5).filter(|x| server.block(IVec3::new(5 + x, FLOOR, 10)) == Some(voxmar_engine::block::BlockId::AIR)).count();
+        assert_eq!(broken, 2, "by the second's time, two are broken");
+        server.complete_actions(dues[4]);
+        assert!((0..5).all(|x| server.block(IVec3::new(5 + x, FLOOR, 10)) == Some(voxmar_engine::block::BlockId::AIR)), "all five in their time");
+    }
+
+    /// A break shown done early wears the pickaxe in hand then, not the shovel switched to
+    /// before its time, nor another copy of it the break was begun with. Shown done with
+    /// something else (another pickaxe, the bare hand) the tool that set its time wears, so
+    /// a switch at the last moment never dodges the wear.
+    #[test]
+    fn a_break_shown_done_early_wears_the_tool_it_was_shown_done_with() {
+        let mut server = fixture();
+        let (pick, shovel) = (server.content.blocks.expect("base:stone_pickaxe"), server.content.blocks.expect("base:stone_shovel"));
+        let flint = server.content.blocks.expect("base:flint_pickaxe");
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[1] = Some(ItemStack::new(shovel, 1));
+        player.inventory.slots[2] = Some(ItemStack::new(pick, 1));
+        player.inventory.slots[3] = Some(ItemStack::new(flint, 1));
+        let mine = server.content.actions.expect("core:mine");
+        let wear = |server: &crate::Server| server.players[&1].inventory.slots[..4].iter().map(|s| s.map(|s| s.wear)).collect::<Vec<_>>();
+        // Five breaks begun with `began` in hand, shown done at three tenths of their time
+        // with `shown`, and the shovel in hand from there to their time. Five blocks: skill
+        // cannot save every use.
+        let breaks = |server: &mut crate::Server, began: usize, shown: usize, row: i32| {
+            for x in 0..5 {
+                let cell = IVec3::new(5 + x, FLOOR, row);
+                let target = ActionTarget::Block { block: cell, face: Face::PosY };
+                server.players.get_mut(&1).unwrap().selected = began;
+                let at = Instant::now();
+                server.propose(1, mine, target, at);
+                let due = server.executor.timed.iter().find(|t| t.target == target).expect("a timed break").due;
+                server.players.get_mut(&1).unwrap().selected = shown;
+                server.finished_action(1, target, at + (due - at).mul_f32(0.3));
+                server.players.get_mut(&1).unwrap().selected = 1;
+                server.complete_actions(due);
+                let now = server.block(cell).map(|b| server.content.blocks.def(b).name.clone());
+                assert_eq!(now.as_deref(), Some("core:air"), "the block at {cell} came back");
+            }
+        };
+        breaks(&mut server, 0, 0, 10);
+        let after = wear(&server);
+        assert!(after[0].is_some_and(|w| w > 0) && after[1..] == [Some(0), Some(0), Some(0)], "the pickaxe wore, not the shovel switched to: {after:?}");
+        breaks(&mut server, 2, 0, 6);
+        let last = wear(&server);
+        assert!(last[0] > after[0] && last[1..] == [Some(0), Some(0), Some(0)], "begun with the other pickaxe, the one shown done with wore: {after:?} to {last:?}");
+        breaks(&mut server, 0, 3, 11);
+        let flinted = wear(&server);
+        assert!(flinted[0] > last[0] && flinted[1..] == [Some(0), Some(0), Some(0)], "shown done with the flint pickaxe, the stone one that set the time wore: {last:?} to {flinted:?}");
+        let dirt = server.content.blocks.expect("base:dirt");
+        for x in 0..5 {
+            server.set_block(IVec3::new(5 + x, FLOOR, 5), dirt);
+        }
+        breaks(&mut server, 0, 4, 5);
+        let bare = wear(&server);
+        assert!(bare[0] > flinted[0] && bare[1..] == [Some(0), Some(0), Some(0)], "shown done with a bare hand, the pickaxe wore: {flinted:?} to {bare:?}");
     }
 }

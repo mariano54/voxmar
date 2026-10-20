@@ -80,7 +80,7 @@
         // A Crucible Kiln firing (its core, heard only while its fire burns): before the
         // fire, so it roars as a kiln, not a hearth. Fully within five blocks.
         (name: "kiln", tags: ["crucible"], range: (3, 10), lit: true),
-        // An earth clamp burning (`clamp_burning`): logs charring under the soil.
+        // A charcoal clamp smouldering (its flue, `clamp_burning`): logs charring under the soil.
         (name: "clamp", tags: ["clamp_burning"], range: (1, 4)),
         // A fire to sit by: a campfire, a hearth, a pit kiln. Before rock, as a hearthstone
         // or a kiln is stone to the step. One within five blocks is a fire fully heard; by

@@ -1043,7 +1043,7 @@ fn a_fire_hears_the_weather() {
 }
 
 /// The Farm age's fires: a Crucible Kiln firing roars as a kiln, never as a hearth; an
-/// earth clamp burning hisses low and its soil ticks as it settles. And the village's
+/// charcoal clamp smouldering hisses low and its soil ticks as it settles. And the village's
 /// smith works the bellows and its bakers turn the quern by day, never at night. A lit
 /// kiln hisses in the rain by its own sky, and its stack moans on a stormy night.
 #[test]
@@ -1113,6 +1113,20 @@ fn hives_and_boards_are_heard_by_their_groups() {
     for id in planks {
         assert_eq!(groups[id.0 as usize].map(|g| ambience.groups[g as usize].name.as_str()), Some("timber"), "{}", content.blocks.def(id).name);
     }
+}
+
+/// A charcoal clamp's flue, the block it burns as, is the clamp heard hissing; a lit
+/// Crucible Kiln's core is the kiln.
+#[test]
+fn a_lit_clamp_and_kiln_are_heard_by_their_groups() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let groups = ambience.block_groups(&content.blocks);
+    let group = |name: &str| groups[content.blocks.id(name).unwrap_or_else(|| panic!("{name}")).0 as usize].map(|g| ambience.groups[g as usize].name.as_str());
+    let burning = content.multiblocks.iter().find_map(|m| m.smoulder.as_ref().filter(|_| m.name == "base:charcoal_clamp").map(|s| s.burning)).expect("the clamp smoulders");
+    assert_eq!(groups[burning.0 as usize].map(|g| ambience.groups[g as usize].name.as_str()), Some("clamp"), "the clamp's burning block");
+    assert_eq!(group("base:clamp_flue"), Some("clamp"));
 }
 
 /// Bees drone by their hive on a warm day, and keep in at night, in the cold and while it

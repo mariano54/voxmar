@@ -366,7 +366,7 @@ impl Server {
         });
         for (i, (item, count)) in found.into_iter().enumerate() {
             let body = dropped::popped(pos, self.meta.next_pop(pos, salt.wrapping_mul(131).wrapping_add(i as u32 + 1000)));
-            self.items.spawn(ItemStack { item, count }, body, dropped::PICKUP_DELAY);
+            self.items.spawn(ItemStack::new(item, count), body, dropped::PICKUP_DELAY);
         }
     }
 
@@ -473,7 +473,7 @@ mod tests {
         let at = voxmar_engine::glam::Vec3::new(8.5, (FLOOR + 1) as f32, 8.5);
         let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
         player.joined = true;
-        player.inventory.slots[0] = Some(ItemStack { item: well, count: 2 });
+        player.inventory.slots[0] = Some(ItemStack::new(well, 2));
         player.selected = 0;
         server.players.insert(1, player);
         let place = server.content.actions.expect("core:place");

@@ -66,6 +66,13 @@
             run: Give,
         ),
         (
+            name: "wear",
+            usage: "<uses left> [hotbar slot]",
+            help: "Wears the tool in your hand (or in that hotbar slot, 1 to 9) down (or mends it) to that many uses left, or burns what is there down to that many seconds.",
+            permission: Admin,
+            run: Wear,
+        ),
+        (
             name: "effect",
             usage: "<effect> [seconds] | clear",
             help: "Gives you an effect for a while (60 seconds unless you say), as food would; clear takes them all away.",

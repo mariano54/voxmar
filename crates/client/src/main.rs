@@ -362,6 +362,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
+    recorded.check_wear()?;
     recorded.covers(&content.actions)?;
     let creature_bank = creature_sounds::Bank::load(&content.files, &content.creatures)?;
     creature_bank.check_files(&assets)?;

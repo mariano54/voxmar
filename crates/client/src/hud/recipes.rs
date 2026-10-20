@@ -382,7 +382,7 @@ mod tests {
         // Logs in the pack change what each way still wants: the cards are drawn again,
         // the quest links are not.
         let log = app.world().resource::<Launch>().content.blocks.id("base:oak_log").unwrap();
-        app.world_mut().resource_mut::<crate::player::LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack { item: log, count: 8 });
+        app.world_mut().resource_mut::<crate::player::LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(log, 8));
         app.update();
         assert_ne!(cards(&mut app), first_cards, "what the pack holds redraws the cards");
         assert_eq!(links(&mut app), first_links, "and leaves the quest links");

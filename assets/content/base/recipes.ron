@@ -15,6 +15,8 @@
         // with a flint wedge in it.
         (ingredients: ["{name}_log"], output: "{name}_planks", count: 6, xp: 1.0, near: "chopping_block"),
         (pattern: [["flint"], ["tag:log"]], output: "chopping_block", skill: "core:crafting", level: 2, xp: 6.0),
+        // Kindling: three sticks bundled, a clamp's flue (multiblocks.ron).
+        (ingredients: ["stick", "stick", "stick"], output: "kindling", xp: 1.0),
         (pattern: [["{name}_planks"], ["{name}_planks"]], output: "stick", count: 4, xp: 1.0),
         // Four planks make a crafting table, for the bigger recipes.
         (pattern: [["{name}_planks", "{name}_planks"], ["{name}_planks", "{name}_planks"]], output: "crafting_table", skill: "core:engineering", xp: 8.0),

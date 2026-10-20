@@ -8,7 +8,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::effect::{EffectId, EffectRegistry, Modifiers};
 use voxmar_engine::glam::Vec3;
-use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, MAX_STACK};
+use voxmar_engine::inventory::{HOTBAR_SLOTS, Inventory, ItemStack, max_stack};
 use voxmar_engine::lang::Words;
 use voxmar_engine::movement::Checks;
 use voxmar_engine::physics::{Aabb, CUBE, player as dims};
@@ -61,6 +61,13 @@ pub struct Player {
     /// The announced effects (`EffectDef::announce`) the player has been told of this
     /// session, so stepping out of a room and back in does not say it twice.
     pub announced: Vec<EffectId>,
+    /// The home steps their home met when last surveyed (`EffectRegistry::home_steps`),
+    /// where that home stood (its `home_spot`'s cell: a home moved since says nothing of
+    /// what was lost), and whether it is yet to be surveyed since they joined, to tell them
+    /// what lights burnt out while they were away cost.
+    pub home_steps: Vec<EffectId>,
+    pub home_anchor: Option<voxmar_engine::glam::IVec3>,
+    pub home_unchecked: bool,
     /// Healing and hurting under way, in seconds (`process::Survival`).
     pub heal_clock: f32,
     pub hurt_clock: f32,
@@ -201,6 +208,9 @@ impl Player {
             vitals: Vitals::default(),
             timed_effects: Vec::new(),
             announced: Vec::new(),
+            home_steps: Vec::new(),
+            home_anchor: None,
+            home_unchecked: false,
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
             health_base: 0,
@@ -335,6 +345,9 @@ impl Player {
             prayer_points: Some(self.praying.points),
             casts: self.casts,
             draws: self.draws,
+            home_steps: self.home_steps.iter().map(|&id| effects.get(id).name.clone()).collect(),
+            home_anchor: self.home_anchor.map(|at| at.to_array()),
+            spilled: Vec::new(),
         }
     }
 }
@@ -408,11 +421,14 @@ impl Server {
         if !known || count == 0 || player.mode() != GameMode::Creative {
             return;
         }
-        let count = count.min(MAX_STACK);
+        // No more than a stack of it holds (a tool comes one at a time), and never onto a
+        // worn one: a new one is not a free mend.
+        let most = max_stack(item);
+        let count = count.min(most);
         if held {
             match &mut player.inventory.cursor {
-                None => player.inventory.cursor = Some(ItemStack { item, count }),
-                Some(stack) if stack.item == item => stack.count = stack.count.saturating_add(count).min(MAX_STACK),
+                None => player.inventory.cursor = Some(ItemStack::new(item, count)),
+                Some(stack) if stack.item == item && stack.wear == 0 => stack.count = stack.count.saturating_add(count).min(most),
                 Some(_) => return,
             }
         } else {
@@ -516,7 +532,7 @@ impl Server {
         // A save that is not a player file is moved aside rather than replaced by a new
         // player's at the next save. One that could not be read at all (no permission, a
         // failing disk), or cannot be moved, turns the player away.
-        let (saved, set_aside) = if let Some((held, _)) = carried {
+        let (mut saved, set_aside) = if let Some((held, _)) = carried {
             (Some(held), None)
         } else {
             match self.save.as_ref().map(|save| (save, save.read_player(&name, &blocks))) {
@@ -577,6 +593,7 @@ impl Server {
         player.casts = saved.as_ref().map_or(0, |saved| saved.casts);
         player.draws = saved.as_ref().map_or_else(Draws::default, |saved| saved.draws);
         player.draw_key = player_draw_key(self.meta.draw_key, &player.name);
+        let spilled = saved.as_mut().map(|saved| std::mem::take(&mut saved.spilled)).unwrap_or_default();
         match saved {
             Some(saved) if saved.health.alive() => {
                 player.position = saved.position;
@@ -593,6 +610,9 @@ impl Server {
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
                 player.timed_effects = saved.effects.iter().filter_map(|(name, left)| Some((effect_ids.id(name)?, *left))).collect();
+                player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
+                player.home_unchecked = !player.home_steps.is_empty();
             }
             // Players who left dead come back to life at home, or else the spawn point.
             Some(saved) => {
@@ -608,6 +628,9 @@ impl Server {
                 player.quests_done = saved.quests;
                 player.quests_claimed = saved.quests_claimed;
                 player.tallies = saved.tallies.into_iter().collect();
+                player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
+                player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
+                player.home_unchecked = !player.home_steps.is_empty();
             }
             // The coin purse in the pack's last slot, out of the hotbar's way, and the kit
             // unless this address has had its share.
@@ -641,6 +664,15 @@ impl Server {
         let entries = self.players[&id].journal.entries().cloned().collect();
         self.players[&id].connection.send(ServerMessage::Journal { entries });
         self.kindle_home(id);
+        // An older save's stacked tools with no slot left fall at their feet, theirs and
+        // lying as long as a grave does: the pack was full, so they wait for room.
+        let feet = self.players[&id].position.floor().as_ivec3();
+        let owner = crate::items::owner_of(&self.players[&id].name);
+        let lifetime = (self.content.value.death.grave * voxmar_protocol::TICKS_PER_SECOND as f32) as u32;
+        for (i, stack) in spilled.into_iter().enumerate() {
+            let random = self.meta.next_pop(feet, 0x5b1d ^ i as u32);
+            self.items.spawn_for(stack, voxmar_engine::dropped::popped(feet, random), voxmar_engine::dropped::PICKUP_DELAY, Some(owner), lifetime);
+        }
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         // What smoulders now: the others were told as it began, and are told only of changes.
         self.players[&id].connection.send(ServerMessage::Smoulders { at: self.smouldering() });
@@ -762,14 +794,10 @@ impl Server {
                 fall: checks.speed_margin * fly.max(tuning.terminal_velocity),
             }
         } else {
-            // Feet on a ladder, a jump climbs it no faster than `climb_speed` (the client's
-            // `movement::step`), so neither does anyone else.
-            let rise = if self.on_ladder(player.position) { tuning.climb_speed } else { tuning.jump_velocity };
-            Budgets {
-                across: checks.speed_margin * tuning.top_ground_speed(),
-                rise: checks.speed_margin * rise,
-                fall: checks.speed_margin * tuning.terminal_velocity,
-            }
+            // Feet on a ladder, nobody climbs it or slides down it faster than `climb_speed`
+            // (the client's `movement::step`, a jump on it included).
+            let (rise, fall) = if self.on_ladder(player.position) { (tuning.climb_speed, tuning.climb_speed) } else { (tuning.jump_velocity, tuning.terminal_velocity) };
+            Budgets { across: checks.speed_margin * tuning.top_ground_speed(), rise: checks.speed_margin * rise, fall: checks.speed_margin * fall }
         };
         let gap = player.budget_at.map_or(1.0 / TICKS_PER_SECOND as f32, |then| at.saturating_duration_since(then).as_secs_f32());
         let since = gap.min(checks.burst);
@@ -1180,6 +1208,54 @@ mod tests {
         assert_eq!(server.players[&1].position, far);
     }
 
+    /// Up a ladder thirty blocks high, or down it, a player sending where they are twenty
+    /// times a second is taken at the ladder's own pace (3 blocks a second), and put back
+    /// at more than twice that, though a jump goes faster and a fall faster still: on a
+    /// ladder nobody rises or sinks faster than `climb_speed` and the margin allow, once
+    /// the moves they have in hand run out.
+    #[test]
+    fn a_climb_or_slide_faster_than_a_ladder_allows_is_put_back() {
+        use voxmar_engine::glam::IVec3;
+        let mut server = crate::test_server();
+        let _connection = join(&mut server, 1, "Ada");
+        let at = server.spawn.floor().as_ivec3() + IVec3::new(0, 20, 0);
+        server.load_area(at - IVec3::splat(4), at + IVec3::new(4, 36, 4));
+        let blocks = &server.content.blocks;
+        let (stone, planks, ladder) = (blocks.expect("base:stone"), blocks.expect("base:oak_planks"), blocks.expect("base:oak_ladder"));
+        for y in 0..=32 {
+            for x in -1..=1 {
+                for z in -1..=1 {
+                    server.set_block(at + IVec3::new(x, y, z), voxmar_engine::block::BlockId::AIR);
+                }
+                server.set_block(at + IVec3::new(x, y, 1), planks);
+            }
+            server.set_block(at + IVec3::Y * y, ladder);
+        }
+        server.set_block(at - IVec3::Y, stone);
+        let bottom = at.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        // From `from`, `steps` inputs a twentieth of a second apart, each `by` further up;
+        // whether any was put back.
+        let mut clock = Instant::now();
+        let mut go = |server: &mut Server, from: Vec3, by: f32, steps: usize| -> bool {
+            let player = server.players.get_mut(&1).unwrap();
+            (player.position, player.accepted, player.budget_at) = (from, from, None);
+            let before = player.teleports;
+            for k in 1..=steps {
+                clock += std::time::Duration::from_millis(50);
+                server.arrival = clock;
+                let teleport = server.players[&1].teleports;
+                server.input(1, PlayerInput { position: from + Vec3::Y * by * k as f32, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false, teleport });
+            }
+            clock += std::time::Duration::from_secs(5);
+            server.players[&1].teleports != before
+        };
+        let top = bottom + Vec3::Y * 30.0;
+        assert!(!go(&mut server, bottom, 0.15, 200), "an honest climb was put back");
+        assert!(!go(&mut server, top, -0.15, 200), "an honest slide was put back");
+        assert!(go(&mut server, bottom, 0.4, 75), "a climb at 8 blocks a second was let through");
+        assert!(go(&mut server, top, -0.4, 75), "a slide at 8 blocks a second was let through");
+    }
+
     fn join(server: &mut Server, id: PlayerId, name: &str) -> ClientConnection {
         let (connection, server_side) = local_pair();
         let player = Player::new(id, server_side, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
@@ -1273,9 +1349,9 @@ mod tests {
         let waiting = server.saved_creatures()[0].clone();
         server.creatures.unplaced = vec![waiting; kept_each - parents.len()];
         let dirt = server.content.blocks.expect("base:dirt");
-        server.items.spawn_for(ItemStack { item: dirt, count: 7 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("Bob")), 10_000);
-        server.items.spawn_for(ItemStack { item: dirt, count: 2 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("bOb")), 10_000);
-        server.items.spawn_for(ItemStack { item: dirt, count: 3 }, Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("someone-else")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 7), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("Bob")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 2), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("bOb")), 10_000);
+        server.items.spawn_for(ItemStack::new(dirt, 3), Loose::new(server.spawn + Vec3::Y * 0.8, Vec3::ZERO), 0.0, Some(owner_of("someone-else")), 10_000);
         server.leave(1);
         drop(original);
         if legacy {

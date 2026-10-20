@@ -299,6 +299,17 @@
             (from: (7, 0, 7), to: (9, 5, 9)),
             (from: (7.75, 5, 7.75), to: (8.25, 6.5, 8.25)),
         ]),
+        // A candle burnt down to its end: a nub of wax and a black wick.
+        "candle_end": (boxes: [
+            (from: (7, 0, 7), to: (9, 1.5, 9)),
+            (from: (7.75, 1.5, 7.75), to: (8.25, 2.25, 8.25)),
+        ]),
+        // A clay oil lamp: a low bowl, its spout to the south and a loop of handle north.
+        "oil_lamp": (boxes: [
+            (from: (5, 0, 4), to: (11, 3, 12)),
+            (from: (7, 1, 12), to: (9, 3, 14)),
+            (from: (7, 1, 2), to: (9, 4, 4)),
+        ]),
         // A chain, a cap, a glass-sided box and a foot.
         "hanging_lantern": (boxes: [
             (from: (7.5, 11, 7.5), to: (8.5, 16, 8.5)),
@@ -603,6 +614,20 @@
             (from: (3, 6, 14.5), to: (13, 7.5, 15.5)),
             (from: (3, 10, 14.5), to: (13, 11.5, 15.5)),
             (from: (3, 14, 14.5), to: (13, 15.5, 15.5)),
+        ]),
+        // A hatch in a loft's floor: boards across the top of the cell, level with the floor
+        // round it, and two battens under them. Open, it hangs from its back edge (south, away
+        // from whoever set it) against the back of the cell, no deeper than a ladder's rungs, so a
+        // ladder under it climbs on up through it.
+        "hatch": (boxes: [
+            (from: (0, 13, 0), to: (16, 16, 16), cull: true),
+            (from: (1, 11.5, 2), to: (15, 13, 4)),
+            (from: (1, 11.5, 12), to: (15, 13, 14)),
+        ]),
+        "hatch_open": (boxes: [
+            (from: (0, 0, 15), to: (16, 16, 16), cull: true),
+            (from: (2, 1, 14.5), to: (4, 15, 15)),
+            (from: (12, 1, 14.5), to: (14, 15, 15)),
         ]),
         "railing_corner": (boxes: [
             (from: (0, 0, 13.5), to: (16, 2, 16), cull: true),

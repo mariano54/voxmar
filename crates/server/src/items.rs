@@ -216,7 +216,11 @@ impl Server {
             {
                 continue;
             }
-            let stack = ItemStack { item: drops, count: drop_count };
+            let mut stack = ItemStack::new(drops, drop_count);
+            // A light picked up burning keeps what it has burnt.
+            if drop_count == 1 {
+                stack.wear = self.burnt_wear(cell, drops);
+            }
             // Scattered by the world's count of drops popped, not the tick it breaks on.
             let body = dropped::popped(cell, self.meta.next_pop(cell, i as u32));
             self.items.spawn(stack, body, dropped::PICKUP_DELAY);
@@ -320,14 +324,14 @@ impl Server {
                     // What a player left where they died is theirs alone.
                     item.owner.is_none_or(|owner| owner == *name)
                         && middle.distance(centre) < MAGNET + 1.0
-                        && self.players[pid].inventory.room_for(item.stack.item, 1) > 0
+                        && self.players[pid].inventory.has_room_for(item.stack)
                 })
                 .min_by(|a, b| a.1.distance(centre).total_cmp(&b.1.distance(centre)));
             let Some(&(collector, middle, reach, _)) = nearest else { continue };
             let inside = item.body.aabb().min.cmple(reach.max).all() && item.body.aabb().max.cmpge(reach.min).all();
             if inside {
                 let player = self.players.get_mut(&collector).expect("a collector");
-                let left = player.inventory.add(item.stack.item, item.stack.count);
+                let left = player.inventory.add_stack(item.stack);
                 if left == item.stack.count {
                     continue;
                 }
@@ -407,6 +411,7 @@ fn merge(items: &mut Items, tick: u64) {
                         let Some(o) = items.all.get(&other) else { continue };
                         if other != id
                             && o.stack.item == item.stack.item
+                            && o.stack.wear == item.stack.wear
                             && o.stack.count < max_stack(o.stack.item)
                             && o.owner == item.owner
                             && o.body.position.distance(item.body.position) < MERGE_WITHIN
@@ -448,7 +453,7 @@ impl Items {
             .map(|(&id, item)| {
                 let age = item.age as f32 / TICKS_PER_SECOND as f32;
                 let lifetime = (item.lifetime != self::lifetime()).then(|| item.lifetime as f32 / TICKS_PER_SECOND as f32);
-                (id, SavedItem { item: name(item.stack.item), count: item.stack.count, position: item.body.position.to_array(), age, owner: item.owner, lifetime })
+                (id, SavedItem { item: name(item.stack.item), count: item.stack.count, position: item.body.position.to_array(), age, owner: item.owner, lifetime, wear: item.stack.wear })
             })
             .collect();
         saved.sort_by_key(|(id, _)| *id);
@@ -463,10 +468,13 @@ impl Items {
             if item.count == 0 || !position.is_finite() {
                 continue;
             }
-            let stack = ItemStack { item: block, count: item.count.min(MAX_STACK) };
+            let stack = ItemStack { wear: item.wear, ..ItemStack::new(block, item.count.min(MAX_STACK)) };
             let life = item.lifetime.map_or(lifetime(), |seconds| (seconds * TICKS_PER_SECOND as f32) as u32);
-            let new = items.spawn_for(stack, Loose::new(position, Vec3::ZERO), 0.0, item.owner, life);
-            items.all.get_mut(&new).expect("just spawned").age = (item.age * TICKS_PER_SECOND as f32) as u32;
+            // Tools stacked before they wore lie as one item each.
+            for stack in voxmar_engine::inventory::split_stack(stack) {
+                let new = items.spawn_for(stack, Loose::new(position, Vec3::ZERO), 0.0, item.owner, life);
+                items.all.get_mut(&new).expect("just spawned").age = (item.age * TICKS_PER_SECOND as f32) as u32;
+            }
         }
         items
     }
@@ -496,7 +504,7 @@ mod tests {
         server.load_area(at - IVec3::new(12, 0, 12), at + IVec3::new(12, 0, 12));
         // The rabbit's loot, lying well out of reach of where the player stands now.
         let to = server.players[&1].position + Vec3::new(8.0, 0.0, 0.0);
-        server.items.spawn(ItemStack { item: raw, count: 1 }, Loose::new(to + Vec3::new(0.4, 0.0, 0.0), Vec3::ZERO), 0.0);
+        server.items.spawn(ItemStack::new(raw, 1), Loose::new(to + Vec3::new(0.4, 0.0, 0.0), Vec3::ZERO), 0.0);
         while let Ok(Some(_)) = client.try_recv() {}
         client.send(ClientMessage::Command { line: "clear raw_small_game".into() });
         client.send(ClientMessage::Command { line: format!("tp {} {} {}", to.x, to.y, to.z) });
@@ -555,7 +563,7 @@ mod tests {
 
     fn item(count: u8, x: f32, age: u32) -> Dropped {
         let body = Loose { position: Vec3::new(x, 0.0, 0.5), velocity: Vec3::ZERO, on_ground: true };
-        Dropped { stack: ItemStack { item: BlockId(5), count }, body, age, pickup_in: 0, owner: None, lifetime: lifetime() }
+        Dropped { stack: ItemStack::new(BlockId(5), count), body, age, pickup_in: 0, owner: None, lifetime: lifetime() }
     }
 
     #[test]
@@ -585,6 +593,28 @@ mod tests {
         assert_eq!(heap.gone.len(), 2);
     }
 
+    /// A worn stack and a fresh one of the same light lie together and stay two: merged,
+    /// the fresh would take the worn one's burn, or the worn the fresh one's.
+    #[test]
+    fn worn_and_fresh_stacks_lying_together_stay_apart() {
+        let mut items = Items::default();
+        items.all.insert(0, item(2, 0.5, 30));
+        let mut worn = item(1, 0.7, 30);
+        worn.stack.wear = 900;
+        items.all.insert(1, worn);
+        merge(&mut items, MERGE_EVERY);
+        merge(&mut items, MERGE_EVERY * 2);
+        assert_eq!(items.all.len(), 2, "worn and fresh merged");
+        assert_eq!((items.all[&0].stack.count, items.all[&0].stack.wear), (2, 0));
+        assert_eq!((items.all[&1].stack.count, items.all[&1].stack.wear), (1, 900));
+        // Two alike in wear still merge.
+        let mut also = item(3, 0.6, 30);
+        also.stack.wear = 900;
+        items.all.insert(2, also);
+        merge(&mut items, MERGE_EVERY * 3);
+        assert_eq!(items.all.values().filter(|d| d.stack.wear == 900).map(|d| d.stack.count).collect::<Vec<_>>(), [4]);
+    }
+
     #[test]
     fn saved_items_round_trip_by_name() {
         let mut items = Items::default();
@@ -595,6 +625,13 @@ mod tests {
         assert_eq!((only.stack, only.body.position, only.age), (items.all[&0].stack, Vec3::new(2.5, 0.0, 0.5), 200));
         // Items that no longer exist are left behind.
         assert!(Items::restore(items.saved(|_| "gone:thing".into()), |_| None).all.is_empty());
+        // A worn stack of several keeps its wear (a handful of half-burnt torches).
+        let mut worn = Items::default();
+        let mut torches = item(3, 1.5, 10);
+        torches.stack.wear = 700;
+        worn.all.insert(0, torches);
+        let back = Items::restore(worn.saved(|_| "base:dirt".into()), |name| (name == "base:dirt").then_some(BlockId(5)));
+        assert_eq!(back.all.values().map(|d| (d.stack.count, d.stack.wear)).collect::<Vec<_>>(), [(3, 700)]);
     }
 
     #[test]
