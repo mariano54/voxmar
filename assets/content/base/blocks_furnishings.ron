@@ -55,7 +55,14 @@
             (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}", "shelter:draughty"]),
             (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "decor", "colour:{name}"]),
             (name: "{name}_banner", render: Model, shape: "banner", facing: true, solid: false, sound: Moss, textures: All("banner_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "banner", "decor", "colour:{name}"]),
-            (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "curtain", "decor", "colour:{name}"]),
+            (name: "{name}_wall_hanging", render: Model, shape: "wall_hanging", facing: true, solid: false, sound: Moss, textures: All("hanging_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "drape", "decor", "colour:{name}"]),
+            // A curtain drawn across, and drawn back (a right click, `swaps`, as a door). Drawn
+            // across a window it keeps most of the room's light in (`light_filter`), so a lit
+            // home's window glows low at night; drawn back, the light goes through as air.
+            (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, light_filter: 8, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
+                swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
+            (name: "{name}_curtain_open", render: Model, shape: "curtain_open", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
+                swaps: "{name}_curtain", drops: "{name}_curtain", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
             (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
             (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),
             (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "yard", "colour:{name}"]),
