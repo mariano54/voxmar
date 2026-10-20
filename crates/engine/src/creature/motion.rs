@@ -175,6 +175,8 @@ pub const SAFE_DROP: i32 = 3;
 
 /// How high a jump at `jump` blocks per second lifts it, stepped as `dt` steps it.
 fn hop_height(jump: f32, dt: f32) -> f32 {
+    // A step of no time would never come down.
+    let dt = dt.max(1e-3);
     let (mut v, mut up) = (jump, 0.0);
     while v > 0.0 {
         up += v * dt;
@@ -183,22 +185,29 @@ fn hop_height(jump: f32, dt: f32) -> f32 {
     up
 }
 
-/// The least jump that hops up a single block, stepped as `dt` steps it: anything that
-/// jumps at all gets up one, however low its own jump (its jump is for leaps and hops).
-fn climb_speed(dt: f32) -> f32 {
+/// The least jump that rises `rise` blocks, stepped as `dt` steps it.
+fn rise_speed(rise: f32, dt: f32) -> f32 {
     let (mut low, mut high) = (0.0, 30.0);
     for _ in 0..24 {
         let mid = (low + high) / 2.0;
-        if hop_height(mid, dt) >= 1.1 { high = mid } else { low = mid }
+        if hop_height(mid, dt) >= rise { high = mid } else { low = mid }
     }
     high
 }
 
-/// How fast a hop up a step goes, stepped as `dt` steps it: its own jump, or the least that
-/// gets up a block (`climb_speed`). Steering (`open_way`) and the hop (`step`) judge a step
-/// by the same hop.
+/// The least jump that hops up a single block, stepped as `dt` steps it: anything that
+/// jumps at all gets up one, however low its own jump (its jump is for leaps and hops).
+fn climb_speed(dt: f32) -> f32 {
+    rise_speed(1.1, dt)
+}
+
+/// How fast a hop up a step goes, stepped as `dt` steps it: its own jump, rising no higher
+/// than the world's `step_rise` (`creature::Climbing`, carried on its `Movement`), or the
+/// least that gets up a block (`climb_speed`). Solved for `dt` as the climb is, so the rise
+/// holds at any step. Steering (`open_way`) and the hop (`step`) judge a step by the same
+/// hop.
 pub fn hop_speed(movement: &Movement, dt: f32) -> f32 {
-    movement.jump.max(climb_speed(dt))
+    movement.jump.min(rise_speed(movement.step_rise, dt)).max(climb_speed(dt))
 }
 
 /// Whether the body can go a little way along `heading` (horizontal, unit length): sliding
@@ -255,6 +264,48 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     let wary = water == Water::Land && !(body.in_water && world.water(feet - IVec3::Y));
     // Along the way it really goes, sliding along a wall as its box would, a step at a
     // time; ahead of its middle by half its width.
+    // Down into a space it would hang in (a trench too short for a long head to come down
+    // into with its head clear): no way at a walk, or it walks in and stands stuck there.
+    // Judged once, at the first place its way goes down, over all of that space along its
+    // way it fits in: a pit with room to land short of its far wall is open. Running or chasing, a creature drops in (a hop carries
+    // it, and its brain gives a held way up); into water it swims, its head up.
+    // Down is below where its feet are: at a lip its box's corners may all be over the drop
+    // (`now`) while its edge still stands on it.
+    let feet = (body.position.y + 0.01).floor() as i32;
+    let held = |middle: Vec3, then: IVec3| {
+        if then.y >= feet || pace > movement.walk || world.water(then) {
+            return false;
+        }
+        let at = |k: i32| Vec3::new(middle.x, then.y as f32, middle.z) + heading * (0.1 * k as f32);
+        // Too narrow along its way for its box (a crack): it never comes down in it.
+        let open = (-4..=4).filter(|&k| !world.solid((at(k * 5) + Vec3::Y * 0.01).floor().as_ivec3())).count() as f32 * 0.5;
+        if open < body.size.0 {
+            return false;
+        }
+        let landed = |k: i32| Body { position: at(k), yaw: yaw_of(heading), ..*body };
+        let fits = |k: i32| !landed(k).aabb().intersects(solid);
+        let Some(near) = (0..=20).map(|k| if k % 2 == 1 { -(k + 1) / 2 } else { k / 2 }).find(|&k| fits(k)) else {
+            return false;
+        };
+        // Down there, nowhere it fits with its head clear, it would hang where its head stops
+        // it coming down. Open ground below a ledge is a way down, however far it walks on.
+        let first = (-20..near).rev().take_while(|&k| fits(k)).last().unwrap_or(near);
+        let last = (near..=20).take_while(|&k| fits(k)).last().unwrap_or(near);
+        (first..=last).find(|&k| !landed(k).head_blocked(world)).is_none()
+    };
+    // From under its own middle too: edging over a trench's lip, it may stand with its middle
+    // over the trench, and where it gets to may be past it.
+    let under = (body.position + Vec3::Y * 0.01).floor().as_ivec3();
+    let mut judged = false;
+    if !world.solid(under)
+        && let Some(then) = landing(under)
+        && then.y < feet
+    {
+        judged = true;
+        if held(body.position, then) {
+            return false;
+        }
+    }
     let samples = (ahead / 0.4).ceil().max(1.0) as i32;
     let step = heading * (ahead / samples as f32);
     let mut aabb = Aabb::standing(to, body.size.0, body.size.1);
@@ -269,7 +320,10 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
         }
         match landing(cell) {
             None => false,
-            Some(then) => now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)),
+            Some(then) => {
+                let first_down = then.y < feet && !std::mem::replace(&mut judged, true);
+                now - then.y <= SAFE_DROP && !(wary && world.water(then) && world.water(then - IVec3::Y)) && !(first_down && held(middle, then))
+            }
         }
     })
 }
@@ -465,6 +519,15 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
                 body.position = back;
             } else if let Some(at) = (1..=backs).map(|k| moved - body.forward() * (0.12 * k as f32)).find(|&at| clear(at, turned)) {
                 body.position = at;
+            } else if let Some(yaw) = (body.velocity.y < -0.5)
+                .then(|| [0.0f32, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0].map(|d| start_yaw + d.to_radians()).into_iter().find(|&yaw| clear(back, yaw)))
+                .flatten()
+            {
+                // Falling, it twists to where its head is clear and goes on down (a long
+                // head in a trench a block wide turns along it) rather than be held in the
+                // air where it was.
+                body.position = back;
+                body.yaw = yaw;
             } else if !rising && clear(start, turned) {
                 // Put back on what it stood or hung on: on the ground, or it falls into
                 // the same place again next step and hangs there.
@@ -582,6 +645,21 @@ mod tests {
         }
         assert!(body.position.z > 2.5, "it barely moved along the wall: {}", body.position);
         assert!(body.position.x + 0.3 <= 3.0 + 1e-3, "it went into the wall");
+    }
+
+    /// A great leaper's hop up a step rises the world's `step_rise` and no higher, at any
+    /// step length; a low jumper's still gets up a block.
+    #[test]
+    fn a_hop_up_a_step_rises_no_higher_than_the_step_rise_at_any_dt() {
+        for step_rise in [1.2, 1.45, 1.9] {
+            for dt in [0.005, 1.0 / 60.0, 0.05, 0.1] {
+                let leaper = Movement { jump: 11.0, step_rise, ..Movement::default() };
+                let rise = hop_height(hop_speed(&leaper, dt), dt);
+                assert!((step_rise..step_rise + 0.05).contains(&rise), "rise {rise} for {step_rise} at {dt}");
+                let low = Movement { jump: 3.0, step_rise, ..Movement::default() };
+                assert!(hop_height(hop_speed(&low, dt), dt) >= 1.1);
+            }
+        }
     }
 
     #[test]

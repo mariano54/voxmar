@@ -23,6 +23,7 @@ use voxmar_engine::quest::{Goal, QuestDef, QuestState, Reward};
 use voxmar_engine::quest_path::QuestPath;
 
 use super::HudImages;
+use super::inventory::InterfaceStyle;
 use super::SLOT;
 use super::screens::{GameScreen, ScreenSystems, spawn_hotkeys};
 use crate::lang::{Locale, Localized, TightLine};
@@ -43,11 +44,18 @@ pub struct QuestsPlugin;
 impl Plugin for QuestsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<QuestView>()
+            .init_resource::<TrackerRoom>()
             .init_resource::<Recentre>()
             .init_resource::<ZoomAt>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
-            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track).chain(), hear_quests).run_if(in_state(Screen::InGame)));
+            // Out of a game the tracker is not kept up, so it goes with the game.
+            .add_systems(OnExit(Screen::InGame), |mut tracker: Query<&mut Visibility, With<Tracker>>| {
+                for mut shown in &mut tracker {
+                    shown.set_if_neq(Visibility::Hidden);
+                }
+            })
+            .add_systems(Update, ((open_start, choose_on_open, show, pick, go_to_path, claim, turn_ways, keep_web_in_range, drag_web, zoom_web, go_to_current, draw, fit_lines.after(crate::ui::widgets::scroll_lists)).chain().after(ScreenSystems), (seed_pins, retire, track, measure_room, squeeze).chain(), hear_quests).run_if(in_state(Screen::InGame)));
     }
 }
 
@@ -151,18 +159,28 @@ fn keep_known_pins(launch: Res<Launch>, mut settings: ResMut<Settings>) {
     }
 }
 
-/// Opened, the book shows the first unfinished pinned quest, else the first open one, in
-/// its chapter.
-fn choose_on_open(ui: Res<UiState>, player: Res<LocalPlayer>, launch: Res<Launch>, settings: Res<Settings>, mut view: ResMut<QuestView>, mut was_open: Local<bool>) {
+/// Each time it opens, the book turns to the quest the player is on (the first unfinished
+/// pinned quest, else the first open one) and brings it to the middle of the web.
+fn choose_on_open(
+    ui: Res<UiState>,
+    player: Res<LocalPlayer>,
+    launch: Res<Launch>,
+    settings: Res<Settings>,
+    mut view: ResMut<QuestView>,
+    mut recentre: ResMut<Recentre>,
+    mut was_open: Local<bool>,
+) {
     let opened = ui.quests_open && !*was_open;
     *was_open = ui.quests_open;
-    if !opened || view.picked.is_some() {
+    // A quest asked for as the book opens (`--quests`, the gate) is kept.
+    if !opened || (view.is_changed() && view.picked.is_some()) {
         return;
     }
     let content = &launch.content;
     if let Some(quest) = current(content, &player, &settings) {
         view.chapter = chapters(content).iter().position(|age| *age == quest.age).unwrap_or(0);
         view.picked = Some(quest.name.clone());
+        recentre.0 = true;
     }
 }
 
@@ -490,6 +508,18 @@ fn goal_line(locale: &Locale, content: &Content, quest: &QuestDef, goal: &Goal, 
     format!("{mark} {}", goal_words(locale, content, quest, goal, progress))
 }
 
+/// The quests whose tracker cards say the most in `locale`, as many as the tracker pins: the
+/// tracker at its tallest, for the gate's text-fit tour.
+pub fn wordiest(content: &Content, locale: &Locale) -> Vec<String> {
+    let words = |quest: &QuestDef| {
+        let goals: usize = best_task(quest, None).iter().map(|(goal, progress)| goal_line(locale, content, quest, goal, *progress, false).chars().count()).sum();
+        title(locale, quest).chars().count() + goals
+    };
+    let mut quests: Vec<&QuestDef> = content.quests.iter().collect();
+    quests.sort_by_key(|quest| std::cmp::Reverse(words(quest)));
+    quests.into_iter().take(content.quests.tracker().pins).map(|quest| quest.name.clone()).collect()
+}
+
 /// Each goal of the task nearest done, with its progress: (have, need).
 fn best_task<'a>(quest: &'a QuestDef, state: Option<&QuestState>) -> Vec<(&'a Goal, (u32, u32))> {
     let progress = |t: usize, g: usize| state.and_then(|s| s.tasks.get(t)?.get(g).copied()).unwrap_or((0, 1));
@@ -565,18 +595,9 @@ struct WayStep {
     of: usize,
 }
 
-/// How much of the window the book takes across and down, in percent: most of it, growing
-/// with the window.
-const SHARE: Vec2 = Vec2::new(92.0, 76.0);
 /// The chapters' column, and the sidebar at the right with the picked quest's page.
 const CHAPTERS: f32 = 80.0 * PX;
 const SIDEBAR: f32 = 180.0 * PX;
-/// A quest's icon on the web at each zoom, in interface pixels: whole multiples of its 16
-/// texels' half, so the pixel art stays sharp. `ZOOM_AT` is the usual one, one and a half
-/// times a slot's, small enough for a big chapter to show much of itself at once; zoomed
-/// all the way out, a whole chapter of a hundred quests fits a laptop's book.
-const ZOOMS: [f32; 4] = [16.0, 24.0, 32.0, 48.0];
-const ZOOM_AT: usize = 1;
 /// The frame around a quest's icon, each side.
 const RIM: f32 = 2.0 * PX;
 /// The quests' least and most step across and down the web, past a cell, at the usual
@@ -600,12 +621,17 @@ const ACROSS: f32 = 0.18;
 /// How thick the lines between quests are.
 const LINE: f32 = 2.0 * PX;
 
-fn spawn(mut commands: Commands, font: Res<UiFont>) {
+fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) {
     let font = &font.0;
-    commands.spawn((QuestScreen, screen(SCRIM), Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
+    // Most of the window: `book_width` of it across, and down all but a gap at the top and
+    // the keys under it (`screens::clear_of_hud` keeps both clear of the HUD's foot).
+    let (mut root, backdrop) = screen(SCRIM);
+    root.padding.top = Val::Px(space::SECTION);
+    commands.spawn((QuestScreen, root, backdrop, Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
         let (mut card, image) = panel(0.0);
-        card.width = Val::Percent(SHARE.x);
-        card.height = Val::Percent(SHARE.y);
+        card.width = Val::Percent(style.book_width);
+        card.flex_grow = 1.0;
+        card.min_height = Val::ZERO;
         root.spawn((card, image)).with_children(|card| {
             card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() }).with_children(|heading| spawn_heading(heading, font, "screen.quests"));
             // The chapters, the web filling what is left, and the picked quest's page at the
@@ -622,8 +648,13 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
                     ..default()
                 };
                 columns.spawn((Web, bevy::ui::RelativeCursorPosition::default(), ScrollPosition::default(), web, Piece::Well.image()));
-                columns.spawn(Node { width: Val::Px(SIDEBAR), flex_shrink: 0.0, flex_direction: FlexDirection::Column, ..default() }).with_children(|side| {
-                    let detail = Node { flex_grow: 1.0, min_height: Val::ZERO, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), overflow: Overflow::scroll_y(), ..default() };
+                // A line kept under the page for its "more below" arrow, so the arrow never
+                // sits over its words.
+                let side = Node { width: Val::Px(SIDEBAR), flex_shrink: 0.0, flex_direction: FlexDirection::Column, padding: UiRect::bottom(Val::Px(BODY + space::HAIR)), ..default() };
+                columns.spawn(side).with_children(|side| {
+                    // A pixel of room either side, inside what it clips: a glyph that draws a little
+                    // left of where it is set (住) is not cut off at the page's edge.
+                    let detail = Node { flex_grow: 1.0, min_height: Val::ZERO, flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), padding: UiRect::horizontal(Val::Px(PX)), overflow: Overflow::scroll_y(), ..default() };
                     let detail = side.spawn((Detail, ScrollList, detail)).id();
                     spawn_scroll_more(side, font, detail);
                 });
@@ -761,7 +792,7 @@ fn draw(
     launch: Res<Launch>,
     locale: Res<Locale>,
     font: Res<UiFont>,
-    images: Res<HudImages>,
+    (images, style): (Res<HudImages>, Res<InterfaceStyle>),
     settings: Res<Settings>,
     viewer: Res<super::recipes::RecipeViewer>,
     chapters_column: Query<Entity, With<Chapters>>,
@@ -824,8 +855,8 @@ fn draw(
     // Spread to fill the well beside the lanes' headers, within reason; a web too big for
     // it scrolls.
     let lanes_room = Vec2::new((room.x - HEADER).max(0.0), room.y);
-    let (icon, zoom) = zoom_of(view.zoom);
-    let side = icon + 2.0 * RIM;
+    let (icon, zoom) = zoom_of(&style, view.zoom);
+    let side = cell_side(&style, view.zoom);
     let step = Vec2::new(lanes_room.x / columns as f32, lanes_room.y / tallest as f32).clamp(side + GAP_LEAST * zoom, side + GAP_MOST * zoom);
     let place = |i: usize| Vec2::X * HEADER + cells[i] * step + (step - Vec2::splat(side)) / 2.0;
     let centre = |i: usize| place(i) + Vec2::splat(side / 2.0);
@@ -956,7 +987,7 @@ fn draw(
                             top.spawn((shadowed(font, locale.get_or(&path.key(), &path.title).to_owned(), BODY, words), TightLine));
                         });
                         // A lane of one row zoomed out is too low for its count under its name.
-                        if lane.rows as f32 * step.y >= ZOOMS[ZOOM_AT] * PX + 2.0 * RIM + GAP_LEAST.y {
+                        if lane.rows as f32 * step.y >= style.book_zooms[style.book_zoom_at] * PX + 2.0 * RIM + GAP_LEAST.y {
                             let count = locale.format("quest.chapter.count", &[("done", &done), ("all", &lane.quests.len())]);
                             header.spawn((text(font, count, BODY, if finished { GOLD.with_alpha(0.6) } else { MUTED }), TightLine));
                         }
@@ -1000,7 +1031,9 @@ fn draw(
                     }
                 });
             }
-            detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, why(&locale, quest), BODY, SOFT)));
+            // A pixel in from the left: a Japanese line may begin on a glyph that reaches a
+            // pixel left of its start.
+            detail.spawn((Node { flex_shrink: 0.0, padding: UiRect::left(Val::Px(PX)), ..default() }, text(font, why(&locale, quest), BODY, SOFT)));
             // What it gives, one line each: an item with its count, or experience in a skill
             // with the skill's mark.
             if !quest.rewards.is_empty() {
@@ -1095,16 +1128,23 @@ fn line_colour(picked: bool, across: bool, done: bool) -> Color {
     }
 }
 
-/// A quest's icon size at `zoom` steps from the usual, and how much bigger than the usual
-/// it is.
-fn zoom_of(zoom: i8) -> (f32, f32) {
-    let icon = ZOOMS[(ZOOM_AT as i32 + i32::from(zoom)).clamp(0, ZOOMS.len() as i32 - 1) as usize];
-    (icon * PX, icon / ZOOMS[ZOOM_AT])
+/// A quest's icon size at `zoom` steps from the usual (`interface.ron`'s `book_zooms`, from
+/// `book_zoom_at`), and how much bigger than the usual it is.
+fn zoom_of(style: &InterfaceStyle, zoom: i8) -> (f32, f32) {
+    let (zooms, usual) = (&style.book_zooms, style.book_zoom_at);
+    let icon = zooms[(usual as i32 + i32::from(zoom)).clamp(0, zooms.len() as i32 - 1) as usize];
+    (icon * PX, icon / zooms[usual])
+}
+
+/// How many pixels across a quest's cell is at zoom `zoom`: its icon at that zoom's size
+/// from the data, in its rim.
+pub(crate) fn cell_side(style: &InterfaceStyle, zoom: i8) -> f32 {
+    zoom_of(style, zoom).0 + 2.0 * RIM
 }
 
 /// The furthest the web zooms out and in from the usual, in steps.
-fn zoom_range() -> (i8, i8) {
-    (-(ZOOM_AT as i8), (ZOOMS.len() - 1 - ZOOM_AT) as i8)
+fn zoom_range(style: &InterfaceStyle) -> (i8, i8) {
+    (-(style.book_zoom_at as i8), (style.book_zooms.len() - 1 - style.book_zoom_at) as i8)
 }
 
 /// Over the web, a mouse wheel's notches (or a trackpad's pinch) zoom it about the pointer
@@ -1113,6 +1153,8 @@ fn zoom_range() -> (i8, i8) {
 fn zoom_web(
     mut wheel: MessageReader<MouseWheel>,
     mut pinch: MessageReader<bevy::input::gestures::PinchGesture>,
+    mut typed: MessageReader<bevy::input::keyboard::KeyboardInput>,
+    (keys, ui, style): (Res<ButtonInput<KeyCode>>, Res<UiState>, Res<InterfaceStyle>),
     mut web: Query<(&ComputedNode, &bevy::ui::RelativeCursorPosition, &mut ScrollPosition), With<Web>>,
     canvas: Query<&Canvas>,
     mut view: ResMut<QuestView>,
@@ -1127,20 +1169,40 @@ fn zoom_web(
         }
     }
     *pinched += pinch.read().map(|p| p.0).sum::<f32>();
+    // + and - zoom too, while the book is up and nothing is typed: by what the key types, so
+    // on any keyboard's layout (= for + unshifted, as on a US one), or on the keypad.
+    use bevy::input::keyboard::Key;
+    let open = ui.quests_open && !ui.recipes_open && !ui.console_open;
+    let (mut zoom_in, mut zoom_out) = (open && keys.just_pressed(KeyCode::NumpadAdd), open && keys.just_pressed(KeyCode::NumpadSubtract));
+    for key in typed.read().filter(|key| open && key.state == bevy::input::ButtonState::Pressed && !key.repeat) {
+        match &key.logical_key {
+            Key::Character(c) if c == "+" || c == "=" => zoom_in = true,
+            Key::Character(c) if c == "-" => zoom_out = true,
+            _ => {}
+        }
+    }
+    let keyed = i8::from(zoom_in) - i8::from(zoom_out);
     let Ok((computed, cursor, mut scroll)) = web.single_mut() else { return };
-    let (Some(normal), true) = (cursor.normalized, cursor.cursor_over()) else {
+    let over = cursor.normalized.filter(|_| cursor.cursor_over());
+    if over.is_none() {
         *pinched = 0.0;
-        return;
-    };
+        if keyed == 0 {
+            return;
+        }
+    }
     let scale = computed.inverse_scale_factor();
-    if slide != Vec2::ZERO {
+    if over.is_some() && slide != Vec2::ZERO {
         let max = (computed.content_size() - computed.size()).max(Vec2::ZERO) * scale;
         let next = (scroll.0 - slide).clamp(Vec2::ZERO, max);
         if scroll.0 != next {
             scroll.0 = next;
         }
     }
-    let steps = if notches != 0.0 {
+    let steps = if keyed != 0 {
+        keyed
+    } else if over.is_none() {
+        0
+    } else if notches != 0.0 {
         notches.signum() as i8
     } else if pinched.abs() >= PINCH_STEP {
         let steps = pinched.signum() as i8;
@@ -1149,13 +1211,15 @@ fn zoom_web(
     } else {
         0
     };
-    let (least, most) = zoom_range();
+    let (least, most) = zoom_range(&style);
     let zoom = (view.zoom + steps).clamp(least, most);
     if zoom == view.zoom {
         return;
     }
     let Ok(canvas) = canvas.single() else { return };
-    // The pointer in the well's room, and the point of the canvas under it, in steps.
+    // The pointer in the well's room (its middle, for a key pressed with the pointer away),
+    // and the point of the canvas under it, in steps.
+    let normal = over.unwrap_or(Vec2::ZERO);
     let pointer = (normal + Vec2::splat(0.5)) * computed.size() * scale - Vec2::splat(space::GAP);
     let at = scroll.0.clamp(Vec2::ZERO, ((computed.content_size() - computed.size()) * scale).max(Vec2::ZERO)) + pointer - canvas.margin;
     zoom_at.0 = Some((pointer, canvas.grid(at)));
@@ -1422,7 +1486,7 @@ fn track(
     tracker: Query<Entity, With<Tracker>>,
     mut visibility: Query<&mut Visibility, With<Tracker>>,
     unpins: Query<(&Unpin, &Interaction), Changed<Interaction>>,
-    mut drawn: Local<Option<(Vec<String>, u32)>>,
+    mut drawn: Local<Option<(Vec<String>, u32, String)>>,
 ) {
     let content = &launch.content;
     for (unpin, interaction) in &unpins {
@@ -1436,8 +1500,9 @@ fn track(
     if let Ok(mut shown) = visibility.single_mut() {
         shown.set_if_neq(if screen || settings.pinned_quests.is_empty() { Visibility::Hidden } else { Visibility::Inherited });
     }
-    let wanted = (settings.pinned_quests.clone(), player.quests_rev);
-    if drawn.as_ref() == Some(&wanted) && !locale.is_changed() {
+    // The language too: one changed in the menus, out of a game, is not seen changing here.
+    let wanted = (settings.pinned_quests.clone(), player.quests_rev, locale.code().to_owned());
+    if drawn.as_ref() == Some(&wanted) {
         return;
     }
     *drawn = Some(wanted);
@@ -1462,8 +1527,9 @@ fn track(
                 }
                 for (goal, progress) in best_task(quest, state) {
                     let met = progress.0 >= progress.1;
-                    card.spawn((shadowed(font, goal_line(&locale, content, quest, goal, progress, met), BODY, if met { GOLD } else { TEXT }), TrackerLine));
+                    card.spawn((shadowed(font, goal_line(&locale, content, quest, goal, progress, met), BODY, if met { GOLD } else { TEXT }), TrackerLine, TrackerGoal));
                 }
+                card.spawn((Node { display: Display::None, ..default() }, shadowed(font, "", BODY, MUTED), TrackerMore));
             });
         }
     });
@@ -1473,9 +1539,136 @@ fn track(
 #[derive(Component)]
 pub struct TrackerLine;
 
+/// A goal's line on a tracker card, which [`squeeze`] may fold away.
+#[derive(Component)]
+struct TrackerGoal;
+
+/// How many of a card's goals [`squeeze`] folded away, under the ones still shown.
+#[derive(Component)]
+struct TrackerMore;
+
+/// The room the tracker is laid out in: the size of the screen it is drawn on, in
+/// physical pixels, and the interface's scale.
+#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
+pub(crate) struct TrackerRoom(pub UVec2, pub f32);
+
+/// Measures [`TrackerRoom`], for `squeeze`.
+fn measure_room(tracker: Query<&bevy::ui::ComputedUiRenderTargetInfo, With<Tracker>>, scale: Res<UiScale>, mut room: ResMut<TrackerRoom>) {
+    let Ok(target) = tracker.single() else { return };
+    room.set_if_neq(TrackerRoom(target.physical_size(), scale.0));
+}
+
+/// Folds goal lines away while the pinned cards run past the bottom of the tracker, which
+/// would cut a card off mid-line: the last card's last lines first, a card's first goal
+/// only once every other is folded, as many as the overrun's height at once (and more the next frame, should a card's
+/// note under them take more room than reckoned), each card then saying how many more it
+/// has. The cards are drawn whole again whenever the tracker is redrawn.
+fn squeeze(
+    locale: Res<Locale>,
+    (tracker, given): (Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children), With<Tracker>>, Res<TrackerRoom>),
+    cards: Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &Children)>,
+    mut goals: Query<(&mut Node, &ComputedNode), (With<TrackerGoal>, Without<TrackerMore>)>,
+    mut more: Query<(&mut Node, &mut Text), (With<TrackerMore>, Without<TrackerGoal>)>,
+    mut room: Local<TrackerRoom>,
+) {
+    let Ok((column, at, children)) = tracker.single() else { return };
+    // A tracker given more room or less (the window resized, the interface scaled) unfolds
+    // every card, to fold them again to the new room from the next frame's layout. (The
+    // tracker's own height follows its folding, so it is no measure of its room.)
+    let now = *given;
+    if now != *room {
+        *room = now;
+        for (mut node, _) in &mut goals {
+            node.display = Display::Flex;
+        }
+        for (mut node, _) in &mut more {
+            node.display = Display::None;
+        }
+        return;
+    }
+    let bottom = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| at.translation.y + node.size().y / 2.0;
+    let Some(last) = children.iter().filter_map(|card| cards.get(card).ok()).filter(|(node, ..)| node.size().y > 0.0).last() else { return };
+    // Past the bottom by more than a pixel's rounding.
+    let mut over = bottom(last.0, last.1) - bottom(column, at);
+    if over <= 1.0 {
+        return;
+    }
+    // Each card keeps its first goal while folding the others will do; a card then shows
+    // its first goal only if there is room for it.
+    for keep in [1, 0] {
+        for card in children.iter().rev() {
+            let Ok((_, _, lines)) = cards.get(card) else { continue };
+            let shown: Vec<(Entity, f32)> = lines.iter().filter_map(|line| goals.get(line).ok().filter(|(node, _)| node.display != Display::None).map(|(_, size)| (line, size.size().y))).collect();
+            let Some(note) = lines.iter().find(|&line| more.contains(line)).filter(|_| shown.len() > keep) else { continue };
+            let Ok((note_node, _)) = more.get(note) else { continue };
+            // The note, once shown (this frame or before), takes a line of its own.
+            if note_node.display == Display::None {
+                over += shown.iter().map(|(_, height)| *height).fold(f32::MAX, f32::min);
+            }
+            let mut folded = 0;
+            for &(line, height) in shown.iter().skip(keep).rev() {
+                if over <= 1.0 {
+                    break;
+                }
+                goals.get_mut(line).expect("a goal line").0.display = Display::None;
+                over -= height;
+                folded += 1;
+            }
+            if folded == 0 {
+                continue;
+            }
+            let hidden = lines.iter().filter(|&line| goals.get(line).is_ok_and(|(node, _)| node.display == Display::None)).count();
+            if let Ok((mut node, mut text)) = more.get_mut(note) {
+                node.display = Display::Flex;
+                text.0 = locale.format("quest.tracker.more", &[("count", &hidden)]);
+            }
+            if over <= 1.0 {
+                return;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two pinned cards of three 20-pixel goals each run 45 pixels past the tracker's foot.
+    /// Folding from the last card up, each card's More note (shown, but not yet laid out)
+    /// is reckoned once: the last card folds all three goals, the first keeps its first.
+    /// Given a bigger window, every goal comes back and the notes go.
+    #[test]
+    fn the_tracker_folds_to_its_room_and_unfolds_when_it_grows() {
+        let mut app = App::new();
+        let content_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        app.insert_resource(Locale::load(&content_dir, "en")).insert_resource(TrackerRoom(UVec2::new(1280, 720), 1.0)).add_systems(Update, squeeze);
+        let sized = |height: f32| ComputedNode { size: Vec2::new(200.0, height), inverse_scale_factor: 1.0, ..Default::default() };
+        let at = |y: f32| bevy::ui::UiGlobalTransform::from(bevy::math::Affine2::from_translation(Vec2::new(100.0, y)));
+        let world = app.world_mut();
+        let card = |world: &mut World, middle: f32| {
+            let goals: Vec<Entity> = (0..3).map(|_| world.spawn((TrackerGoal, Node::default(), sized(20.0))).id()).collect();
+            let note = world.spawn((TrackerMore, Node { display: Display::None, ..default() }, Text::default(), sized(0.0))).id();
+            let card = world.spawn((sized(80.0), at(middle))).add_children(&goals).add_children(&[note]).id();
+            (card, goals, note)
+        };
+        let (first, first_goals, first_note) = card(world, 25.0);
+        let (last, last_goals, last_note) = card(world, 105.0);
+        // The tracker's foot at 100, the last card's at 145.
+        world.spawn((Tracker, sized(100.0), at(50.0))).add_children(&[first, last]);
+        let shown = |app: &App, line: Entity| app.world().get::<Node>(line).unwrap().display != Display::None;
+        // The first frame learns the room; the next folds.
+        app.update();
+        app.update();
+        assert_eq!(last_goals.iter().map(|&g| shown(&app, g)).collect::<Vec<_>>(), [false; 3], "the last card folds every goal");
+        assert_eq!(first_goals.iter().map(|&g| shown(&app, g)).collect::<Vec<_>>(), [true, false, false], "the first card keeps its first goal: its note counted once");
+        assert!(shown(&app, first_note) && shown(&app, last_note));
+        assert_eq!(app.world().get::<Text>(first_note).unwrap().0, "+2 More");
+        // A bigger window: everything unfolds, to be folded again to the new room.
+        app.world_mut().insert_resource(TrackerRoom(UVec2::new(2560, 1440), 1.0));
+        app.update();
+        assert!(first_goals.iter().chain(&last_goals).all(|&g| shown(&app, g)), "a bigger window unfolds every goal");
+        assert!(!shown(&app, first_note) && !shown(&app, last_note), "and puts the notes away");
+    }
 
     fn content() -> Content {
         voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap()
@@ -1714,15 +1907,25 @@ mod tests {
         assert_eq!(line_colour(true, true, false), ACCENT);
     }
 
-    /// Zoomed all the way out or in, the icon stays a whole number of half texels across.
+    /// The book's zooms as `interface.ron` gives them.
+    fn style() -> InterfaceStyle {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/core/interface.ron");
+        let source = std::fs::read_to_string(path).expect("core interface.ron");
+        InterfaceStyle::load(&[voxmar_engine::content::ContentFile { package: "core".into(), name: InterfaceStyle::FILE.into(), source }]).expect("loads")
+    }
+
+    /// Zoomed all the way out or in, and past either end, the icon stays a whole number of
+    /// half texels across.
     #[test]
     fn zoom_keeps_icons_sharp() {
-        let (least, most) = zoom_range();
+        let style = style();
+        let (least, most) = zoom_range(&style);
+        assert!(least < 0 && most > 0, "the book zooms both ways from where it opens");
         for zoom in least - 1..=most + 1 {
-            let (icon, _) = zoom_of(zoom);
+            let (icon, _) = zoom_of(&style, zoom);
             assert_eq!((icon / PX / 8.0).fract(), 0.0, "zoom {zoom}: icon {icon}");
         }
-        assert_eq!(zoom_of(0).1, 1.0);
+        assert_eq!(zoom_of(&style, 0).1, 1.0);
     }
 
     #[test]

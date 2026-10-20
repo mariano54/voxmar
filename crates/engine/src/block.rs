@@ -202,6 +202,10 @@ pub struct BlockDef {
     /// Seconds to break by hand. Negative means unbreakable.
     pub hardness: f32,
     pub sound: Sound,
+    /// The building material it sounds as (a `materials` entry of sounds.ron, by name),
+    /// whatever its tags say: cut cobblestone is not `cobbled` for recipes but still sounds
+    /// like cobblestone. Only sounds read it; nothing else may.
+    pub material: Option<String>,
     /// Name of the block dropped when broken, `core:air` for nothing. Defaults to the
     /// block itself.
     pub drops: Option<String>,
@@ -279,6 +283,18 @@ pub struct BlockDef {
     /// The block placed in the cell above along with it, by name, in the same facing, and
     /// broken with it: a door's top half, which rests on it (`support: Below`).
     pub upper: Option<String>,
+    /// What coats it in place (`with`, a block held, one used up) and what it is then
+    /// (`into`): clay on a wattle panel daubs it. It takes the level of the recipe that makes
+    /// `into` and teaches its experience a piece (server `coat.rs`).
+    pub coat: Option<Coat>,
+}
+
+/// A coating (see [`BlockDef::coat`]): the block held to coat it, and the block it becomes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Coat {
+    pub with: String,
+    pub into: String,
 }
 
 /// The name suffix of a block made upside down (see [`BlockDef::flips`]), before any facing's.
@@ -517,6 +533,7 @@ impl Default for BlockDef {
             light_filter: 0,
             hardness: 1.0,
             sound: Sound::Stone,
+            material: None,
             drops: None,
             drop_count: 1,
             color: [255, 0, 255],
@@ -544,6 +561,7 @@ impl Default for BlockDef {
             shape: None,
             swaps: None,
             upper: None,
+            coat: None,
         }
     }
 }
@@ -577,6 +595,10 @@ impl BlockDef {
         self.wall.iter_mut().for_each(fill);
         self.swaps.iter_mut().for_each(fill);
         self.upper.iter_mut().for_each(fill);
+        if let Some(coat) = &mut self.coat {
+            fill(&mut coat.with);
+            fill(&mut coat.into);
+        }
         self.icon.iter_mut().for_each(fill);
         self.tags.iter_mut().for_each(fill);
         for variant in &mut self.variants {
@@ -601,6 +623,10 @@ impl BlockDef {
         self.swaps.iter_mut().for_each(qualify);
         self.upper.iter_mut().for_each(qualify);
         self.shape.iter_mut().for_each(qualify);
+        if let Some(coat) = &mut self.coat {
+            qualify(&mut coat.with);
+            qualify(&mut coat.into);
+        }
         if let Some(fluid) = &mut self.fluid {
             for meeting in &mut fluid.meets {
                 for name in [&mut meeting.fluid, &mut meeting.source, &mut meeting.flowing, &mut meeting.below] {
@@ -663,6 +689,7 @@ pub struct BlockPatch {
     pub light_filter: Option<u8>,
     pub hardness: Option<f32>,
     pub sound: Option<Sound>,
+    pub material: Option<String>,
     pub drops: Option<String>,
     pub drop_count: Option<u8>,
     pub color: Option<[u8; 3]>,
@@ -689,6 +716,7 @@ impl BlockPatch {
             light_filter,
             hardness,
             sound,
+            material,
             drops,
             drop_count,
             color,
@@ -712,6 +740,7 @@ impl BlockPatch {
         light_filter.into_iter().for_each(|v| def.light_filter = v);
         hardness.into_iter().for_each(|v| def.hardness = v);
         sound.into_iter().for_each(|v| def.sound = v);
+        material.into_iter().for_each(|v| def.material = Some(v));
         drops.into_iter().for_each(|v| def.drops = Some(v));
         drop_count.into_iter().for_each(|v| def.drop_count = v);
         color.into_iter().for_each(|v| def.color = v);
@@ -860,6 +889,8 @@ pub struct BlockRegistry {
     shape_starts: Vec<u32>,
     /// The texture layer of each quad of a block's shape, by block.
     shape_layers: Vec<Vec<u16>>,
+    /// What each shape stops movement with: its boxes' unturned bounds, by shape.
+    shape_collision: Vec<Vec<crate::physics::Aabb>>,
     /// By block, whether it is only a form another takes when placed (`placement_form`).
     placement_forms: Vec<bool>,
     /// Every block's looks: itself and its variants (shared by the variants).
@@ -1278,7 +1309,20 @@ impl BlockRegistry {
                 return Err(RegistryError(format!("`{}` drops merged-away `{}`; drop `{into}` (item_of) instead", defs[i].name, defs[dropped.0 as usize].name)));
             }
         }
-        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, placement_forms, looks, fluids, renamed: FxHashMap::default() })
+        let shape_collision = shapes.iter().map(|s| s.bounds.iter().map(|&(min, max)| crate::physics::Aabb { min, max }).collect()).collect();
+        // A coating names blocks that are, held as an item, and turns it into another.
+        for def in &defs {
+            let Some(coat) = &def.coat else { continue };
+            for (what, name) in [("coated with", &coat.with), ("coats into", &coat.into)] {
+                if !by_name.contains_key(name) {
+                    return Err(RegistryError(format!("`{}` is {what} unknown block `{name}`", def.name)));
+                }
+            }
+            if coat.into == def.name || defs[by_name[&coat.into].0 as usize].coat.is_some() {
+                return Err(RegistryError(format!("`{}` coats into `{}`, which is itself or coats again", def.name, coat.into)));
+            }
+        }
+        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, shape_collision, placement_forms, looks, fluids, renamed: FxHashMap::default() })
     }
 
     /// A block's looks for a generator to choose from: the block itself first, then its
@@ -1297,6 +1341,22 @@ impl BlockRegistry {
                 let def = &self.defs[id.0 as usize];
                 def.variant_of.is_none() && self.info(id).fluid.is_none_or(|f| self.fluids[f.fluid.0 as usize].source == id) && def.has_tag(tag)
             })
+    }
+
+    /// Whether a block is less than a whole block: drawn as a shape (a slab, stairs, a post,
+    /// a column, a headstone), whatever its tags. See [`Self::answers_whole`].
+    pub fn is_piece(&self, id: BlockId) -> bool {
+        self.info(id).shape.is_some()
+    }
+
+    /// Blocks that answer `tag:TAG` where whole blocks are counted (a multiblock's cells):
+    /// every block with the tag, but a piece (see [`Self::is_piece`]) only when no whole
+    /// block has it too, so cobblestone slabs never stand in for cobblestone (six slabs come
+    /// from three blocks) while a tag only pieces carry (`beam`) still takes them.
+    pub fn answers_whole(&self, tag: &str) -> Vec<BlockId> {
+        let all: Vec<BlockId> = (0..self.defs.len() as u16).map(BlockId).filter(|&id| self.def(id).has_tag(tag)).collect();
+        let whole = all.iter().any(|&id| !self.is_piece(id));
+        all.into_iter().filter(|&id| !whole || !self.is_piece(id)).collect()
     }
 
     /// The fluid state a block is, if it is one.
@@ -1423,6 +1483,12 @@ impl BlockRegistry {
         self.id(&format!("{base}{}", facing.suffix())).unwrap_or(block)
     }
 
+    /// What coats `block` in place and what it becomes (see [`BlockDef::coat`]).
+    pub fn coating(&self, block: BlockId) -> Option<(BlockId, BlockId)> {
+        let coat = self.def(block).coat.as_ref()?;
+        Some((*self.by_name.get(&coat.with)?, *self.by_name.get(&coat.into)?))
+    }
+
     /// What `block` turns into when used (see [`BlockDef::swaps`]), in its facing.
     pub fn swapped(&self, block: BlockId) -> Option<BlockId> {
         let to = self.info(block).swaps?;
@@ -1456,6 +1522,19 @@ impl BlockRegistry {
     /// The shape a block drawn as boxes takes, made ready for its facing.
     pub fn shape(&self, id: BlockId) -> Option<&crate::shape::Shape> {
         self.info(id).shape.map(|s| &self.shapes[s as usize])
+    }
+
+    /// What a block stops movement with, in blocks from its cell's lower corner: nothing for
+    /// one walked through, its shape's boxes for a solid block drawn as one (a slab's lower
+    /// half, a table's top and legs), else the whole cell. Players move against these, on the
+    /// client and as the server judges them.
+    pub fn collision(&self, id: BlockId) -> &[crate::physics::Aabb] {
+        let info = self.info(id);
+        match (info.solid, info.shape) {
+            (false, _) => &[],
+            (true, Some(s)) => &self.shape_collision[s as usize],
+            (true, None) => &crate::physics::CUBE,
+        }
     }
 
     /// Where a block's shape's quads start in all shapes' quads, in order, as the renderer's

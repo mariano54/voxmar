@@ -10,6 +10,7 @@
         "sand": ["#c4b080", "#cfbb8b", "#d8c596", "#e0cea0", "#e7d6aa", "#eedeb4"],
         "red_sand": ["#9c4e1c", "#a95922", "#b5632a", "#c06e33", "#ca7a3e", "#d3864a"],
         "gravel": ["#6c6765", "#7a7472", "#88827f", "#96908d", "#a49e9b", "#b3adaa"],
+        "flint": ["#1f2026", "#2c2e36", "#3a3c46", "#4e5260", "#6a6e7c", "#8a8e9c"],
         "clay": ["#8a909e", "#979dab", "#a3a9b6", "#afb4c0", "#babfca", "#c6cad4"],
         "mud": ["#2c2b2c", "#353334", "#3e3c3c", "#474545", "#514e4e", "#5b5858"],
         "moss": ["#3c5420", "#476226", "#53702c", "#5f7e33", "#6b8b3b", "#789945"],
@@ -97,6 +98,10 @@
         ]),
         "block/gravel": (palettes: {"main": "gravel"}, layers: [
             Paint(palette: "main", base: 0.55, shade: [Cells(count: (5, 5), jitter: 1.0, value: 0.45, edge: -0.35, bevel: 0.3, warp: 0.6), Grain(0.15)], clean: true),
+        ]),
+        // A flint nodule: dark, glassy facets with pale knapped edges.
+        "block/loose_flint": (palettes: {"main": "flint"}, layers: [
+            Paint(palette: "main", base: 0.45, shade: [Cells(count: (3, 3), jitter: 1.0, value: 0.5, edge: 0.4, bevel: 0.45, warp: 0.4), Grain(0.08)], clean: true),
         ]),
         "block/sand": (palettes: {"main": "sand"}, layers: [
             Paint(palette: "main", base: 0.55, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.25), Grain(0.5), Speckle(chance: 0.1, amount: -0.25), Speckle(chance: 0.08, amount: 0.25, seed: 1)]),

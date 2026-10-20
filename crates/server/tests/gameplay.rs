@@ -21,6 +21,9 @@ struct Client {
     id: PlayerId,
     name: String,
     phase: &'static str,
+    /// Whether the server's pings are answered, as a running game does; a minimized one
+    /// sends nothing from the game itself, only its network thread's keepalives.
+    pongs: bool,
     /// Dropped items in sight, and the ones we picked up.
     items: std::collections::HashMap<u32, ItemView>,
     collected: Vec<u32>,
@@ -174,15 +177,18 @@ fn local_connection(accepted: crossbeam_channel::Sender<voxmar_protocol::ServerC
 
 impl Client {
     /// Joins a new server in-process, as singleplayer does.
+    #[track_caller]
     fn join() -> Self {
         Self::join_with(ServerConfig { view_distance: 2, ..Default::default() })
     }
 
+    #[track_caller]
     fn join_with(config: ServerConfig) -> Self {
         Self::join_named(config, "test")
     }
 
     /// Joins a new server on `config` as `name`.
+    #[track_caller]
     fn join_named(config: ServerConfig, name: &str) -> Self {
         let content = content();
         let server = spawn(config, content.clone()).unwrap();
@@ -221,6 +227,7 @@ impl Client {
     /// Prepares the content and Hello before opening a connection. Loading and hashing
     /// the fixture must not spend the server's pending-login deadline, especially when
     /// other tests keep this process off its cores. `prepare` can model that delay in ticks.
+    #[track_caller]
     fn greet_content(open: impl FnOnce() -> ClientConnection, name: &str, server: Option<ServerHandle>, admin_token: Option<&str>, prepare: impl FnOnce() -> Content) -> Self {
         let content = prepare();
         let hello = ClientMessage::Hello { name: name.into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: admin_token.map(str::to_owned) };
@@ -231,6 +238,7 @@ impl Client {
             id: 0,
             name: name.to_owned(),
             phase: "welcome",
+            pongs: true,
             items: Default::default(),
             collected: Vec::new(),
             skills: Default::default(),
@@ -294,6 +302,7 @@ impl Client {
     /// is opening the world and generating where the player stands, never idle, so until
     /// then the time in all is the CPU time its thread had: at load 120 a server starting
     /// with a share of a core sent no welcome for 60 s while it worked all along.
+    #[track_caller]
     fn pump_until(&mut self, done: impl Fn(&Self) -> bool) {
         const AWAY: Duration = Duration::from_millis(500);
         let began = Instant::now();
@@ -441,7 +450,9 @@ impl Client {
                 self.pips.push(pips);
             }
             ServerMessage::Ping { id } => {
-                self.connection.send(ClientMessage::Pong { id });
+                if self.pongs {
+                    self.connection.send(ClientMessage::Pong { id });
+                }
             }
             ServerMessage::Hurt { creature, damage, defended } => {
                 self.hurt.push((damage, defended));
@@ -470,6 +481,7 @@ impl Client {
     /// do about the messages sent before it is done, for checking that something did not
     /// happen without waiting a fixed time. Sound only for in-process clients, whose
     /// messages reach the server at once; over TCP a message may still be in flight.
+    #[track_caller]
     fn after_server_ticks(&mut self, ticks: u64) {
         let ran = |c: &Self| c._server.as_ref().expect("the first player holds the server").ticks();
         let until = ran(self) + ticks + 1;
@@ -488,6 +500,7 @@ impl Client {
     /// Applies what the server sends until it tells of a tick at least `ticks` past the
     /// last it told of, or `done`: a wait by the server's clock, which a busy machine
     /// slows with it.
+    #[track_caller]
     fn pump_ticks(&mut self, ticks: u64, done: impl Fn(&Self) -> bool) {
         let until = self.server_tick + ticks;
         self.pump_until(|c| c.server_tick >= until || done(c));
@@ -521,11 +534,13 @@ impl Client {
 
     /// Waits until the server's clock has run at least `seconds` on (it tells the time every
     /// second, so a little more).
+    #[track_caller]
     fn wait_server(&mut self, seconds: u64) {
         self.after_ticks(seconds * TICKS_PER_SECOND as u64);
     }
 
     /// Runs a command and returns the console lines it answers with.
+    #[track_caller]
     fn command(&mut self, line: &str) -> Vec<(ChatKind, String)> {
         self.chat.clear();
         self.connection.send(ClientMessage::Command { line: line.into() });
@@ -535,12 +550,29 @@ impl Client {
 
     /// Waits until the server has handled everything sent before (refused or instant
     /// actions included), by a command's answer coming back after them.
+    #[track_caller]
     fn settle(&mut self) {
         self.ok("/time");
     }
 
+    /// Waits until the land of the columns all round the player's is in, its own too. Tests
+    /// build within a few blocks of where the player stands, and the server judges a
+    /// structure (a kiln's cook, a machine's survey) only on land it holds; on a busy machine
+    /// a column beside the player's took many seconds more to load than the player's own, and
+    /// a check timed in the server's seconds ran out on land not yet there (a kiln across two
+    /// columns refused its cook; a turbine hall stayed incomplete for 17 server seconds). The
+    /// server sends only land it holds, so once the client has it, so has the server.
+    #[track_caller]
+    fn land_round(&mut self) {
+        self.pump_until(|c| {
+            let at = ColumnPos::of_block(c.position.floor().as_ivec3());
+            (-1..=1).all(|dx| (-1..=1).all(|dz| c.world.contains(at.offset(dx, dz))))
+        });
+    }
+
     /// Waits until at least `ticks` server ticks have passed from now, by the server's own
     /// clock (it tells it once a second).
+    #[track_caller]
     fn after_ticks(&mut self, ticks: u64) {
         let told = self.server_tick;
         self.pump_until(|c| c.server_tick > told);
@@ -548,8 +580,37 @@ impl Client {
         self.pump_until(|c| c.server_tick >= from + ticks);
     }
 
+    /// Waits until at least `ticks` server ticks have passed from now, and little longer:
+    /// it asks the server's clock (`ask_tick`) rather than waiting on its once-a-second
+    /// tell, which made a one-second wait one to two. For an admin, who may ask.
+    #[track_caller]
+    fn after_ticks_asked(&mut self, ticks: u64) {
+        let from = self.ask_tick();
+        while self.ask_tick() < from + ticks {}
+    }
+
+    /// As [`Client::wait_server`], by the asked clock ([`Client::after_ticks_asked`]).
+    #[track_caller]
+    fn wait_server_asked(&mut self, seconds: u64) {
+        self.after_ticks_asked(seconds * TICKS_PER_SECOND as u64);
+    }
+
+    /// The server's tick now: `/time add 0` tells it at once and moves nothing. Its answer
+    /// is taken out of the chat, and whatever else was said there kept.
+    #[track_caller]
+    fn ask_tick(&mut self) -> u64 {
+        let before = self.chat.len();
+        self.connection.send(ClientMessage::Command { line: "/time add 0".into() });
+        let answer = |c: &Client| c.chat[before..].iter().position(|(kind, text)| *kind == ChatKind::Info && text.starts_with("Day ") && text.contains("(tick "));
+        self.pump_until(|c| answer(c).is_some());
+        let at = before + answer(self).expect("answered");
+        self.chat.remove(at);
+        self.server_tick
+    }
+
     /// Waits until `count` holds still across 20 server ticks after everything sent was
     /// handled (drops still landing, pick-ups on the way), and returns it.
+    #[track_caller]
     fn quiet(&mut self, count: impl Fn(&Self) -> usize) -> usize {
         for _ in 0..30 {
             self.settle();
@@ -574,6 +635,7 @@ impl Client {
     }
 
     /// Runs a command that should succeed, returning its answer.
+    #[track_caller]
     fn ok(&mut self, line: &str) -> String {
         let lines = self.command(line);
         assert!(lines.iter().all(|(kind, _)| *kind == ChatKind::Info), "{line}: {lines:?}");
@@ -600,10 +662,10 @@ fn break_and_place_blocks() {
     let mut client = Client::join();
     client.clear();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
-    // Stone, which takes long enough to mine that a server catching up cannot finish it
+    // Cobblestone (a bare hand breaks it, unlike natural stone), which takes long enough to mine that a server catching up cannot finish it
     // anywhere near at once.
-    client.ok("/setblock ~ ~-1 ~ stone");
-    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:stone"));
+    client.ok("/setblock ~ ~-1 ~ cobblestone");
+    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:cobblestone"));
     let ground = client.world.block(below).unwrap();
     let hardness = Duration::from_secs_f32(client.content.blocks.info(ground).hardness);
 
@@ -726,16 +788,16 @@ fn crops_are_sown_at_their_level_grow_and_are_harvested_for_experience() {
 fn a_block_mined_nearly_long_enough_still_breaks_when_the_next_is_started() {
     // A busy server can complete a break later than the client, which shows it done and
     // starts on the next block; that must not cancel the first. Too early, it still does.
-    // Stone takes long enough that a server catching up on its ticks cannot finish the
+    // Cobblestone (bare hands break it, unlike natural stone) takes long enough that a server catching up on its ticks cannot finish the
     // block only begun before it is replaced.
     let mut client = Client::join();
     let feet = client.position.floor().as_ivec3();
     let (a, b, c) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2), feet + IVec3::new(1, -1, 1));
-    client.ok("/fill ~ ~-1 ~1 ~1 ~-1 ~2 stone");
-    client.pump_until(|cl| [a, b, c].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
+    client.ok("/fill ~ ~-1 ~1 ~1 ~-1 ~2 cobblestone");
+    client.pump_until(|cl| [a, b, c].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:cobblestone")));
     let stone = client.world.block(a).unwrap();
     let hardness = client.content.blocks.info(stone).hardness;
-    assert!(Duration::from_secs_f32(hardness) > CATCH_UP * 2, "stone mines too fast for this test");
+    assert!(Duration::from_secs_f32(hardness) > CATCH_UP * 2, "cobblestone mines too fast for this test");
     // Clicked 50 ms apart, then the next once 85% of the second's time has passed.
     let mine = |client: &Client, block: IVec3, at: Instant| client.propose_at("core:mine", ActionTarget::Block { block, face: Face::PosY }, at);
     let start = Instant::now();
@@ -755,8 +817,8 @@ fn a_block_the_client_finished_breaks_even_if_the_server_started_it_late() {
     let mut client = Client::join();
     let feet = client.position.floor().as_ivec3();
     let (a, b) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2));
-    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 stone");
-    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
+    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 cobblestone");
+    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:cobblestone")));
     let mine = |client: &Client, block: IVec3| client.propose("core:mine", ActionTarget::Block { block, face: Face::PosY });
     mine(&client, a);
     client.connection.send(ClientMessage::Finished { target: ActionTarget::Block { block: a, face: Face::PosY } });
@@ -961,9 +1023,9 @@ fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
     copy_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), &assets.join("content"));
     let blocks = assets.join("content/base/blocks.ron");
     let source = std::fs::read_to_string(&blocks).unwrap();
-    let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet"]"#;
+    let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound"]"#;
     assert!(source.contains(mossy));
-    std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "tagged"]"#)).unwrap();
+    std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound", "tagged"]"#)).unwrap();
     let tagged = load_content(&assets).expect("content loads");
     assert!(warned(tagged), "a block's tags changed");
     std::fs::remove_dir_all(&dir).unwrap();
@@ -1516,14 +1578,14 @@ fn looking_closely_shows_more_with_farming() {
 
 #[test]
 fn a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks() {
-    // About nine ticks a second instead of twenty: judged by its ticks, stone would take
+    // About nine ticks a second instead of twenty: judged by its ticks, cobblestone would take
     // the server more than twice its time, long after the player saw it break.
     let lag = voxmar_server::Lag { per_tick: Duration::from_millis(60), ..Default::default() };
     let mut client = Client::join_with(ServerConfig { view_distance: 2, lag, ..Default::default() });
     client.clear();
     let below = client.position.floor().as_ivec3() - IVec3::Y;
-    client.ok("/setblock ~ ~-1 ~ stone");
-    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:stone"));
+    client.ok("/setblock ~ ~-1 ~ cobblestone");
+    client.pump_until(|c| c.world.block(below) == c.content.blocks.id("base:cobblestone"));
     let hardness = client.content.blocks.info(client.world.block(below).unwrap()).hardness;
     let (started, from) = (Instant::now(), client.ticks());
     client.propose("core:mine", ActionTarget::Block { block: below, face: Face::PosY });
@@ -1534,11 +1596,11 @@ fn a_break_completes_on_time_by_the_clock_when_the_server_runs_behind_on_ticks()
     });
     let ran = ran.get();
     let took = started.elapsed().as_secs_f32();
-    assert!(took >= hardness - 0.05, "stone ({hardness} s) broke after {took:.2} s");
+    assert!(took >= hardness - 0.05, "cobblestone ({hardness} s) broke after {took:.2} s");
     // Each tick takes at least 60 ms, so the clock finishes it in fewer ticks than counting
     // them would.
     let by_ticks = (hardness * TICKS_PER_SECOND as f32) as u64;
-    assert!(ran < by_ticks, "stone broke after {ran} ticks, as many as {by_ticks} would take counted");
+    assert!(ran < by_ticks, "cobblestone broke after {ran} ticks, as many as {by_ticks} would take counted");
 }
 
 #[test]
@@ -1548,8 +1610,8 @@ fn placing_or_throwing_while_mining_does_not_cancel_the_mining() {
     let mut client = Client::join_with(ServerConfig { view_distance: 2, lag: SLOW, ..Default::default() });
     let feet = client.position.floor().as_ivec3();
     let (a, b) = (feet + IVec3::new(0, -1, 1), feet + IVec3::new(0, -1, 2));
-    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 stone");
-    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:stone")));
+    client.ok("/fill ~ ~-1 ~1 ~ ~-1 ~2 cobblestone");
+    client.pump_until(|cl| [a, b].into_iter().all(|p| cl.world.block(p) == cl.content.blocks.id("base:cobblestone")));
     let hardness = client.content.blocks.info(client.world.block(a).unwrap()).hardness;
     // Each click half the break's time after the last, by the clock the server judges by.
     let (mut at, half) = (Instant::now(), Duration::from_secs_f32(hardness * 0.5));
@@ -1573,8 +1635,8 @@ fn a_finished_break_the_server_refused_is_undone_on_the_client() {
     // client must be told what is really there rather than keep a block only it broke.
     let mut client = Client::join();
     let far = client.position.floor().as_ivec3() + IVec3::new(0, -1, 9);
-    client.ok("/setblock ~ ~-1 ~9 stone");
-    client.pump_until(|c| c.world.block(far) == c.content.blocks.id("base:stone"));
+    client.ok("/setblock ~ ~-1 ~9 cobblestone");
+    client.pump_until(|c| c.world.block(far) == c.content.blocks.id("base:cobblestone"));
     let stone = client.world.block(far).unwrap();
     let target = ActionTarget::Block { block: far, face: Face::PosY };
     client.propose("core:mine", target);
@@ -1617,14 +1679,14 @@ fn ores_ask_for_a_mining_level_and_a_pickaxe_and_teach_mining() {
     hold(&client, 0);
     mine(&client);
     client.settle();
-    client.after_ticks(with_pickaxe + 20);
+    client.after_ticks_asked(with_pickaxe + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke at Mining 1");
     // At Mining 15 with a bare hand: refused too.
     client.ok("/skill mining 15");
     hold(&client, 1);
     mine(&client);
     client.settle();
-    client.after_ticks(by_hand + 20);
+    client.after_ticks_asked(by_hand + 20);
     assert_eq!(client.world.block(ore), Some(iron), "iron ore broke without a pickaxe");
     // At Mining 15 with the stone pickaxe: broken, quicker than by hand (by the server's
     // clock, told once a second), teaching Mining (35).
@@ -1923,7 +1985,7 @@ fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
     client.ok("/skill magic 45");
     client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.1 == 55));
     client.connection.send(ClientMessage::Pray { prayer: ward, on: true });
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(client.prayers.as_ref().unwrap().2.is_empty(), "Ward Melee is Magic 46");
     // Points are 10 and one a Magic level, full for a new player.
     client.ok("/skill magic 46");
@@ -1961,7 +2023,7 @@ fn prayers_drain_ward_off_blows_and_fill_at_an_altar() {
     let bone_slot = (0..voxmar_engine::inventory::HOTBAR_SLOTS).find(|&s| client.inventory.get(s).is_some_and(|s| s.item == bone)).expect("the bone in the hotbar");
     let yaw = yaw_toward(client.position, altar.as_vec3() + 0.5);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.3, selected_slot: bone_slot as u8, flying: false }));
-    client.wait_server(1);
+    client.wait_server_asked(1);
     let earned = client.earned.len();
     client.propose("base:pray", ActionTarget::Block { block: altar, face: Face::NegZ });
     client.pump_until(|c| c.prayers.as_ref().is_some_and(|p| p.0 == p.1) && c.earned.len() > earned);
@@ -2236,6 +2298,7 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
 /// paid fire survive reload; taking out a brick and putting it back leaves it cold.
 #[test]
 fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
+    lockstep("a kiln's charge burns down by the server's ticks, so the cook after the reload finds it lit however long a busy machine takes by the clock");
     let dir = world_dir("kiln-fire");
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let mut client = Client::join_with(config());
@@ -2243,6 +2306,23 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     // The kiln lit, the quest's last part.
     let lit = |c: &Client| c.quests.iter().find(|q| q.name == "base:crucible_kiln").unwrap().tasks[0].last().unwrap().0;
     let light = |c: &Client| c.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
+    // A cook takes its seconds of the clock, judged by when messages arrive: proposed as if
+    // clicked now, with a command stamped just past its time, it is done at once, so no
+    // clock time passes in lockstep while the charge burns by ticks. The command's answer is
+    // read here, not taken for the next one's.
+    let cook = |c: &mut Client| {
+        let action = c.content.actions.expect("base:cook");
+        let seconds = match c.content.actions.get(action).expect("base:cook is defined").duration {
+            voxmar_engine::action::Duration::Seconds(s) => s,
+            other => panic!("a cook is timed in seconds, not {other:?}"),
+        };
+        let at = Instant::now();
+        c.propose_at("base:cook", ActionTarget::Block { block: core, face: Face::PosY }, at);
+        c.chat.clear();
+        c.connection.send_at(ClientMessage::Command { line: "/time".into() }, at + Duration::from_secs_f32(seconds + 0.1));
+        c.pump_until(|c| c.chat.iter().any(|(_, text)| text.contains("(tick ")));
+        c.chat.clear();
+    };
     let count = |c: &Client, name: &str| {
         let item = c.content.blocks.expect(name);
         c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
@@ -2277,13 +2357,15 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     let meta = voxmar_server::save::WorldSave::new(&dir).read_meta().unwrap();
     let fire = meta.lit.iter().find(|fire| fire.position == core.to_array()).expect("saved paid fire").clone();
     let mut client = Client::join_with(config());
+    // This kiln stands across two columns: a cook asked before the other is in is turned down.
+    client.land_round();
     client.pump_until(|c| !c.quests.is_empty() && c.world.block(core) == c.content.blocks.id("base:crucible"));
     assert_eq!(lit(&client), 1);
     light(&client);
     client.settle();
     client.ok("/give copper_ore 1");
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
-    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    cook(&mut client);
     client.pump_until(|c| count(c, "base:copper_ingot") == 1);
     // Two consecutive edits must quench it even before any cooking or quest check.
     for line in ["/setblock ~3 ~1 ~-1 air", "/setblock ~3 ~1 ~-1 kiln_bricks"] { client.ok(line); }
@@ -2291,7 +2373,7 @@ fn kiln_fuel_and_lighting_progress_survive_reload_without_free_refuelling() {
     client.ok("/give copper_ore 1");
     client.pump_until(|c| count(c, "base:copper_ore") == 1);
     client.chat.clear();
-    client.propose("base:cook", ActionTarget::Block { block: core, face: Face::PosY });
+    cook(&mut client);
     client.pump_until(|c| c.refused.iter().any(|t| t.contains("is cold")));
     assert_eq!(count(&client, "base:copper_ore"), 1);
     assert_eq!(count(&client, "base:copper_ingot"), 0);
@@ -2624,6 +2706,52 @@ fn a_sleeping_bag_is_where_the_homeless_wake() {
 }
 
 #[test]
+fn a_bed_set_placed_or_another_players_is_yours() {
+    let mut client = on_a_test_floor();
+    let feet = client.position.floor().as_ivec3();
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let refused = |c: &Client| c.refused.iter().any(|t| t.contains("belongs to someone"));
+    let bed = client.content.blocks.expect("base:oak_bed");
+    // One set by command (as an older save or a map maker might), one the player sets down
+    // within the pickup reach, so broken it comes back to them.
+    let (set, own) = (feet + IVec3::new(2, 0, -1), feet + IVec3::new(1, 0, 1));
+    for line in ["/clear".to_owned(), "/give oak_bed 1".to_owned(), format!("/setblock {} {} {} oak_bed", set.x, set.y, set.z)] {
+        client.ok(&line);
+    }
+    client.pump_until(|c| c.world.block(set) == Some(bed) && c.inventory.get(0).is_some_and(|s| s.item == bed));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: set, face: Face::PosY });
+    client.pump_until(|c| told(c, "wake here"));
+    assert!(!refused(&client), "a bed no village planned was refused");
+    client.propose("core:place", ActionTarget::Block { block: own - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(bed));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| told(c, "wake here"));
+    assert!(!refused(&client), "the player's own bed was refused");
+    // Picked up and set down again elsewhere, it is still theirs.
+    client.propose("core:mine", ActionTarget::Block { block: own, face: Face::PosY });
+    client.pump_until(|c| c.world.block(own) == Some(BlockId::AIR));
+    // Back in the first slot, the one in hand, emptied when it was set down.
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == bed));
+    let again = feet + IVec3::new(-2, 0, 2);
+    client.propose("core:place", ActionTarget::Block { block: again - IVec3::Y, face: Face::PosY });
+    client.pump_until(|c| c.world.block(again) == Some(bed));
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: again, face: Face::PosY });
+    client.pump_until(|c| told(c, "wake here"));
+    assert!(!refused(&client), "the bed set down again was refused");
+    // Another player's bed is no village's: it works for a guest as for its owner.
+    let mut guest = client.another("guest");
+    client.ok(&format!("/tp guest {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+    guest.pump_until(|c| c.position.distance(feet.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) < 1.0 && c.world.block(again) == Some(bed));
+    guest.chat.clear();
+    guest.propose("base:sleep", ActionTarget::Block { block: again, face: Face::PosY });
+    guest.pump_until(|c| told(c, "wake here"));
+    assert!(!refused(&guest), "another player's bed was refused the guest");
+}
+
+#[test]
 fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     let mut client = on_a_test_floor();
     let feet = client.position.floor().as_ivec3();
@@ -2647,12 +2775,19 @@ fn a_furnished_home_heals_faster_and_sleeping_in_it_rests_you_once() {
     client.propose("base:sleep", ActionTarget::Block { block: bag, face: Face::PosY });
     client.pump_until(|c| told(c, "rested already"));
     assert!(!has(&client, "base:well_rested"));
-    // Light a hearth with a chimney (a lit one is home), a second light and a roof: snug.
+    // Light a hearth with a chimney (a lit one is home), a second light, and walls and a
+    // roof on a floor: snug.
     let core = feet + IVec3::new(4, 0, 0);
+    let (low, high) = (feet + IVec3::new(-3, 0, -4), feet + IVec3::new(7, 3, 4));
     for line in [
         format!("/setblock {} {} {} hearthstone", core.x, core.y, core.z),
         format!("/setblock {} {} {} torch", feet.x + 3, feet.y + 1, feet.z),
         format!("/fill {} {} {} {} {} {} stone", feet.x - 2, feet.y + 4, feet.z - 3, feet.x + 6, feet.y + 4, feet.z + 3),
+        format!("/fill {} {} {} {} {} {} stone", low.x, low.y - 1, low.z, high.x, low.y - 1, high.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", low.x, low.y, low.z, low.x, high.y, high.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", high.x, low.y, low.z, high.x, high.y, high.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", low.x, low.y, low.z, high.x, high.y, low.z),
+        format!("/fill {} {} {} {} {} {} oak_planks", low.x, low.y, high.z, high.x, high.y, high.z),
     ] {
         client.ok(&line);
     }
@@ -2857,14 +2992,15 @@ fn home_says_where_home_is_and_what_the_next_step_needs() {
     let said = client.ok("/home");
     assert!(said.contains(&format!("Your home is at {}, {}, {}", bag.x, bag.y + 1, bag.z)), "{said}");
     assert!(said.contains("Camp reached. Next, Hearthside: it needs hearth 0/1"), "{said}");
-    // A hearthstone lights it: the ladder moves on and the next step names a roof and the rest.
+    // A hearthstone lights it: the ladder moves on and the next step names a roof, walls and the rest.
     let hearth = feet + IVec3::new(4, 0, 0);
     client.ok(&format!("/setblock {} {} {} hearthstone", hearth.x, hearth.y, hearth.z));
     client.pump_until(|c| c.world.block(hearth) == c.content.blocks.id("base:hearthstone"));
     client.chat.clear();
     client.pump_until(|c| c.chat.iter().any(|(_, t)| t.contains("Hearthside:")));
     let said = client.ok("/home");
-    assert!(said.contains("Hearthside reached. Next, Snug: it needs a roof overhead, light 1/2"), "{said}");
+    assert!(said.contains("Hearthside reached. Next, Snug: it needs a roof overhead, draughty or better walls and roof all about "), "{said}");
+    assert!(said.contains("%/90%, light 1/2"), "{said}");
 }
 
 #[test]
@@ -2971,6 +3107,31 @@ fn gravel_sometimes_breaks_to_flint_instead() {
         }
     }
     assert!(flints > 0, "sixty gravel broke without a flint");
+}
+
+/// A standing log refuses a bare hand: the client's break it claims finished is undone, the
+/// log put back. Held, a flint axe fells it, and the log comes to hand.
+#[test]
+fn a_bare_hand_fells_no_tree_and_a_flint_axe_does() {
+    let mut client = Client::join();
+    let below = client.position.floor().as_ivec3() - IVec3::Y;
+    client.ok("/clear");
+    client.ok("/setblock ~ ~-1 ~ oak_log");
+    let (log, axe) = (client.content.blocks.expect("base:oak_log"), client.content.blocks.expect("base:flint_axe"));
+    client.pump_until(|c| c.world.block(below) == Some(log));
+    let target = ActionTarget::Block { block: below, face: Face::PosY };
+    client.propose("core:mine", target);
+    client.settle();
+    client.world.set_block(below, BlockId::AIR);
+    client.connection.send(ClientMessage::Finished { target });
+    client.pump_until(|c| c.world.block(below) == Some(log));
+    assert!(client.inventory.slots.iter().flatten().all(|s| s.item != log), "a bare hand took a log");
+    client.ok("/give flint_axe 1");
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == axe));
+    client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
+    client.propose("core:mine", target);
+    client.pump_until(|c| c.world.block(below) == Some(BlockId::AIR));
+    client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == log));
 }
 
 // Seed 3 has a village at (368, 135, 784), 421 blocks from spawn (432, 134, 368).
@@ -3361,6 +3522,102 @@ fn leaving_dead_leaves_their_things_behind_too() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// The spawn kit's loose flint the client sees within twelve blocks of where it stands.
+/// The loose flint within the kit's reach of the spawn (six blocks), where the land alone
+/// seldom has four.
+fn kit_flint(c: &Client) -> Vec<IVec3> {
+    kit_pieces(c, 6, "base:loose_flint")
+}
+
+/// The cells of `piece` within `reach` blocks across of the player's feet.
+fn kit_pieces(c: &Client, reach: i32, piece: &str) -> Vec<IVec3> {
+    let piece = c.content.blocks.id(piece);
+    let feet = c.position.floor().as_ivec3();
+    (-reach..=reach).flat_map(|dx| (-reach..=reach).flat_map(move |dz| (-32..=8).map(move |dy| feet + IVec3::new(dx, dy, dz)))).filter(|&p| c.world.block(p) == piece).collect()
+}
+
+/// An older save whose player built over the spawn (set down by command, so nothing marks it
+/// placed: a dirt floor, a plank roof four up on the east, and a hall's roof eighteen up on the
+/// west, above where the kit looks for ground) gets its kit outside the build, never in it.
+#[test]
+fn the_spawn_kit_keeps_out_of_a_players_build() {
+    let dir = world_dir("spawn-kit-build");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let joined = || {
+        let mut c = Client::join_with(config());
+        let feet = c.position.floor().as_ivec3();
+        c.pump_until(|c| (-1..=1).all(|dx| (-1..=1).all(|dz| c.world.block(feet + IVec3::new(dx * 12, 0, dz * 12)).is_some())));
+        c
+    };
+    let mut client = joined();
+    // Cleared of the kit a new world gets, then built over: everything within eight across.
+    for piece in ["base:loose_flint", "base:dead_log"] {
+        for p in kit_pieces(&client, 12, piece) {
+            client.ok(&format!("/setblock {} {} {} air", p.x, p.y, p.z));
+        }
+    }
+    let feet = client.position.floor().as_ivec3();
+    let (lo, hi) = (feet - IVec3::new(8, 0, 8), feet + IVec3::new(8, 0, 8));
+    client.ok(&format!("/fill {} {} {} {} {} {} oak_planks", feet.x, feet.y + 4, lo.z, hi.x, feet.y + 4, hi.z));
+    client.ok(&format!("/fill {} {} {} {} {} {} oak_planks", lo.x, feet.y + 18, lo.z, feet.x - 1, feet.y + 18, hi.z));
+    client.ok(&format!("/fill {} {} {} {} {} {} dirt", lo.x - 1, feet.y - 1, lo.z - 1, hi.x + 1, feet.y - 1, hi.z + 1));
+    let planks = client.content.blocks.id("base:oak_planks");
+    client.pump_until(|c| c.world.block(hi + IVec3::Y * 4) == planks && c.world.block(lo + IVec3::Y * 18) == planks && kit_pieces(c, 12, "base:loose_flint").is_empty());
+    drop(client);
+    let file = dir.join("world.ron");
+    let text = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file, text.lines().filter(|line| !line.contains("spawn_kit")).collect::<Vec<_>>().join("\n")).unwrap();
+    let client = joined();
+    let inside = |p: &IVec3| (lo.x..=hi.x).contains(&p.x) && (lo.z..=hi.z).contains(&p.z) && p.y < feet.y + if p.x < feet.x { 18 } else { 4 };
+    for piece in ["base:loose_flint", "base:dead_log"] {
+        let under: Vec<IVec3> = kit_pieces(&client, 8, piece).into_iter().filter(inside).collect();
+        assert!(under.is_empty(), "{piece} laid inside the build: {under:?}");
+    }
+    assert!(!kit_pieces(&client, 12, "base:loose_flint").is_empty(), "the kit went nowhere");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_spawn_kit_is_laid_once_in_new_worlds_and_old_saves() {
+    let dir = world_dir("spawn-kit");
+    let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
+    let joined = || {
+        let mut c = Client::join_with(config());
+        let feet = c.position.floor().as_ivec3();
+        c.pump_until(|c| (-1..=1).all(|dx| (-1..=1).all(|dz| c.world.block(feet + IVec3::new(dx * 12, 0, dz * 12)).is_some())));
+        c
+    };
+    // A new world has it.
+    let mut client = joined();
+    let laid = kit_flint(&client);
+    assert!(laid.len() >= 4, "the spawn kit's flint: {laid:?}");
+    // Picked up, it is not laid again on the next start.
+    for p in &laid {
+        client.ok(&format!("/setblock {} {} {} air", p.x, p.y, p.z));
+    }
+    client.pump_until(|c| kit_flint(c).len() < laid.len());
+    let left = kit_flint(&client);
+    drop(client);
+    let client = joined();
+    assert_eq!(kit_flint(&client), left, "the kit was laid twice");
+    drop(client);
+    // A save from before the kit (no `spawn_kit` in its world.ron) gets it once.
+    let file = dir.join("world.ron");
+    let text = std::fs::read_to_string(&file).unwrap();
+    let old: String = text.lines().filter(|line| !line.contains("spawn_kit")).collect::<Vec<_>>().join("\n");
+    assert!(text.contains("spawn_kit: true") && !old.contains("spawn_kit"), "{text}");
+    std::fs::write(&file, old).unwrap();
+    let client = joined();
+    let again = kit_flint(&client);
+    assert!(again.len() >= left.len() + 4, "an old save got no kit: {again:?}");
+    drop(client);
+    let client = joined();
+    assert_eq!(kit_flint(&client), again, "an old save got the kit twice");
+    drop(client);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn a_player_who_left_dead_wakes_at_home() {
     let dir = world_dir("dead-home");
@@ -3553,6 +3810,334 @@ fn long_steps_off_ledges_down_terraces_and_up_steps_are_not_snapped() {
 }
 
 #[test]
+fn walkers_stand_on_shaped_blocks_where_they_stop_them() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Southwards: a slab, a stair whose step faces north (the way it comes), a plank.
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_slab");
+    client.fill(at, IVec3::new(0, 0, 2), IVec3::new(0, 0, 2), "oak_stairs");
+    client.fill(at, IVec3::new(0, 0, 3), IVec3::new(0, 0, 3), "oak_planks");
+    // On the slab's top, half a block up in its cell, then the stair's upper step and the
+    // plank: where the client stepped up to, none of it inside a block.
+    client.send_position(start + Vec3::new(0.0, 0.5, 1.0), false);
+    client.send_position(start + Vec3::new(0.0, 1.0, 2.25), false);
+    client.send_position(start + Vec3::new(0.0, 1.0, 3.0), false);
+    assert!(client.all_accepted(), "a walker on shaped blocks was put back to {:?}", client.teleported);
+    // But not sunk into the slab: its lower half stops movement.
+    client.send_position(start + Vec3::new(0.0, 0.25, 1.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::new(0.0, 1.0, 3.0)), "stood inside the slab");
+}
+
+/// Ground is what the feet rest on as drawn. Pressed into the corner of a shaft walled with
+/// columns and barrels, a player's box reaches into both walls' cells but touches neither,
+/// so it is no ground: a dodge there is refused, and the fall down it hurts. On a slab's top
+/// it is ground.
+#[test]
+fn a_shaft_lined_with_shaped_blocks_is_no_ground_to_dodge_or_break_a_fall_on() {
+    real_time("movement and combat are judged on the clock: how far a player may get between messages, a dodge's grace in seconds");
+    let mut client = on_a_test_floor();
+    client.ok("/gamemode survival");
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Columns on the west, barrels on the south, five high from the floor.
+    client.fill(at, IVec3::new(-1, 0, 0), IVec3::new(-1, 4, 0), "stone_column");
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 4, 1), "barrel");
+    // Clear of the columns' bases and capitals (2/16 in) and the barrels' hoops (1.5/16 in).
+    let corner = at.as_vec3() + Vec3::new(0.2, 0.0, 0.75);
+    let top = corner + Vec3::Y * 5.0;
+    client.tp(top);
+    // Past the dodge's grace since the floor.
+    client.wait_server_asked(1);
+    assert!(!dodge_taken(&mut client), "a dodge in mid-air beside columns and barrels was taken");
+    client.teleported = None;
+    for y in (0..5).rev() {
+        client.send_position(corner + Vec3::Y * y as f32, false);
+        // A server tick on each step, so the fall is seen block by block.
+        client.after_server_ticks(1);
+    }
+    client.after_server_ticks(4);
+    assert_eq!(client.health, 18, "a five block fall down the shaft costs two health: the shaft's walls broke the fall");
+    assert!(client.teleported.is_none(), "the fall was put back to {:?}", client.teleported);
+    // A slab's top is ground to dodge from.
+    client.fill(at, IVec3::new(3, 0, 0), IVec3::new(3, 0, 0), "oak_slab");
+    client.tp(start + Vec3::new(3.0, 0.5, 0.0));
+    client.after_server_ticks(2);
+    assert!(dodge_taken(&mut client), "a dodge on a slab's top was refused");
+}
+
+/// A sprint at a low frame rate climbs a slab and then a whole block in one input, under a
+/// ceiling too low over its start to rise there first: neither the straight line, nor
+/// across then up, nor up then across clears, but walking up each step in turn does.
+#[test]
+fn two_half_steps_in_one_input_are_climbed_under_a_low_ceiling() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_slab");
+    client.fill(at, IVec3::new(0, 0, 2), IVec3::new(0, 0, 2), "oak_planks");
+    // 2.5 over the start, 3 over the slab: room to stand on the slab and step up from it.
+    client.fill(at, IVec3::new(0, 2, 0), IVec3::new(0, 2, 0), "oak_slab_top");
+    client.fill(at, IVec3::new(0, 3, 1), IVec3::new(0, 3, 1), "oak_planks");
+    client.send_position(start + Vec3::new(0.0, 1.0, 2.0), false);
+    assert!(client.all_accepted(), "two half-steps in one input were put back to {:?}", client.teleported);
+    // A whole block is still a jump, not two steps: none of it on a stair of whole blocks.
+    client.tp(start);
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_planks");
+    client.fill(at, IVec3::new(0, 1, 2), IVec3::new(0, 1, 2), "oak_planks");
+    client.send_position(start + Vec3::new(0.0, 2.0, 2.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start), "climbed two whole blocks in one input");
+}
+
+/// A walk up a stair of slabs and planks onto the roof of a sealed room, in one input, ends
+/// on the roof, not in the room: the way down from the top of the climb to where the input
+/// says is through the roof.
+#[test]
+fn a_climb_in_one_input_ends_on_a_roof_not_in_the_room_under_it() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Eastwards, each top half a block above the last: slab, plank, then the same a level
+    // up and another, the last beside the room's roof.
+    for (x, y, block) in [(1, 0, "oak_slab"), (2, 0, "oak_planks"), (3, 1, "oak_slab"), (4, 1, "oak_planks"), (5, 2, "oak_slab"), (6, 2, "oak_planks")] {
+        client.fill(at, IVec3::new(x, 0, 0), IVec3::new(x, y - 1, 0), "oak_planks");
+        client.fill(at, IVec3::new(x, y, 0), IVec3::new(x, y, 0), block);
+    }
+    // The room: one cell two high at x+7, walled and roofed in planks.
+    client.fill(at, IVec3::new(6, 0, -1), IVec3::new(8, 2, 1), "oak_planks");
+    client.fill(at, IVec3::new(7, 0, 0), IVec3::new(7, 1, 0), "air");
+    client.tp(start);
+    client.send_position(start + Vec3::new(7.0, 0.0, 0.0), false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start), "got into a sealed room through its roof");
+}
+
+/// A spot the server took as clear stays clear when a shape comes or goes beside it: which
+/// of its two boxes judges the spot (the margin box near shapes, the share box among whole
+/// blocks) never flips it into a wall, where only the end of the next move would be
+/// checked and a player could step through any wall into a sealed room. Pressed a fortieth
+/// into a plank wall (the share box allows it) with a slab then set in the cell their box
+/// only touches; or a two-hundredth into the floor beside a headstone that is then mined.
+#[test]
+fn a_shape_placed_or_mined_beside_a_player_never_lets_them_through_a_wall() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // The room: one cell two high at x+4, walled and roofed in planks.
+    let room = |client: &mut Client| {
+        client.fill(at, IVec3::new(3, 0, -1), IVec3::new(5, 2, 1), "oak_planks");
+        client.fill(at, IVec3::new(4, 0, 0), IVec3::new(4, 1, 0), "air");
+    };
+    let into = at.as_vec3() + Vec3::new(4.5, 0.0, 0.5);
+    // A plank wall at x+1, the player against it with their box's south side on a cell's edge.
+    room(&mut client);
+    client.fill(at, IVec3::new(1, 0, -2), IVec3::new(1, 1, 2), "oak_planks");
+    let pressed = at.as_vec3() + Vec3::new(1.0 - 0.3 + 0.025, 0.0, 0.7);
+    client.tp(pressed);
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 1), "oak_slab");
+    client.send_position(into, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(pressed), "into a sealed room through a wall, after a slab was set beside a player pressed against it");
+    // A headstone at x+1, the player sunk a little into the floor beside it; then it is mined.
+    client.fill(at, IVec3::new(0, 0, -2), IVec3::new(2, 2, 2), "air");
+    room(&mut client);
+    client.fill(at, IVec3::new(1, 0, 0), IVec3::new(1, 0, 0), "stone_headstone");
+    let sunk = at.as_vec3() + Vec3::new(0.75, -0.005, 0.5);
+    client.tp(sunk);
+    client.fill(at, IVec3::new(1, 0, 0), IVec3::new(1, 0, 0), "air");
+    client.send_position(into, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(sunk), "into a sealed room through a wall, after a headstone beside a player was mined");
+}
+
+/// The test client's world as the engine's movement takes it, as the game's client moves
+/// its player: blocks by their boxes, no water.
+struct Seen<'a>(&'a Client);
+
+impl voxmar_engine::movement::Surroundings for Seen<'_> {
+    fn solid(&self, cell: IVec3) -> bool {
+        !self.boxes(cell).is_empty()
+    }
+
+    fn boxes(&self, cell: IVec3) -> &[voxmar_engine::physics::Aabb] {
+        self.0.world.block(cell).map_or(&[], |b| self.0.content.blocks.collision(b))
+    }
+
+    fn water(&self, _: &voxmar_engine::physics::Aabb) -> (f32, voxmar_engine::glam::Vec2) {
+        (0.0, voxmar_engine::glam::Vec2::ZERO)
+    }
+}
+
+/// An honest client among shapes: the engine's own movement at 30, 60 and 144 frames a
+/// second, sending where it is twenty times a second, sprinting along each course straight
+/// or drifting into its side (sliding along a wall, past the corners of shapes), jumping
+/// or not, is never put back. The courses: a slab floor along a plank wall under a plank
+/// ceiling the jumps hit; a row of barrels, pot shelves, columns, a plank block and
+/// headstones beside the way; a slab, a stair and plank blocks climbed in half steps; and
+/// a plank wall stepping back a block every four, run into at a slant round its outside
+/// corners, on a slab floor (judged by the margin box) and on the plain floor (the share box).
+/// Each input is stamped with the client's own clock (as `going_silent_does_not_buy_more_time_hovering`),
+/// so the server's ticks may run quick.
+#[test]
+fn honest_movement_among_shapes_is_never_put_back() {
+    use voxmar_engine::movement::{Body, Controls, advance};
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    let tuning = client.content.movement.clone();
+    let wall_row = ["barrel", "oak_pot_shelf", "stone_column", "oak_planks", "stone_headstone"];
+    // Each course: boxes of blocks to fill, corners from `at`.
+    type Fills = Vec<(IVec3, IVec3, &'static str)>;
+    // A plank wall two high north of the way, a block further back every four blocks along.
+    let stepped = |floor: Option<&'static str>| -> Fills {
+        let mut fills: Fills = floor.map(|slab| (IVec3::new(1, 0, -6), IVec3::new(20, 0, 1), slab)).into_iter().collect();
+        fills.extend((0..5).map(|k| (IVec3::new(1 + 4 * k, 0, -2 - k), IVec3::new(4 + 4 * k, 1, -2 - k), "oak_planks")));
+        fills
+    };
+    let (straight, slanting) = (&[0.0, 0.3][..], &[0.3, 0.6, 1.0][..]);
+    let courses: [(&str, Fills, &[f32]); 5] = [
+        ("slab floor along a wall under a ceiling", vec![
+            (IVec3::new(1, 0, -1), IVec3::new(20, 0, 1), "oak_slab"),
+            (IVec3::new(1, 0, -2), IVec3::new(20, 3, -2), "oak_planks"),
+            (IVec3::new(1, 3, -1), IVec3::new(20, 3, 1), "oak_planks"),
+        ], straight),
+        ("shapes beside the way", (0..20).map(|i| {
+            let cell = IVec3::new(1 + i, 0, -1);
+            (cell, cell, wall_row[i as usize % wall_row.len()])
+        }).collect(), straight),
+        ("slab, stair and planks in half steps", vec![
+            (IVec3::new(2, 0, -1), IVec3::new(2, 0, 1), "oak_slab"),
+            (IVec3::new(3, 0, -1), IVec3::new(3, 0, 1), "oak_stairs_west"),
+            (IVec3::new(4, 0, -1), IVec3::new(5, 0, 1), "oak_planks"),
+            (IVec3::new(5, 1, -1), IVec3::new(5, 1, 1), "oak_slab"),
+            (IVec3::new(6, 0, -1), IVec3::new(20, 1, 1), "oak_planks"),
+        ], straight),
+        ("a wall stepping back, on slabs", stepped(Some("oak_slab")), slanting),
+        ("a wall stepping back, on the floor", stepped(None), slanting),
+    ];
+    // Ground under the stepping wall, which reaches past the test floor's north edge.
+    client.fill(at, IVec3::new(1, -1, -6), IVec3::new(20, -1, -4), "stone");
+    client.fill(at, IVec3::new(1, 0, -6), IVec3::new(20, 3, -4), "air");
+    // The client's clock, on past every run's inputs.
+    let mut clock = Instant::now();
+    let mut put_back = Vec::new();
+    for (course, blocks, drifts) in &courses {
+        for &(from, to, block) in blocks {
+            client.fill(at, from, to, block);
+        }
+        // The client's world has the course: its last block arrived.
+        let (last, name) = blocks.last().map(|&(_, to, block)| (at + to, block)).unwrap();
+        let id = client.content.blocks.expect(&format!("base:{name}"));
+        client.pump_until(|c| c.world.block(last) == Some(id));
+        for fps in [30.0, 60.0, 144.0] {
+            for (&drift, jump) in drifts.iter().flat_map(|d| [(d, false), (d, true)]) {
+                client.tp(start);
+                let mut body = Body { position: start, on_ground: true, ..Default::default() };
+                let controls = Controls { wish: Vec3::new(1.0, 0.0, -drift).normalize(), forward: true, sprint: true, jump, descend: false };
+                let (dt, mut t, mut sent) = (1.0 / fps, 0.0f32, 0u32);
+                while t < 2.5 {
+                    advance(&mut body, &Seen(&client), &tuning, controls, dt);
+                    t += dt;
+                    if t >= (sent + 1) as f32 * 0.05 {
+                        sent += 1;
+                        client.send_position_at(body.position, false, clock + Duration::from_secs_f32(t));
+                    }
+                }
+                let case = format!("{course} at {fps} fps, drift {drift}, jump {jump}");
+                if !client.all_accepted() {
+                    put_back.push(format!("{case}: at {} put back to {:?}", body.position - start, client.teleported.map(|to| to - start)));
+                } else {
+                    // Where the server has them (a teleport to where they are says): where the
+                    // client got to, along the course, every input taken.
+                    client.connection.send(ClientMessage::Command { line: "/tp ~ ~ ~".into() });
+                    client.pump_until(|c| c.teleported.is_some());
+                    let there = client.teleported.take().unwrap();
+                    assert!(there.distance(body.position) < 1e-3 && body.position.x - start.x > 1.0, "{case}: the client got to {}, the server has {}", body.position - start, there - start);
+                }
+                clock += Duration::from_secs(4);
+            }
+        }
+        client.fill(at, IVec3::new(1, 0, -6), IVec3::new(20, 3, 1), "air");
+    }
+    assert!(put_back.is_empty(), "honest moves put back:\n{}", put_back.join("\n"));
+}
+
+/// A gap between shaped blocks narrower or lower than the player is no way through, though
+/// a share of their box would fit: between two pot shelves in a row (9/16 of a block, the
+/// player is 0.6 wide), and on a headstone under an upside-down slab (1.75 high, the
+/// player is 1.8 tall).
+#[test]
+fn gaps_between_shapes_smaller_than_the_player_are_no_way_through() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    // Two shelves facing the same way, south of each other: the second's free front is 9/16 deep.
+    client.fill(at, IVec3::new(0, 0, 1), IVec3::new(0, 0, 2), "oak_pot_shelf");
+    let beside = at.as_vec3() + Vec3::new(-0.5, 0.0, 2.0 + 9.0 / 32.0);
+    client.tp(beside);
+    client.send_position(beside + Vec3::X, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(beside), "squeezed between two pot shelves 9/16 apart");
+    // As narrow between a whole block and a shelf, and off the gap's middle.
+    client.fill(at, IVec3::new(5, 0, 1), IVec3::new(5, 0, 1), "oak_planks");
+    client.fill(at, IVec3::new(5, 0, 2), IVec3::new(5, 0, 2), "oak_pot_shelf");
+    let beside = at.as_vec3() + Vec3::new(4.5, 0.0, 2.271);
+    client.tp(beside);
+    client.send_position(beside + Vec3::X, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(beside), "squeezed between planks and a pot shelf 9/16 apart");
+    // Onto a headstone (three quarters of a block high, a jump): open above, the player
+    // stands on it...
+    client.tp(start);
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 0, 0), "stone_headstone");
+    let on = start + Vec3::new(2.0, 0.75, 0.0);
+    client.send_position(start + Vec3::X, false);
+    client.send_position(on, false);
+    assert!(client.all_accepted(), "a jump onto a headstone was put back to {:?}", client.teleported);
+    // ...but not under a slab in the upper half of the cell above the next, 1.75 over its top
+    // (set once they are off it: no fill shuts a player in).
+    client.tp(start + Vec3::X);
+    client.fill(at, IVec3::new(2, 2, 0), IVec3::new(2, 2, 0), "oak_slab_top");
+    client.send_position(on, false);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::X), "stood on a headstone with 1.75 blocks of headroom");
+}
+
+/// A player walks through a doorway in a plank wall with its door open (the leaf swung
+/// against the frame, no box), but a shut door is a wall like the planks beside it.
+#[test]
+fn a_player_walks_through_an_open_door_but_not_a_shut_one() {
+    real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
+    let mut client = on_a_test_floor();
+    let start = client.position;
+    let at = start.floor().as_ivec3();
+    client.fill(at, IVec3::new(2, 0, -2), IVec3::new(2, 1, -1), "oak_planks");
+    client.fill(at, IVec3::new(2, 0, 1), IVec3::new(2, 1, 2), "oak_planks");
+    let walk = |client: &mut Client| {
+        client.tp(start);
+        for x in 1..=4 {
+            client.send_position(start + Vec3::X * x as f32, false);
+        }
+    };
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 0, 0), "wooden_door_open_east");
+    client.fill(at, IVec3::new(2, 1, 0), IVec3::new(2, 1, 0), "wooden_door_open_top_east");
+    walk(&mut client);
+    assert!(client.all_accepted(), "walking through an open door was put back to {:?}", client.teleported);
+    client.fill(at, IVec3::new(2, 0, 0), IVec3::new(2, 0, 0), "wooden_door_east");
+    client.fill(at, IVec3::new(2, 1, 0), IVec3::new(2, 1, 0), "wooden_door_top_east");
+    walk(&mut client);
+    client.pump_until(|c| c.teleported.is_some());
+    assert_eq!(client.teleported.take(), Some(start + Vec3::X), "walked through a shut door");
+}
+
+#[test]
 fn swimmers_climb_out_onto_a_bank_but_nobody_jumps_out_of_a_dry_pit_or_lava() {
     real_time("movement is checked against the clock: how far a player may get in the seconds between their messages");
     let mut client = on_a_test_floor();
@@ -3734,7 +4319,7 @@ fn a_name_already_playing_is_turned_away_unless_it_comes_back_from_a_silent_game
     std::io::Write::write_all(&mut frozen, &[&(frame.len() as u32).to_le_bytes()[..], &frame].concat()).unwrap();
     let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
     while host.command("/op guest").iter().any(|(kind, _)| *kind == ChatKind::Error) {
-        host.after_ticks(1);
+        host.after_ticks_asked(1);
     }
     // Silent past `rejoin_silence` by the server's clock, the guest comes back from there.
     let silence = Limits::default().rejoin_silence;
@@ -3783,7 +4368,7 @@ fn joining_again_takes_what_the_silent_session_held_not_an_older_file() {
     let mut frozen = frozen_game(addr, "guest", &host.content);
     // An admin made the guest one, so its commands count (it is theirs for the session).
     while host.command("/op guest").iter().any(|(kind, _)| *kind == ChatKind::Error) {
-        host.after_ticks(1);
+        host.after_ticks_asked(1);
     }
     for line in ["/skill mining 7", "/give iron_ore 5"] {
         frozen_says(&mut frozen, ClientMessage::Command { line: line.into() });
@@ -3900,15 +4485,20 @@ fn preparing_tcp_content_does_not_spend_the_hello_deadline() {
 #[test]
 fn a_player_who_sends_nothing_but_keepalives_is_kept() {
     real_time("silence and floods are timed on the clock (idle timeouts, chat per second)");
-    let host = Client::join();
+    // Let go after ten seconds silent, two keepalives' worth, rather than fifteen.
+    let idle = 2 * voxmar_protocol::KEEPALIVE;
+    let host = Client::join_with(ServerConfig { view_distance: 2, idle_timeout: idle, ..Default::default() });
     let addr = tcp::listen("127.0.0.1:0", host._server.as_ref().unwrap().connections()).unwrap();
     let mut guest = Client::greet(|| tcp::connect(addr).unwrap(), "guest", None);
-    // Twenty seconds of the server's clock with no input, as from a minimized game: only
-    // the connection's keepalives. (Being let go would end the pump with a panic.)
+    // A keepalive's worth past the idle timeout of the server's clock with no input, as
+    // from a minimized game: only the connection's keepalives. (Being let go would end the
+    // pump with a panic.)
     let ticks = |c: &Client| c._server.as_ref().unwrap().ticks();
-    let until = ticks(&host) + 20 * TICKS_PER_SECOND as u64;
+    let until = ticks(&host) + (idle + voxmar_protocol::KEEPALIVE).as_secs() * TICKS_PER_SECOND as u64;
     guest.phase = "keepalive wait";
+    guest.pongs = false;
     guest.pump_until(|_| ticks(&host) >= until);
+    guest.pongs = true;
     assert!(guest.ok("/seed").contains(char::is_numeric), "the guest was let go");
     drop(host);
 }
@@ -4357,11 +4947,11 @@ fn a_swing_is_dropped_when_its_weapon_leaves_the_hand() {
     // 0.1 s): no blow lands, neither the sword's nor a fist's.
     client.propose("core:attack", ActionTarget::Creature(id));
     face(&mut client, id, other, true);
-    client.wait_server(2);
+    client.wait_server_asked(2);
     assert_eq!(client.blows, 0, "the dropped swing still landed, for {:?}", client.damage);
     // Swung and kept in hand, it lands.
     face(&mut client, id, slot, true);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 1);
 }
@@ -4374,14 +4964,22 @@ fn carried_of(client: &Client, item: voxmar_engine::block::BlockId) -> u32 {
 #[test]
 fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
-    let mut client = Client::join();
+    // Draws by a key whose first shot hits: by chance, the shots it took to hit were four
+    // on most keys, each a server second apart, and now and then none of sixteen hit.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(5), ..Default::default() });
     let (sling, stone) = (client.content.blocks.expect("base:sling"), client.content.blocks.expect("base:cobblestone"));
     let ranged = client.content.skills.id("core:ranged").expect("a ranged skill");
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
-    // Creative, so the bear's blows pass us by, on a wide flat floor.
+    // Creative, so the bear's blows pass us by, on a wide flat floor: the land round loaded
+    // first (a busy server streams it late), then the floor seen laid, by the server's word.
     client.ok("/gamemode creative");
+    let feet = client.position.floor().as_ivec3();
+    let corners = [(-12, -12), (-12, 12), (12, -12), (12, 12), (0, 0)].map(|(x, z)| feet + IVec3::new(x, -1, z));
+    client.pump_until(|c| corners.iter().all(|&p| c.world.block(p).is_some()));
     client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
     client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
+    let floor = client.content.blocks.id("base:stone");
+    client.pump_until(|c| corners.iter().all(|&p| c.world.block(p) == floor && c.world.block(p + IVec3::Y).is_some_and(|b| b.is_air())));
     client.ok("/clear");
     client.ok("/skill ranged 10");
     client.ok("/give sling 1");
@@ -4401,12 +4999,12 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     };
     client.ok(&format!("/tp {} {} {}", at.x + 8.0, at.y, at.z));
     aim(&mut client);
-    client.wait_server(1);
+    client.settle();
     // Nothing to shoot: no swing, and the player is told what the sling needs.
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.chat.iter().any(|(_, line)| line.contains("Nothing to shoot")));
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert_eq!(client.blows, 0, "a sling with no stone still swung");
     // With stones: each shot takes one, hit or miss, and a hit trains Ranged.
     client.ok("/give cobblestone 16");
@@ -4415,23 +5013,29 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     let mut shots = 0;
     while client.damage.iter().all(|&d| d == 0) {
         assert!(shots < 16, "sixteen sling shots from eight blocks never hit: {:?}", client.damage);
+        if shots > 0 {
+            client.wait_server_asked(1);
+        }
         client.propose("core:attack", ActionTarget::Creature(id));
         shots += 1;
         client.pump_until(|c| c.blows == shots);
         client.pump_until(|c| carried_of(c, stone) == 16 - shots);
-        client.wait_server(1);
     }
     client.pump_until(|c| c.skills.xp(ranged) > xp);
     // A wall between is a miss, and the stone is still spent.
     let x = at.x + 4.0;
     client.ok(&format!("/fill {} {} {} {} {} {} stone", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
-    client.wait_server(1);
-    // Two shots, the second on the sling's beat (0.53 s): both are at the air, so off the
-    // beat, and earn no pip.
+    let wall = [0.0, 1.0, 2.0].map(|y| Vec3::new(x, at.y + y, at.z).floor().as_ivec3());
+    client.pump_until(|c| wall.iter().all(|&p| c.world.block(p) == floor));
+    // Two shots, the second on the sling's beat (its cooldown, from the content): both are
+    // at the air, so off the beat, and earn no pip. The first waits out the cooldown of the
+    // shot that hit, by the server's ticks: a click before it is ready is no shot.
+    let beat = client.content.combat.timing(&client.content.combat.wielded(Some(sling), |_| 10)).cooldown;
+    client.after_ticks_asked((beat * TICKS_PER_SECOND as f32).ceil() as u64);
     let (blows, left, pips) = (client.blows, carried_of(&client, stone), client.pips.last().copied().unwrap_or(0));
     let start = Instant::now();
     for k in 0..2u32 {
-        client.propose_at("core:attack", ActionTarget::Creature(id), start + Duration::from_secs_f32(0.53 * k as f32 - if k == 0 { 0.0 } else { 0.06 }));
+        client.propose_at("core:attack", ActionTarget::Creature(id), start + Duration::from_secs_f32(beat * k as f32 - if k == 0 { 0.0 } else { 0.06 }));
         client.pump_until(|c| c.blows == blows + k + 1);
         assert_eq!(client.damage.last(), Some(&0), "a shot through a wall hit");
     }
@@ -4439,6 +5043,8 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
     assert_eq!(kinds, [voxmar_engine::combat::Blow::Plain; 2], "shots into a wall counted as {kinds:?}");
     assert!(client.pips.last().copied().unwrap_or(0) <= pips, "shots into a wall earned a pip: {:?}", client.pips);
     client.pump_until(|c| carried_of(c, stone) == left - 2);
+    // The wall down again: with a clear line, only the stone gone makes the next shot miss.
+    client.ok(&format!("/fill {} {} {} {} {} {} air", x.floor(), at.y.floor(), at.z.floor() - 3.0, x.floor(), at.y.floor() + 4.0, at.z.floor() + 3.0));
     // The last stone gone while a shot winds up: still answered, as a miss at the air, and
     // the player told why.
     let slots: Vec<(usize, u8)> = (0..voxmar_engine::inventory::SLOTS).filter_map(|s| client.inventory.get(s).filter(|k| k.item == stone).map(|k| (s, k.count))).collect();
@@ -4450,7 +5056,7 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
         client.propose("core:drop", ActionTarget::Stack { slot: last as u8, count: count - 1 });
     }
     client.pump_until(|c| carried_of(c, stone) == 1);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     client.chat.clear();
     let blows = client.blows;
     client.propose("core:attack", ActionTarget::Creature(id));
@@ -4463,7 +5069,9 @@ fn a_sling_shoots_a_stone_a_clear_line_away_and_trains_ranged() {
 #[test]
 fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
     real_time("combat is judged on the clock: blows by when they arrived, wind-ups and rhythm in seconds, not in ticks");
-    let mut client = Client::join();
+    // Draws by a key whose first shot hits and leaves its arrow: by chance, it took from two
+    // shots to twenty-six, each a server second apart.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(10), ..Default::default() });
     let (bow, arrow) = (client.content.blocks.expect("base:short_bow"), client.content.blocks.expect("base:arrow"));
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
     let recover = client.content.combat.recover(&client.content.combat.wielded(Some(bow), |_| 10));
@@ -4486,20 +5094,24 @@ fn an_arrow_that_hits_may_be_left_by_the_target_to_pick_up_again() {
     client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
     let yaw = yaw_toward(client.position, at);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: true }));
-    client.wait_server(1);
-    // Shot until an arrow lies by the bear: a hit leaves one half the time, so a forty-health
-    // bear dies only after a dozen or more hits, by which one has all but surely been left.
-    let lying = |c: &Client| c.items.values().any(|v| v.stack.item == arrow && v.position.distance(at) < 3.0);
+    client.settle();
+    // Shot until a hit leaves an arrow by the bear: a hit leaves one half the time, so a
+    // forty-health bear dies only after a dozen or more hits, by which one has all but surely
+    // been left. A miss in reach may land by it too (`recover_miss`), so only an arrow that
+    // came with a hit counts.
+    let lying = |c: &Client| c.items.values().filter(|v| v.stack.item == arrow && v.position.distance(at) < 3.0).map(|v| v.stack.count as u32).sum::<u32>();
     let mut shots = 0;
-    while !lying(&client) {
-        assert!(client.creatures.contains_key(&id) && shots < 48, "no arrow left by the bear after {shots} shots: {:?}", client.damage);
+    loop {
+        assert!(client.creatures.contains_key(&id) && shots < 48, "no arrow left by the bear by a hit after {shots} shots: {:?}", client.damage);
+        let before = lying(&client);
         client.propose("core:attack", ActionTarget::Creature(id));
         shots += 1;
         client.pump_until(|c| c.blows == shots || !c.creatures.contains_key(&id));
-        client.wait_server(1);
+        client.wait_server_asked(1);
+        if client.damage.last().is_some_and(|&d| d > 0) && lying(&client) > before {
+            break;
+        }
     }
-    let hits = client.damage.iter().filter(|&&d| d > 0).count();
-    assert!(hits >= 1, "an arrow lay by the bear with no hit: {:?}", client.damage);
 }
 
 /// A shot that lands by a wild bees' nest stirs the bees, and they sting the shooter; with a
@@ -4531,19 +5143,19 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
     let yaw = yaw_toward(client.position, at);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
-    client.wait_server(1);
+    client.wait_server_asked(1);
     let stung = |c: &Client| c.chat.iter().any(|(_, line)| line.starts_with("Stung!"));
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 1);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(stung(&client), "a shot by the nest stirs its bees: {:?}", client.chat);
     // A campfire beside the nest: the next shot leaves them calm.
     client.ok(&format!("/setblock {} {} {} campfire", nest.x + 1, nest.y, nest.z));
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 2);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(!stung(&client), "smoked bees stay calm: {:?}", client.chat);
     // A smoked nest on the bear's other side, met first in the search, and the first nest's
     // campfire moved off: the unsmoked nest's bees are stirred though the smoked one's stay calm.
@@ -4554,14 +5166,14 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 3);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(stung(&client), "an unsmoked nest beside a smoked one stirs: {:?}", client.chat);
     // Smoke clinging to the shooter (effects.ron's `smoky`) calms every nest the shot is near.
     client.ok("/effect smoky 60");
     client.chat.clear();
     client.propose("core:attack", ActionTarget::Creature(id));
     client.pump_until(|c| c.blows == 4);
-    client.wait_server(1);
+    client.wait_server_asked(1);
     assert!(!stung(&client), "a smoky shooter stirs no bees: {:?}", client.chat);
 }
 
@@ -4585,13 +5197,13 @@ fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
     client.ok("/tp ~ ~6 ~");
     client.pump_until(|c| c.teleported.is_some());
     // Six blocks up and told nothing else, the server has us in the air past the grace.
-    client.wait_server(1);
+    client.wait_server_asked(1);
     client.teleported = None;
     client.propose("core:dodge", ActionTarget::None);
     client.pump_until(|c| c.teleported.is_some());
     // Landing, told just before the dodge (between the server's ticks), counts as ground.
     client.ok("/tp ~ ~-5 ~");
-    client.wait_server(1);
+    client.wait_server_asked(1);
     client.teleported = None;
     let landed = client.position - Vec3::Y;
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: landed, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
@@ -4599,7 +5211,7 @@ fn a_dodge_needs_the_ground_and_one_refused_puts_the_player_back() {
     assert!(dodge_taken(&mut client), "a dodge as the player landed was refused");
     // On the ground it is taken.
     client.ok("/tp ~ ~ ~");
-    client.wait_server(2);
+    client.wait_server_asked(2);
     assert!(dodge_taken(&mut client), "a dodge on the ground was refused");
 }
 
@@ -4650,7 +5262,7 @@ fn a_perfect_block_staggers_a_bear_and_a_dodge_lets_its_blow_pass() {
             if outcome == want {
                 return struck;
             }
-            client.wait_server(1);
+            client.wait_server_asked(1);
             if sent_late > STEP {
                 late.push(sent_late);
                 assert!(late.len() < LATE_ANSWERS as usize, "{} answers went more than {STEP} s past their moment ({late:.2?} s late), so none could say when the bear's blow is met; the rest came to {outcomes:?}", late.len());
@@ -4789,6 +5401,10 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
         let mut outcomes = Vec::new();
         let mut askew = 0;
         while outcomes.len() < 2 {
+            // A blow taken lets the creature recover a while before it is provoked again.
+            if !outcomes.is_empty() {
+                client.wait_server_asked(1);
+            }
             let before = provoke_until_it_winds_up(&mut client, id, slot, name);
             // Only a wind-up begun facing us: one begun facing away (a creature struck from
             // behind or the side) turns at its turn rate, and walks at a third of its pace
@@ -4802,7 +5418,7 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
                 askew += 1;
                 assert!(askew <= 6, "the {name} wound up facing away {askew} times");
                 wait_for_blow(&mut client, id, before);
-                client.wait_server(1);
+                client.wait_server_asked(1);
                 continue;
             }
             // Straight back from it, facing it, until the blow lands: a walk's worth each
@@ -4823,7 +5439,6 @@ fn backing_off_at_a_walk_does_not_escape_a_creatures_blow() {
             }
             let struck = blow_from(&client.hurt_by, id, before).expect("the selected creature struck");
             outcomes.push(client.hurt[struck].1);
-            client.wait_server(1);
         }
         assert!(outcomes.iter().all(|&o| matches!(o, Defended::Hit | Defended::Missed)), "backing off a {name} at a walk came to {outcomes:?}");
     }
@@ -4932,7 +5547,7 @@ fn a_dodge_waits_longer_in_heavier_armour() {
     let shirt = client.content.blocks.id("base:chainmail_shirt").unwrap();
     client.ok("/give chainmail_shirt 1");
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == shirt));
-    client.wait_server(1);
+    client.wait_server_asked(1);
     // Two pairs of dodges, the pairs 1.0 s apart by the clock the server judges dodges by
     // (`propose_at`: exactly, however busy the machine). Of each pair the second is refused
     // by the first's cooldown, and puts us back. Unarmoured (light, 1.0 s less the 0.1 a
@@ -5232,8 +5847,11 @@ fn wait_server(client: &mut Client, seconds: u64) {
 }
 
 /// Asks `/machine` about a block until its answer contains `want`, or panics after `seconds`
-/// of the server's clock.
+/// of the server's clock, counted once the land round the player is in (a machine's survey
+/// looks only at land the server holds).
+#[track_caller]
 fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> String {
+    client.land_round();
     let started = client.server_tick;
     loop {
         let said = client.ok(&format!("/machine {at}"));
@@ -5721,9 +6339,18 @@ fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
     let saved = format!(r#"[(position:({},{},{}),block:"base:chest",inputs:[],outputs:[],fuel:None,burning:0.0,energy:0.0,condition:0.0,made:0,bin:[{stacks}])]"#, chest.x, chest.y, chest.z);
     std::fs::write(dir.join("machines.ron"), saved).unwrap();
     let mut client = Client::join_with(config());
-    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
     let cobblestone = client.content.blocks.expect("base:cobblestone");
-    client.pump_until(|c| c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>() == 3 * 64);
+    let held = |c: &Client| c.inventory.slots.iter().flatten().filter(|s| s.item == cobblestone).map(|s| s.count as u32).sum::<u32>();
+    // What the player held as they came in (a starting kit) is no stack of the chest's.
+    let held_at_join = held(&client);
+    machine_says(&mut client, &at, &format!("holds {} items", 27 * 64), 10);
+    // Out on the ground, or already picked up by the player standing beside it: the wait
+    // for the land round the player (`machine_says`) can outlast the pick-up delay.
+    let spilled = |c: &Client| {
+        let lying = c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>();
+        lying + held(c).saturating_sub(held_at_join)
+    };
+    client.pump_until(|c| spilled(c) == 3 * 64);
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -5961,10 +6588,18 @@ fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_i
     }
     let start = client.position.floor().as_ivec3();
     let wheel = format!("{} {} {}", start.x + 3, start.y, start.z);
+    // The kept one, by its keeper: a wild aurochs can come by (the land's own, by the draw),
+    // and turns down food held out to it, so feeding whichever aurochs was in view hung the
+    // test. One stands well off, held, so feeding the wrong one cannot pass by luck.
+    client.ok("/summon aurochs 1 ~-12 ~ ~-12 held");
+    let me = client.id;
+    let mine = |c: &Client| c.creatures.iter().find(|(_, v)| v.species == aurochs && v.owner == Some(me)).map(|(&id, _)| id);
+    client.pump_until(|c| mine(c).is_some() && c.creatures.values().filter(|v| v.species == aurochs).count() >= 2);
+    let kept = mine(&client).expect("seen");
     let turns = |client: &mut Client| !client.ok(&format!("/machine {wheel}")).contains("needs a kept animal");
     let started = client.server_tick;
     while !turns(&mut client) {
-        assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel");
+        assert!(server_seconds(&client, started) < 10, "the tamed aurochs never walked the wheel: {:?} {:?}", client.ok(&format!("/machine {wheel}")), client.creatures.iter().filter(|(_, v)| v.species == aurochs).map(|(id, v)| (*id, v.position)).collect::<Vec<_>>());
         client.after_ticks(6);
     }
     // Three days on, unfed, it will not walk.
@@ -5974,16 +6609,15 @@ fn a_treadwheel_stops_once_its_animal_goes_two_days_unfed_and_turns_again_when_i
     // Fed its wheat, it walks again.
     client.ok("/give wheat 1");
     let wheat = client.content.blocks.expect("base:wheat");
-    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == wheat) && c.creatures.values().any(|v| v.species == aurochs));
-    let (&id, view) = client.creatures.iter().find(|(_, v)| v.species == aurochs).unwrap();
-    let at = view.position;
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == wheat) && c.creatures.contains_key(&kept));
+    let at = client.creatures[&kept].position;
     client.ok(&format!("/tp {} {} {}", at.x + 0.8, at.y, at.z));
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: 0, flying: false }));
-    client.propose("base:tend", ActionTarget::Creature(id));
+    client.propose("base:tend", ActionTarget::Creature(kept));
     client.pump_until(|c| c.inventory.get(0).is_none());
     let started = client.server_tick;
     while !turns(&mut client) {
-        assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel");
+        assert!(server_seconds(&client, started) < 10, "fed, the aurochs still does not walk the wheel: {:?} {:?}", client.ok(&format!("/machine {wheel}")), client.creatures.iter().filter(|(_, v)| v.species == aurochs).map(|(id, v)| (*id, v.position)).collect::<Vec<_>>());
         client.after_ticks(6);
     }
 }
@@ -6922,7 +7556,9 @@ impl Fresh {
         let ring = |r: f32, at: Vec3| (0..24).map(|i| (i as f32 * 15.0).to_radians()).map(move |a| Vec3::new(goal.x + r * a.cos(), at.y, goal.z + r * a.sin()));
         let nearest = |spots: Vec<Vec3>, at: Vec3| spots.into_iter().min_by(|a, b| across(*a, at).total_cmp(&across(*b, at)));
         let roomy = nearest(ring(r, self.at).filter(|&p| room(self, p)).collect(), self.at);
-        let tight = || nearest([0.05, 0.15, 0.25, 0.35, 0.45].into_iter().filter(|&r| r < stop).flat_map(|r| ring(r, self.at)).filter(|&p| self.has_room(p)).collect(), self.at);
+        // Where it is tight, the nearest spot the body just fits, the goal itself among them:
+        // a stop too short for any ring (0.05, beside a drop) still has the goal.
+        let tight = || nearest([0.0, 0.05, 0.15, 0.25, 0.35, 0.45].into_iter().filter(|&r| r == 0.0 || r < stop).flat_map(|r| ring(r, self.at)).filter(|&p| self.has_room(p)).collect(), self.at);
         let Some(to) = roomy.or_else(tight) else { return false };
         self.c.tp(to);
         self.at = to;
@@ -7087,6 +7723,39 @@ impl Fresh {
             match self.collect_reachable(item, need) {
                 0 => return,
                 lost => owed -= lost,
+            }
+        }
+    }
+
+    /// As [`Fresh::gather`], for what a block gives only sometimes in place of its own drop
+    /// (`instead` in tools.ron: flint from gravel, a stick from leaves): breaks the nearest of
+    /// `targets` until `need` of `item` are carried or lie loose, then collects them; as in
+    /// `gather`, what lies out of every reach is dug again.
+    fn gather_chance(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.hold(tool);
+        // Only a target that can give `item`, as its drop or `instead`, is broken: another
+        // block laid over the plot (the farm's copper) is passed over.
+        let id = self.c.content.blocks.expect(item);
+        let gives = |c: &Client, t: IVec3| c.world.block(t).is_some_and(|b| c.content.blocks.info(b).drops == id || c.content.tools.rule(b).and_then(|r| r.instead).is_some_and(|(given, _)| given == id));
+        // Drops left lying out of every reach, still counted loose.
+        let mut lost = 0;
+        loop {
+            while self.have(item) + loose(&self.c, item) < need + lost {
+                targets.retain(|&t| solid(&self.c, t) && gives(&self.c, t));
+                let from = self.at;
+                let Some(target) = targets.iter().copied().min_by_key(|t| ((across(Self::middle(*t), from) * 10.0) as i32, t.y)) else {
+                    panic!("{item}: every block was broken for {} of {need} ({lost} out of reach)", self.have(item) + loose(&self.c, item));
+                };
+                let centre = Self::middle(target);
+                if across(centre, self.at) > 2.3 {
+                    self.walk_toward(centre, 1.3);
+                } else {
+                    self.mine(target);
+                }
+            }
+            match self.collect_reachable(item, need) {
+                0 => return,
+                short => lost += short,
             }
         }
     }
@@ -7378,6 +8047,23 @@ impl Fresh {
         for x in [1, 3, 5, 7] {
             c.fill(origin, v(x, 0, -5), v(x, 3, -5), "oak_log");
         }
+        // Bushes of oak leaves along the plot's south edge, each a column four high with two
+        // blocks to walk between (a drop under leaves left standing is in reach from either
+        // side), and a dead snag at their end as the spawn kit lays one, for the sticks bare
+        // hands pull from leaves and snags, and a gravel bank beside
+        // them in two rows for flint, with a lane two wide between them, beyond the plot's edge
+        // so they stand clear of the kiln's site and of the copper's drops: a new player's
+        // first tools are flint on sticks.
+        for x in (-12..=9).step_by(3) {
+            c.fill(origin, v(x, 0, 12), v(x, 3, 12), "oak_leaves");
+        }
+        c.fill(origin, v(11, 0, 12), v(11, 2, 12), "dead_log");
+        c.fill(origin, v(9, 0, 14), v(25, 10, 17), "air");
+        c.fill(origin, v(9, -4, 14), v(25, -1, 17), "dirt");
+        // Ninety gravel: at one flint in eight, a key whose draws run short still finds four.
+        for z in [14, 17] {
+            c.fill(origin, v(10, 0, z), v(24, 2, z), "gravel");
+        }
         // A patch of natural stone one block high, with two coal ores on its near edge.
         c.fill(origin, v(9, 0, -3), v(17, 0, 4), "stone");
         c.fill(origin, v(9, 0, 3), v(9, 0, 4), "coal_ore");
@@ -7393,7 +8079,7 @@ impl Fresh {
         // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
         // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
         c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt")];
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(9, 3, 12), "base:oak_leaves"), (v(11, 2, 12), "base:dead_log"), (v(24, 2, 17), "base:gravel")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -7515,6 +8201,28 @@ fn the_bot_takes_a_drop_under_a_cut_trunk_from_beside_it() {
     assert_eq!(f.have("base:cobblestone"), 1);
 }
 
+/// A spot the body just fits, off the middle of a one-wide nook, is somewhere to hop to: the
+/// walk's way round, caught, ends there rather than finding no room (the Nomad bot, going
+/// to a drop beside a trunk: "no way round ... and no room near it").
+#[test]
+fn the_bot_hops_to_a_spot_it_just_fits_in_a_one_wide_nook() {
+    lockstep("a bot hopping into a one-wide nook");
+    let c = on_a_test_floor();
+    let (feet, ticks) = (c.position, c.ticks());
+    let origin = feet.floor().as_ivec3();
+    let mut f = Fresh { c, origin, at: feet, held: 0, t0: ticks, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch: (ticks, Instant::now()), steps: 0, swung: Vec::new() };
+    // Walls either side of a row of cells four to five blocks off, shut at its far end.
+    f.c.fill(origin, IVec3::new(3, 0, -1), IVec3::new(6, 1, -1), "stone");
+    f.c.fill(origin, IVec3::new(3, 0, 1), IVec3::new(6, 1, 1), "stone");
+    f.c.fill(origin, IVec3::new(6, 0, 0), IVec3::new(6, 1, 0), "stone");
+    let shut = origin + IVec3::new(6, 1, 0);
+    f.c.pump_until(|c| c.world.block(shut) == c.content.blocks.id("base:stone"));
+    let goal = Vec3::new(origin.x as f32 + 5.4, feet.y, origin.z as f32 + 0.45);
+    assert!(f.has_room(goal), "the body fits at {goal:?}");
+    assert!(f.hop_near(goal, 0.05), "no room near {goal:?}, where the body fits");
+    assert!(across(f.at, goal) <= 0.05, "hopped to {:?}, not within 0.05 of {goal:?}", f.at);
+}
+
 /// A drop with no room for a body anywhere in reach of it (a slot one block high under the
 /// ground) is left lying, as a player leaves it: the bot takes the others, and the gather
 /// it was for digs another block for the one lost rather than waiting it out.
@@ -7569,6 +8277,10 @@ fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
     f.place("base:cobblestone", origin + IVec3::new(2, -1, 0));
 }
 
+/// The fresh player's rolls (sticks from leaves, flint from gravel, burnt meat): one key, so
+/// the plot plays the same each run and a failure can be run again.
+const FRESH_DRAWS: u64 = 0x0f1a;
+
 /// Takes 3 to 4 minutes (it plays real server time), too slow for every run: use
 /// `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
 /// after changing early-age content, quests or recipes, and read the milestone block.
@@ -7576,7 +8288,7 @@ fn the_bot_places_from_the_slot_it_holds_after_a_correction() {
 #[ignore = "plays 3 to 4 minutes of real server time; run it after changing early-age content"]
 fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     real_time("it measures the early game's pace in server seconds, and a hunt's blows land by the clock");
-    let c = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    let c = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(FRESH_DRAWS), ..Default::default() });
     let mut f = Fresh::lay_out(c);
     the_first_days(&mut f);
     finish(f)
@@ -7604,10 +8316,22 @@ fn the_first_days(f: &mut Fresh) -> Site {
     let rel = |f: &Fresh, cells: Vec<IVec3>| -> Vec<IVec3> { cells.into_iter().map(|p| f.origin + p).collect() };
     let (cobble, clay, stick, log) = ("base:cobblestone", "base:clay", "base:stick", "base:oak_log");
 
-    // Timber, with bare hands (a new player starts with nothing): four logs, for the planks
-    // that make the table, the sticks and the first two tools.
+    // Flint tools, with bare hands (a new player starts with nothing, and a bare hand fells
+    // no tree and breaks no stone): sticks pulled from leaves and a snag, flint from gravel,
+    // a flint axe and pickaxe made in the hand's grid.
+    let leaves = (-12..=9).step_by(3).flat_map(|x| (0..=3).map(move |y| v(x, y, 12)));
+    let (flint, sticks) = ("base:flint", rel(f, leaves.chain((0..=2).map(|y| v(11, y, 12))).collect()));
+    f.gather_chance("", sticks, stick, 3);
+    let gravel = rel(f, (10..=24).flat_map(|x| (0..=2).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
+    f.gather_chance("", gravel, flint, 4);
+    f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1)], "base:flint_axe", 1);
+    f.craft(&[(0, flint, 1), (1, flint, 1), (3, stick, 1), (4, stick, 1)], "base:flint_pickaxe", 1);
+    f.mark("flint_tools");
+
+    // Timber, with the flint axe: four logs, for the planks that make the table, the sticks
+    // and the next tools.
     let trunks = rel(f, [1, 3, 5, 7].into_iter().flat_map(|x| (0..4).map(move |y| v(x, y, -5))).collect());
-    f.gather("", trunks.clone(), log, 4);
+    f.gather("base:flint_axe", trunks.clone(), log, 4);
     f.mark("timber");
     f.craft(&[(0, log, 4)], "base:oak_planks", 16);
 
@@ -7620,7 +8344,6 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.place("base:crafting_table", table - up);
     f.craft(&[(0, "base:oak_planks", 3), (3, "base:oak_planks", 3)], stick, 12);
     f.at_table(table);
-    f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (2, "base:oak_planks", 1), (4, stick, 1), (7, stick, 1)], "base:wooden_pickaxe", 1);
 
     // An Axe to It: a wooden axe, and the twelve logs the campfires and later planks want
     // chopped with it, in half the time a fist takes.
@@ -7628,9 +8351,9 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.gather("base:wooden_axe", trunks, log, 12);
     f.mark("an_axe_to_it");
 
-    // Stone in Hand: cobblestone with the wooden pickaxe, then a stone pickaxe and axe.
+    // Stone in Hand: cobblestone with the flint pickaxe, then a stone pickaxe and axe.
     let stone = rel(f, (9..=17).flat_map(|x| (-3..=4).map(move |z| v(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).collect());
-    f.gather("base:wooden_pickaxe", stone.clone(), cobble, 9);
+    f.gather("base:flint_pickaxe", stone.clone(), cobble, 9);
     f.at_table(table);
     f.craft(&[(0, cobble, 1), (1, cobble, 1), (2, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_pickaxe", 1);
     f.craft(&[(0, cobble, 1), (1, cobble, 1), (3, cobble, 1), (4, stick, 1), (7, stick, 1)], "base:stone_axe", 1);
@@ -7685,8 +8408,11 @@ fn the_first_days(f: &mut Fresh) -> Site {
     if unhurt(&f.c).is_empty() {
         f.stock("junglefowl", -4);
     }
+    // The seeds in hand from the lane's mouth on, so a fowl that wanders while the player
+    // walks in is tempted from wherever it ends up (seeds tempt from under ten blocks).
+    f.hold("base:wheat_seeds");
     // In by the open end to five blocks short of the nearest junglefowl (they huddle at the
-    // far end, and the seeds tempt from ten), where it can walk up the rest.
+    // far end), where it can walk up the rest.
     f.walk_toward(Fresh::middle(f.rel(-9, 0, 2)), 0.3);
     // One may have stepped out by the open end while the player walked in: another is let in.
     let in_lane = |c: &Client| !unhurt(c).is_empty();
@@ -7694,10 +8420,10 @@ fn the_first_days(f: &mut Fresh) -> Site {
         f.stock("junglefowl", -4);
         assert!(f.waited(2.0, in_lane), "the junglefowl let into the lane never showed");
     }
+    // Where the nearest is now, once the player is in.
     let near = unhurt(&f.c).into_iter().fold(f32::MIN, f32::max);
     let lane_x = f.rel(-9, 0, 0).x as f32 + 0.5;
     f.walk_toward(Vec3::new(lane_x, f.at.y, (near + 5.0).min(f.rel(0, 0, 0).z as f32 + 0.5)), 0.3);
-    f.hold("base:wheat_seeds");
     // However crowded the lane's end, one walks out of the heap and up to the seeds.
     let drawn = f.waited(10.0, |c| quest_status(c, "a_tempting_bite").0);
     let fowls: Vec<_> = f.c.creatures.values().filter(|v| v.species == fowl && v.position.distance(f.at) < 12.0).map(|v| (v.id, v.position, v.pose, v.health)).collect();
@@ -7707,7 +8433,8 @@ fn the_first_days(f: &mut Fresh) -> Site {
 
     // A Bed of Your Own: two feathers (junglefowl) and two hides (rabbits) for a sleeping
     // bag, crafted in the two by two grid.
-    let (feather, hide) = ("base:feather", "base:hide");
+    // Rabbits give raw hide; the first bag takes it as it is.
+    let (feather, hide) = ("base:feather", "base:raw_hide");
     let (feathers, hides) = (|c: &Client| holding(c, feather) + loose(c, feather), |c: &Client| holding(c, hide) + loose(c, hide));
     f.hunt(|c| if hides(c) < 2 { "rabbit" } else { "junglefowl" }, |c| feathers(c) >= 2 && hides(c) >= 2);
     f.collect(feather, 2);
@@ -7878,7 +8605,7 @@ impl Fresh {
     /// takes nothing more in (a quest's reward, a craft, dug clay), and cooked food takes a
     /// slot each, so by the Farm age a player clears theirs out as this does.
     fn make_room(&mut self, free: usize) {
-        const SPARE: [&str; 7] = ["base:burnt_food", "base:feather", "base:wooden_pickaxe", "base:raw_small_game", "base:cooked_small_game", "base:oak_planks", "base:bread"];
+        const SPARE: [&str; 7] = ["base:burnt_food", "base:feather", "base:flint_pickaxe", "base:raw_small_game", "base:cooked_small_game", "base:oak_planks", "base:bread"];
         let slots = voxmar_engine::inventory::SLOTS;
         let empty = |c: &Client| (0..slots).filter(|&s| c.inventory.get(s).is_none()).count();
         if empty(&self.c) >= free {
@@ -7952,7 +8679,7 @@ impl Fresh {
 fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     lockstep("some eleven minutes of game time, from bare hands to the lit Crucible Kiln");
     let wall = Instant::now();
-    let c = Client::join_with(ServerConfig { view_distance: 2, ..Default::default() });
+    let c = Client::join_with(ServerConfig { view_distance: 2, draw_key: Some(FRESH_DRAWS), ..Default::default() });
     let mut f = Fresh::lay_out(c);
     f.lay_out_the_farm();
     let o = f.origin;
@@ -8018,7 +8745,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, ingot, 1), (1, ingot, 1), (2, ingot, 1), (4, stick, 1), (7, stick, 1)], "base:copper_pickaxe", 1);
     f.mark("red_metal");
 
-    // Brick by Brick: nineteen kiln bricks in hand, four fired clay each in the grid
+    // Brick by Brick: nineteen kiln bricks in hand, two from four fired clay in the grid
     // (Crafting 5). A Kiln Load falls on the way, done at forty clay fired in all, and pays
     // the first four.
     while !quest_status(&f.c, "a_kiln_load").0 {
@@ -8026,10 +8753,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         f.fire_clay(&site, more);
     }
     f.mark("a_kiln_load");
-    let short = 19u32.saturating_sub(f.have(bricks));
-    f.fire_clay(&site, short * 4);
-    let k = short as u8;
-    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, short);
+    let crafts = 19u32.saturating_sub(f.have(bricks)).div_ceil(2);
+    f.fire_clay(&site, crafts * 4);
+    let k = crafts as u8;
+    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
     f.mark("brick_by_brick");
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10).
@@ -8041,6 +8768,10 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // each corner of the ring; thirty-two charcoal held and the crucible right-clicked.
     f.burn_charcoal(&site, 32);
     let centre = f.rel(13, 0, 9);
+    // The site cleared first, whatever the earlier steps left on it.
+    f.c.fill(f.origin, IVec3::new(12, 0, 8), IVec3::new(14, 2, 10), "air");
+    let site: Vec<IVec3> = (12..=14).flat_map(|x| (0..=2).flat_map(move |y| (8..=10).map(move |z| IVec3::new(x, y, z)))).map(|p| f.origin + p).collect();
+    f.c.pump_until(|c| site.iter().all(|&p| c.world.block(p) == Some(BlockId::AIR)));
     f.walk_toward(Fresh::middle(f.rel(13, 0, 6)), 0.05);
     let core = f.place("base:crucible", centre - IVec3::Y);
     for (dx, dz) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
@@ -8379,4 +9110,59 @@ fn first_age_fights_balanced() {
         }
     }
     eprintln!("\nfirst-age fights:\n{}", lines.join("\n"));
+}
+
+/// A bed a village furnished a home with is its resident's: sleeping in it is refused, out
+/// of creative, and it does not become where the player wakes; a bed set beside it, which
+/// the village never planned, works.
+#[test]
+fn a_village_bed_is_someones() {
+    let mut client = Client::join_with(ServerConfig { seed: VILLAGE_SEED, view_distance: 2, allow_flight: false, ..Default::default() });
+    client.admin = true;
+    to_settlement(&mut client, "", "noon");
+    let told = |c: &Client, text: &str| c.chat.iter().any(|(_, t)| t.contains(text));
+    let refused = |c: &Client| c.refused.iter().any(|t| t.contains("belongs to someone"));
+    let world_content = voxmar_worldgen::WorldContent::load(&client.content).unwrap();
+    let overworld = voxmar_worldgen::Overworld::with_content(VILLAGE_SEED, client.content.blocks.clone(), &world_content);
+    let towns = overworld.settlements_near(client.position.floor().as_ivec3().xz(), 256);
+    // A ground-floor bed, by the floor its home stands on.
+    let (home, bed) = towns.iter().flat_map(|t| &t.buildings).find_map(|b| b.beds.iter().find(|p| p.y == b.floor + 1).map(|&p| (b.clone(), p))).expect("a village home with a bed on its ground floor");
+    let open = |c: &Client, p: IVec3| c.world.block(p).is_some_and(|b| !c.content.blocks.def(b).solid);
+    client.ok(&format!("/tp {} {} {}", bed.x as f32 + 0.5, bed.y + 1, bed.z as f32 + 0.5));
+    client.pump_until(|c| c.world.block(bed).is_some_and(|b| c.content.blocks.def(b).has_tag("bed")));
+    // Stand beside it, on the floor of the room, where the way to it is open.
+    let side = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().map(|d| bed + d).find(|&p| open(&client, p) && open(&client, p + IVec3::Y) && home.room.contains(&p.xz()))
+        .unwrap_or_else(|| panic!("the {} bed at {bed} has no open side", home.what));
+    client.ok(&format!("/tp {} {} {}", side.x as f32 + 0.5, side.y, side.z as f32 + 0.5));
+    client.pump_until(|c| c.position.distance(side.as_vec3() + Vec3::new(0.5, 0.0, 0.5)) < 1.0);
+    client.chat.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(refused);
+    assert!(!told(&client, "wake here"), "a village bed took as where the player wakes");
+    // One set beside it works: the village never planned it. The player stands on the
+    // village bed meanwhile, as no block is set where someone stands.
+    let stand_on = |client: &mut Client, p: IVec3| {
+        client.ok(&format!("/tp {} {} {}", p.x as f32 + 0.5, p.y + 1, p.z as f32 + 0.5));
+        client.pump_until(|c| c.position.xz().distance(p.xz().as_vec2() + 0.5) < 0.5);
+    };
+    stand_on(&mut client, bed);
+    client.ok(&format!("/setblock {} {} {} oak_bed", side.x, side.y, side.z));
+    let oak = client.content.blocks.expect("base:oak_bed");
+    client.pump_until(|c| c.world.block(side) == Some(oak));
+    client.chat.clear();
+    client.refused.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: side, face: Face::PosY });
+    client.pump_until(|c| told(c, "wake here"));
+    assert!(!refused(&client), "a bed set by command in the village was refused");
+    // So does one set in the village bed's own place: it is no longer the bed the village put
+    // there. The player stands on the new bed meanwhile.
+    stand_on(&mut client, side);
+    client.ok(&format!("/setblock {} {} {} sleeping_bag", bed.x, bed.y, bed.z));
+    let bag = client.content.blocks.expect("base:sleeping_bag");
+    client.pump_until(|c| c.world.block(bed) == Some(bag));
+    client.chat.clear();
+    client.refused.clear();
+    client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
+    client.pump_until(|c| told(c, "wake here"));
+    assert!(!refused(&client), "a bag set in a village bed's place was refused");
 }

@@ -33,6 +33,12 @@ the server's side in `crates/server/src/stations.rs`.
 - Loading one sounds at the block when the server says it took (never predicted, so a refused
   load is silent): its `sound` (the pot's `Water`, a stir), else its working block's placing.
   Taking from it pops like a pickup (client `sfx::station_cue`).
+- Loaded inside the loader's own home (they stand in it too), a station tops the load up to
+  `holds` with more of what is in hand. It takes from the hand, then the rest of the pack,
+  then the home's stores they placed (or nobody did), nearest the hearth or bed first. Set
+  `from_stores: false` to turn this off; the compost heap and the earth clamp do, so stored
+  grain is not composted nor the woodshed charred (docs/home.md, "Crafting from home's
+  stores").
 - Breaking (or replacing) a loaded station drops what is on it: the raw input before it is
   done, the output after.
 - `fertilisers`: an item right-clicked on a growing sown crop (`base:fertilise`) grows the sown
@@ -48,7 +54,8 @@ and a fertiliser reach outside 0 to 4.
 
 | Station | Age | Recipe | Works | Spot | Time | Skill |
 | --- | --- | --- | --- | --- | --- | --- |
-| Drying rack | Nomad | 4 sticks, 3 twine (Crafting 3) | up to 8 raw meat or raw fish into jerky, one for one | open sky; a `fire` within 3 doubles the speed | 10 min (5 by a fire) | Cooking 1, 6 xp each |
+| Drying rack | Nomad | 4 sticks, 3 twine (Crafting 1) | up to 8 raw meat or raw fish into jerky, one for one | open sky; a `fire` within 3 doubles the speed | 10 min (5 by a fire) | Cooking 1, 6 xp each |
+| Drying rack | Nomad | (the same rack) | up to 8 raw hides into hide, one for one: a beast's hide comes off raw | open sky; a `fire` within 3 doubles the speed | 10 min (5 by a fire) | Crafting 1, 2 xp each; a cured hide is worth 3 to a raw one's 2 |
 | Cooking pot | Nomad | 7 fired clay about a clay pot (Crafting 3) | up to 6: two grain, not seed (`tag:grain+!vegetable+!seed`), into porridge (Cooking 3, 14 xp); three raw meat, roots, vegetables or other edible produce, none of it cooked, grain or fruit, into a stew (Cooking 14, 36 xp) | a `hob` within 1 (a campfire beside it, or the hearthstone under it) and water within 4 (a well counts), both at load and take | 2 min (porridge), 3 min (stew) | Cooking 3 / 14 |
 | Compost heap | Farm | 7 planks in a U (Construction 5) | up to 16 produce, vegetables, fruit, seed or burnt food (`compost` tag), four into one compost | water within 2 makes it x1.5 | 15 min (10 by water) | Farming 5, 8 xp each |
 | Earth clamp | Farm | 8 dirt round a log (Construction 3) | up to 16 clay into fired clay (never cracked), or 16 logs into charcoal, one for one; quests count both as cooked | anywhere | 1 min | Crafting 1, 4 xp each (clay); Cooking 1, 3 xp each (charcoal) |
