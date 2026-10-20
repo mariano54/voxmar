@@ -1031,7 +1031,7 @@ impl Weapon {
 }
 
 /// Every class and weapon, with each item's weapon worked out once.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CombatRegistry {
     classes: Vec<ClassDef>,
     /// Each block id's weapon, if it is one.
