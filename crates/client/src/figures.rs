@@ -10,6 +10,7 @@
 use bevy::light::NotShadowCaster;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::prelude::*;
+use bevy::render::render_resource::Buffer;
 use bevy::tasks::{Task, block_on, futures_lite::future};
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
@@ -334,6 +335,24 @@ fn ease_pitch(from: f32, to: f32, rate: f32, dt: f32) -> f32 {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Where a figure at `from` is after `dt` seconds following the server's `to` at `rate`,
+/// and how far it walked: from more than `SNAP` off it is there at once, and a snap (a
+/// respawn, a teleport) is no step, so it swings no limb.
+fn follow(from: Vec3, to: Vec3, rate: f32, dt: f32) -> (Vec3, f32) {
+    if from.distance(to) > SNAP {
+        return (to, 0.0);
+    }
+    let at = from.lerp(to, 1.0 - (-rate * dt).exp());
+    (at, (at - from).with_y(0.0).length())
+}
+
+/// A figure's material: unlit, its skin painted through `body`'s volume, `skin` till then.
+fn figure_material(body: &SpeciesBody, skin: Handle<Image>, atmosphere: Buffer) -> SkinMaterial {
+    let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
+    let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };
+    SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin, frame, atmosphere } }
+}
+
 fn show(
     mut commands: Commands,
     time: Res<Time>,
@@ -363,14 +382,19 @@ fn show(
         here
     });
     let parts = look.parts();
-    let body = figures.body.get_or_insert_with(|| crate::creatures::species_body(&look.body.model, &parts, meshes, binds));
     let blank = figures.blank.get_or_insert_with(|| images.add(crate::creatures::blank_skin())).clone();
+    let body = figures.body.get_or_insert_with(|| {
+        let body = crate::creatures::species_body(&look.body.model, &parts, meshes, binds);
+        // Its pipeline compiles as the world loads (`render::warm`), drawn as a figure is
+        // (`figure_material`, no shadow), not when another player first comes into view.
+        let material = skins.add(figure_material(&body, blank.clone(), atmosphere.clone()));
+        crate::render::warm::warm_skinned(&mut commands, body.mesh.clone(), material, body.binds.clone(), parts.len(), false, DespawnOnExit(Screen::InGame));
+        body
+    });
     let hand = look.hand;
     for view in remote.views() {
         let figure = figures.shown.entry(view.id).or_insert_with(|| {
-            let size = Vec3::from_array(body.dims.map(|n| n as f32)) / skin::TEXELS;
-            let frame = SkinFrame { origin: body.origin.extend(skin::TEXELS), size: size.extend(0.0) };
-            let material = skins.add(SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin: blank.clone(), frame, atmosphere: atmosphere.clone() } });
+            let material = skins.add(figure_material(body, blank.clone(), atmosphere.clone()));
             let root = commands.spawn((Transform::from_translation(view.position), Visibility::Hidden, DespawnOnExit(Screen::InGame))).id();
             let joints: Vec<(Entity, Part)> = parts.iter().map(|&part| (commands.spawn((Transform::from_translation(part.pivot), ChildOf(root))).id(), part)).collect();
             let skinned = SkinnedMesh { inverse_bindposes: body.binds.clone(), joints: joints.iter().map(|(e, _)| *e).collect() };
@@ -436,11 +460,10 @@ fn show(
             }
         }
         // Where it is: eased toward what the server says, or there at once from far off.
-        let before = figure.position;
-        figure.position = if before.distance(view.position) > SNAP { view.position } else { before.lerp(view.position, 1.0 - (-look.follow * dt).exp()) };
+        let moved;
+        (figure.position, moved) = follow(figure.position, view.position, look.follow, dt);
         figure.yaw = ease_angle(figure.yaw, view.yaw, look.turn, dt);
         figure.pitch = ease_pitch(figure.pitch, view.pitch, look.turn, dt);
-        let moved = (figure.position - before).with_y(0.0).length();
         if dt > 0.0 {
             figure.pace += (moved / dt - figure.pace) * (1.0 - (-10.0 * dt).exp());
         }
@@ -594,6 +617,17 @@ mod tests {
     fn shipped() -> PlayerLook {
         let source = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/base/", "player_look.ron")).unwrap();
         PlayerLook::load(&[ContentFile { package: "base".into(), name: FILE.into(), source }]).unwrap()
+    }
+
+    /// A remote player who respawns or is teleported is drawn there at once, and the jump
+    /// is no stride: it does not run on the spot.
+    #[test]
+    fn a_teleported_figure_is_there_at_once_without_a_step() {
+        let from = Vec3::ZERO;
+        let (at, moved) = follow(from, Vec3::new(SNAP + 40.0, 0.0, 0.0), 12.0, 1.0 / 60.0);
+        assert_eq!((at, moved), (Vec3::new(SNAP + 40.0, 0.0, 0.0), 0.0), "a snap swings no limb");
+        let (at, moved) = follow(from, Vec3::new(1.0, 0.0, 0.0), 12.0, 1.0 / 60.0);
+        assert!(moved > 0.0 && (moved - at.x).abs() < 1e-6, "a walk is a step: {moved} to {at}");
     }
 
     /// A look from all but straight down to all but straight up passes the level, never

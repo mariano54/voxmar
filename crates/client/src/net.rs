@@ -184,16 +184,20 @@ impl Clock {
     }
 }
 
-/// Other players as the server last told them (drawn by `figures`).
+/// Other players as the server last told them (drawn by `figures`), and any shown with no
+/// server behind them (`puppet`).
 #[derive(Resource, Default)]
 pub struct RemotePlayers {
     players: FxHashMap<PlayerId, PlayerView>,
+    /// Shown as if told of (the gate's stand-in): the server's next list, which never has
+    /// them, leaves them be.
+    puppets: FxHashMap<PlayerId, PlayerView>,
 }
 
 impl RemotePlayers {
     /// Every other player here.
     pub fn views(&self) -> impl Iterator<Item = &PlayerView> {
-        self.players.values()
+        self.players.values().chain(self.puppets.values())
     }
 
     /// What the server told of others: views changed or come into sight (a name, when
@@ -211,19 +215,25 @@ impl RemotePlayers {
     }
 
     /// Shows another player as if the server had told of them, or moves one shown so (the
-    /// gate's stand-in, as no second client plays it).
+    /// gate's stand-in, as no second client plays it). They stay, standing as last shown,
+    /// until forgotten (`forget`), whatever the server tells of others meanwhile.
     pub fn puppet(&mut self, view: PlayerView) {
-        self.players.insert(view.id, view);
+        self.puppets.insert(view.id, view);
     }
 
     /// Stops showing another player.
     pub fn forget(&mut self, id: PlayerId) {
         self.players.remove(&id);
+        self.puppets.remove(&id);
+    }
+
+    fn get(&self, id: PlayerId) -> Option<&PlayerView> {
+        self.puppets.get(&id).or_else(|| self.players.get(&id))
     }
 
     /// What another player is called, while they are here.
     pub fn name(&self, id: PlayerId) -> Option<&str> {
-        self.players.get(&id).and_then(|view| view.name.as_deref())
+        self.get(id).and_then(|view| view.name.as_deref())
     }
 
     /// The player nearest along the look ray within `within` blocks of the eye, and how far:
@@ -231,9 +241,9 @@ impl RemotePlayers {
     /// server says they are.
     pub fn looked_at(&self, eye: Vec3, look: Vec3, within: f32, drawn: impl Fn(PlayerId) -> Option<Vec3>) -> Option<(PlayerId, f32)> {
         use voxmar_engine::physics::{Aabb, player};
-        self.players
-            .iter()
-            .filter_map(|(&id, view)| {
+        self.views()
+            .filter_map(|view| {
+                let id = view.id;
                 let at = drawn(id).unwrap_or(view.position);
                 Some((id, crate::creatures::ray_box(eye, look, &Aabb::standing(at, player::WIDTH, player::HEIGHT))?))
             })
@@ -243,7 +253,7 @@ impl RemotePlayers {
 
     /// Where another player stands, if they are in sight.
     pub fn position(&self, id: PlayerId) -> Option<Vec3> {
-        self.players.get(&id).map(|view| view.position)
+        self.get(id).map(|view| view.position)
     }
 }
 
@@ -502,6 +512,25 @@ mod tests {
         players.told(vec![view(None, 1.0)], vec![]);
         assert_eq!((players.name(9), players.position(9)), (Some("Ada"), Some(Vec3::X)));
         players.told(vec![], vec![9]);
+        assert_eq!(players.views().count(), 0);
+    }
+
+    /// A stand-in shown with no server behind it (the gate's) stays through what the server
+    /// tells of the others, which never names it, until it is forgotten.
+    #[test]
+    fn a_puppet_stays_through_the_servers_lists_until_forgotten() {
+        let mut players = RemotePlayers::default();
+        let view = |id, name: &str| PlayerView { id, name: Some(name.to_owned()), position: Vec3::ZERO, yaw: 0.0, pitch: 0.0, held: None, fight: Default::default() };
+        players.puppet(view(7, "Gate"));
+        players.told(vec![view(9, "Ada")], vec![]);
+        players.told(vec![view(9, "Ada")], vec![]);
+        let mut here: Vec<_> = players.views().map(|v| v.id).collect();
+        here.sort();
+        assert_eq!(here, vec![7, 9], "the stand-in and the player the server told of");
+        assert_eq!(players.name(7), Some("Gate"));
+        players.told(Vec::new(), vec![9]);
+        assert_eq!(players.views().map(|v| v.id).collect::<Vec<_>>(), vec![7], "the server telling the others gone leaves the stand-in");
+        players.forget(7);
         assert_eq!(players.views().count(), 0);
     }
 
