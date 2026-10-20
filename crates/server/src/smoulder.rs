@@ -61,7 +61,9 @@ impl Server {
         let Some(turn) = structure.turn(core, |p| self.block(p)) else { return };
         let now = self.day.floor() as u64;
         let done = now + (smoulder.hours as f64 * HOUR).round() as u64;
-        self.smoulders.insert(core, Smouldering { position: core.to_array(), structure: structure.name.clone(), turn, lit: now, done, seen: now, wet: 0, roofed: false });
+        // Its flue is loaded now, so a roof already over it is known before it is left.
+        let roofed = !self.open_sky(core + IVec3::Y);
+        self.smoulders.insert(core, Smouldering { position: core.to_array(), structure: structure.name.clone(), turn, lit: now, done, seen: now, wet: 0, roofed });
         self.set_block(core, smoulder.burning);
         self.tally(agent, "lit", &structure.name, 1);
         self.tell_smoulder(agent, Words::key("multiblock.smoulders").with("structure", title).with("hours", format!("{:.0}", smoulder.hours.ceil())));
@@ -381,6 +383,20 @@ mod tests {
         };
         assert_eq!(burn(false), [("base:ash_heap".to_owned(), 5), ("base:charcoal_heap".to_owned(), 4)], "the rain while away counted, the clear sky on return not");
         assert_eq!(burn(true), [("base:charcoal_heap".to_owned(), 9)], "roofed when last seen");
+        // Roofed, lit and left at once, never tended while loaded: the roof seen as it was lit.
+        let mut server = fixture("base:torch");
+        sky(&mut server, "clear");
+        build(&mut server);
+        server.set_block(FLUE + IVec3::new(0, 3, 0), id(&server, "base:stone"));
+        light(&mut server);
+        let column = server.world.remove(ColumnPos::new(0, 0)).unwrap();
+        sky(&mut server, "rain");
+        server.day += burn_ticks(&server);
+        server.tend_smoulders();
+        sky(&mut server, "clear");
+        server.world.insert(ColumnPos::new(0, 0), column);
+        server.tend_smoulders();
+        assert_eq!(charred(&server), [("base:charcoal_heap".to_owned(), 9)], "roofed as it was lit, left at once");
     }
 
     /// What smoulders is saved with the world, and comes back while its structure does.
