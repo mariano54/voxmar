@@ -77,16 +77,23 @@ impl Lattice {
 
     /// The values above the block column at (x, z), relative to the column origin.
     pub fn profile(&self, x: i32, z: i32, out: &mut Profile) {
+        self.profile_to(x, z, i32::MAX, out);
+    }
+
+    /// The values above the block column at (x, z) like `profile`, for heights up to `high`
+    /// only: the layers above it are left out.
+    pub fn profile_to(&self, x: i32, z: i32, high: i32, out: &mut Profile) {
         let (gx, gz) = ((x / STEP) as usize, (z / STEP) as usize);
         let (fx, fz) = ((x % STEP) as f32 / STEP as f32, (z % STEP) as f32 / STEP as f32);
         let plane = SIDE * SIDE;
         let corner = gz * SIDE + gx;
-        for layer in 0..self.layers {
+        let layers = ((high >> self.shift_y) - self.first + 2).clamp(0, self.layers as i32) as usize;
+        for layer in 0..layers {
             let at = |dx: usize, dz: usize| self.values[layer * plane + corner + dz * SIDE + dx];
             out.values[layer] = lerp(lerp(at(0, 0), at(1, 0), fx), lerp(at(0, 1), at(1, 1), fx), fz);
         }
         out.first = self.first;
-        out.layers = self.layers;
+        out.layers = layers;
         out.shift_y = self.shift_y;
     }
 }

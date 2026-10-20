@@ -24,6 +24,7 @@
 //   a new player never wakes on one)
 //   plant, flower, herb, grass, fern, reed, bush, fungus, groundcover
 //   natural, cobbled, polished, bricks, building, light (gives light), glass
+//   rubble (loose stones broken from rock, knocked together into cobbles)
 //   mossy, ruined (weathered building blocks), volcanic, dripstone, stalagmite,
 //   stalactite, hanging (grows down from a ceiling)
 // Rock: igneous, sedimentary, metamorphic; where it shows: cliff (bare rock faces), cave
@@ -144,12 +145,16 @@
     blocks: [
         // Rock
         (name: "bedrock", texture_variety: (turn: true, mirror: true), textures: All("bedrock"), hardness: -1.0, color: (60, 60, 60), tags: ["deep"]),
-        (name: "stone", texture_variety: (turn: true, mirror: true), textures: All("stone"), hardness: 1.5, drops: "cobblestone", color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave", "shelter:sound"]),
+        (name: "stone", texture_variety: (turn: true, mirror: true), textures: All("stone"), hardness: 1.5, drops: "loose_stone", drop_count: 2, color: (125, 125, 125), family: "stone", tags: ["stone", "natural", "igneous", "cliff", "cave", "shelter:sound"]),
         // A lair's room (lairs.ron): living root that no tool cuts, and the floor boss music
         // knows the room by (music.ron's `boss.rooms`).
         (name: "hollow_root", sound: Wood, textures: All("hollow_root"), hardness: -1.0, color: (78, 58, 42), tags: ["root", "lair"]),
         (name: "hollow_floor", sound: Soil, textures: All("hollow_floor"), hardness: -1.0, color: (66, 50, 38), tags: ["lair"]),
         (name: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), family: "stone", tags: ["stone", "cobbled", "building", "shelter:sound"]),
+        // Loose stones: what plain stone breaks into, two a block, knocked four at a time into
+        // two cobblestone in the hand's grid (recipes.ron). Hard rock breaks to its own cobbles,
+        // which the grindstone wants whole.
+        (name: "loose_stone", render: Plant, solid: false, item: true, sound: Stone, textures: All("loose_stone"), hardness: 0.0, color: (125, 125, 125), tags: ["rubble"]),
         (name: "mossy_cobblestone", textures: All("mossy_cobblestone"), hardness: 2.0, color: (100, 118, 90), family: "stone", tags: ["stone", "cobbled", "building", "mossy", "wet", "shelter:sound"]),
         (name: "polished_stone", textures: All("polished_stone"), hardness: 1.5, color: (135, 135, 135), family: "stone", tags: ["stone", "polished", "building", "shelter:fine"]),
         (name: "stone_bricks", textures: All("stone_bricks"), hardness: 1.5, color: (120, 120, 120), family: "stone", tags: ["stone", "bricks", "building", "shelter:fine"]),
@@ -309,8 +314,8 @@
         (name: "cactus", sound: Wood, textures: Sides(top: "cactus_top", bottom: "cactus_bottom", side: "cactus_side"), hardness: 0.4, color: (80, 130, 40), tags: ["plant", "desert", "hot", "dry", "natural", "thorny"]),
         // Plants
         (name: "short_grass", render: Plant, solid: false, sound: Grass, textures: All("fine_grass"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["plant", "grass", "meadow"]),
-        (name: "tall_grass", render: Plant, solid: false, sound: Grass, textures: All("tall_fine_grass_bottom"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["plant", "grass", "meadow", "tall"]),
-        (name: "tall_grass_top", render: Plant, solid: false, sound: Grass, textures: All("tall_fine_grass_top"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150)),
+        (name: "tall_grass", render: Plant, solid: false, sound: Grass, textures: All("tall_fine_grass_bottom"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["plant", "grass", "meadow", "tall", "fibre"]),
+        (name: "tall_grass_top", render: Plant, solid: false, sound: Grass, textures: All("tall_fine_grass_top"), tint: Grass, hardness: 0.0, drops: "core:air", color: (150, 150, 150), tags: ["tall", "fibre"]),
         (name: "fern", render: Plant, solid: false, sound: Grass, textures: All("fern"), tint: Grass, hardness: 0.0, drops: "core:air", color: (130, 130, 130), tags: ["plant", "fern", "forest_floor", "shade"]),
         (name: "large_fern", render: Plant, solid: false, sound: Grass, textures: All("large_fern_bottom"), tint: Grass, hardness: 0.0, drops: "core:air", color: (130, 130, 130), tags: ["plant", "fern", "forest_floor", "shade", "tall"]),
         (name: "large_fern_top", render: Plant, solid: false, sound: Grass, textures: All("large_fern_top"), tint: Grass, hardness: 0.0, drops: "core:air", color: (130, 130, 130)),
@@ -419,11 +424,14 @@
         ),
     ],
     families: [
-        // Rocks. Deepslate and the sandstones show their layers on top.
-        (template: "stone", name: "deepslate", tags: ["metamorphic", "deep", "cave"], members: {"deepslate": (textures: Column(end: "deepslate_top", side: "deepslate"), hardness: 3.0, color: (75, 75, 82))}),
-        (template: "stone", name: "granite", tags: ["igneous", "cliff", "cave"], all: (color: (150, 105, 90))),
-        (template: "stone", name: "diorite", tags: ["igneous", "cliff", "cave"], all: (color: (190, 190, 190))),
-        (template: "stone", name: "andesite", tags: ["igneous", "cliff", "cave"], all: (color: (135, 135, 135))),
+        // Rocks. Deepslate and the sandstones show their layers on top. Toolstone is hard,
+        // fine-grained rock that grinds to a tool's edge at a grindstone (recipes.ron): granite,
+        // diorite, andesite and basalt where a province bares them (rocks.ron), and deepslate
+        // under every province, for a player whose country has none to mine down to.
+        (template: "stone", name: "deepslate", tags: ["metamorphic", "deep", "cave", "toolstone"], members: {"deepslate": (textures: Column(end: "deepslate_top", side: "deepslate"), hardness: 3.0, color: (75, 75, 82))}),
+        (template: "stone", name: "granite", tags: ["igneous", "cliff", "cave", "toolstone"], all: (color: (150, 105, 90))),
+        (template: "stone", name: "diorite", tags: ["igneous", "cliff", "cave", "toolstone"], all: (color: (190, 190, 190))),
+        (template: "stone", name: "andesite", tags: ["igneous", "cliff", "cave", "toolstone"], all: (color: (135, 135, 135))),
         (template: "stone", name: "tuff", tags: ["igneous", "cave", "deep"], all: (color: (108, 109, 102))),
         (template: "stone", name: "calcite", tags: ["sedimentary", "cave"], all: (color: (223, 224, 220), hardness: 0.75)),
         (
@@ -473,7 +481,7 @@
         (template: "stone", name: "marble", tags: ["metamorphic", "cliff", "cave"], all: (color: (226, 224, 218))),
         (template: "stone", name: "limestone", tags: ["sedimentary", "cliff", "cave"], all: (color: (200, 190, 160))),
         (template: "stone", name: "slate", tags: ["metamorphic", "cliff", "cave"], all: (color: (70, 78, 88))),
-        (template: "stone", name: "basalt", tags: ["igneous", "cliff", "cave", "deep"], all: (color: (60, 60, 66), hardness: 2.0)),
+        (template: "stone", name: "basalt", tags: ["igneous", "cliff", "cave", "deep", "toolstone"], all: (color: (60, 60, 66), hardness: 2.0)),
         (template: "stone", name: "chalk", tags: ["sedimentary", "cliff"], all: (color: (236, 234, 226), hardness: 0.8)),
         (template: "stone", name: "travertine", tags: ["sedimentary", "cliff", "cave"], all: (color: (206, 192, 160))),
         // More fired clay colours, for mesa bands and painted caves.

@@ -93,6 +93,10 @@ pub struct Seen {
     pub tolerated: bool,
     /// Its owner, whom a kept creature neither fears nor hunts.
     pub friend: bool,
+    /// Whether a blow from where the creature stands has a way through the air to them
+    /// (the server's `blow_open`): none through a roof or a wall, so it is not close enough
+    /// to strike however near.
+    pub open: bool,
 }
 
 /// Where someone with a routine (villagers) is to be now, as the server's schedule and
@@ -233,6 +237,9 @@ pub enum Memory {
     NoWay,
     /// A player's blow (not a bleed) landed on it within `STRUCK_LATELY` seconds.
     Struck,
+    /// Something at `Mind::startled_at` startled it with no one near to blame (a snare it
+    /// slipped): it runs from that spot. Kin's alarms raised after leave this be.
+    Startled,
 }
 
 /// A creature's state of mind, kept between decisions.
@@ -254,8 +261,14 @@ pub struct Mind {
     pub pause: f32,
     /// Seconds until it may attack again.
     pub cooldown: f32,
+    /// Seconds left of circling its target between blows (`Attack::circle`), counted from
+    /// the end of its recovery (held till then, it does not think).
+    pub circling: f32,
     /// Zigzag side when fleeing, and other modules' small counters.
     pub zig: f32,
+    /// Where it was startled with no one to blame (a snare it slipped): while it recalls
+    /// the fright (`Memory::Startled`) it runs from there, not toward home.
+    pub startled_at: Option<Vec3>,
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
     /// near, how far it likes to stray).
     pub seed: u64,
@@ -275,8 +288,10 @@ impl Mind {
             goal: None,
             pause: 0.0,
             cooldown: 0.0,
+            circling: 0.0,
             seed,
             zig: 1.0,
+            startled_at: None,
         }
     }
 
@@ -365,6 +380,14 @@ impl Mind {
     pub fn alarmed(&mut self) {
         self.fear = self.fear.max(0.5 + 0.5 * self.personality.nervousness);
         self.remember(Memory::Alarm, 8.0);
+    }
+
+    /// Something at `at` startled it with no one near to blame: alarmed (`alarmed`), it
+    /// runs from that spot for as long as it is startled (`Memory::Startled`).
+    pub fn startled(&mut self, at: Vec3) {
+        self.alarmed();
+        self.startled_at = Some(at);
+        self.remember(Memory::Startled, 8.0);
     }
 }
 
@@ -460,6 +483,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     mind.fear = (mind.fear - FEAR_FADE * dt * (1.5 - mind.personality.nervousness)).max(0.0);
     mind.anger = (mind.anger - ANGER_FADE * dt).max(0.0);
     mind.cooldown = (mind.cooldown - dt).max(0.0);
+    mind.circling = (mind.circling - dt).max(0.0);
     mind.pause = (mind.pause - dt).max(0.0);
     mind.since += dt;
     mind.memories.retain_mut(|(_, left)| {
@@ -531,7 +555,7 @@ pub(super) mod tests {
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
-        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false }
+        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true }
     }
 
     fn doing<'a>(creature: &'a Creature, mind: &Mind) -> &'a str {

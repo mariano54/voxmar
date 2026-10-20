@@ -55,6 +55,8 @@ struct Fighter {
     /// perfect dodge).
     counter_until: f64,
     riposte_until: f64,
+    /// Swings landed, counted round, for others to see each blow (`FightView::struck`).
+    struck: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -131,6 +133,9 @@ pub(crate) struct Fights {
     /// lower by the share, until when).
     pinned: FxHashMap<u32, (f32, f64)>,
     sundered: FxHashMap<u32, (f32, f64)>,
+    /// Fight time in tests that drive it by game time (`run_clock`), not the wall clock.
+    #[cfg(test)]
+    clock: Option<f64>,
 }
 
 impl Default for Fights {
@@ -142,6 +147,8 @@ impl Default for Fights {
             bleeds: Vec::new(),
             pinned: FxHashMap::default(),
             sundered: FxHashMap::default(),
+            #[cfg(test)]
+            clock: None,
         }
     }
 }
@@ -152,7 +159,18 @@ impl Fights {
     }
 
     fn now(&self) -> f64 {
+        #[cfg(test)]
+        if let Some(clock) = self.clock {
+            return clock;
+        }
         self.secs(Instant::now())
+    }
+
+    /// Runs fight time by game time from here on, `seconds` on from where it is (tests that
+    /// tick faster than the clock): the wall clock no longer counts.
+    #[cfg(test)]
+    pub(crate) fn run_clock(&mut self, seconds: f32) {
+        self.clock = Some(self.clock.unwrap_or_else(|| self.secs(Instant::now())) + seconds as f64);
     }
 
     /// The share a pin slows `creature` by at `now`, in game seconds (`Server::game_secs`).
@@ -192,6 +210,19 @@ impl Server {
 
     fn fight_arrival(&self) -> f64 {
         self.fights.secs(self.arrival)
+    }
+
+    /// What `player` is doing in a fight, for others to see: the swing under way (seconds
+    /// into it on the fight clock), the blows landed and the guard.
+    pub(crate) fn fight_view(&self, player: PlayerId) -> voxmar_protocol::FightView {
+        let Some(fighter) = self.fights.fighters.get(&player) else { return Default::default() };
+        let now = self.fights.now().max(self.fight_arrival());
+        let swing = fighter.rhythm.pending().zip(fighter.aim).map(|(swing, aim)| voxmar_protocol::SwingView {
+            into: (now - swing.starts) as f32,
+            windup: (swing.lands - swing.starts) as f32,
+            shot: !self.content.combat.ammo(&aim.weapon).is_empty(),
+        });
+        voxmar_protocol::FightView { swing, struck: fighter.struck, guard: fighter.guarding.is_up() }
     }
 
     /// How `player` guards: with their shield, or their weapon (`CombatRegistry::guard_of`).
@@ -380,8 +411,12 @@ impl Server {
         // player stands, from its body's edge (`Creature::choose`).
         let species = self.content.creatures.get(live.species);
         let edge = species.edge(to.length(), live.scale);
-        let Some(index) = species.choose(live.phase, edge, live.attack) else { return };
+        let Some(index) = species.choose(live.phase, edge, live.attack, species.level(live.body.position.y, target.position.y, live.scale)) else { return };
         let Some(attack) = species.attack_at(index) else { return };
+        // No wind-up at a player its blow has no way through the air to (`blow_open`).
+        if attack.charge.is_none() && !self.blow_open(&live.body, attack.reach, target.position) {
+            return;
+        }
         let feel = self.content.combat.feel;
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
         let tick = self.tick;
@@ -465,6 +500,7 @@ impl Server {
         for (&player, fighter) in &mut self.fights.fighters {
             if let Some(swing) = fighter.rhythm.landed(now) {
                 let Some(aim) = fighter.aim.take() else { continue };
+                fighter.struck = fighter.struck.wrapping_add(1);
                 let p = self.players.get(&player);
                 let eye = p.map(|p| p.eye());
                 let ammo = combat.ammo(&aim.weapon);
@@ -705,6 +741,13 @@ impl Server {
         live.decision.pose = brain::Pose::Idle;
         live.held_until = live.held_until.max(tick + ticks(recovery));
         live.mind.cooldown = (attack.every - windup - recovery).max(0.0);
+        // One that circles between blows does so once it has recovered (held till then, it
+        // does not think, so the circling counts from there), and only then comes in again
+        // (`Attack::circle`).
+        if let Some(circle) = attack.circle {
+            live.mind.circling = circle.seconds;
+            live.mind.cooldown = live.mind.cooldown.max(live.mind.circling);
+        }
         live.changed = true;
         let Some(target) = self.players.get(&player) else { return };
         if !target.health.alive() || target.allow_flight {
@@ -719,7 +762,10 @@ impl Server {
         // with slack for the lag.
         let reach = attack.reach + size.0 * scale * 0.5 + 0.3 + feel.reach_slack;
         let flat = (to - at).with_y(0.0).length();
-        let tall = (to.y - at.y).abs() < size.1 * scale + 1.5;
+        let tall = self.content.creatures.get(species).in_band(at.y, to.y, voxmar_engine::physics::player::HEIGHT, scale);
+        // And through the air, not through a roof or a wall (`blow_open`); a charge that ran
+        // into them met them.
+        let open = contact || self.blow_open(&voxmar_engine::creature::motion::Body { position: at, ..live.body }, attack.reach + feel.reach_slack, to);
         // A charge that runs onto a braced point is stopped on it, heavy or not.
         if let Some(charge) = attack.charge.filter(|_| contact) {
             let bracing = self.guard_of(player).filter(|g| g.braces(look, at - to));
@@ -734,7 +780,7 @@ impl Server {
         }
         let guard = self.guard_of(player).and_then(|g| g.takes(attack.style, attack.heavy, look, at - to, &feel));
         let fighter = self.fights.fighters.entry(player).or_default();
-        let defended = if flat > reach || !tall { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
+        let defended = if flat > reach || !tall || !open { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
         match defended {
             Defended::Dodged => fighter.riposte_until = lands + feel.riposte as f64,
             Defended::Perfect => fighter.counter_until = lands + feel.counter as f64,
@@ -791,7 +837,8 @@ impl Server {
         let Some(live) = self.creatures.live.get_mut(&creature) else { return };
         let Some(mut charge) = live.charging else { return };
         let body = live.body;
-        let species = self.content.creatures.get(live.species);
+        let kind = live.species;
+        let species = self.content.creatures.get(kind);
         let (size, scale, most) = (species.def.body.size, live.scale, species.def.health);
         let moved = (body.position - before).with_y(0.0).dot(charge.along).max(0.0);
         charge.left -= moved;
@@ -824,7 +871,7 @@ impl Server {
             .filter(|p| p.joined && p.health.alive() && !p.allow_flight)
             .filter(|p| {
                 let to = (p.position - body.position).with_y(0.0);
-                to.length() <= touching && to.dot(charge.along) >= 0.0 && (p.position.y - body.position.y).abs() < size.1 * scale + 1.0
+                to.length() <= touching && to.dot(charge.along) >= 0.0 && self.content.creatures.get(kind).level(body.position.y, p.position.y, scale)
             })
             .min_by(|a, b| (a.position - body.position).with_y(0.0).length_squared().total_cmp(&(b.position - body.position).with_y(0.0).length_squared()))
             .map(|p| p.id);
@@ -1195,16 +1242,52 @@ mod tests {
         assert!(!server.creatures.live[&bear].winding);
     }
 
-    /// The ticks a wolf's blows come down on, standing by a player who never fights back,
+    /// Others see a player's fight as the server has it: the guard up, a swing winding up
+    /// with its wind-up and not a shot, then landed (the count of blows moves on).
+    #[test]
+    fn others_see_a_players_guard_swing_and_blow() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        joined.joined = true;
+        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
+        joined.inventory.add(sword, 1);
+        let attack = server.content.skills.id("core:attack").expect("Attack");
+        joined.skills.grant(attack, server.content.skills.xp_for(20));
+        let ahead = joined.position + joined.look().with_y(0.0).normalize() * 1.2;
+        server.players.insert(player, joined);
+        let species = server.content.creatures.id("base:brown_bear").expect("a bear");
+        let bear = server.spawn_creature(species, ahead, 1).expect("room");
+        assert_eq!(server.fight_view(player), voxmar_protocol::FightView::default(), "a player who never fought");
+        client.send(ClientMessage::Guard { up: true });
+        server.handle_messages();
+        assert!(server.fight_view(player).guard, "the guard up was not shown");
+        client.send(ClientMessage::Guard { up: false });
+        server.handle_messages();
+        assert!(!server.fight_view(player).guard, "the guard down was not shown");
+        server.swing_at(player, bear);
+        let view = server.fight_view(player);
+        let swing = view.swing.expect("the swing winding up was not shown");
+        let windup = server.content.combat.timing(&server.wielded_by(player).expect("a sword")).windup;
+        assert!(!swing.shot && (swing.windup - windup).abs() < 1e-4 && (0.0..windup).contains(&swing.into), "{swing:?}, a wind-up of {windup} wanted");
+        // Its wind-up goes by (the epoch put back that much, as no test waits on the clock).
+        server.fights.epoch = server.fights.epoch.checked_sub(Duration::from_secs_f32(windup + 0.05)).expect("a clock that far back");
+        server.tick_fights();
+        let after = server.fight_view(player);
+        assert_eq!((after.swing, after.struck), (None, view.struck.wrapping_add(1)), "the blow landed was not shown");
+    }
+
+    /// The ticks a `name`'s blows come down on, standing by a player who never fights back,
     /// over 10 game seconds of the server's own ticks; with `slow`, each tick takes 100 ms of
     /// the players' clock, 50 more than it is, as on a server running behind.
-    fn wolf_blows(slow: bool) -> Vec<u64> {
+    fn blows_of(name: &str, slow: bool) -> Vec<u64> {
         use crate::creatures::cornered_tests::{join, pen, put};
         let mut server = crate::test_server();
         let c = pen(&mut server, 9);
         let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
         let player = join(&mut server, stand);
-        let wolf = put(&mut server, "base:wolf", stand - Vec3::X * 3.0, Vec3::X);
+        let wolf = put(&mut server, name, stand - Vec3::X * 3.0, Vec3::X);
         server.tick = 1000;
         server.hurt_creature(player, wolf, 0, None, Blow::Plain);
         let (mut blows, mut winding) = (Vec::new(), false);
@@ -1234,17 +1317,24 @@ mod tests {
     /// ahead (every test) landed none.
     #[test]
     fn a_creatures_blows_keep_their_beat_in_game_time_however_long_the_ticks_take() {
-        let quick = wolf_blows(false);
-        let slow = wolf_blows(true);
+        // A badger strikes on its `every` alone; a wolf circles between bites (`circle`),
+        // which comes on top, so its beat is checked only for keeping to game time.
+        let quick = blows_of("base:badger", false);
+        let slow = blows_of("base:badger", true);
         let server = crate::test_server();
-        let wolf = server.content.creatures.find("wolf").map(|s| server.content.creatures.get(s).def.clone()).expect("a wolf");
-        let every = wolf.attack.expect("a wolf bites").every as f64;
+        let badger = server.content.creatures.find("badger").map(|s| server.content.creatures.get(s).def.clone()).expect("a badger");
+        let attack = badger.attack.expect("a badger strikes");
+        assert!(attack.circle.is_none(), "the badger circles now: pick a creature that strikes on its every alone");
+        let every = attack.every as f64;
         let gaps: Vec<f64> = quick.windows(2).map(|w| (w[1] - w[0]) as f64 / TICKS_PER_SECOND as f64).collect();
-        assert!(quick.len() >= 6, "the wolf came down only {} times in 10 game seconds: {quick:?}", quick.len());
+        assert!(quick.len() >= 6, "the badger came down only {} times in 10 game seconds: {quick:?}", quick.len());
         assert_eq!(quick, slow, "a server running behind gave other blows");
         for gap in &gaps {
             assert!((every - 0.05..=every + 0.35).contains(gap), "blows {gap:.2} game s apart, its every {every:.2}: {gaps:?}");
         }
+        let (quick, slow) = (blows_of("base:wolf", false), blows_of("base:wolf", true));
+        assert!(quick.len() >= 3, "the wolf came down only {} times in 10 game seconds: {quick:?}", quick.len());
+        assert_eq!(quick, slow, "a server running behind gave a circling wolf other blows");
     }
 
     /// A guard raised just before a creature's blow lands counts, even when the server
