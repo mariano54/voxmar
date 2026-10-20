@@ -1,0 +1,13 @@
+// The bar of the in-game screens' keys (crates/client/src/hud/screens.rs), read and checked
+// at launch: one bar for every screen, shown while any is open. A later package changes
+// what it gives, each field whole.
+(
+    // The window's edge the bar runs along: Top, or Bottom (over the hotbar and health).
+    edge: Top,
+    // The screens the bar shows, left to right: inventory, character, journal, quests and
+    // menu, each at most once. A screen left out still opens with its key.
+    screens: ["inventory", "character", "journal", "quests", "menu"],
+    // The screens on which the keys that look an item up show, at the bar's right: those
+    // that show items to look up.
+    look_keys: ["inventory", "quests"],
+)

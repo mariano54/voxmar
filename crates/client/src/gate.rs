@@ -9173,20 +9173,21 @@ fn retarget(world: &mut World, gate: &mut Gate, size: UVec2) {
     state.apply(world);
 }
 
-/// What the keys under the screen shown run into: a panel of the screen beside them, or
-/// anything drawn along the bottom by the HUD, which stays in sight with a screen open.
+/// What the bar of the screens' keys runs into: a panel of the screen shown, or anything
+/// drawn along the bottom by the HUD, which stays in sight with a screen open.
 fn keys_blocked(world: &mut World) -> Vec<String> {
-    use crate::hud::screens::HotkeyBar;
+    use crate::hud::screens::{HotkeyBar, ScreenRoot};
     let rect = |node: &ComputedNode, at: &bevy::ui::UiGlobalTransform| Rect::from_center_size(at.translation, node.size());
     let meets = |a: Rect, b: Rect| {
         let both = a.intersect(b);
         both.width() > 0.5 && both.height() > 0.5
     };
-    let bars: Vec<(Entity, Rect, Entity)> = world
-        .query_filtered::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility, &ChildOf), With<HotkeyBar>>()
+    let roots: Vec<Entity> = world.query_filtered::<(Entity, &InheritedVisibility), With<ScreenRoot>>().iter(world).filter(|(_, shown)| shown.get()).map(|(root, _)| root).collect();
+    let bars: Vec<(Entity, Rect)> = world
+        .query_filtered::<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), With<HotkeyBar>>()
         .iter(world)
-        .filter(|(_, node, _, shown, _)| shown.get() && node.size().min_element() > 0.0)
-        .map(|(bar, node, at, _, root)| (bar, rect(node, at), root.parent()))
+        .filter(|(_, node, _, shown)| shown.get() && node.size().min_element() > 0.0)
+        .map(|(bar, node, at, _)| (bar, rect(node, at)))
         .collect();
     let Some(bottom) = world.query_filtered::<Entity, With<crate::hud::Bottom>>().iter(world).next() else { return Vec::new() };
     // Everything drawn of the HUD along the bottom: its pictures and words, wherever shown.
@@ -9208,8 +9209,9 @@ fn keys_blocked(world: &mut World) -> Vec<String> {
         }
     };
     let mut found = Vec::new();
-    for (bar, keys, root) in bars {
-        let panels: Vec<Entity> = world.get::<Children>(root).map_or_else(Vec::new, |children| children.iter().filter(|&child| child != bar).collect());
+    for (_, keys) in bars {
+        let mut panels: Vec<Entity> = roots.iter().flat_map(|&root| world.get::<Children>(root).map_or_else(Vec::new, |children| children.iter().collect())).collect();
+        panels.extend(world.query_filtered::<Entity, With<crate::hud::screens::UnderBar>>().iter(world));
         for panel in panels {
             let (Some(node), Some(at)) = (world.get::<ComputedNode>(panel), world.get::<bevy::ui::UiGlobalTransform>(panel)) else { continue };
             let shown = world.get::<InheritedVisibility>(panel).is_some_and(|v| v.get());

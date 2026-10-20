@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::skill::{SkillId, SkillRegistry};
 
-use super::screens::{GameScreen, ScreenSystems, spawn_hotkeys};
+use super::screens::{GameScreen, ScreenSystems, mark_screen};
 use super::skills::xp_text;
 use crate::lang::{Locale, Localized};
 use crate::menu::Screen;
@@ -187,7 +187,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             spawn_rule(card, space::GAP);
             card.spawn((CharacterHint, text(font, "", BODY, MUTED)));
         });
-        spawn_hotkeys(root, GameScreen::Character);
+        mark_screen(root, GameScreen::Character);
     });
 }
 

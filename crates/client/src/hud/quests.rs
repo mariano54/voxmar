@@ -32,7 +32,7 @@ use super::HudImages;
 use super::inventory::InterfaceStyle;
 use super::quest_look::{Look, QuestLook};
 use super::SLOT;
-use super::screens::{GameScreen, ScreenSystems, spawn_hotkeys};
+use super::screens::{GameScreen, ScreenSystems, mark_screen};
 use crate::lang::{Locale, Localized, TightLine};
 use crate::menu::Screen;
 use crate::net::Net;
@@ -42,7 +42,7 @@ use crate::settings::Settings;
 use crate::ui::skin::{PX, Piece};
 use crate::ui::sound::UiSound;
 use crate::ui::widgets::{
-    ACCENT, BODY, ButtonStyle, GOLD, MUTED, SCRIM, SHADOW, SOFT, ScrollList, TEXT, UiFont, button_row, panel, screen, shadowed, space, spawn_button, spawn_heading, spawn_rule, spawn_scroll_more,
+    ACCENT, BODY, ButtonStyle, GOLD, MUTED, SCRIM, SHADOW, SOFT, ScrollList, TEXT, UiFont, button_row, panel, screen, shadowed, space, spawn_button, spawn_scroll_more,
     text,
 };
 
@@ -677,17 +677,17 @@ const ACROSS: f32 = 0.18;
 
 fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) {
     let font = &font.0;
-    // Most of the window: `book_width` of it across, and down all but a gap at the top and
-    // the keys under it (`screens::clear_of_hud` keeps both clear of the HUD's foot).
-    let (mut root, backdrop) = screen(SCRIM);
-    root.padding.top = Val::Px(space::SECTION);
+    // Almost the whole window, the world dimmed behind it: `book_width` of it across, and
+    // down from under the bar of the screens' keys to the HUD's foot (`screens::clear_of_hud`
+    // keeps it clear of both). The bar names the screen, so the book needs no heading.
+    let (root, backdrop) = screen(SCRIM);
     commands.spawn((QuestScreen, root, backdrop, Visibility::Hidden, GlobalZIndex(1))).with_children(|root| {
         let (mut card, image) = panel(0.0);
         card.width = Val::Percent(style.book_width);
         card.flex_grow = 1.0;
         card.min_height = Val::ZERO;
+        card.padding = UiRect::all(Val::Px(space::INNER));
         root.spawn((card, image)).with_children(|card| {
-            card.spawn(Node { width: Val::Percent(100.0), flex_direction: FlexDirection::Column, ..default() }).with_children(|heading| spawn_heading(heading, font, "screen.quests"));
             // The chapters, the web filling what is left, and the picked quest's page at the
             // right.
             card.spawn(Node { flex_grow: 1.0, min_height: Val::ZERO, column_gap: Val::Px(space::GAP), ..default() }).with_children(|columns| {
@@ -734,15 +734,14 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) 
                     });
                 });
             });
-            spawn_rule(card, space::GAP);
-            card.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
+            card.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), margin: UiRect::top(Val::Px(space::HAIR)), ..default() }).with_children(|row| {
                 row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, Localized("quest.hint"), text(font, "", BODY, MUTED)));
                 row.spawn(Node { width: Val::Px(CURRENT_WIDTH), flex_shrink: 0.0, ..default() }).with_children(|holder| {
                     spawn_button(holder, font, "quest.current", ButtonStyle::Secondary, CurrentButton);
                 });
             });
         });
-        spawn_hotkeys(root, GameScreen::Quests);
+        mark_screen(root, GameScreen::Quests);
         // The name of the quest under the pointer (`swell` places it).
         let name = Node { position_type: PositionType::Absolute, padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
         root.spawn((QuestName, name, Piece::Tooltip.image(), Visibility::Hidden, GlobalZIndex(2), bevy::ui::FocusPolicy::Pass)).with_child((shadowed(font, "", BODY, TEXT), TightLine));
@@ -1013,8 +1012,8 @@ fn draw(
                         if done && i < ours && standing(content, &player, quests[i]) == Standing::Open {
                             line.insert(Flow { length: centre(j).distance(centre(i)), ..default() }).with_children(|line| {
                                 for core in [false, true] {
-                                    let spark = Node { position_type: PositionType::Absolute, display: Display::None, top: Val::ZERO, bottom: Val::ZERO, ..default() };
-                                    line.spawn((Spark { core }, spark, BackgroundColor(Color::NONE)));
+                                    let spark = Node { position_type: PositionType::Absolute, left: Val::ZERO, right: Val::ZERO, top: Val::ZERO, bottom: Val::ZERO, ..default() };
+                                    line.spawn((Spark { core }, spark, UiTransform::default(), Visibility::Hidden, BackgroundColor(Color::NONE)));
                                 }
                             });
                         }
@@ -1461,30 +1460,36 @@ fn fit_lines(
 
 /// The light along each line into an open quest runs from the quest before it, `flow`
 /// lengths of the line a second: a halo `glow` of the line long in the light's colour, its
-/// middle third bright, each as clear as the line it runs on. Plain coloured nodes, cut to
-/// the part of the line the well shows.
-fn run_light(time: Res<Time>, look: Res<QuestLook>, lines: Query<(&Flow, &BackgroundColor, &Children)>, mut sparks: Query<(&Spark, &mut Node, &mut BackgroundColor), Without<Flow>>) {
+/// middle third bright, each as clear as the line it runs on. Plain coloured nodes as long
+/// as the part of the line the well shows, slid and squeezed along it by their transforms,
+/// so the light running asks nothing of the layout.
+fn run_light(time: Res<Time>, look: Res<QuestLook>, lines: Query<(&Flow, &BackgroundColor, &Children)>, mut sparks: Query<(&Spark, &mut UiTransform, &mut Visibility, &mut BackgroundColor), Without<Flow>>) {
     let lines_look = look.lines;
     let phase = (time.elapsed_secs() * lines_look.flow).fract();
     for (flow, base, children) in &lines {
         let (start, shown) = flow.shown;
         for &child in children {
-            let Ok((spark, mut node, mut colour)) = sparks.get_mut(child) else { continue };
-            // Where the band's middle is along the part shown, from nought to one, and its
-            // half length in the same terms; the band enters before nought and leaves past one.
-            let reach = 1.0 + lines_look.glow;
-            let middle = ((phase * reach - lines_look.glow / 2.0) * flow.length - start) / shown.max(f32::EPSILON);
-            let half = lines_look.glow / 2.0 * flow.length / shown.max(f32::EPSILON) / if spark.core { 3.0 } else { 1.0 };
-            let (from, to) = ((middle - half).clamp(0.0, 1.0), (middle + half).clamp(0.0, 1.0));
-            let display = if shown > 0.0 && to > from { Display::Flex } else { Display::None };
-            let (left, width) = (Val::Percent(from * 100.0), Val::Percent((to - from) * 100.0));
-            if node.display != display || node.left != left || node.width != width {
-                (node.display, node.left, node.width) = (display, left, width);
+            let Ok((spark, mut turn, mut visible, mut colour)) = sparks.get_mut(child) else { continue };
+            let (from, to) = spark_span(phase, lines_look.glow, flow.length, (start, shown), spark.core);
+            visible.set_if_neq(if shown > 0.0 && to > from { Visibility::Inherited } else { Visibility::Hidden });
+            let wanted = UiTransform { translation: Val2::percent(((from + to) / 2.0 - 0.5) * 100.0, 0.0), scale: Vec2::new((to - from).max(f32::EPSILON), 1.0), ..default() };
+            if *turn != wanted {
+                *turn = wanted;
             }
             let lit = lines_look.light.color().with_alpha(base.0.alpha() * if spark.core { 1.0 } else { 0.45 });
             colour.set_if_neq(BackgroundColor(lit));
         }
     }
+}
+
+/// Where a spark lies along the part of its line shown, from nought to one: the band's
+/// middle and half length in the same terms, the band entering before nought and leaving
+/// past one, cut to the part shown.
+fn spark_span(phase: f32, glow: f32, length: f32, (start, shown): (f32, f32), core: bool) -> (f32, f32) {
+    let reach = 1.0 + glow;
+    let middle = ((phase * reach - glow / 2.0) * length - start) / shown.max(f32::EPSILON);
+    let half = glow / 2.0 * length / shown.max(f32::EPSILON) / if core { 3.0 } else { 1.0 };
+    ((middle - half).clamp(0.0, 1.0), (middle + half).clamp(0.0, 1.0))
 }
 
 /// A quest under the pointer swells a little, and its name shows over the web by it.

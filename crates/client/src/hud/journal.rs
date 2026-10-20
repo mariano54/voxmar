@@ -11,7 +11,7 @@ use voxmar_engine::journal::{Page, Stage};
 use voxmar_engine::lang::{def_key, title_from_id};
 
 use super::HudImages;
-use super::screens::{GameScreen, ScreenSystems, spawn_hotkeys};
+use super::screens::{GameScreen, ScreenSystems, mark_screen};
 use super::SLOT;
 use crate::lang::{Locale, Localized, TightLine};
 use crate::menu::Screen;
@@ -224,7 +224,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             spawn_rule(card, space::GAP);
             card.spawn((Localized("journal.hint"), text(font, "", BODY, MUTED)));
         });
-        spawn_hotkeys(root, GameScreen::Journal);
+        mark_screen(root, GameScreen::Journal);
     });
 }
 

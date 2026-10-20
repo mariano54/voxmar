@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use voxmar_engine::lang::Lang;
 use voxmar_engine::prayer::{Effect, PrayerDef, PrayerId, PrayerRegistry};
 
-use super::screens::{GameScreen, ScreenSystems, spawn_hotkeys};
+use super::screens::{GameScreen, ScreenSystems, mark_screen};
 use crate::fight::Fighting;
 use crate::lang::{Locale, Localized};
 use crate::menu::Screen;
@@ -128,7 +128,7 @@ fn spawn_book(mut commands: Commands, font: Res<UiFont>) {
                 });
             });
         });
-        spawn_hotkeys(root, GameScreen::Character);
+        mark_screen(root, GameScreen::Character);
     });
 }
 

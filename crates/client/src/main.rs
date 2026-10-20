@@ -334,6 +334,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let quest_look = hud::quest_look::QuestLook::load(&content.files)?;
+    let menu_bar = hud::screens::MenuBar::load(&content.files)?;
     if let Some(name) = quest_look.unknown_quests(|name| content.quests.get(name).is_some()).next() {
         return Err(format!("{}: a shape for `{name}`, which is no quest", hud::quest_look::FILE).into());
     }
@@ -519,7 +520,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(quest_look).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(quest_look).insert_resource(menu_bar).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light);
     app.insert_resource(creature_sounds::Checked(creature_bank));
     app.insert_resource(ambience::Checked(ambience, roof_patters));
     if options.loading {

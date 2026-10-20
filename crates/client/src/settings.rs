@@ -1360,8 +1360,7 @@ fn spawn_menu(mut commands: Commands, font: Res<UiFont>, categories: Option<Res<
                 spawn_button(row, font, "menu.quit_game", ButtonStyle::Secondary, MenuButton::Quit);
             });
         });
-        let bar = crate::hud::screens::spawn_hotkeys(root, crate::hud::screens::GameScreen::Menu);
-        root.commands().entity(bar).insert(ShownWhen::InGame);
+        crate::hud::screens::mark_screen(root, crate::hud::screens::GameScreen::Menu);
     });
 }
 
