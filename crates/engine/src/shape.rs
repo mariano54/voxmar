@@ -71,6 +71,19 @@ impl ShapeFile {
 #[serde(default, deny_unknown_fields)]
 pub struct ShapeDef {
     pub boxes: Vec<ShapeBox>,
+    /// What a creature's blow meets of it at a player standing in the open part of its
+    /// cell, gaps and all (`Shape::hull`): a railing's balusters are no way through. None,
+    /// the span of all its boxes, which suits a shape of one run (a railing, a fence); a
+    /// shape of two (a railing's corner) names one span for each.
+    pub hull: Vec<Span>,
+}
+
+/// A span of a shape's cell, in 16ths of a block from its lower corner.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Span {
+    pub from: [f32; 3],
+    pub to: [f32; 3],
 }
 
 impl ShapeDef {
@@ -82,7 +95,8 @@ impl ShapeDef {
             .iter()
             .map(|b| ShapeBox { from: [b.from[0], 16.0 - b.to[1], b.from[2]], to: [b.to[0], 16.0 - b.from[1], b.to[2]], ..b.clone() })
             .collect();
-        ShapeDef { boxes }
+        let hull = self.hull.iter().map(|h| Span { from: [h.from[0], 16.0 - h.to[1], h.from[2]], to: [h.to[0], 16.0 - h.from[1], h.to[2]] }).collect();
+        ShapeDef { boxes, hull }
     }
 }
 
@@ -165,6 +179,9 @@ pub struct Shape {
     pub full: [bool; 6],
     /// Its boxes as collision and selection see them: unturned bounds, in blocks.
     pub bounds: Vec<(Vec3, Vec3)>,
+    /// What a blow at a player in its cell meets (`ShapeDef::hull`), in blocks, turned as
+    /// `bounds` are: the span of `bounds` unless the shape names its own.
+    pub hull: Vec<(Vec3, Vec3)>,
 }
 
 impl Shape {
@@ -191,6 +208,19 @@ pub fn compile(
     if def.boxes.len() > limits.boxes {
         return Err(error(format!("it has {} boxes, more than the {} a shape may have", def.boxes.len(), limits.boxes)));
     }
+    if def.hull.len() > limits.boxes {
+        return Err(error(format!("its hull has {} spans, more than the {} boxes a shape may have", def.hull.len(), limits.boxes)));
+    }
+    let quarter_turn = |p: Vec3| {
+        let (x, z) = (p.x - 0.5, p.z - 0.5);
+        let (x, z) = match facing {
+            Facing::North => (x, z),
+            Facing::East => (-z, x),
+            Facing::South => (-x, -z),
+            Facing::West => (z, -x),
+        };
+        Vec3::new(x + 0.5, p.y, z + 0.5)
+    };
     let mut shape = Shape::default();
     let mut names = Vec::new();
     for (i, b) in def.boxes.iter().enumerate() {
@@ -242,20 +272,21 @@ pub fn compile(
         }
         // Collision and selection: the unturned box, turned only by the facing, which is a
         // whole number of quarter turns and so exact.
-        let quarter_turn = |p: Vec3| {
-            let (x, z) = (p.x - 0.5, p.z - 0.5);
-            let (x, z) = match facing {
-                Facing::North => (x, z),
-                Facing::East => (-z, x),
-                Facing::South => (-x, -z),
-                Facing::West => (z, -x),
-            };
-            Vec3::new(x + 0.5, p.y, z + 0.5)
-        };
         let (a, c) = (quarter_turn(from), quarter_turn(to));
         shape.bounds.push((a.min(c), a.max(c)));
     }
     shape.full = full_faces(&shape.bounds, def);
+    for (i, h) in def.hull.iter().enumerate() {
+        if !(0..3).all(|k| (0.0..=16.0).contains(&h.from[k]) && (0.0..=16.0).contains(&h.to[k]) && h.from[k] < h.to[k]) {
+            return Err(error(format!("hull span {i} must run from less to more on every axis within 0..16: from {:?} to {:?}", h.from, h.to)));
+        }
+        let (a, c) = (quarter_turn(Vec3::from(h.from) / 16.0), quarter_turn(Vec3::from(h.to) / 16.0));
+        shape.hull.push((a.min(c), a.max(c)));
+    }
+    if shape.hull.is_empty() {
+        let span = shape.bounds.iter().fold(None::<(Vec3, Vec3)>, |span, &(a, c)| Some(span.map_or((a, c), |(min, max)| (min.min(a), max.max(c)))));
+        shape.hull.extend(span);
+    }
     Ok((shape, names))
 }
 
@@ -330,7 +361,7 @@ mod tests {
     const LIMITS: ShapeLimits = ShapeLimits { boxes: 8, quads: 4096 };
 
     fn shape(boxes: Vec<ShapeBox>) -> Result<Shape, RegistryError> {
-        compile("test:shape", "test:block", &ShapeDef { boxes }, &Textures::All("stone".into()), Facing::North, LIMITS).map(|(shape, _)| shape)
+        compile("test:shape", "test:block", &ShapeDef { boxes, ..Default::default() }, &Textures::All("stone".into()), Facing::North, LIMITS).map(|(shape, _)| shape)
     }
 
     #[test]
@@ -393,7 +424,7 @@ mod tests {
     #[test]
     fn facings_turn_the_boxes() {
         // A half-block against the north side (-z), turned to face east, lies against the east (+x).
-        let def = ShapeDef { boxes: vec![ShapeBox { to: [16.0, 16.0, 8.0], ..Default::default() }] };
+        let def = ShapeDef { boxes: vec![ShapeBox { to: [16.0, 16.0, 8.0], ..Default::default() }], ..Default::default() };
         let (east, _) = compile("s", "b", &def, &Textures::All("stone".into()), Facing::East, LIMITS).unwrap();
         assert_eq!(east.bounds, vec![(Vec3::new(0.5, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0))]);
         assert!(east.full[Face::PosX as usize] && !east.full[Face::NegZ as usize]);

@@ -14,7 +14,8 @@
         // The Homestead Hearth, the Nomad age's gate: a hearthstone in a ring of stone, a
         // chimney two blocks tall at one corner. Lit, it is your home: you wake there.
         (
-            name: "homestead_hearth", title: "Homestead Hearth", home: true,
+            // Lit, its firelight keeps wolves, bears and badgers back 16 blocks at night.
+            name: "homestead_hearth", title: "Homestead Hearth", home: true, ward: 16.0,
             hint: "The hearth needs a ring of stone around the hearthstone and a chimney two blocks tall at one corner.",
             layers: [
                 ["sss", "sHs", "sss"],
@@ -29,7 +30,7 @@
         // brick pillar on each corner to hold the heat. Lit, it smelts copper and tin and
         // makes bronze (cooking.ron's `crucible` station), and the Bronze age opens.
         (
-            name: "crucible_kiln", title: "Crucible Kiln",
+            name: "crucible_kiln", title: "Crucible Kiln", ward: 10.0,
             // Progression design's two implemented fuel routes; burn times are shared
             // with machines.ron. Hold the whole stack and light the standing core.
             fuels: [("charcoal", 32), ("coal_ore", 24)], heat: 3,

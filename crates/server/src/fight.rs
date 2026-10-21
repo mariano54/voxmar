@@ -204,6 +204,13 @@ fn ticks(seconds: f32) -> u64 {
     (seconds.max(0.0) * TICKS_PER_SECOND as f32).ceil() as u64
 }
 
+/// Whether a player's blow from `eye` with a weapon of `reach` reaches a creature's
+/// `reach_box` (as `Creatures::reach_box` gives it, lagged by `Feel::reach_lag`): its nearest
+/// point within the reach and the feel's slack.
+pub(crate) fn within_reach(eye: Vec3, reach_box: &Aabb, reach: f32, feel: &voxmar_engine::combat::Feel) -> bool {
+    eye.distance(eye.clamp(reach_box.min, reach_box.max)) <= reach + feel.reach_slack
+}
+
 impl Server {
     /// Game seconds: the server's ticks, however long each took. A creature's fight times
     /// run on them.
@@ -511,7 +518,7 @@ impl Server {
                 let ammo = combat.ammo(&aim.weapon);
                 let loaded = ammo.is_empty() || p.is_some_and(|p| (0..voxmar_engine::inventory::SLOTS).any(|slot| p.inventory.get(slot).is_some_and(|stack| ammo.contains(&stack.item))));
                 let in_reach = loaded && eye.zip(self.creatures.reach_box(aim.creature, feel.reach_lag)).is_some_and(|(eye, aabb)| {
-                    eye.distance(eye.clamp(aabb.min, aabb.max)) <= aim.weapon.reach + feel.reach_slack && (ammo.is_empty() || clear_shot(eye, &aabb, solid))
+                    within_reach(eye, &aabb, aim.weapon.reach, &feel) && (ammo.is_empty() || clear_shot(eye, &aabb, solid))
                 });
                 let on_beat = in_reach && (swing.on_beat || aim.riposte || aim.counter);
                 let kind = fighter.rhythm.blow(&Swing { on_beat, ..swing }, now, &feel);
