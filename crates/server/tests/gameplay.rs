@@ -9013,7 +9013,12 @@ impl Fresh {
         for (i, &ground) in grounds.iter().enumerate() {
             let last = i + 1 == grounds.len();
             let cell = ground + IVec3::Y;
-            let open = |c: &Client| c.world.block(cell) == Some(BlockId::AIR) && c.world.block(ground).is_some_and(|b| c.content.blocks.def(b).solid);
+            // Open as the place action finds it: air, or a plant or snow a block replaces
+            // (not water), on solid ground.
+            let open = |c: &Client| {
+                c.world.block(cell).is_some_and(|b| b == BlockId::AIR || (c.content.blocks.info(b).replaceable && c.content.blocks.info(b).fluid.is_none()))
+                    && c.world.block(ground).is_some_and(|b| c.content.blocks.def(b).solid)
+            };
             if !last && (!open(&self.c) || Self::creature_on(&self.c, cell)) {
                 continue;
             }
@@ -9024,8 +9029,10 @@ impl Fresh {
                 assert!(off, "placing {item} on {ground}: a creature stood on the cell for 5 server seconds");
             }
             let refused = self.c.refused.len();
+            // Set is what was not there before: a grass tuft in the cell is not the piece.
+            let before = self.c.world.block(cell);
             self.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
-            let set = |c: &Client| c.world.block(cell).is_some_and(|b| b != BlockId::AIR);
+            let set = |c: &Client| c.world.block(cell).is_some_and(|b| b != BlockId::AIR && Some(b) != before);
             let placed = self.waited(5.0, |c| set(c) || c.refused.len() > refused);
             if !set(&self.c) && !last && self.c.refused.len() > refused {
                 continue;
