@@ -93,7 +93,7 @@ impl Server {
         });
         for (i, (item, count)) in found.into_iter().enumerate() {
             // What the chest has no room for (a mod's table) lies beside it.
-            if let Some(left) = self.factory.put(pos, ItemStack { item, count }, &machines) {
+            if let Some(left) = self.factory.put(pos, ItemStack::new(item, count), &machines) {
                 let random = self.meta.next_pop(pos, 0x7e46 ^ i as u32);
                 self.items.spawn(left, dropped::popped(pos, random), dropped::PICKUP_DELAY);
             }

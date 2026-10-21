@@ -104,6 +104,10 @@
             break: ["sounds/materials/terracotta_break_1.ogg", "sounds/materials/terracotta_break_2.ogg", "sounds/materials/terracotta_break_3.ogg"],
         ),
     ],
+    // A tool in hand nearly worn out (tools.ron's `wear.warn`): a dry creak and a tick as the
+    // head shifts. Worn out: the haft snaps and its pieces fall.
+    tool_worn: ["sounds/tool_worn_1.ogg", "sounds/tool_worn_2.ogg"],
+    tool_break: ["sounds/tool_break_1.ogg", "sounds/tool_break_2.ogg"],
     // What the player does, heard as they do it, by action: about as loud as placing a
     // block, times `volume`. A package that names an action replaces its sound. Every
     // action says how it sounds, or the game does not start: its `sounds`, `silent: true`,
@@ -152,8 +156,6 @@
                 (name: "stir", with: ["cooking_pot"], sounds: ["sounds/work/stir_1.ogg", "sounds/work/stir_2.ogg"], volume: 0.7),
                 // Greens forked onto the heap: a wet flump and a damp rustle.
                 (name: "heap", with: ["compost_heap"], sounds: ["sounds/work/heap_1.ogg", "sounds/work/heap_2.ogg"], volume: 0.7),
-                // Clay or logs laid in the clamp and soil shovelled over.
-                (name: "clamp", with: ["earth_clamp"], sounds: ["sounds/work/clamp_1.ogg", "sounds/work/clamp_2.ogg"], volume: 0.7),
             ],
         ),
         // Taking a catch from a sprung trap (traps.ron): a pouch drawn open and shut.
@@ -164,10 +166,11 @@
             // A hearth or kiln catching: a strike, a whoomph, and the fire swelling into a
             // roar that settles into its bed (ambience.ron's fire); a kiln's deeper.
             ways: [
-                (name: "kindle_hearth", with: ["hearthstone"], sounds: ["sounds/work/kindle_hearth_1.ogg", "sounds/work/kindle_hearth_2.ogg"]),
+                (name: "kindle_hearth", with: ["hearthstone", "kindling"], sounds: ["sounds/work/kindle_hearth_1.ogg", "sounds/work/kindle_hearth_2.ogg"]),
                 (name: "kindle_kiln", with: ["crucible"], sounds: ["sounds/work/kindle_kiln_1.ogg", "sounds/work/kindle_kiln_2.ogg"]),
             ],
         ),
+        "base:relight": (sounds: ["sounds/light_1.ogg", "sounds/light_2.ogg"]),
         // A lid lifted: a short creak and the lid knocking back.
         "base:open_store": (
             sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.8,

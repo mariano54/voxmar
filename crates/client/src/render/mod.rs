@@ -825,6 +825,20 @@ fn tint(color: Vec3, hue: Vec3, amount: f32) -> Vec3 {
 /// Colour of the glow around the sun in sky.wgsl, which the haze shares.
 const SUN_GLOW: Vec3 = Vec3::new(1.0, 0.8, 0.55);
 
+/// How far in front of the eye a light held in the hand shines from, in blocks.
+const HELD_LIGHT_AHEAD: f32 = 0.4;
+
+/// The light level of what the local player holds, if it gives light held
+/// (`held_light:N`) and they are alive in the world.
+pub(crate) fn held_light(player: Option<&crate::player::LocalPlayer>, launch: Option<&crate::session::Launch>) -> Option<u8> {
+    let (player, launch) = (player?, launch?);
+    if player.dead || !player.joined {
+        return None;
+    }
+    let item = player.inventory.get(player.selected)?.item;
+    Some(launch.content.tools.held_light(item)).filter(|&level| level > 0)
+}
+
 /// Advances time of day and moves the sun, light colours, the air and sky to match.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_environment(
@@ -840,7 +854,7 @@ pub(crate) fn update_environment(
     (pack, quality, air, mut atmosphere): (Res<pack::ActivePack>, Res<Quality>, Res<ClientAtmosphere>, ResMut<atmosphere::Atmosphere>),
     (generator, mut water_column, mut hail_lying): (Option<Res<lod::WorldGenerator>>, Local<Option<(IVec2, Vec3)>>, Local<f32>),
     (player, mut sky_of, mut scene_light): (Option<Res<crate::player::LocalPlayer>>, Local<Option<u64>>, ResMut<SceneLight>),
-    sky_open: Res<exposure::SkyOpen>,
+    (sky_open, launch): (Res<exposure::SkyOpen>, Option<Res<crate::session::Launch>>),
     night: Res<night_light::NightLight>,
 ) {
     let Some(sky_handle) = sky_handle else { return };
@@ -925,6 +939,10 @@ pub(crate) fn update_environment(
     if !cycle.underwater && env.to_sun.y > 0.0 {
         air.bow = env.to_sun.extend(shown.rainbow * smoothstep(0.0, 0.05, env.to_sun.y));
     }
+    // A light held in the hand (a firebrand), from a little in front of the eye.
+    air.held = held_light(player.as_deref(), launch.as_deref()).map_or(Vec4::ZERO, |level| {
+        (camera.translation + camera.forward() * HELD_LIGHT_AHEAD).extend(level as f32 / 15.0)
+    });
     atmosphere.set_if_neq(air);
 
     let horizon_color = Color::linear_rgb(horizon.x, horizon.y, horizon.z);
