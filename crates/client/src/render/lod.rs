@@ -353,36 +353,41 @@ impl Lod {
     /// square that are not entirely covered by the next finer ring. Tiles under the real
     /// chunks are kept, to stand in wherever those have not been meshed yet.
     fn wanted_tiles(&self, camera: IVec2) -> Vec<TileKey> {
-        let mut wanted = Vec::new();
-        for level in 0..LEVELS as u8 {
-            let tile = (FIRST_CELL << level) * CELLS;
-            let center = camera.div_euclid(IVec2::splat(tile));
-            let finer = {
-                let finer = tile / 2;
-                let c = camera.div_euclid(IVec2::splat(finer));
-                ((c - RING) * finer, (c + RING + 1) * finer)
-            };
-            let mut ring: Vec<TileKey> = Vec::new();
-            for z in center.y - RING..=center.y + RING {
-                for x in center.x - RING..=center.x + RING {
-                    let low = IVec2::new(x, z) * tile;
-                    let high = low + tile;
-                    // Tiles where real chunks belong are kept all the same: those chunks arrive
-                    // over many frames (a fast flight outruns them by hundreds of blocks),
-                    // and the shader hides a tile only where they have. Hiding them here left
-                    // a hole between the finest ring and the real chunks still to come, which
-                    // showed as a long straight strip of sky and sunken sea floor.
-                    let hidden = level > 0 && low.cmpge(finer.0).all() && high.cmple(finer.1).all();
-                    if !hidden {
-                        ring.push(TileKey { level, x, z });
-                    }
+        rings_around(camera)
+    }
+}
+
+/// Tiles each ring needs around `camera` (`Lod::wanted_tiles`).
+fn rings_around(camera: IVec2) -> Vec<TileKey> {
+    let mut wanted = Vec::new();
+    for level in 0..LEVELS as u8 {
+        let tile = (FIRST_CELL << level) * CELLS;
+        let center = camera.div_euclid(IVec2::splat(tile));
+        let finer = {
+            let finer = tile / 2;
+            let c = camera.div_euclid(IVec2::splat(finer));
+            ((c - RING) * finer, (c + RING + 1) * finer)
+        };
+        let mut ring: Vec<TileKey> = Vec::new();
+        for z in center.y - RING..=center.y + RING {
+            for x in center.x - RING..=center.x + RING {
+                let low = IVec2::new(x, z) * tile;
+                let high = low + tile;
+                // Tiles where real chunks belong are kept all the same: those chunks arrive
+                // over many frames (a fast flight outruns them by hundreds of blocks),
+                // and the shader hides a tile only where they have. Hiding them here left
+                // a hole between the finest ring and the real chunks still to come, which
+                // showed as a long straight strip of sky and sunken sea floor.
+                let hidden = level > 0 && low.cmpge(finer.0).all() && high.cmple(finer.1).all();
+                if !hidden {
+                    ring.push(TileKey { level, x, z });
                 }
             }
-            ring.sort_by_key(|k| (IVec2::new(k.x, k.z) - center).abs().max_element());
-            wanted.extend(ring);
         }
-        wanted
+        ring.sort_by_key(|k| (IVec2::new(k.x, k.z) - center).abs().max_element());
+        wanted.extend(ring);
     }
+    wanted
 }
 
 fn request_tiles(mut lod: ResMut<Lod>, world: Res<WorldGenerator>, camera: Query<&GlobalTransform, With<Camera3d>>) {
@@ -506,9 +511,9 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Tile
     // Corners 0..=CELLS plus one more on each side for normals.
     const W: i32 = CELLS + 3;
     let at = |i: i32| (i - 1) * cell;
-    let heights: Vec<i32> =
-        (0..W * W).map(|i| generator.height(origin.x + at(i % W), origin.y + at(i / W))).collect();
-    let height = |x: i32, z: i32| heights[((z + 1) * W + x + 1) as usize];
+    // The ground at every corner once, for its height and the surface on it.
+    let grounds = generator.grounds((0..W * W).map(|i| (origin.x + at(i % W), origin.y + at(i / W))));
+    let height = |x: i32, z: i32| grounds[((z + 1) * W + x + 1) as usize].height();
     // The regional climate is shared by every sample of the tile, and of the cliffs' rock
     // half a cell beyond its outermost corners.
     let sampler = generator.sampler(origin - 2 * cell, origin + (CELLS + 2) * cell);
@@ -526,7 +531,7 @@ fn build_tile(generator: &Overworld, palette: &LodPalette, key: TileKey) -> Tile
                 0
             };
             let slope = (rise + cell / 2) / cell;
-            let surface = sampler.surface(wx, wz, h, slope);
+            let surface = sampler.surface_on(&grounds[((z + 1) * W + x + 1) as usize], wx, wz, h, slope);
             let (top, mut side) = palette.faces(surface.ground, &surface.colors);
             // Cliffs are rock: real chunks lay their cliff rock wherever a column is steep
             // from one block to the next, but a corner's slope is its cell's average, which
@@ -688,4 +693,66 @@ fn encode_normal(n: Vec3) -> u32 {
     }
     let quantize = |v: f32| ((v * 0.5 + 0.5) * 255.0).round() as u32;
     quantize(x) | quantize(z) << 8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// What the distant land round spawn costs to build, as when a world loads: every tile
+    /// the rings want there, on all the machine's threads, on a world nothing has built
+    /// yet (its spawn settled first, as the server does), then again on the same world
+    /// (the samples alone, the land's regions known), and heights alone on another fresh
+    /// world. Printed by ring; the wall time is what a load waits for.
+    ///
+    /// Ignored by default: `cargo test --release -p voxmar_client distant_land_round_spawn
+    /// -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn distant_land_round_spawn() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let world = WorldContent::load(&content).unwrap();
+        let registry = content.blocks.clone();
+        let layers = (0..registry.len()).flat_map(|i| registry.info(BlockId(i as u16)).layers).max().unwrap_or(0) as usize + 1;
+        let textures: Vec<Rgba> = (0..layers).map(|_| Rgba { width: 1, height: 1, pixels: vec![128, 128, 128, 255] }).collect();
+        let palette = LodPalette::new(&registry, &textures, &[]);
+        let seed = 1;
+        let fresh = || {
+            let generator = Overworld::with_content(seed, registry.clone(), &world);
+            let started = Instant::now();
+            let spawn = generator.settle_spawn();
+            (generator, spawn, started.elapsed())
+        };
+        let (generator, spawn, settled) = fresh();
+        let tiles = rings_around(IVec2::new(spawn.x, spawn.z));
+        let palette = palette.with_strata(generator.strata());
+        let run = |generator: &Overworld, each: &(dyn Fn(&Overworld, TileKey) + Sync)| {
+            let took: Vec<std::sync::Mutex<Duration>> = (0..LEVELS).map(|_| Default::default()).collect();
+            let started = Instant::now();
+            use rayon::prelude::*;
+            tiles.par_iter().for_each(|&key| {
+                let started = Instant::now();
+                each(generator, key);
+                *took[key.level as usize].lock().unwrap() += started.elapsed();
+            });
+            (started.elapsed(), took.into_iter().map(|t| t.into_inner().unwrap()).collect::<Vec<_>>())
+        };
+        let line = |label: &str, (wall, levels): (Duration, Vec<Duration>)| {
+            let per: Vec<String> = levels.iter().enumerate().map(|(l, t)| format!("ring {l} {:.2}s", t.as_secs_f64())).collect();
+            eprintln!("{label}: {:.2}s wall on {} threads; summed {}", wall.as_secs_f64(), rayon::current_num_threads(), per.join(", "));
+        };
+        let counts: Vec<usize> = (0..LEVELS).map(|l| tiles.iter().filter(|k| k.level as usize == l).count()).collect();
+        eprintln!("seed {seed}: spawn {spawn}, settled in {:.2}s; {} tiles ({counts:?} by ring)", settled.as_secs_f64(), tiles.len());
+        line("first build", run(&generator, &|g, key| drop(build_tile(g, &palette, key))));
+        line("again", run(&generator, &|g, key| drop(build_tile(g, &palette, key))));
+        let (other, _, _) = fresh();
+        const W: i32 = CELLS + 3;
+        line("heights alone, fresh", run(&other, &|g, key| {
+            let (cell, origin) = (key.cell(), key.origin());
+            for i in 0..W * W {
+                std::hint::black_box(g.height(origin.x + (i % W - 1) * cell, origin.y + (i / W - 1) * cell));
+            }
+        }));
+    }
 }

@@ -40,12 +40,18 @@ impl Plugin for RecipesPlugin {
         app.init_resource::<RecipeViewer>()
             .init_resource::<HoveredItem>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (look_up, click, report, draw, cycle).chain().run_if(in_state(Screen::InGame)))
-            .add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
-                viewer.leave_game();
-                ui.recipes_open = false;
-            });
+            .add_systems(Update, (look_up, click, report, draw, cycle).chain().run_if(in_state(Screen::InGame)));
+        forget_on_leaving(app);
     }
+}
+
+/// Leaving a game forgets it, its recipe book with it: the book is built for each game as
+/// it starts, so nothing reads a world's content with another's.
+fn forget_on_leaving(app: &mut App) {
+    app.add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
+        viewer.leave_game();
+        ui.recipes_open = false;
+    });
 }
 
 /// A look-up to open once in game, by item name (`--recipes NAME`, `--uses NAME`, for
@@ -226,9 +232,8 @@ fn look_up(
     start: Option<Res<StartLookup>>,
     mut commands: Commands,
 ) {
-    // Built again for a world played with other content (other packages, other ways), and
-    // what was being looked up there forgotten.
-    if viewer.book.is_none() || launch.is_changed() {
+    // Built as each game starts: leaving one drops its book (`forget_on_leaving`).
+    if viewer.book.is_none() {
         // Its world data parsed as the content loaded (`load_content` refuses it otherwise).
         viewer.build(voxmar_server::recipe_book(&launch.content).expect("the world data of loaded content parses"));
         viewer.trail.clear();
@@ -407,6 +412,22 @@ mod tests {
         assert_eq!(viewer.book_number(), 0);
         viewer.build(RecipeBook::default());
         assert!(![0, first].contains(&viewer.book_number()), "a new book took an old number");
+    }
+
+    /// Leaving a game, by the screen changing, drops its book, so the next game builds its own.
+    #[test]
+    fn the_book_goes_with_the_game_left() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin).insert_state(Screen::InGame).insert_resource(UiState { recipes_open: true, ..default() }).init_resource::<RecipeViewer>();
+        forget_on_leaving(&mut app);
+        app.world_mut().resource_mut::<RecipeViewer>().build(RecipeBook::default());
+        app.update();
+        assert_ne!(app.world().resource::<RecipeViewer>().book_number(), 0, "in game, the book stays");
+        app.world_mut().resource_mut::<NextState<Screen>>().set(Screen::Title);
+        app.update();
+        let viewer = app.world().resource::<RecipeViewer>();
+        assert!(viewer.book().is_none() && viewer.book_number() == 0, "the book outlived its game");
+        assert!(!app.world().resource::<UiState>().recipes_open);
     }
 
     /// A family of recipes cycling and the quests asking for it, drawn by the viewer: a

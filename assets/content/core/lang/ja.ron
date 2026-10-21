@@ -527,6 +527,7 @@
     "quest.tracker.how": "やり方：{way}",
     "quest.tracker.first": "まず：{way}",
     "quest.tracker.set_down": "まず：{item}を置く",
+    "quest.tracker.hold": "さしだす：{list}",
     "quest.tracker.from": "{how}：{list}",
     "quest.tracker.book": "{key}：クエスト",
     "quest.any": "何か",
