@@ -1348,8 +1348,11 @@ fn a_towns_market_is_busier_than_a_villages() {
     assert!(market > 0 && busy == 0, "a village's stalls now and then: {market}, {busy}");
     let town = heard(90.0, 0.8);
     assert!(town[4] > 0 && town[3] + town[4] > 2 * (market + busy), "a town's market: {town:?}, a village's {market} + {busy}");
-    let hamlet = heard(5.0, 0.8);
+    // The busiest hamlet's trader is quiet, and the busiest village's stalls are never a
+    // town's market.
+    let hamlet = heard(16.0, 0.8);
     assert_eq!(hamlet[3] + hamlet[4], 0, "a hamlet's trader: {hamlet:?}");
+    assert_eq!(heard(45.0, 0.8)[4], 0, "a big village's stalls");
     let night = heard(90.0, -0.8);
     assert_eq!([night[0], night[3], night[4]], [0, 0, 0], "the tanner and the market at night: {night:?}");
 }
