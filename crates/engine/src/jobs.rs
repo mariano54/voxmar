@@ -7,11 +7,12 @@
 //! Under a limit each kind has its share, since the client asks every frame and the server
 //! only every tick: generation always has a third of the room (at least one job) that the
 //! others may not take, distant land, the least urgent, at most a third, and meshing at
-//! least one. While a player's land around them is missing (the server says, each tick),
-//! as after a teleport beyond the view, there is no limit: that is loading again.
+//! least one. While a player's land around them is missing (any server says so, each tick:
+//! `LandMissing`), as after a teleport beyond the view, there is no limit: that is loading
+//! again.
 
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// What a streaming job does.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -35,8 +36,8 @@ struct Counts {
 
 static COUNTS: Mutex<Counts> = Mutex::new(Counts { limit: 0, running: [0; 3] });
 
-/// Whether some player's land around them is missing, as the server last said.
-static MISSING: AtomicBool = AtomicBool::new(false);
+/// Servers saying some player's land around them is missing (`LandMissing`).
+static MISSING: AtomicUsize = AtomicUsize::new(0);
 
 fn counts() -> std::sync::MutexGuard<'static, Counts> {
     COUNTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -48,9 +49,30 @@ pub fn set_limit(jobs: usize) {
     counts().limit = if jobs == 0 { 0 } else { jobs.max(LEAST) };
 }
 
-/// Says whether some player's land around them is missing: no limit while it is.
-pub fn set_land_missing(missing: bool) {
-    MISSING.store(missing, Ordering::Relaxed);
+/// One server's say in whether some player's land around them is missing: no limit while
+/// any server's says so. Taken back when dropped, with its server, so a server stopped
+/// while land was missing leaves no other world in the process streaming unlimited, and
+/// servers side by side (as tests run them) never clear each other's.
+#[derive(Default)]
+pub struct LandMissing(bool);
+
+impl LandMissing {
+    pub fn set(&mut self, missing: bool) {
+        if missing != self.0 {
+            self.0 = missing;
+            if missing {
+                MISSING.fetch_add(1, Ordering::Relaxed);
+            } else {
+                MISSING.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+    }
+}
+
+impl Drop for LandMissing {
+    fn drop(&mut self) {
+        self.set(false);
+    }
 }
 
 /// The most streaming jobs at once now: 0 for no limit, as while land around a player is
@@ -61,7 +83,7 @@ pub fn limit() -> usize {
 }
 
 fn limit_of(counts: &Counts) -> usize {
-    if MISSING.load(Ordering::Relaxed) { 0 } else { counts.limit }
+    if MISSING.load(Ordering::Relaxed) > 0 { 0 } else { counts.limit }
 }
 
 /// Room for one more streaming job of `kind`, if there is any: held by the job while it runs.
@@ -139,7 +161,7 @@ mod tests {
     }
 
     /// One test for the process's own limit: at least `LEAST`, none at 0, and none while
-    /// land around a player is missing.
+    /// any server says land around a player is missing, until each has taken it back.
     #[test]
     fn the_limit_is_at_least_the_least_and_lapses_while_land_is_missing() {
         for asked in 1..=5 {
@@ -148,10 +170,16 @@ mod tests {
             assert_eq!(slots.len(), asked.max(LEAST), "asked {asked}");
             assert!(start(Kind::Meshes).is_none(), "asked {asked}: full");
             assert_eq!(limit(), asked.max(LEAST), "asked {asked}");
-            set_land_missing(true);
+            let (mut one, mut other) = (LandMissing::default(), LandMissing::default());
+            one.set(true);
+            other.set(true);
+            other.set(true);
             assert_eq!(limit(), 0, "asked {asked}: loading again");
             assert!(start(Kind::Meshes).is_some(), "asked {asked}: loading again");
-            set_land_missing(false);
+            one.set(false);
+            assert_eq!(limit(), 0, "asked {asked}: the other's land still missing");
+            drop(other);
+            assert_eq!(limit(), asked.max(LEAST), "asked {asked}: taken back with its server");
         }
         set_limit(0);
         assert_eq!(limit(), 0);

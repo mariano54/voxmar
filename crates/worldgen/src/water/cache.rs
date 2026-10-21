@@ -184,6 +184,10 @@ pub(crate) enum Wait {
 
 /// Has every urgent thread about to wait on another thread's make say so on `waited`, until
 /// given `None`: a test of a path on which every cache copies fails the moment one does.
+/// One for the whole test binary, heard from every thread: so far only
+/// `water::tests::an_urgent_thread_never_waits_on_a_region_being_built` watches, and no
+/// other test has an urgent thread meet a cache that does not copy; a second watcher, or
+/// such a test, would need it scoped to its own threads.
 #[cfg(test)]
 pub(crate) fn on_urgent_wait(waited: Option<std::sync::mpsc::Sender<Wait>>) {
     *URGENT_WAITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = waited;
@@ -213,7 +217,9 @@ fn hold(kind: Hold) {
         return;
     };
     let _ = held.send(());
-    let _ = release.recv_timeout(std::time::Duration::from_secs(600));
+    // Well past any test's own guard against a hang, so the test's release, or its sender
+    // dropped as it fails, is what ends the hold.
+    let _ = release.recv_timeout(std::time::Duration::from_secs(3600));
 }
 
 /// Bookkeeping per entry besides the value itself.

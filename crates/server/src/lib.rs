@@ -551,9 +551,6 @@ impl Drop for ServerHandle {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
-        // Stopped, it says no more whether its players' land is missing: left set, a later
-        // world in the process, on a server elsewhere, would stream unlimited throughout.
-        voxmar_engine::jobs::set_land_missing(false);
     }
 }
 
@@ -711,6 +708,8 @@ pub(crate) fn load_column(
 
 pub(crate) struct Server {
     config: ServerConfig,
+    /// Whether its players' land is missing, as it last said (taken back with the server).
+    land_missing: voxmar_engine::jobs::LandMissing,
     meta: WorldMeta,
     /// The last save generation begun, whether or not it counted: none is begun twice, so
     /// files a failed save left can never pass for a later one's.
@@ -898,6 +897,7 @@ impl Server {
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
+            land_missing: Default::default(),
             tick,
             day: meta.day.unwrap_or(tick) as f64,
             day_speed: meta.day_speed,
@@ -1190,7 +1190,7 @@ impl Server {
         // Loading again around any player whose land is missing (one just come, or gone
         // beyond their view): every worker streams until it has come (voxmar_engine::jobs).
         let missing = self.players.values().any(|p| p.joined && self.land_missing_around(p.position));
-        voxmar_engine::jobs::set_land_missing(missing);
+        self.land_missing.set(missing);
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for &id in &ids {
             self.stream_columns(id);
