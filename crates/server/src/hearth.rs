@@ -204,8 +204,17 @@ impl Server {
         // structure's reach of the change is kept without looking its structure up.
         let reach = structures.reach();
         let before = self.lit.len();
-        self.lit.retain(|&core, fire| fire.until > tick && ((changed - core).abs().max_element() > reach || structures.get(&fire.structure)
-            .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p)))));
+        // A fire whose fuel has run out goes from here as from anywhere; it is told gone cold
+        // (`tell_fires_out`) for it all the same.
+        let cold = &mut self.fires_out;
+        self.lit.retain(|&core, fire| {
+            let keep = fire.until > tick && ((changed - core).abs().max_element() > reach || structures.get(&fire.structure)
+                .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p))));
+            if !keep && fire.until <= tick {
+                cold.push(fire.clone());
+            }
+            keep
+        });
         if self.lit.len() != before {
             self.send_fires();
         }

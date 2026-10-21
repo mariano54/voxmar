@@ -54,6 +54,8 @@ struct Client {
     said: Vec<voxmar_engine::lang::Words>,
     /// Refusals received, in English.
     refused: Vec<String>,
+    /// The other players the server has named to us, until it says they left.
+    others: std::collections::HashMap<PlayerId, String>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
     /// The server's tick, as it last told (once a second): the clock waits are judged by.
@@ -320,6 +322,7 @@ impl Client {
             chat: Vec::new(),
             said: Vec::new(),
             refused: Vec::new(),
+            others: Default::default(),
             day: None,
             server_tick: 0,
             creatures: Default::default(),
@@ -533,6 +536,17 @@ impl Client {
                     self.items.remove(&gone.id);
                     if gone.collector == Some(self.id) {
                         self.collected.push(gone.id);
+                    }
+                }
+            }
+            ServerMessage::Players { seen, names, .. } => {
+                let named = seen.into_iter().filter_map(|view| Some((view.id, view.name?)));
+                for (id, name) in named.chain(names) {
+                    // A name told empty is one who left the server.
+                    if name.is_empty() {
+                        self.others.remove(&id);
+                    } else {
+                        self.others.insert(id, name);
                     }
                 }
             }
@@ -1646,8 +1660,12 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
 
 #[test]
 fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
-    // No mutation, so the chick's genes are only its parents'.
-    let mut client = Client::join_with(ServerConfig { view_distance: 2, mutation: Some(0.0), ..Default::default() });
+    // A pack that turns mutation off (`genetics`), so the chick's genes are only ever its
+    // parents': at the world's chance one birth in some 270 drew an allele neither had.
+    // That births mutate at the data's chance is `genes`' test.
+    let (assets, content) = with_mod("breeding-no-mutation", &[("creatures.ron", "(genetics: (mutation: 0.0), creatures: [])")]);
+    assert_eq!(content.creatures.genetics().mutation, 0.0);
+    let mut client = join_content(content);
     let hen = client.content.creatures.find("junglefowl").expect("junglefowl in the content");
     let wheat = client.content.blocks.id("base:wheat").unwrap();
     client.ok("/summon junglefowl 2 ~ ~ ~");
@@ -1685,7 +1703,7 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
         client.pump_until(|_| Instant::now() > until);
     }
     // The chick inherits its plumage from its parents: each of its two alleles is one of
-    // theirs (mutation is off on this server; at the game's rate, a few chicks in a
+    // theirs (mutation is off in this pack; at the game's rate, a few chicks in a
     // thousand would carry a new allele).
     let genes = &client.content.creatures.get(hen).def.genes;
     assert!(!genes.is_empty(), "junglefowl have genes");
@@ -1696,6 +1714,8 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
     let parents: Vec<u8> = hens.iter().flat_map(|id| alleles(&client.creatures[id])).collect();
     let chick = client.creatures.values().find(|v| v.young && v.kept).expect("born");
     assert!(alleles(chick).iter().all(|a| parents.contains(a)), "{:?} from parents {parents:?}", alleles(chick));
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
 }
 
 #[test]
@@ -2048,10 +2068,16 @@ fn troughs_saved(dir: &std::path::Path, name: &str) -> Option<(u32, Vec<[i32; 3]
     Some((count, cells))
 }
 
-/// Waits, up to five of the server's seconds, for the save `name` left to read `want`.
-fn await_troughs(server: &mut Client, dir: &std::path::Path, name: &str, want: (u32, Vec<[i32; 3]>), why: &str) {
-    server.pump_ticks(5 * TICKS_PER_SECOND as u64, |_| troughs_saved(dir, name).as_ref() == Some(&want));
-    assert_eq!(troughs_saved(dir, name), Some(want), "{why}");
+/// Drops `leaver` and waits for the save they left: the server saves as one leaves, before
+/// telling the others they are gone, so once `watcher` is told it reads `want`.
+#[track_caller]
+fn leave_and_check_troughs(watcher: &mut Client, leaver: Client, dir: &std::path::Path, want: (u32, Vec<[i32; 3]>), why: &str) {
+    let (id, name) = (leaver.id, leaver.name.clone());
+    // Told of them first, or there is no leaving to be told of.
+    watcher.pump_until(|c| c.others.contains_key(&id));
+    drop(leaver);
+    watcher.pump_until(|c| !c.others.contains_key(&id));
+    assert_eq!(troughs_saved(dir, &name), Some(want), "{why}");
 }
 
 #[test]
@@ -2090,28 +2116,23 @@ fn a_placed_block_another_player_breaks_comes_off_its_owners_tally() {
     let mut ada = breaker.another("ada");
     let cell = place_a_trough(&mut ada);
     clear_cell(&mut breaker, cell);
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she played");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (0, vec![]), "broken while she played");
     // Ada away: Bob breaks it, and she finds it off her count when she comes back.
     let mut ada = breaker.another("ada");
     let cell = place_a_trough(&mut ada);
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (1, vec![cell.to_array()]), "set down, as she left");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (1, vec![cell.to_array()]), "set down, as she left");
     clear_cell(&mut breaker, cell);
     let ada = breaker.another("ada");
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she was away");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (0, vec![]), "broken while she was away");
     // Ada left dead: the same, as she comes back to life.
     let mut ada = breaker.another("ada");
     let cell = place_a_trough(&mut ada);
     ada.ok("/kill");
     ada.pump_until(|c| c.health == 0);
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (1, vec![cell.to_array()]), "set down, as she left dead");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (1, vec![cell.to_array()]), "set down, as she left dead");
     clear_cell(&mut breaker, cell);
     let ada = breaker.another("ada");
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she lay dead away");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (0, vec![]), "broken while she lay dead away");
     drop(breaker);
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -3688,11 +3709,13 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         // The last round's harvest the player would take or draw in comes in once its pickup
         // delay is out, which on a loaded server lands after the /clear and fills a slot the
         // wait below wants empty: let it come in first, by the server's own rule. What came
-        // to rest beyond the magnet stays where it is.
+        // to rest beyond the magnet stays where it is. One still sliding under 0.1 a second
+        // goes about 0.012 further, so it counts as settled only that far clear of the magnet.
         client.pump_until(|c| {
             c.items.values().all(|i| {
                 let item = voxmar_engine::dropped::Loose::new(i.position, i.velocity);
-                let settled = i.velocity.length() < 0.1 || voxmar_engine::dropped::middle(c.position).distance(item.centre()) >= voxmar_engine::dropped::CLAIM;
+                let away = voxmar_engine::dropped::middle(c.position).distance(item.centre());
+                let settled = i.velocity == Vec3::ZERO || (i.velocity.length() < 0.1 && away >= voxmar_engine::dropped::MAGNET + 0.02) || away >= voxmar_engine::dropped::CLAIM;
                 settled && item.pull(c.position) == voxmar_engine::dropped::Pull::Left
             })
         });
@@ -3932,6 +3955,7 @@ fn a_settlement_come_back_to_holds_its_people_once() {
         before = now;
     }
     assert!(settled, "the people never held still: {before:?}");
+    let seen_before: Vec<String> = villagers(&client).iter().map(|v| format!("{} {} {:?} at {:.1}", species_name(&client, v), v.seed, v.pose, v.position)).collect();
     // Away past `release` (well inside `forget`): the server lets them go.
     let far = client.position + Vec3::new(400.0, 0.0, 0.0);
     client.ok(&format!("/tp {} {}", far.x as i32, far.z as i32));
@@ -3947,7 +3971,8 @@ fn a_settlement_come_back_to_holds_its_people_once() {
             once.dedup();
             assert_eq!(&once, seeds, "{species} twice over: {seeds:?}");
         }
-        assert_eq!(after, before, "the people came back other than they were");
+        let seen_after: Vec<String> = villagers(&client).iter().map(|v| format!("{} {} {:?} at {:.1}", species_name(&client, v), v.seed, v.pose, v.position)).collect();
+        assert_eq!(after, before, "the people came back other than they were: before {seen_before:?}, after {seen_after:?}");
     }
 }
 
@@ -4015,8 +4040,13 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
         let mut said = String::new();
         for _ in 0..60 {
             said = client.ok("/creatures people");
-            // Read from the server's words, not from any language's rendering of them.
-            let Some(Words::Key(_, args)) = client.said.first().cloned() else { panic!("/creatures people: {said}") };
+            // Read from the server's words, not from any language's rendering of them, and
+            // from its answer, not whatever else came first.
+            let answer = client.said.iter().find_map(|w| match w {
+                Words::Key(key, args) if key == "command.creatures.people" => Some(args.clone()),
+                _ => None,
+            });
+            let Some(args) = answer else { panic!("/creatures people: {said}") };
             let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
             let number = |name: &str| match arg(name) {
                 Some(Words::Text(n)) => n.parse::<usize>().ok(),
@@ -4030,15 +4060,27 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
                 && out == due
                 && due > 0
             {
-                client.pump_ticks(10 * TICKS_PER_SECOND as u64, |c| seen.iter().all(|id| c.creatures.contains_key(id)));
-                assert!(seen.iter().all(|id| client.creatures.contains_key(id)), "the server told of people in sight the client never heard of: {said}");
-                return kind(client);
+                // Everyone the server named, held; someone who walked out of sight since
+                // is asked about again.
+                client.pump_ticks(2 * TICKS_PER_SECOND as u64, |c| seen.iter().all(|id| c.creatures.contains_key(id)));
+                if seen.iter().all(|id| client.creatures.contains_key(id)) {
+                    return kind(client);
+                }
+                continue;
             }
             client.pump_ticks(TICKS_PER_SECOND as u64 / 2, |_| false);
         }
-        panic!("the settlement's people never all came out: {said}");
+        panic!("the settlement's people never all came out and were all held: {said}");
     };
+    // A restart first, so those in sight are the ones a restart brings out where the player
+    // stands. One who came out as the player crossed the settlement stays out while near,
+    // and was counted here, though the restart's people due out near the player left them
+    // in (one asleep 87 blocks off: 6 of 7 back).
+    drop(client);
+    let mut client = Client::join_with(config());
+    client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
     let housemates = settle(&mut client);
+    let victim = villagers(&client).into_iter().find(|v| v.seed == victim.seed).unwrap_or(victim);
     assert!(housemates.contains(&victim.seed), "the {name} asleep was not among those in sight");
     arm_for_villager_death(&mut client);
     strike_until(&mut client, victim.id, 20, |c| !c.creatures.contains_key(&victim.id));
@@ -4100,8 +4142,18 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     client.ok(&format!("/tp {} {} {}", at.x, at.y, at.z));
     client.ok(&format!("/tp bystander {} {} {}", at.x, at.y, at.z));
     bystander.pump_until(|c| c.teleported.is_some() && c.health > 0);
+    let (blows_before, refused_before, started) = (client.damage.len(), client.refused.len(), client.server_tick);
     strike_until(&mut client, villager.id, 10, |c| c.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health));
-    assert!(client.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health), "no blow landed on the villager");
+    let now = client.creatures.get(&villager.id).map(|v| format!("{} health {} at {:.1} {:?} ({:.1} off)", species_name(&client, v), v.health, v.position, v.pose, v.position.distance(client.position)));
+    assert!(
+        client.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health),
+        "no blow landed on the villager {} in {} ticks: now {now:?}; our blows {:?}; refused {:?}; the player at {:.1}",
+        villager.id,
+        client.server_tick - started,
+        &client.damage[blows_before..],
+        &client.refused[refused_before..],
+        client.position
+    );
     // Step beside the called guard without striking it. This checks whom the alarm
     // selects; the blocked-route and give-up test checks an unreachable quarry.
     let at = client.creatures[&guard.id].position;
@@ -4112,7 +4164,8 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     let struck_by_a_guard = |c: &Client| c.hurt[hurt_before..].iter().any(|&(damage, _)| damage > 0) && guards(c).iter().any(|g| g.position.distance(c.position) < 3.0);
     client.pump_ticks(20 * TICKS_PER_SECOND as u64, struck_by_a_guard);
     let hit = struck_by_a_guard(&client);
-    assert!(hit, "no called guard struck a reachable quarry in 20 seconds");
+    let seen: Vec<String> = guards(&client).iter().map(|g| format!("{} at {:.1} {:?} ({:.1} off)", g.id, g.position, g.pose, g.position.distance(client.position))).collect();
+    assert!(hit, "no called guard struck a reachable quarry in 20 seconds: the player at {:.1}, hurt {:?}; guards {seen:?} (called {})", client.position, &client.hurt[hurt_before..], guard.id);
     // The bystander, the while and a few seconds more.
     client.pump_ticks(5 * TICKS_PER_SECOND as u64, |_| false);
     bystander.drain();
@@ -6655,14 +6708,20 @@ fn wait_server(client: &mut Client, seconds: u64) {
 /// looks only at land the server holds).
 #[track_caller]
 fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> String {
+    machine_shows(client, at, want, seconds, |said| said.contains(want))
+}
+
+/// As `machine_says`, until what `/machine` says passes `shows` (described as `what`).
+#[track_caller]
+fn machine_shows(client: &mut Client, at: &str, what: &str, seconds: u64, shows: impl Fn(&str) -> bool) -> String {
     client.land_round();
     let started = client.server_tick;
     loop {
         let said = client.ok(&format!("/machine {at}"));
-        if said.contains(want) {
+        if shows(&said) {
             return said;
         }
-        assert!(server_seconds(client, started) < seconds, "/machine {at} never said `{want}`: {said}");
+        assert!(server_seconds(client, started) < seconds, "/machine {at} never said `{what}`: {said}");
         wait_server(client, 1);
     }
 }
@@ -7167,7 +7226,13 @@ fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
         let lying = c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>();
         lying + held(c).saturating_sub(held_at_join)
     };
-    client.pump_until(|c| spilled(c) == 3 * 64);
+    // They fell out as the server started, so are there by the time the chest is read. The
+    // wait is by the server's clock, well inside a dropped stack's life (`dropped::LIFETIME`):
+    // one by the wall's could outlast them (half an hour of the server's, 90 s at the tests'
+    // speed) and then only time out, saying nothing of what the player saw.
+    client.pump_ticks(10 * TICKS_PER_SECOND as u64, |c| spilled(c) == 3 * 64);
+    let lying: Vec<_> = client.items.values().filter(|i| i.stack.item == cobblestone).map(|i| (i.stack.count, i.position)).collect();
+    assert_eq!(spilled(&client), 3 * 64, "lying {lying:?}, held {} ({held_at_join} as they came in), tick {}", held(&client), client.server_tick);
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -8104,8 +8169,10 @@ fn an_hv_hall_runs_a_processing_array_and_an_induction_smelter_on_one_cable() {
         part.strip_prefix("at ").and_then(|p| p.strip_suffix("% power")).or_else(|| part.strip_suffix("% done"))
             .and_then(|n| n.parse::<f32>().ok()).is_some_and(|n| n > 0.0)
     });
-    assert!(powered(&machine_says(&mut client, &at(array), "making", 20)));
-    assert!(powered(&machine_says(&mut client, &at(smelter), "making", 20)));
+    // Until each says it is powered: one look can come as it starts an item, at 0% done.
+    for target in [array, smelter] {
+        machine_shows(&mut client, &at(target), "making, powered", 20, |said| said.contains("making") && powered(said));
+    }
 }
 
 // A fresh survival player's first day, played with legitimate actions only and timed by the
@@ -8623,6 +8690,7 @@ impl Fresh {
     /// `item` (the player counts the drops coming, as one watching them would). Then waits for
     /// them to arrive.
     fn gather_from(&mut self, tool: &str, stands: &[Vec3], mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.make_room_for(item, need, tool);
         self.hold(tool);
         let id = self.c.content.blocks.expect(item);
         let mut owed = self.have(item);
@@ -8667,6 +8735,7 @@ impl Fresh {
     /// As [`Fresh::gather_from`] over open ground: the player walks up to the nearest block
     /// that is out of the pull and goes on.
     fn gather(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.make_room_for(item, need, tool);
         self.hold(tool);
         let id = self.c.content.blocks.expect(item);
         let mut owed = self.have(item);
@@ -8697,6 +8766,7 @@ impl Fresh {
     /// `targets` until `need` of `item` are carried or lie loose, then collects them; as in
     /// `gather`, what lies out of every reach is dug again.
     fn gather_chance(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.make_room_for(item, need, tool);
         self.hold(tool);
         // Only a target that can give `item`, as its drop or `instead`, is broken: another
         // block laid over the plot (the farm's copper) is passed over.
@@ -9605,6 +9675,23 @@ impl Fresh {
     /// takes nothing more in (a quest's reward, a craft, dug clay), and cooked food takes a
     /// slot each, so by the Farm age a player clears theirs out as this does.
     fn make_room(&mut self, free: usize) {
+        self.make_room_keeping(free, &[]);
+    }
+
+    /// Makes room for `need` of `item` in all, before gathering it with `tool` (both kept): the
+    /// pack fills with the way's loot as it goes, the hunt's and the gravel's more on one run
+    /// than another, and a drop with no room for it lies under the player for good.
+    fn make_room_for(&mut self, item: &str, need: u32, tool: &str) {
+        let id = self.c.content.blocks.expect(item);
+        let most = voxmar_engine::inventory::max_stack(id) as u32;
+        let topped: u32 = self.c.inventory.slots.iter().flatten().filter(|s| s.item == id).map(|s| most.saturating_sub(s.count as u32)).sum();
+        let more = need.saturating_sub(self.have(item)).saturating_sub(topped);
+        if more > 0 {
+            self.make_room_keeping(more.div_ceil(most) as usize, &[item, tool]);
+        }
+    }
+
+    fn make_room_keeping(&mut self, free: usize, keep: &[&str]) {
         const SPARE: [&str; 7] = ["base:burnt_food", "base:feather", "base:flint_pickaxe", "base:raw_small_game", "base:cooked_small_game", "base:oak_planks", "base:bread"];
         let slots = voxmar_engine::inventory::SLOTS;
         let empty = |c: &Client| (0..slots).filter(|&s| c.inventory.get(s).is_none()).count();
@@ -9613,7 +9700,7 @@ impl Fresh {
         }
         let back = self.at;
         assert!(self.hop_near(Self::middle(self.rel(29, 0, -10)), 0.5), "no room at the plot's far corner");
-        for item in SPARE {
+        for item in SPARE.into_iter().filter(|i| !keep.contains(i)) {
             let id = self.c.content.blocks.expect(item);
             while empty(&self.c) < free {
                 let Some(slot) = (0..slots).find(|&s| self.c.inventory.get(s).is_some_and(|x| x.item == id)) else { break };
@@ -9738,7 +9825,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.hold("base:torch");
     f.propose("base:light", ActionTarget::Block { block: flue, face: Face::PosY });
     let flue_is = |c: &Client, name: &str| c.world.block(flue) == c.content.blocks.id(name);
-    f.wait(5.0, "lighting the clamp", |c| flue_is(c, "base:clamp_flue"));
+    f.wait(5.0, "lighting the clamp", |c| flue_is(c, "base:clamp_flue_catching"));
     let spent = move |c: &Client| c.world.block(flue) == Some(BlockId::AIR);
     // Clay in Store, while it smoulders: thirty-two clay dug (Clay Banks on the way), and a
     // chest by the pit kiln, eight planks round an empty middle at the table, with them put
@@ -9991,7 +10078,8 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // (a claim on the way can be refused, a full pack turning A Kiln Load's bricks away),
     // is marked and claimed now, before the crucible needs its Engineering.
     for quest in ["a_kiln_load", "brick_by_brick"] {
-        if !f.c.claimed(&format!("base:{quest}")) {
+        let name = format!("base:{quest}");
+        if !f.waited(2.0, |c| c.claimed(&name)) {
             f.mark(quest);
         }
     }

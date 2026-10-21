@@ -276,7 +276,8 @@ the Nomad quests whose goals take hide (A Coin Purse, Pockets, A Stone's Throw, 
 come after Hung to Dry, whose drying rack turns a hunt's raw hide into hide. The Farm book
 teaches its own rack, as a Farm quest comes after Farm quests only: Bigger Game has the player
 make one, and the Farm quests that take hide (Full Hide Wraps, Light in the Window, Books and
-Banners, Candlelight, The Beekeeper Calls) come after it. A drop counts only from a creature
+Banners) come after it. Candlelight and The Beekeeper Calls need no hide: a candle is also a wick
+over lard (a wild boar's drop) or over beeswax, so they come after their own chapters alone. A drop counts only from a creature
 every player meets: the raiders and jailers that also drop hide come only with rare
 wandering parties, and a boss's drop counts once a quest before has the player kill it.
 
@@ -440,9 +441,9 @@ names cooked fish alone:
 
 | Quest | After | Teaches | Pays |
 |---|---|---|---|
-| Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
+| Salt and Sardines | Patient Angler, Camp Cook | Sardines bite only in the sea: four caught and cooked (Cooking 5) | Fishing 80, 2 bread |
 | Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, 2 bread |
-| Cold Water Trout | Still Water Perch | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked | Fishing 120, 4 bread |
+| Cold Water Trout | Still Water Perch, A Hearty Stew | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked (Cooking 15) | Fishing 120, 4 bread |
 | Three Waters | Salt and Sardines, Still Water Perch | A fourth kind past minnow, sardine and perch: a trout or a cod | Fishing 150, 4 bread |
 | Fish on the Table | Salt and Sardines | A lit hearth, eight fish cooked and six eaten | Cooking 120, 4 bread |
 
@@ -456,10 +457,10 @@ cloth and dyes. Each pays in bread:
 
 | Quest | After | Teaches | Pays |
 |---|---|---|---|
-| Fang and Stick | The Farm Age | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
+| Fang and Stick | Earthenware | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
 | Lanterns of Cloth | A Rug Underfoot | Paper lanterns (Crafting 6): two made and set down at home, each a light | Crafting 60, 2 bread |
 | A Dooryard | Lanterns of Cloth | An awning and bunting made, then the Dooryard felt (an awning and two yard things under open sky) | Crafting 100, 4 bread |
-| Five Colours | A Rug Underfoot | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
+| Five Colours | A Rug Underfoot, A Kiln Load | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
 
 ## About camp in the Nomad book (Oct 20)
 

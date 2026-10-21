@@ -358,6 +358,12 @@ impl Neighbours {
 
 impl Creatures {
     /// Whether `player` was last told of creature `id`: it is in their sight.
+    /// For tests: player `player` is shown creature `id`, as a sent view does.
+    #[cfg(test)]
+    pub(crate) fn show(&mut self, player: PlayerId, id: u32) {
+        self.seen.entry(player).or_default().insert(id);
+    }
+
     pub(crate) fn sees(&self, player: PlayerId, id: u32) -> bool {
         self.seen.get(&player).is_some_and(|seen| seen.contains(&id))
     }
@@ -572,6 +578,10 @@ fn charges_from(species: &creature::Creature, phase: u8, scale: f32, from: Vec3,
     species.reaches(phase, edge, level) && !species.strikes_from_here(phase, edge, level) && species.in_band(from.y, to.y, voxmar_engine::physics::player::HEIGHT, scale)
 }
 
+/// How far to one side of a gap's middle a body may be and go straight in, once it cannot
+/// go straight in from where it is (`Server::think_and_move`): nearer, it goes on in.
+const LINE_UP: f32 = 0.02;
+
 /// How far apart along a charge's lane its cells are looked at (`Server::charge_open`):
 /// under a block, so none is stepped over.
 const CHARGE_LANE_STEP: f32 = 0.25;
@@ -733,7 +743,7 @@ impl Server {
     /// looks: within `field` degrees either way of where it faces, from high in its body,
     /// with nothing that hides it between (`BlockInfo::occludes`, as a player's look is
     /// judged). Seeing all round, it sees through nothing all the same.
-    fn in_view(&self, body: &Body, field: f32, eye: Vec3) -> bool {
+    pub(crate) fn in_view(&self, body: &Body, field: f32, eye: Vec3) -> bool {
         let from = body.position + Vec3::Y * body.size.1 * 0.8;
         let to = eye - from;
         let distance = to.length();
@@ -1177,7 +1187,29 @@ impl Server {
                     }
                     cells.remove(0);
                 }
-                let wish = cells.first().map_or(drive.wish, |cell| (walker.middle(*cell) - body.position).with_y(0.0).normalize_or_zero());
+                let wish = cells.first().map_or(drive.wish, |cell| {
+                    let to = (walker.middle(*cell) - body.position).with_y(0.0);
+                    // Before a gap its box does not go straight through (come at from along
+                    // a fence, a boar at a gate barely wider than it), it lines up first: it
+                    // makes for the point square in front of the gap's middle, a cell back,
+                    // and goes in from there, rather than press the post beside it.
+                    let axis = if to.x.abs() > to.z.abs() { Vec3::X * to.x.signum() } else { Vec3::Z * to.z.signum() };
+                    let ahead = to.dot(axis);
+                    let aside = to - axis * ahead;
+                    // Only at a gap it would go straight in from there: not at a step it
+                    // climbs (stairs), where nothing to its side is in its way.
+                    let level = (cell.y as f32 - body.position.y).abs() < 0.6;
+                    let lined_up = || {
+                        let mut there = body.aabb();
+                        there.translate(to - axis);
+                        goes_straight(there, axis, |p| motion::Surroundings::solid(&ground, p))
+                    };
+                    if level && (0.5..1.5).contains(&ahead) && aside.length() > LINE_UP && !straight(cell) && lined_up() {
+                        (to - axis).normalize_or_zero()
+                    } else {
+                        to.normalize_or_zero()
+                    }
+                });
                 let (heading, side) = motion::steer(&body, &Ground::climbing(self, climbs), movement, water, wish, creature.detour, drive.speed, dt);
                 way = cells;
                 (Drive { wish: heading, ..drive }, side)
@@ -3436,7 +3468,10 @@ mod way_tests {
     /// reindeer, a boar, a deer), led with its favourite food held up, follows the player
     /// through an open gate in a fence, past a feed trough set by the gate, and up stairs
     /// onto a floor a block up, within 20 s each: none of the ways about a homestead traps
-    /// one it is led along. An aurochs or a bison (a block across or more) fits no gate.
+    /// one it is led along. An aurochs or a bison (a block across or more) fits no gate one
+    /// wide; they come through a double gate (the next test). Before: a large boar (0.87
+    /// across) led along the fence to the gate ran on past it and pressed the post beside
+    /// it; now it lines up square in front of the gap first.
     #[test]
     fn homestead_animals_led_with_food_follow_through_gates_past_troughs_and_up_stairs() {
         fn fence(server: &mut Server, c: IVec3) {
@@ -3465,12 +3500,6 @@ mod way_tests {
         ];
         for name in ["base:junglefowl", "base:mallard", "base:mouflon", "base:mountain_goat", "base:reindeer", "base:wild_boar", "base:red_deer"] {
             for (scene, build) in scenes {
-                // A boar this large (0.87 across) led along the fence to the bare gate runs on
-                // past the line through it and presses the fence beside it: a known case,
-                // left for the next change to path following.
-                if name == "base:wild_boar" && scene == "gate" {
-                    continue;
-                }
                 let mut server = crate::test_server();
                 let c = pen(&mut server, 14);
                 let to = build(&mut server, c);
@@ -3482,6 +3511,52 @@ mod way_tests {
                 held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == food)).expect("the food is held");
                 let id = put(&mut server, name, c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5), Vec3::X);
                 assert!(comes(&mut server, id, to, 20).is_some(), "{name} never followed the food in the {scene} scene: at {:.2}", server.creatures.live[&id].body.position - c.as_vec3());
+            }
+        }
+    }
+
+    /// Broad cattle (an aurochs 1.1 across, a bison 1.0) led with food held up follow the
+    /// player through an open double gate in a fence within 20 s, but not through an open
+    /// gate one wide in 20 s, even started in line with it: that still keeps them out, as a
+    /// door keeps them out of a house.
+    #[test]
+    fn cattle_led_with_food_come_through_a_double_gate_but_not_a_gate_one_wide() {
+        for name in ["base:aurochs", "base:bison"] {
+            for double in [true, false] {
+                let mut server = crate::test_server();
+                let c = pen(&mut server, 14);
+                let fence = server.content.blocks.expect("base:oak_fence_east");
+                for z in -14..=14 {
+                    server.world.set_block(c + IVec3::new(1, 0, z), fence);
+                }
+                let to = if double {
+                    // Set as a player sets it: its second leaf beside it (`placed_with`).
+                    let gate = server.content.blocks.expect("base:oak_double_gate_open_east");
+                    let at = c + IVec3::new(1, 0, 3);
+                    server.world.set_block(at, gate);
+                    let with: Vec<(IVec3, BlockId)> = server.content.blocks.placed_with(gate).collect();
+                    assert_eq!(with.len(), 1, "one leaf beside it");
+                    for (by, leaf) in with {
+                        server.world.set_block(at + by, leaf);
+                    }
+                    c.as_vec3() + Vec3::new(4.0, 0.0, 3.0)
+                } else {
+                    server.world.set_block(c + IVec3::new(1, 0, 3), server.content.blocks.expect("base:oak_fence_gate_open_east"));
+                    c.as_vec3() + Vec3::new(4.0, 0.0, 3.5)
+                };
+                let player = join(&mut server, to);
+                let species = server.content.creatures.get(server.content.creatures.find(name).expect(name));
+                let food = species.favourite[0];
+                let held = server.players.get_mut(&player).unwrap();
+                held.inventory.add(food, 1);
+                held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == food)).expect("the food is held");
+                // Within a bison's lure (6 blocks), across the fence from the player and in
+                // line with the gate: the way one wide is hardest to miss.
+                let id = put(&mut server, name, to - Vec3::X * 5.5, Vec3::X);
+                let came = comes(&mut server, id, to, 20).is_some();
+                let at = server.creatures.live[&id].body.position - c.as_vec3();
+                assert_eq!(came, double, "{name}, double gate {double}: came {came}, at {at:.2}");
+                assert!(double || at.x < 1.0, "{name} got through a gate one wide: at {at:.2}");
             }
         }
     }
@@ -6230,6 +6305,64 @@ mod fight_tests {
         };
         let (ran, said) = (limped / whole, 1.0 - hurt * (1.0 - share));
         assert!((ran - said).abs() < 0.08, "hurt to {share:.2} of its health it ran {ran:.2} of the ground, not {said:.2} ({limped:.1} of {whole:.1} blocks)");
+    }
+
+    /// A game bird sits tight (`creature::Flush`): a player walking up to it in the open is
+    /// let come to its `hold`, the bird crouched where it was; within it, it bursts away
+    /// faster than it can run.
+    #[test]
+    fn a_game_bird_sits_tight_then_bursts_away() {
+        const WALK: f32 = 4.3;
+        for name in ["base:pheasant", "base:quail", "base:junglefowl"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 48);
+            let start = c.as_vec3() + Vec3::new(8.5, 0.0, 0.5);
+            let id = put(&mut server, name, start, -Vec3::X);
+            let player = join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+            let species = server.creatures.live[&id].species;
+            let (flush, run) = {
+                let def = &server.content.creatures.get(species).def;
+                (def.flush.expect("a game bird sits tight"), def.movement.run)
+            };
+            let doing = |server: &Server| {
+                let c = &server.creatures.live[&id];
+                c.mind.doing.map_or("-", |i| server.content.creatures.get(c.species).modules[i].0.name())
+            };
+            let gap = |server: &Server| server.players[&player].position.with_y(0.0).distance(server.creatures.live[&id].body.position.with_y(0.0));
+            // Walk up, a step a tick, to half a block outside its hold.
+            let (mut sat, mut ticks) = (None, 0);
+            while gap(&server) > flush.hold + 0.5 {
+                ticks += 1;
+                let (at, bird) = (server.players[&player].position, server.creatures.live[&id].body.position);
+                let step = (bird - at).with_y(0.0).normalize() * (WALK / TICKS_PER_SECOND as f32).min(gap(&server) - flush.hold - 0.5);
+                server.players.get_mut(&player).unwrap().position = at + step;
+                server.tick += 1;
+                server.tick_creatures();
+                if doing(&server) == "hide" {
+                    sat.get_or_insert(server.creatures.live[&id].body.position);
+                }
+                assert!(ticks < 20 * TICKS_PER_SECOND, "{name}: the walk up never ended, {:.1} blocks off, {}", gap(&server), doing(&server));
+            }
+            let sat = sat.unwrap_or_else(|| panic!("{name} never sat tight, {}", doing(&server)));
+            assert_eq!(doing(&server), "hide", "{name} at {:.1} blocks", gap(&server));
+            let still = server.creatures.live[&id].body.position.with_y(0.0).distance(sat.with_y(0.0));
+            assert!(still < 0.3, "{name} crept {still:.2} blocks while sitting tight");
+            // One step more, within its hold: it bursts away.
+            let at = server.players[&player].position;
+            let bird = server.creatures.live[&id].body.position;
+            server.players.get_mut(&player).unwrap().position = at + (bird - at).with_y(0.0).normalize();
+            // It turns from facing them and gathers speed; at the top of its burst it is
+            // going faster than its run.
+            let mut top: f32 = 0.0;
+            for _ in 0..TICKS_PER_SECOND / 2 {
+                server.tick += 1;
+                server.tick_creatures();
+                top = top.max(server.creatures.live[&id].body.velocity.with_y(0.0).length());
+            }
+            assert_eq!(doing(&server), "flee", "{name} within its hold");
+            let pace = server.creatures.live[&id].mind.personality.pace();
+            assert!(top > run * pace * 1.2, "{name} went at most {top:.2} blocks a second; its run is {:.2}", run * pace);
+        }
     }
 
     /// At night a wolf in a campfire's ward (`BlockDef::ward`) walks out of it. Not by day,
