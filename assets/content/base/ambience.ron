@@ -110,6 +110,8 @@
         (name: "rock", materials: [Stone, Gravel], range: (60, 700)),
         (name: "sand", materials: [Sand], range: (60, 600)),
         (name: "snowpack", materials: [Snow], range: (60, 600)),
+        // Ice: a frozen pond or lake, a glacier's edge.
+        (name: "ice", tags: ["ice"], range: (20, 300)),
     ],
     roofs: (
         height: 12,
@@ -432,6 +434,23 @@
             when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3)},
             not_biome: ["desert", "frozen"],
             duck: {"shelter": 0.8, "rain": 0.9},
+        ),
+        // A nightjar churring on a warm night over open ground (grass, few trees), from dusk:
+        // a long dry rattle now and then, somewhere out past the camp.
+        (
+            name: "nightjar", sound: Churr, volume: 0.3, at: Around(distance: (12, 28), height: (0, 3)), per_minute: 1.2, cooldown: 25,
+            pitch: (0.95, 1.05), reach: 20,
+            when: {"sun": (max: -0.05, fade: 0.1), "temperature": (min: 12, fade: 5), "grass": (min: 0.4, fade: 0.3), "leaves": (max: 0.2, fade: 0.2), "sky": (min: 0.6, fade: 0.3)},
+            not_biome: ["desert", "frozen", "wetland"],
+            duck: {"shelter": 0.8, "rain": 0.9, "high_wind": 0.7},
+        ),
+        // Ice on frozen water singing as the night cools: a deep thoom, then a falling
+        // whistle running away through the sheet. Now and then by day too, more after dark.
+        (
+            name: "ice_sing", sound: IceSing, volume: 0.32, at: OpenBlock("ice"), per_minute: 1.5, cooldown: 18,
+            pitch: (0.85, 1.15), reach: 40,
+            when: {"ice": (min: 0.3, fade: 0.25), "sun": (max: 0.0, fade: 0.4), "sky": (min: 0.4, fade: 0.4)},
+            duck: {"shelter": 0.7, "high_wind": 0.6},
         ),
         // Frogs by water on warm evenings and nights, most in wetlands.
         (

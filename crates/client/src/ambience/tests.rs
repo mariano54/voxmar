@@ -119,6 +119,7 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "storm_outside", &forest_tags, &[&forest[..], STORM].concat()),
         scene(ambience, "storm_by_the_hearth", &forest_tags, &[&forest[..], STORM, INDOORS, &[("fire", 1.0)]].concat()),
         scene(ambience, "quiet_peak", &["mountain"], &[("rock", 0.8), ("relief", 60.0), ("height", 150.0), ("wind", 4.0), ("temperature", 2.0)]),
+        scene(ambience, "frozen_lake_night", &["frozen", "cold", "open"], &[("ice", 0.8), ("snowpack", 0.5), ("sun", -0.6), ("temperature", -12.0)]),
     ]
 }
 
@@ -172,7 +173,7 @@ fn each_place_has_its_own_sound() {
             "forest_noon" => (&["leaves", "breeze", "warbler", "thrush"], &["meadow", "crickets", "owl", "dawn_chorus", "cave", "drip", "fire", "fire_snap"]),
             "forest_rain" => (&["downpour"], &["rain_on_roof"]),
             "meadow_noon" => (&["meadow", "breeze"], &["leaves", "crickets", "warbler"]),
-            "meadow_night" => (&["crickets", "cricket"], &["meadow", "warbler", "thrush"]),
+            "meadow_night" => (&["crickets", "cricket", "nightjar"], &["meadow", "warbler", "thrush", "ice_sing"]),
             "river" => (&["stream"], &["surf", "lake"]),
             "coast" => (&["surf"], &["stream", "lake", "frog"]),
             "lake" => (&["lake"], &["stream", "surf"]),
@@ -199,6 +200,8 @@ fn each_place_has_its_own_sound() {
             "sandstorm" => (&["sandstorm", "gusty"], &["hail", "blizzard", "meadow", "crickets"]),
             "blizzard" => (&["blizzard"], &["sandstorm", "hail", "meadow"]),
             "sleet" => (&["sleet"], &["hail", "sandstorm"]),
+            // A frozen lake at night: the ice singing, no insects or birds.
+            "frozen_lake_night" => (&["ice_sing"], &["crickets", "cricket", "nightjar", "frog", "owl"]),
             other => panic!("{other}"),
         };
         for name in must {
@@ -976,6 +979,31 @@ fn a_home_settles_at_night_and_its_eaves_drip_after_rain() {
     };
     let (porch, indoors) = (loudness(&after_rain), loudness(&[&after_rain[..], &[("shelter", 1.0)]].concat()));
     assert!(indoors < 0.7 * porch, "eaves heard indoors at {indoors:.3}, from the porch at {porch:.3}");
+}
+
+/// A first night out on warm open grass has a nightjar churring somewhere past the camp,
+/// never by day, in the woods, in the cold or under a roof; and a frozen lake sings, most
+/// after dark, never without ice.
+#[test]
+fn a_nightjar_churrs_on_warm_open_nights_and_the_ice_sings() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let played = |name: &str, tags: &[&str], set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "night", tags, set), 900.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count()
+    };
+    let open = ["grassland", "temperate", "open"];
+    let night = [("grass", 1.0), ("sun", -0.6), ("temperature", 18.0)];
+    assert!(played("nightjar", &open, &night) > 0, "a warm night on open grass");
+    assert_eq!(played("nightjar", &open, &[("grass", 1.0), ("temperature", 18.0)]), 0, "by day");
+    assert_eq!(played("nightjar", &["forest", "temperate"], &[&night[..], &[("leaves", 1.0)]].concat()), 0, "in the woods");
+    assert_eq!(played("nightjar", &open, &[("grass", 1.0), ("sun", -0.6), ("temperature", 2.0)]), 0, "a cold night");
+    assert_eq!(played("nightjar", &open, &[&night[..], INDOORS].concat()), 0, "indoors");
+    let frozen = ["frozen", "cold", "open"];
+    let ice = |sun: f32| played("ice_sing", &frozen, &[("ice", 0.8), ("sun", sun), ("temperature", -12.0)]);
+    let (dark, noon) = (ice(-0.6), ice(0.8));
+    assert!(dark > 0 && noon < dark, "the ice sings most after dark: {dark} at night, {noon} at noon");
+    assert_eq!(played("ice_sing", &frozen, &[("snowpack", 1.0), ("sun", -0.6), ("temperature", -12.0)]), 0, "snow but no ice");
 }
 
 /// A village at work by day: the anvil ringing at the smithy, the mill wheel turning, logs
