@@ -1064,6 +1064,31 @@ pub(super) mod tests {
         assert_ne!(doing(&badger, &mind), "warn");
     }
 
+    /// A stallholder's trades are checked at load: items that exist, 1 to a stack of each,
+    /// and something given for what is wanted.
+    #[test]
+    fn trades_that_would_not_play_are_refused() {
+        let blocks = || {
+            BlockRegistry::new(["test:kindling", "test:bread"].map(|name| crate::block::BlockDef { name: name.into(), ..Default::default() }).to_vec()).unwrap()
+        };
+        let build = |trades: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, trades: [{trades}])])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &blocks(), &SkillRegistry::default()).map(|r| r.get(CreatureId(0)).trades.clone()).map_err(|e| e.to_string())
+        };
+        let good = build("(wants: (\"test:kindling\", 4), gives: [(\"test:bread\", 2)])").expect("a good trade refused");
+        let ids = blocks();
+        assert_eq!(good, [crate::creature::Trade { wants: (ids.id("test:kindling").unwrap(), 4), gives: vec![(ids.id("test:bread").unwrap(), 2)] }]);
+        for (what, trades) in [
+            ("no such item wanted", "(wants: (\"test:nothing\", 4), gives: [(\"test:bread\", 2)])"),
+            ("no such item given", "(wants: (\"test:kindling\", 4), gives: [(\"test:nothing\", 2)])"),
+            ("none wanted", "(wants: (\"test:kindling\", 0), gives: [(\"test:bread\", 2)])"),
+            ("more than a stack given", "(wants: (\"test:kindling\", 4), gives: [(\"test:bread\", 65)])"),
+            ("nothing given", "(wants: (\"test:kindling\", 4), gives: [])"),
+        ] {
+            assert!(build(trades).is_err_and(|e| e.contains("trade") || e.contains("wants")), "{what} let through");
+        }
+    }
+
     /// What `warn` may say is checked at load: an attack to follow it, no boss, a radius
     /// only for one that does not hunt, and each number in its range.
     #[test]

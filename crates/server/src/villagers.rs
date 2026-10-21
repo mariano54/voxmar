@@ -1763,17 +1763,15 @@ mod tests {
             server.day = day;
             !server.night() && server.place_now(1, 0, seed).0 == Place::Sleep
         });
-        if let Some(dawn) = dawn {
-            server.day = dawn;
-            server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
-            server.creatures.live.get_mut(&id).unwrap().body.position = Vec3::new(7.5, 200.0, 7.5);
-            for _ in 0..2 {
-                server.tick += ticks(react.intruder_every);
-                server.follow_day(id, 1, 0, &live);
-            }
-            assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().map(|t| t.place), Some(Place::Sleep), "not abed at dawn");
-            assert_eq!(told(&client, "villager.leave"), 0, "told to leave at dawn, by day");
+        server.day = dawn.expect("no one abed after sunrise: the dawn case tests nothing");
+        server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
+        server.creatures.live.get_mut(&id).unwrap().body.position = Vec3::new(7.5, 200.0, 7.5);
+        for _ in 0..2 {
+            server.tick += ticks(react.intruder_every);
+            server.follow_day(id, 1, 0, &live);
         }
+        assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().map(|t| t.place), Some(Place::Sleep), "not abed at dawn");
+        assert_eq!(told(&client, "villager.leave"), 0, "told to leave at dawn, by day");
         // By day a visitor in the house is let be.
         out_in_the_open(&mut server);
         server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;

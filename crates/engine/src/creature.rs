@@ -537,6 +537,24 @@ pub struct Barking {
     pub every: f32,
 }
 
+/// One of a stallholder's trades, as written: `wants` (an item, how many) for `gives`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TradeDef {
+    pub wants: (String, u8),
+    pub gives: Vec<(String, u8)>,
+}
+
+/// A trade with its items found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Trade {
+    pub wants: (crate::block::BlockId, u8),
+    pub gives: Vec<(crate::block::BlockId, u8)>,
+}
+
+/// The most of an item a trade asks for or gives at once: a stack.
+pub const MOST_TRADED: u8 = 64;
+
 /// The farthest, in blocks, a bark carries.
 pub const MOST_BARK_RANGE: f32 = 64.0;
 /// The longest, in seconds, between one bark and the same again to the same player.
@@ -824,6 +842,10 @@ pub struct CreatureDef {
     /// How far its barks carry and how often it makes one to the same player.
     #[serde(default)]
     pub barking: Barking,
+    /// What one of a settlement's people keeping a market stall trades there, one a day
+    /// (`Server::trade`): it wants a few of something a player can make, and gives for it.
+    #[serde(default)]
+    pub trades: Vec<TradeDef>,
     /// How far from home it roams before turning back, in blocks.
     #[serde(default = "leash")]
     pub leash: f32,
@@ -1202,6 +1224,8 @@ pub struct Creature {
     pub products: Vec<crate::block::BlockId>,
     /// What it steals from the ground (`Scavenge::takes`), as items.
     pub scraps: Vec<crate::block::BlockId>,
+    /// What it trades at a stall, its items found (`CreatureDef::trades`).
+    pub trades: Vec<Trade>,
 }
 
 impl Creature {
@@ -1406,6 +1430,23 @@ impl CreatureRegistry {
                     blocks.id(&p.item).ok_or_else(|| error(format!("gives `{}`, which does not exist", p.item)))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            // A trade asks for and gives 1 to a stack of items that exist, and gives something.
+            let trades = def
+                .trades
+                .iter()
+                .map(|t| {
+                    let item = |(name, count): &(String, u8)| -> Result<_, RegistryError> {
+                        if !(1..=MOST_TRADED).contains(count) {
+                            return Err(error(format!("trades {count} of `{name}`: 1 to {MOST_TRADED} at once")));
+                        }
+                        Ok((blocks.id(name).ok_or_else(|| error(format!("trades `{name}`, which does not exist")))?, *count))
+                    };
+                    if t.gives.is_empty() {
+                        return Err(error(format!("wants `{}` for nothing", t.wants.0)));
+                    }
+                    Ok(Trade { wants: item(&t.wants)?, gives: t.gives.iter().map(item).collect::<Result<_, _>>()? })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let xp_skill = match &def.xp.skill {
                 Some(name) => Some(skills.id(name).ok_or_else(|| error(format!("no skill `{name}`")))?),
                 None => None,
@@ -1436,7 +1477,7 @@ impl CreatureRegistry {
             if registry.by_name.insert(def.name.clone(), id).is_some() {
                 return Err(error("defined twice".into()));
             }
-            registry.creatures.push(Creature { def, behaviours, modules, parts, reach, head, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products, scraps });
+            registry.creatures.push(Creature { def, behaviours, modules, parts, reach, head, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products, scraps, trades });
         }
         Ok(registry)
     }
