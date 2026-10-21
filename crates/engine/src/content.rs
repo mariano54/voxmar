@@ -1093,6 +1093,28 @@ mod tests {
         assert!(!both(5, 1), "five fences are not six");
     }
 
+    /// Lanterns of Cloth asks for paper lanterns: the metal and stone lanterns carry
+    /// `lantern` too, so two copper lanterns made and set down are not the quest.
+    #[test]
+    fn lanterns_of_cloth_wants_paper_lanterns() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let quest = content.quests.get("base:lanterns_of_cloth").expect("Lanterns of Cloth");
+        let done = |lantern: &str| {
+            let keys = [format!("crafted:{lantern}"), format!("placed:{lantern}")];
+            let tallies: FxHashMap<String, u32> = keys.into_iter().map(|k| (k, 2)).collect();
+            let journal = crate::journal::Journal::default();
+            let has_tag = |name: &str, tag: &str| content.blocks.item_named(name).is_some_and(|id| content.blocks.def(id).has_tag(tag));
+            let progress = crate::quest::Progress { journal: &journal, tallies: &tallies, level: &|_| 1, carried: &|_| 0, has_tag: &has_tag, drops: &|_| None, thriving: &|_| 0, home: false };
+            quest.tasks.iter().any(|task| content.quests.task_done(task, &progress, &|_| true))
+        };
+        let paper = content.blocks.tagged("paper_lantern").next().map(|b| content.blocks.def(b).name.clone()).expect("a paper lantern");
+        assert!(done(&paper), "two paper lanterns made and set down");
+        for other in ["base:copper_hanging_lantern", "base:iron_hanging_lantern", "base:stone_lantern"] {
+            assert!(content.blocks.id(other).is_some(), "no `{other}`");
+            assert!(!done(other), "two of `{other}` are no paper lanterns");
+        }
+    }
+
     /// Each Farm path's capstone comes after every other quest of its path, directly or
     /// through what comes before it, but for side quests and the age's rite. An "a|b" edge
     /// is followed down neither side, as it makes sure of neither. (The Nomad book is checked
@@ -1153,52 +1175,32 @@ mod tests {
     }
 
     /// Every quest, on any path, asks to make only what its own goals and the quests it comes
-    /// after have taught the stations for: something it has the player make (or set down, or
-    /// hold, of a tag: the easiest of them) is gathered, mined or made, and each recipe on the
-    /// way is at a station (the crafting table, the pit kiln, the loom) one of those quests
-    /// has the player make. The main-line walk puts down any station a recipe needs and walks
-    /// only the main line, so a side path asking for fired clay before the kiln got through
-    /// (A Stove and a Quern's workshop half, once 451 made its pieces take kiln output).
+    /// after have taught the stations for: what it has the player make, cook, set down or
+    /// hold (of a tag: any one of what a player can hold of it) is got one of the recipe
+    /// book's ways, each worked only at a station (the crafting table, a recipe's `near`
+    /// block, a cooking station) one of those quests has the player make. A Craft goal is
+    /// met at the grid and a Cook goal by cooking (at its station, for CookAt). The
+    /// main-line walk puts down any station a recipe needs and walks only the main line, so
+    /// a side path asking for fired clay before the kiln got through (A Stove and a Quern's
+    /// workshop half, once 451 made its pieces take kiln output).
     #[test]
     fn a_quest_asks_only_for_what_its_stations_are_taught_for() {
         use crate::quest::Goal;
+        use crate::recipe_book::{Method, RecipeBook};
         let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
         let blocks = &content.blocks;
+        let book = RecipeBook::new(&content);
         let id = |name: &str| blocks.id(name).or_else(|| blocks.id(&format!("base:{name}")));
-        // What a goal names: an item, or everything with a tag a player can make or find (not
-        // the forms it is set down in, another facing, which nothing makes and no one finds).
+        // What a goal names, as held: an item, or what a player can hold with a tag.
         let named = |item: &str| -> Vec<BlockId> {
-            match item.strip_prefix("tag:") {
-                Some(tag) => blocks.tagged(tag).filter(|&b| blocks.def(b).form_of().is_none() && !blocks.def(b).has_tag("creative_only")).collect(),
-                None => id(item).into_iter().collect(),
-            }
+            let mut held: Vec<BlockId> = match item.strip_prefix("tag:") {
+                Some(tag) => blocks.tagged(tag).filter(|&b| blocks.holdable(b) && !blocks.def(b).has_tag(crate::recipe_book::CREATIVE_ONLY)).map(|b| blocks.item_of(b)).collect(),
+                None => id(item).map(|b| blocks.item_of(b)).into_iter().collect(),
+            };
+            held.sort();
+            held.dedup();
+            held
         };
-        // Gathered: nothing makes it, or it is mined whole (stone breaks to loose stone, so
-        // the stone in quern stones is cobblestone fired in a pit kiln).
-        let gathered = |b: BlockId| {
-            let whole = blocks.def(b).drops.as_deref().is_none_or(|d| id(d) == Some(b));
-            (!content.recipes.iter().any(|r| r.output == b) && !content.cooking.iter().any(|(_, r)| r.output == b))
-                || (whole && content.tools.rule(b).is_some_and(|r| r.skill.is_some()))
-        };
-        // Made from what the taught stations allow, by some recipe; `on` guards a loop.
-        fn makeable(content: &Content, b: BlockId, taught: &[String], on: &mut Vec<BlockId>, gathered: &dyn Fn(BlockId) -> bool) -> bool {
-            if gathered(b) {
-                return true;
-            }
-            if on.contains(&b) {
-                return false;
-            }
-            on.push(b);
-            let cell = |accepts: &[BlockId], on: &mut Vec<BlockId>| accepts.iter().any(|&a| gathered(a)) || accepts.iter().any(|&a| makeable(content, a, taught, on, gathered));
-            let grid = content.recipes.iter().filter(|r| r.output == b).any(|r| {
-                (!r.needs_table() || taught.iter().any(|t| t == "crafting_table")) && r.alternatives().into_iter().flatten().all(|a| cell(a, on))
-            });
-            let cooked = grid || content.cooking.iter().filter(|(_, r)| r.output == b).any(|(input, r)| {
-                taught.contains(&r.def.station) && cell(&[input], on) && r.with.iter().all(|&(item, _)| cell(&[item], on))
-            });
-            on.pop();
-            cooked
-        }
         let mut walls = Vec::new();
         for quest in content.quests.iter() {
             // The quests it surely comes after ("a|b" makes sure of neither), and itself.
@@ -1212,18 +1214,33 @@ mod tests {
                 next.extend(q.after.iter().filter(|a| !a.contains('|')).map(|a| content.quests.get(a).unwrap_or_else(|| panic!("{} comes after {a}, which is no quest", q.name))));
             }
             // A station is taught by a goal that has the player make, set down or hold it by name.
-            let taught: Vec<String> = before.iter().flat_map(|q| q.tasks.iter().flatten()).filter_map(|g| match g {
-                Goal::Craft(item, _) | Goal::Placed(item, _) | Goal::Have(item, _) if !item.starts_with("tag:") => id(item),
+            let taught: Vec<BlockId> = before.iter().flat_map(|q| q.tasks.iter().flatten()).filter_map(|g| match g {
+                Goal::Craft(item, _) | Goal::Placed(item, _) | Goal::Have(item, _) if !item.starts_with("tag:") => id(item).map(|b| blocks.item_of(b)),
                 _ => None,
-            }).flat_map(|b| blocks.def(b).tags.clone()).collect();
+            }).collect();
+            let tagged = |tag: &str| taught.iter().any(|&b| blocks.def(b).has_tag(tag));
+            let small = |cells: &[Option<BlockId>; crate::craft::GRID]| cells.iter().enumerate().all(|(i, c)| c.is_none() || crate::craft::SMALL.contains(&i));
+            let worked = |method: &Method| match method {
+                Method::Craft { variants, near, .. } => (variants.iter().any(small) || tagged("crafting_table")) && near.as_deref().is_none_or(tagged),
+                Method::Cook { station, .. } => tagged(station),
+                Method::Work { .. } | Method::Process { .. } | Method::Trap { .. } => method.stations(blocks).iter().any(|&s| taught.contains(&blocks.item_of(s))),
+                _ => true,
+            };
             for goal in quest.tasks.iter().flatten() {
-                let (Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::CookAt(item, _, _) | Goal::Placed(item, _) | Goal::Have(item, _)) = goal else { continue };
+                // Which of the book's ways meet it.
+                let (item, way): (&String, &dyn Fn(&Method) -> bool) = match goal {
+                    Goal::Craft(item, _) => (item, &|m| matches!(m, Method::Craft { .. })),
+                    Goal::Cook(item, _) => (item, &|m| matches!(m, Method::Cook { .. })),
+                    Goal::CookAt(item, station, _) => (item, &move |m| matches!(m, Method::Cook { station: at, .. } if at == station)),
+                    Goal::Placed(item, _) | Goal::Have(item, _) => (item, &|_| true),
+                    _ => continue,
+                };
                 if item == "any" {
                     continue;
                 }
                 let accepts = named(item);
-                assert!(!accepts.is_empty(), "{}: {goal:?} names nothing", quest.name);
-                if !accepts.iter().any(|&b| makeable(&content, b, &taught, &mut Vec::new(), &gathered)) {
+                assert!(!accepts.is_empty(), "{}: {goal:?} names nothing a player holds", quest.name);
+                if !accepts.iter().any(|&b| book.making(b).into_iter().any(|e| way(&e.method) && book.by(blocks, e, &worked))) {
                     walls.push(format!("{}: {goal:?}", quest.name));
                 }
             }

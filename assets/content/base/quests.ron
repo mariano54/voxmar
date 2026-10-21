@@ -845,7 +845,7 @@
         (
             name: "lanterns_of_cloth", age: "farm", branch: "crafting", title: "Lanterns of Cloth",
             why: "A cloth over a torch, hung from a stick, is a paper lantern (Crafting 6): a soft light in any colour you dyed. Make two and set them down at home; each one counts as a light.",
-            tasks: [[Craft("tag:lantern", 2), Placed("tag:lantern", 2)]],
+            tasks: [[Craft("tag:paper_lantern", 2), Placed("tag:paper_lantern", 2)]],
             after: ["a_rug_underfoot"],
             side: true,
             rewards: [Xp("crafting", 60.0), Item("bread", 2)],

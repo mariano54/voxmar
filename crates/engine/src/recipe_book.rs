@@ -442,6 +442,49 @@ impl RecipeBook {
         self.makes.get(&item).map_or_else(Vec::new, |found| found.iter().map(|&i| &self.entries[i]).collect())
     }
 
+    /// Whether a player surely comes by `item` the book's ways, working only those `worked`
+    /// allows (where a quest has taught the station): from what the world lays, breeds,
+    /// grows and bites, then made from that. Gifts (a quest's reward, a chest, a party on
+    /// the road) are no sure way.
+    pub fn within(&self, blocks: &crate::block::BlockRegistry, item: BlockId, worked: &dyn Fn(&Method) -> bool) -> bool {
+        self.making(item).into_iter().any(|entry| self.works(blocks, entry, worked, &mut vec![item]))
+    }
+
+    /// Whether `entry` can be worked, as [`Self::within`] has it.
+    pub fn by(&self, blocks: &crate::block::BlockRegistry, entry: &Entry, worked: &dyn Fn(&Method) -> bool) -> bool {
+        self.works(blocks, entry, worked, &mut vec![entry.output])
+    }
+
+    /// `on` holds the items being made now, so a loop of ways is no way.
+    fn works(&self, blocks: &crate::block::BlockRegistry, entry: &Entry, worked: &dyn Fn(&Method) -> bool, on: &mut Vec<BlockId>) -> bool {
+        let got = |item: BlockId, on: &mut Vec<BlockId>| {
+            let item = listed_as(blocks, item);
+            if on.contains(&item) {
+                return false;
+            }
+            on.push(item);
+            let found = self.making(item).into_iter().any(|e| self.works(blocks, e, worked, on));
+            on.pop();
+            found
+        };
+        let laid = |block: BlockId| self.laid.contains(&listed_as(blocks, block));
+        if !worked(&entry.method) {
+            return false;
+        }
+        match &entry.method {
+            Method::Found { .. } | Method::Catch { .. } | Method::Drop { .. } | Method::Product { .. } => true,
+            Method::Harvest { from, forage, .. } => *forage || got(*from, on),
+            Method::Craft { variants, .. } => variants.iter().any(|cells| cells.iter().flatten().all(|&cell| got(cell, on))),
+            Method::Cook { input, with, .. } => got(*input, on) && with.iter().all(|&(item, _)| got(item, on)),
+            Method::Work { station, input, .. } => got(*station, on) && got(*input, on),
+            Method::Process { machines, inputs, .. } => machines.iter().any(|&m| got(m, on)) && inputs.iter().all(|&(item, _)| got(item, on)),
+            Method::Break { block, .. } => laid(*block) || got(*block, on),
+            Method::Trap { trap, .. } => got(*trap, on),
+            Method::Bees { block, .. } => laid(*block) || got(*block, on),
+            Method::Chest { .. } | Method::Trade { .. } | Method::Reward { .. } => false,
+        }
+    }
+
     /// Everything `item` goes into: as an ingredient, a station or a tool.
     pub fn using(&self, item: BlockId) -> Vec<&Entry> {
         self.uses.get(&item).map_or_else(Vec::new, |found| found.iter().map(|&i| &self.entries[i]).collect())

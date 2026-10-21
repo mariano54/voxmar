@@ -1485,7 +1485,7 @@
     "quest.base.a_herb_nook": "A Herb Nook",
     "quest.base.a_herb_nook.why": "Tie two herbs with twine and they hang to dry (Crafting 4); a drying rack hung with meat counts as a bunch. Two bunches and a jar, basket or crate at home make a herb nook: there you farm and brew as if a level higher, so a kitchen garden at the door takes seed a level early, and a meal's good lasts a tenth longer.",
     "quest.base.hung_to_dry": "Hung to Dry",
-    "quest.base.hung_to_dry.why": "Meat keeps if you dry it. Lash four sticks and three twine into a drying rack (Crafting 3) and stand it under open sky. Right-click it with raw meat or fish in hand to hang up to eight; go gathering, and ten minutes later it is jerky, which heals 2 and, unlike cooked food, stacks in your pack. A fire within three blocks dries it twice as fast; a roof over it stops it. Make a rack and bring home four jerky.",
+    "quest.base.hung_to_dry.why": "Meat keeps if you dry it. Lash four sticks and three twine into a drying rack (Crafting 1) and stand it under open sky. Right-click it with raw meat or fish in hand to hang up to eight; go gathering, and ten minutes later it is jerky, which heals 2 and, unlike cooked food, stacks in your pack. A fire within three blocks dries it twice as fast; a roof over it stops it. Make a rack and bring home four jerky.",
     "quest.base.trail_rations": "Trail Rations",
     "quest.base.trail_rations.why": "A pack of jerky carries you far from the fire: it never spoils and twelve fit in one slot. Stand a second rack by your campfire, keep both hung while you work, and gather eight jerky for a long trip. A hung rack is homely too: it counts as a bunch of herbs drying for a herb nook.",
     "quest.base.a_compost_heap": "A Compost Heap",
