@@ -169,7 +169,11 @@ impl Survival {
         let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
         let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
         let warmed = vitals::warmed(heat, cold_air);
-        let home = server.home_survey(id);
+        // At home, or else a guest at another player's lit hearth (guests.rs).
+        let own = server.home_survey(id);
+        let guest = own.is_none();
+        let home = own.or_else(|| server.guest_survey(id));
+        let guest = guest && home.is_some();
         let home_stores = server.home_store_tally(id);
         // What effects ask of the item in hand (`Holding`) and of the blocks near
         // (`Near`).
@@ -192,8 +196,8 @@ impl Survival {
         let player = server.players.get_mut(&id).unwrap();
         // What their home meets now, and where it stands, to tell on their return what
         // lights burnt out while they were away cost; not before that is told
-        // (`flames::check_home_return`).
-        if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked) {
+        // (`flames::check_home_return`). Their own home only: a guest's stays as it was.
+        if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked && !guest) {
             (player.home_steps, player.home_anchor) = (effects.home_steps(home), anchor);
         }
         let creative = player.allow_flight;
@@ -219,8 +223,11 @@ impl Survival {
         situation.felt = effects.modifiers(&first).felt(vitals::felt_air(cold_air, heat), server.survival.comfort_top);
         let active = effects.active(&situation, &player.timed_effects);
         let modifiers = effects.modifiers(&active);
+        // A guest's own: what they would have away from the home they are a guest in. Only
+        // these are counted for their quests and announced.
+        let own_effects = guest.then(|| effects.active(&Situation { home: None, ..situation }, &player.timed_effects));
         // Quests ask whether an effect was ever felt (`Felt`), not how often.
-        for a in &active {
+        for a in own_effects.as_ref().unwrap_or(&active) {
             player.tallies.entry(format!("felt:{}", effects.get(a.effect).name)).or_insert(1);
         }
         player.modifiers = modifiers;
@@ -275,12 +282,12 @@ impl Survival {
         player.vitals.seated = seated;
         player.vitals.home_stores = home_stores;
         // What kept animals laid into the home's stores is told once the keeper is home.
-        if home.is_some() && !player.nested.is_empty() {
+        if home.is_some() && !guest && !player.nested.is_empty() {
             let items = std::mem::take(&mut player.nested).into_iter().map(|(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(item))).collect();
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("home.nested").with("items", Words::List(items)) });
         }
-        // The steps of a ladder say so when first reached.
-        let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
+        // The steps of a ladder say so when first reached, at the player's own home.
+        let gained: Vec<EffectId> = own_effects.as_ref().unwrap_or(&player.vitals.effects).iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
         player.announced.extend(&gained);
         for effect in gained {
             let def = effects.get(effect);
@@ -334,7 +341,7 @@ impl Server {
     }
 
     /// Whether `at` lies in the home box around `anchor`.
-    fn in_home_box(&self, anchor: IVec3, at: Vec3) -> bool {
+    pub(crate) fn in_home_box(&self, anchor: IVec3, at: Vec3) -> bool {
         let rules = &self.survival;
         let feet = at.floor().as_ivec3();
         let near = (feet - anchor).abs();
@@ -798,6 +805,32 @@ mod tests {
         assert!(gapped.share(Shelter::Draughty) < walls.share(Shelter::Draughty), "a station plugged a wall: {gapped:?}");
     }
 
+    /// A cooking pot, simmering or not, and a feed trough stood in a room are furniture the
+    /// survey looks past, not walls: none of their faces count, so the room is walled (and
+    /// warmed) as it was without them.
+    #[test]
+    fn a_pot_or_a_trough_in_a_room_leaves_its_walls_as_they_were() {
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks, bricks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"), block(&server, "base:stone_bricks"));
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                server.set_block(at + IVec3::new(x, 4, z), planks);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { bricks } else { voxmar_engine::block::BlockId::AIR });
+                }
+            }
+        }
+        let plain = server.room_walls(at + IVec3::Y);
+        for name in ["base:cooking_pot", "base:cooking_pot_simmering", "base:cooking_pot_ready", "base:feed_trough"] {
+            server.set_block(at + IVec3::new(1, 1, 1), block(&server, name));
+            assert_eq!(server.room_walls(at + IVec3::Y), plain, "a {name} in the room walled it");
+        }
+    }
+
     /// The load check on shelter tags: a solid `building` block with no shelter tag, or one
     /// with two, is refused by name; furniture (a furniture tag, no shelter tag) is let
     /// through, as is every shelter-tagged block.
@@ -816,6 +849,17 @@ mod tests {
         let unjudged = parse(r#"(blocks: [(name: "wall", textures: All("stone"), tags: ["building"])])"#);
         let why = rules.check_shelters(&unjudged).unwrap_err();
         assert!(why.contains("test:wall"), "{why}");
+        // A solid shaped piece is judged as a wall is, building or not, unless it is furniture.
+        let shaped = |source: &str| {
+            use voxmar_engine::shape::{ShapeFile, ShapeLimits, Shapes};
+            let file = ShapeFile::read("test", r#"(shapes: {"pot": (boxes: [(from: (2, 0, 2), to: (14, 10, 14))])})"#).unwrap();
+            let shapes = Shapes::gather(vec![("test".into(), file)], ShapeLimits { boxes: 4, quads: 128 }).unwrap();
+            voxmar_engine::block::BlockRegistry::with_shapes(voxmar_engine::block::BlockRegistry::parse("test", source).unwrap(), &shapes).unwrap()
+        };
+        let pot = shaped(r#"(blocks: [(name: "pot", render: Model, shape: "pot", textures: All("stone"))])"#);
+        assert!(rules.check_shelters(&pot).unwrap_err().contains("test:pot"), "an unjudged solid piece passed");
+        let station = shaped(r#"(blocks: [(name: "pot", render: Model, shape: "pot", textures: All("stone"), tags: ["station"])])"#);
+        assert_eq!(rules.check_shelters(&station), Ok(()), "a piece that is furniture is let through");
         let twice = parse(r#"(blocks: [(name: "wall", textures: All("stone"), tags: ["roof", "shelter:sound", "shelter:fine"])])"#);
         assert!(rules.check_shelters(&twice).unwrap_err().contains("test:wall"));
         // A misspelt shelter tag, and a draught through anything but a draughty wall.

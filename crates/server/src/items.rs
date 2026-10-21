@@ -115,6 +115,35 @@ impl Items {
         id
     }
 
+    /// Where the nearest stack of any of `items` lies within `reach` blocks of `at`, across
+    /// the ground, for a scavenger (`creature::Scavenge`): one anyone may pick up, nobody's
+    /// own, and one it senses (`sensed`).
+    pub(crate) fn scrap_near(&self, at: Vec3, reach: f32, items: &[BlockId], sensed: impl Fn(Vec3) -> bool) -> Option<Vec3> {
+        self.scraps(at, reach, items).map(|(_, d)| d.body.position).filter(|&p| sensed(p)).min_by(|a, b| a.distance_squared(at).total_cmp(&b.distance_squared(at)))
+    }
+
+    /// A scavenger within `reach` of a stack of any of `items` snatches one of it (the
+    /// nearest stack), taking it out of the world.
+    pub(crate) fn snatch(&mut self, at: Vec3, reach: f32, items: &[BlockId]) -> Option<ItemStack> {
+        let (id, _) = self.scraps(at, reach, items).min_by(|a, b| a.1.body.position.distance_squared(at).total_cmp(&b.1.body.position.distance_squared(at)))?;
+        let item = self.all.get_mut(&id)?;
+        let piece = ItemStack { count: 1, ..item.stack };
+        if item.stack.count > 1 {
+            item.stack.count -= 1;
+            self.changed.insert(id);
+        } else {
+            self.remove(id, None);
+        }
+        Some(piece)
+    }
+
+    fn scraps<'a>(&'a self, at: Vec3, reach: f32, items: &'a [BlockId]) -> impl Iterator<Item = (u32, &'a Dropped)> + 'a {
+        self.all
+            .iter()
+            .filter(move |(_, d)| d.owner.is_none() && d.pickup_in == 0 && items.contains(&d.stack.item) && d.body.position.with_y(0.0).distance(at.with_y(0.0)) <= reach && (d.body.position.y - at.y).abs() <= 3.0)
+            .map(|(&id, d)| (id, d))
+    }
+
     fn remove(&mut self, id: u32, collector: Option<PlayerId>) {
         if self.all.remove(&id).is_some() {
             self.changed.remove(&id);

@@ -126,11 +126,14 @@ pub struct Modifiers {
     /// (`tools.ron`'s rules): 0.05 is one more time in twenty. It adds to what the tool's
     /// `yield` and the skill level give.
     pub finds: f32,
+    /// How many times its own slots a store in the player's home holds, opened by them
+    /// (`Machine::grown_bin`): 2 is twice. Stores only grow, never shrink.
+    pub store_room: f32,
 }
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hurt_every: None, warmth: 0.0, home_warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, home_warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0, store_room: 1.0 }
     }
 }
 
@@ -163,6 +166,7 @@ impl Modifiers {
             meal_heal: sum.meal_heal * m.meal_heal,
             meal_time: sum.meal_time * m.meal_time,
             finds: sum.finds + m.finds,
+            store_room: sum.store_room * m.store_room,
         })
     }
 }
@@ -833,6 +837,9 @@ impl EffectRegistry {
         }
         let (mut near, mut held, mut worn) = (Vec::new(), Vec::new(), Vec::new());
         for def in &defs {
+            if !(def.modifiers.store_room.is_finite() && (1.0..=6.0).contains(&def.modifiers.store_room)) {
+                return Err(RegistryError(format!("effect `{}` gives store_room {}: it takes 1 to 6", def.name, def.modifiers.store_room)));
+            }
             if !(def.modifiers.home_warmth.is_finite() && def.modifiers.home_warmth >= 0.0) {
                 return Err(RegistryError(format!("effect `{}` adds {} home warmth: a home only warms, 0 or more", def.name, def.modifiers.home_warmth)));
             }
@@ -1412,6 +1419,19 @@ mod tests {
         assert_eq!(quest.quests(), ["core:dry_kit"], "a quest in `ends` is qualified by the package too");
         let bad = r#"(effects: [(name: "x", kind: Debuff, title: "X", description: "", when: Some(Rain(0.3)), ends: Some(Warmed))])"#;
         assert!(EffectRegistry::new(vec![EffectRegistry::read("core", bad).unwrap()]).is_err(), "only what lingers ends");
+    }
+
+    /// A step's store_room grows stores 1 to 6 times; less (a shrinking store) or more is
+    /// refused at launch, and steps together multiply.
+    #[test]
+    fn store_room_is_one_to_six() {
+        let read = |room: &str| EffectRegistry::new(vec![EffectRegistry::read("core", &format!(r#"(effects: [(name: "roomy", kind: Buff, title: "Roomy", description: "", modifiers: (store_room: {room}))])"#)).unwrap()]);
+        assert!(read("2.0").is_ok());
+        for bad in ["0.5", "6.5", "inf"] {
+            assert!(read(bad).is_err_and(|e| e.0.contains("store_room")), "store_room {bad}");
+        }
+        let two = Modifiers { store_room: 2.0, ..Modifiers::default() };
+        assert_eq!(Modifiers::combine([&two, &two]).store_room, 4.0);
     }
 
     #[test]

@@ -72,8 +72,9 @@
         "trap.needs",
         // No sleep with a hunter near or a wound fresh, or in a bed of someone's home.
         "bed.threatened", "bed.just_hurt", "bed.someones",
-        // Daubing a panel another player or a creature leans on, which their client cannot see.
-        "refusal.someone_there",
+        // Someone the client cannot see in the way: a panel daubed or a block placed where a
+        // player or a creature stands, a door shut on them (`Server::unforeseen`).
+        "refusal.someone_there", "refusal.doorway",
         // A station recipe's tool not carried (an axe to split a log on a chopping block).
         "cooking.needs_tool",
     ],

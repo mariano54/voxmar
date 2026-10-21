@@ -477,6 +477,18 @@ pit kiln fires a dozen clay at a time while the bot digs the next load. Six runs
 Crucible Kiln at 473 to 545 s; the window from 360 s brings 14 to 16 new things; the longest
 single-action stretch is 39 s (49 gravel dug in a row for the clamp's flint).
 
+### Farm pacing from the hearth (Oct 21)
+
+From the lit hearth to the lit Crucible Kiln, the quest-book bot went 71 to 75 s with nothing
+new in four runs of five (47 s in the other). That was A Kiln Load, firing forty clay, and it
+ended with the four kiln bricks the quest gives. A Kiln Load's own text says to make crockery
+between loads, but Earthenware opened only after it. Earthenware now opens after The Potter,
+and the bot makes the bowls after one load and the jar after the next. Five runs: the longest
+wait with nothing new from the hearth is 32 to 46 s, now the wait for the charcoal.
+The test fails the Farm line past a minute with nothing new from the hearth (`PACING_WAIT`,
+as long as `PACING_STRETCH`). The longest single action there is the 30 to 35 s idle wait for
+the clamp.
+
 ### Nomad pacing (Oct 21)
 
 The Nomad walk now runs the same pacing check as the Farm walk, by the same floors. Two runs:

@@ -74,6 +74,9 @@
         // furniture). Counted beside a block's own group, never instead. A few draughty cells
         // within five blocks begin to whistle; a room walled in them whistles fully.
         (name: "draughty", shelter: Draughty, range: (10, 160)),
+        // Curtains drawn across (`curtain_drawn`): cloth over the gaps hushes the draught's
+        // whistle, half with one near, all with two.
+        (name: "curtained", tags: ["curtain_drawn"], range: (0, 20)),
         // Thatch or wattle smouldering by a flame, about to catch (fire.ron): heard only while
         // it smoulders (`smouldering`), one within a few blocks fully.
         (name: "smoulder", tags: ["thatch", "wattle"], range: (1, 4), smouldering: true),
@@ -138,15 +141,16 @@
     draughts: {"shelter:draughty": ["draught", "draught_rain"]},
     beds: [
         // A draughty home at night: under a roof (`sheltered`), by walls that let the wind
-        // through, a thin whistle in the gusts, louder the more such walls are near; on a
+        // through, a thin whistle in the gusts, louder the more such walls are near, hushed
+        // by curtains drawn across (`curtained`); on a
         // wet night with little wind, a fainter one. Daubing the wattle stops it.
         (
             name: "draught", sound: Draught, volume: 0.22, fade: 4,
-            when: {"draughty": (min: 1, fade: 0.95), "sheltered": (min: 0.35, fade: 0.2), "wind": (min: 7, fade: 5), "sun": (max: 0.05, fade: 0.15)},
+            when: {"draughty": (min: 1, fade: 0.95), "sheltered": (min: 0.35, fade: 0.2), "wind": (min: 7, fade: 5), "sun": (max: 0.05, fade: 0.15), "curtained": (max: 0, fade: 1)},
         ),
         (
             name: "draught_rain", sound: Draught, volume: 0.12, fade: 4,
-            when: {"draughty": (min: 1, fade: 0.95), "sheltered": (min: 0.35, fade: 0.2), "raining": (min: 0.3, fade: 0.2), "sun": (max: 0.05, fade: 0.15)},
+            when: {"draughty": (min: 1, fade: 0.95), "sheltered": (min: 0.35, fade: 0.2), "raining": (min: 0.3, fade: 0.2), "sun": (max: 0.05, fade: 0.15), "curtained": (max: 0, fade: 1)},
             duck: {"draught": 1},
         ),
         // Rain, recorded (CC0; see THIRD_PARTY_NOTICES.md) and layered the AmbientSounds

@@ -97,6 +97,19 @@ pub struct MachineState {
     /// Whether its standing structure was counted for quests already (a multiblock's core).
     #[serde(default)]
     pub counted: bool,
+    /// The slots a home grew it to as a store (`Machine::grown_bin`), 0 for none: it keeps
+    /// them, and only they, past its own.
+    #[serde(default)]
+    pub grown: usize,
+}
+
+impl MachineState {
+    /// How many stacks it has room for as a bin of `machine`: its own slots, or, a store,
+    /// what a home grew it to, up to a store screen's (a package that made it no store
+    /// leaves it only its own).
+    pub fn bin_room(&self, machine: &crate::machine::Machine) -> usize {
+        if machine.is_store() { machine.bin_slots().max(self.grown.min(crate::inventory::STORE_SLOTS)) } else { machine.bin_slots() }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -203,7 +216,8 @@ impl Factory {
         let (inputs, outputs) = machine.slots();
         state.inputs.resize(inputs, None);
         state.outputs.resize(outputs, None);
-        state.bin.resize(machine.bin_slots(), None);
+        // A store a home grew (`Machine::grown_bin`) keeps its size.
+        state.bin.resize(state.bin_room(machine), None);
         let chute = match machine.role {
             Role::Chute { rate } => Some(rate),
             _ => None,
@@ -998,7 +1012,7 @@ mod tests {
             "ore", "dust", "log", "wheel", "shaft", "mill", "boiler", "pipe", "engine", "dynamo", "lv_cable", "mv_cable", "crusher",
             "battery", "mv_battery", "transformer", "furnace", "ingot", "washer", "chute", "conveyor", "hopper", "chest", "kiln",
         ];
-        let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
+        let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into(), "fuel".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
         let machines = MachineRegistry::read(
             "t",
             r#"(machines: [
