@@ -314,7 +314,10 @@ impl Server {
             && let Some(by) = &s.by
         {
             let title = Words::Own(def_key("multiblock", &structure.name), structure.title.clone());
-            let words = Words::key("multiblock.smoulder_opened").with("structure", title).with("count", Words::text(heaps)).with("item", Words::Block(self.content.blocks.def(smoulder.early).name.clone()));
+            // In what is taken from it, as the done note says: part-burnt wood, not its heaps.
+            let info = self.content.blocks.info(smoulder.early);
+            let count = heaps * info.drop_count as usize;
+            let words = Words::key("multiblock.smoulder_opened").with("structure", title).with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(info.drops).name.clone()));
             self.tell_fired(by, words);
         }
     }
@@ -715,7 +718,18 @@ mod tests {
         server.world.insert(ColumnPos::new(0, 0), column);
         server.tend_smoulders();
         assert!(server.smoulders.is_empty(), "opened once loaded");
-        assert_eq!(keys(&client), ["multiblock.smoulder_opened"], "told it was opened after all");
+        // In what is taken from it, as the done note was: the part-burnt wood its heaps give.
+        let early = server.content.multiblocks.get("base:charcoal_clamp").and_then(|m| m.smoulder.as_ref()).map(|s| s.early).unwrap();
+        let info = server.content.blocks.info(early);
+        let (wood, count) = (server.content.blocks.def(info.drops).name.clone(), 9 * info.drop_count as usize);
+        let mut opened = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            if let voxmar_protocol::ServerMessage::Fired { words: voxmar_engine::lang::Words::Key(key, args) } = message {
+                let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+                opened.push((key, arg("count"), arg("item")));
+            }
+        }
+        assert_eq!(opened, [("multiblock.smoulder_opened".to_owned(), Some(voxmar_engine::lang::Words::text(count)), Some(voxmar_engine::lang::Words::Block(wood)))], "told it was opened after all");
     }
 
     /// Its wood swapped for stone while it smoulders opens it, and the stone is left as it
