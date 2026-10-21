@@ -1830,7 +1830,8 @@ fn snowy_villages_keep_their_built_stone() {
     // worlds; the others are the search it falls back to when content moves the snow.
     const SNOWY: [u64; 2] = [18, 1];
     'seeds: for seed in SNOWY.into_iter().chain((1u64..=60).filter(|seed| !SNOWY.contains(seed))) {
-        let world = Overworld::with_content(seed, registry.clone(), &content);
+        // The base content's world, as the other tests read it (`content` is the base's).
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 4000) {
             // Snowy where snow lies on the ground about its middle.
