@@ -58,7 +58,7 @@ fn by_the_fire(server: &Server) -> bool {
 }
 
 /// Sat on, a stool sets the player on it, eye lower than standing there; with a campfire
-/// near, they are By the Fire. Stepping off, they stand, and the fire's rest goes.
+/// near, Fireside comes on. Stepping off, they stand, and the fire's rest goes.
 #[test]
 fn a_stool_by_the_fire_is_sat_on_and_rests_until_stepped_off() {
     let mut server = fixture();
@@ -70,17 +70,17 @@ fn a_stool_by_the_fire_is_sat_on_and_rests_until_stepped_off() {
     assert!(player.eye().y < standing - 0.25, "the eye sat on a stool ({}) is not lower than standing beside it ({standing})", player.eye().y);
     crate::process::Survival.run(&mut server);
     assert_eq!(server.players[&1].vitals.seated, Some(STOOL));
-    assert!(!by_the_fire(&server), "By the Fire with no fire");
+    assert!(!by_the_fire(&server), "Fireside with no fire");
     let campfire = id(&server, "base:campfire");
     server.set_block(FIRE, campfire);
     crate::process::Survival.run(&mut server);
-    assert!(by_the_fire(&server), "sat by a campfire, not By the Fire");
+    assert!(by_the_fire(&server), "sat by a campfire, not Fireside");
     // A step off the stool, and they are standing again.
     let player = server.players.get_mut(&1).unwrap();
     player.position = Vec3::new(8.5, (FLOOR + 1) as f32, 8.5);
     crate::process::Survival.run(&mut server);
     assert_eq!(server.players[&1].vitals.seated, None, "still sat after stepping off");
-    assert!(!by_the_fire(&server), "By the Fire standing up");
+    assert!(!by_the_fire(&server), "Fireside standing up");
 }
 
 /// A seat broken from under a player stands them up; one with a block over it, or asked
