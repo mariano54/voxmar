@@ -5956,7 +5956,8 @@ impl BrandPlan {
             }
             let fire = blocks.ids().find(|&b| {
                 let def = blocks.def(b);
-                def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
+                // A fire that burns set down alone: a hearthstone waits on its ring.
+                def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && !def.has_tag("multiblock_core") && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
             });
             if let Some(fire) = fire {
                 return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand), proposals: 0, asked: None, regiven: 0 });
@@ -6027,9 +6028,10 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         // The one stick in hand and the fire there: held into the fire until it catches. A
-        // stick picked up meanwhile (one lying where the last step was) stacks on it, and of
-        // two in hand one catches and the brand goes where it fits, the other left in hand
-        // (train 174): the sticks are cleared and the one given again.
+        // stick picked up meanwhile (one lying where the last step was) stacks on it (train
+        // 174): the sticks are cleared and the one given again, so the step holds one stick
+        // as a player first does. One picked up during the hold the server answers itself:
+        // the brand is held up and the other stick put by (train 190).
         1 => {
             let Some(mut plan) = gate.firebrand else { return };
             let burning = world.resource::<ClientWorld>().block(fire_at) == Some(plan.fire);
@@ -6072,8 +6074,9 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let held = in_hand(world);
             let cook = content.actions.expect("base:cook");
             // Another stick picked up since phase 1 would stack on the one in hand and repeat
-            // train 174: before any press, back to phase 1 to clear it.
-            if plan.asked.is_none() && holding(world, &name(plan.stick)).0 != 1 {
+            // train 174: before any press, back to phase 1 to clear it. None left is no such
+            // case (it may be the brand already, checked below), and phase 1 gives none.
+            if plan.asked.is_none() && holding(world, &name(plan.stick)).0 > 1 {
                 mouse(world, MouseButton::Right, false);
                 gate.phase = 0;
                 gate.advance(now);
@@ -6153,7 +6156,8 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let Some(slot) = slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS) else {
                     return fail(world, gate, "firebrand: burns out", format!("the {} is not in the hotbar", name(plan.brand)));
                 };
-                // Its slot named, so the wear needs no wait on the server hearing the hand.
+                // Its slot named for the wear; it burns its last second once the server hears
+                // it is the hand, as only the hand burns (waited on below).
                 world.resource_mut::<LocalPlayer>().selected = slot;
                 world.resource::<Net>().command(&format!("wear 1 {}", slot + 1));
                 gate.advance(now);

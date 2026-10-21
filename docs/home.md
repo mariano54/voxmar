@@ -505,7 +505,9 @@ asks for one made and set down where it keeps tilled ground moist (`Watering`).
 
 Lit, the Homestead Hearth cooks what a campfire cooks: raw meat, fish or an egg in hand, a right
 click on the standing hearth (its ring and chimney whole, `station_stands`) cooks one, with an
-empty hand still lighting it. The Cottage Stove (Farm, five cobblestone round a campfire) is
+empty hand still lighting it. A stick held in it catches into a firebrand and a torch's stub
+lights again, as at any fire (cooking.ron's `hearth` recipes: the hearthstone itself is no
+`fire`). The Cottage Stove (Farm, five cobblestone round a campfire) is
 the campfire built in: it cooks the same, holds a cooking pot (`hob`), and warms and lights the
 room as a fire does (`heat`, `fire`, light 12, which survival.ron's `heat_emission` counts),
 smoking from its flue. So the home's own fire is where supper is made, and nobody keeps a

@@ -757,8 +757,8 @@ pub(crate) struct Server {
     lit: FxHashMap<IVec3, hearth::Lit>,
     /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
     smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
-    /// The tick fuelled fires were last looked over for going out (`Server::tell_fires_out`).
-    fires_out_seen: u64,
+    /// News of firings for players away when it came, told when they are on again.
+    news_waiting: Vec<smoulder::Waiting>,
     /// Fuelled fires gone cold since then, taken out of `lit` wherever that happened, to be
     /// told (`Server::tell_fires_out`).
     fires_out: Vec<hearth::Lit>,
@@ -934,6 +934,7 @@ impl Server {
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect::<FxHashMap<_, _>>();
         let hearth_owners = hearth::HearthOwner::restore(&meta.hearth_owners, &lit, |name| content.multiblocks.get(name).is_some_and(|m| m.home));
         let smoulders = smoulder::restore(&meta.smoulders, |name| content.multiblocks.get(name).is_some_and(|m| m.smoulder.is_some()));
+        let news_waiting = meta.news_waiting.clone();
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
@@ -953,7 +954,7 @@ impl Server {
             factory: voxmar_engine::factory::Factory::default(),
             lit,
             smoulders,
-            fires_out_seen: 0,
+            news_waiting,
             fires_out: Vec::new(),
             hearth_owners,
             fires_sent: Vec::new(),
@@ -1359,6 +1360,7 @@ impl Server {
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
         meta.smoulders = self.saved_smoulders();
+        meta.news_waiting = self.news_waiting.clone();
         meta.hearth_owners = hearth::HearthOwner::saved(&self.hearth_owners);
         meta.day = Some(self.day as u64);
         meta.day_speed = self.day_speed;

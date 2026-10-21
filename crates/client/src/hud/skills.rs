@@ -25,8 +25,8 @@ const FADE: f32 = 0.6;
 const MERGE: f32 = 1.2;
 /// How far a line rises over its life, in HUD pixels.
 const RISE: f32 = 10.0;
-/// Lines shown at once at most.
-const LINES: usize = 6;
+/// Lines shown at once at most: one more than the news the server keeps for a player away.
+const LINES: usize = voxmar_protocol::NEWS_LINES;
 /// How long a refusal's reason shows under the crosshair, and how far below its middle
 /// (of the screen's height): close enough to read without looking away from the block.
 const WHY_SECONDS: f32 = 2.5;
@@ -157,10 +157,15 @@ impl SkillToasts {
         self.why = Some((why, now));
     }
 
+    /// A line, and room for it: a line already gone goes first, then the oldest gain, and
+    /// news only when there is nothing else, so news kept for a player away shows its life.
     fn push(&mut self, line: Line) {
+        let now = self.now.max(line.at);
         self.lines.push(line);
         if self.lines.len() > LINES {
-            self.lines.remove(0);
+            let gone = self.lines.iter().position(|l| now - l.at >= l.kind.life());
+            let gain = || self.lines.iter().position(|l| matches!(l.kind, LineKind::Gain { .. }));
+            self.lines.remove(gone.or_else(gain).unwrap_or(0));
         }
     }
 }
@@ -302,6 +307,25 @@ mod tests {
         assert_eq!((toasts.lines.len(), toasts.news_showing().collect::<Vec<_>>()), (1, vec!["Your Charcoal Clamp is done"]), "the gain gone, the news still there");
         toasts.now = 1.0 + NEWS_SECONDS + 0.1;
         assert_eq!(toasts.news_showing().count(), 0);
+    }
+
+    /// Gains coming on top of a full screen of news push out other gains, never the news,
+    /// and news pushes out news only when nothing else is left.
+    #[test]
+    fn gains_make_room_among_themselves_not_from_news() {
+        let mut toasts = SkillToasts::default();
+        for i in 0..LINES - 1 {
+            toasts.news(format!("news {i}"), 1.0);
+        }
+        for skill in 0..3 {
+            toasts.gained(SkillId(skill), 10, 1.5);
+        }
+        toasts.now = 1.6;
+        assert_eq!(toasts.news_showing().count(), LINES - 1, "all the news kept");
+        assert_eq!(toasts.lines.len(), LINES);
+        toasts.news("news 5".into(), 1.7);
+        toasts.news("news 6".into(), 1.7);
+        assert_eq!(toasts.news_showing().collect::<Vec<_>>(), ["news 1", "news 2", "news 3", "news 4", "news 5", "news 6"], "news alone: the oldest goes");
     }
 
     #[test]
