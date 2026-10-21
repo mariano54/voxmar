@@ -415,6 +415,8 @@
     "quest.base.seed_mix.why": ("Kept animals only breed when fed their breeding food. Two seeds and a wheat in the crafting grid make seed mix (Cooking 8), which readies any kept animal to breed. Make four. Bring in eight wheat to make it from.", "飼っている動物は、繁殖用の餌を与えないと増えない。種2つと小麦1つを作業枠に並べると混ぜ種ができ（料理レベル8）、どの動物も繁殖の準備ができる。4個作ろう。材料にする小麦を8つ収穫しよう。"),
     "quest.base.roots_in_the_embers": ("Roots in the Embers", "おき火の根菜"),
     "quest.base.roots_in_the_embers.why": ("A roast carrot heals better than a raw one, and roots are easy food to grow. Roast four carrots on a campfire (Cooking 2).", "焼きニンジンは生より回復し、根菜は育てやすい食べ物だ。焚き火でニンジンを4本焼こう（料理レベル2）。"),
+    "quest.base.game_for_the_pot": ("Game for the Pot", "鍋に獲物を"),
+    "quest.base.game_for_the_pot.why": ("Big game feeds you better than rabbits, and cooking it teaches the pot more. Roast three mutton from a mouflon or sheep (Cooking 5), or three pork from a wild boar (Cooking 8), on a campfire.", "大きな獲物はウサギより腹を満たし、料理の腕も上げてくれる。ムフロンか羊のマトンを3つ（料理レベル5）、またはイノシシの豚肉を3つ（料理レベル8）、焚き火で焼こう。"),
     "quest.base.hens_in_a_row": ("Hens in a Row", "並んだ雌鶏"),
     "quest.base.hens_in_a_row.why": ("Hold wheat seeds (wild wheat and your own field give them), walk up slowly (no sprinting, no hitting) and right-click a junglefowl until it trusts you; they keep to warm grassland and jungle. A kept hen needs room, grass or feed, and water nearby, and lays an egg about every five minutes. Tame three.", "小麦の種（野生の小麦や自分の畑から取れる）を持ち、走らず殴らずにそっとヤケイに近づき、慣れるまで右クリックしよう。ヤケイは暖かい草地やジャングルにいる。飼うには広さと草か餌、近くの水が要り、5分に1個ほど卵を産む。3羽手なずけること。"),
     "quest.base.a_trough_for_the_pen": ("A Trough for the Pen", "囲いの飼い葉桶"),

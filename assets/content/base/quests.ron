@@ -40,7 +40,7 @@
             capstone: true,
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
-            after: ["a_pot_on_the_fire", "roots_in_the_embers", "seed_mix", "a_proper_breakfast"],
+            after: ["a_pot_on_the_fire", "roots_in_the_embers", "game_for_the_pot", "seed_mix", "a_proper_breakfast"],
             rewards: [Xp("cooking", 300.0), Item("honey", 2)],
         ),
         // Fuel: logs to char or coal from a seam, two ways to the Crucible Kiln's charge.
@@ -241,6 +241,13 @@
             tasks: [[Cook("roast_carrot", 4)]],
             after: ["carrot_patch"],
             rewards: [Xp("cooking", 120.0)],
+        ),
+        (
+            name: "game_for_the_pot", age: "farm", branch: "cooking", title: "Game for the Pot",
+            why: "Big game feeds you better than rabbits, and cooking it teaches the pot more. Roast three mutton from a mouflon or sheep (Cooking 5), or three pork from a wild boar (Cooking 8), on a campfire.",
+            tasks: [[Cook("cooked_mutton", 3)], [Cook("cooked_pork", 3)]],
+            after: ["bigger_game", "camp_cook"],
+            rewards: [Xp("cooking", 200.0)],
         ),
         (
             name: "hens_in_a_row", age: "farm", branch: "husbandry", title: "Hens in a Row",

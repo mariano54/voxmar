@@ -1344,6 +1344,8 @@
     "quest.base.seed_mix.why": "Kept animals only breed when fed their breeding food. Two seeds and a wheat in the crafting grid make seed mix (Cooking 8), which readies any kept animal to breed. Make four. Bring in eight wheat to make it from.",
     "quest.base.roots_in_the_embers": "Roots in the Embers",
     "quest.base.roots_in_the_embers.why": "A roast carrot heals better than a raw one, and roots are easy food to grow. Roast four carrots on a campfire (Cooking 2).",
+    "quest.base.game_for_the_pot": "Game for the Pot",
+    "quest.base.game_for_the_pot.why": "Big game feeds you better than rabbits, and cooking it teaches the pot more. Roast three mutton from a mouflon or sheep (Cooking 5), or three pork from a wild boar (Cooking 8), on a campfire.",
     "quest.base.hens_in_a_row": "Hens in a Row",
     "quest.base.hens_in_a_row.why": "Hold wheat seeds (wild wheat and your own field give them), walk up slowly (no sprinting, no hitting) and right-click a junglefowl until it trusts you; they keep to warm grassland and jungle. A kept hen needs room, grass or feed, and water nearby, and lays an egg about every five minutes. Tame three.",
     "quest.base.a_trough_for_the_pen": "A Trough for the Pen",
