@@ -9661,7 +9661,8 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.wait(5.0, "the server counting the logs carried", |c| quest_status(c, "fuel_to_hand").0);
     f.mark("fuel_to_hand");
     // Charcoal, from a clamp as the quest says, of the logs carried: one for the chopping
-    // block, five split on it into ten firewood (nine laid), one for sticks. The chopping
+    // block, three split on it into six firewood to join The Potter's four (nine laid), one
+    // for sticks. The chopping
     // block is a flint over a log (Crafting 2), the flint dug from what the first days left
     // of the gravel bank.
     // The pack is full after the forty logs: the spare goes, for the flint and the dirt.

@@ -1126,6 +1126,28 @@ mod tests {
         assert!(!both(5, 1), "five fences are not six");
     }
 
+    /// Lanterns of Cloth asks for paper lanterns: the metal and stone lanterns carry
+    /// `lantern` too, so two copper lanterns made and set down are not the quest.
+    #[test]
+    fn lanterns_of_cloth_wants_paper_lanterns() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let quest = content.quests.get("base:lanterns_of_cloth").expect("Lanterns of Cloth");
+        let done = |lantern: &str| {
+            let keys = [format!("crafted:{lantern}"), format!("placed:{lantern}")];
+            let tallies: FxHashMap<String, u32> = keys.into_iter().map(|k| (k, 2)).collect();
+            let journal = crate::journal::Journal::default();
+            let has_tag = |name: &str, tag: &str| content.blocks.item_named(name).is_some_and(|id| content.blocks.def(id).has_tag(tag));
+            let progress = crate::quest::Progress { journal: &journal, tallies: &tallies, level: &|_| 1, carried: &|_| 0, has_tag: &has_tag, drops: &|_| None, thriving: &|_| 0, home: false };
+            quest.tasks.iter().any(|task| content.quests.task_done(task, &progress, &|_| true))
+        };
+        let paper = content.blocks.tagged("paper_lantern").next().map(|b| content.blocks.def(b).name.clone()).expect("a paper lantern");
+        assert!(done(&paper), "two paper lanterns made and set down");
+        for other in ["base:copper_hanging_lantern", "base:iron_hanging_lantern", "base:stone_lantern"] {
+            assert!(content.blocks.id(other).is_some(), "no `{other}`");
+            assert!(!done(other), "two of `{other}` are no paper lanterns");
+        }
+    }
+
     /// Each Farm path's capstone comes after every other quest of its path, directly or
     /// through what comes before it, but for side quests and the age's rite. An "a|b" edge
     /// is followed down neither side, as it makes sure of neither. (The Nomad book is checked

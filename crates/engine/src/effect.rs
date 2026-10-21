@@ -102,6 +102,10 @@ pub struct Modifiers {
     pub hurt_every: Option<f32>,
     /// Degrees (°C) added to how warm the player feels.
     pub warmth: f32,
+    /// Degrees a home adds (its steps and rooms), 0 or more: they lift how warm the player
+    /// feels only up to the top of the comfortable band (survival.ron's `comfort_top`),
+    /// never past it, so a cosy home never makes its owner hot (`Modifiers::felt`).
+    pub home_warmth: f32,
     /// Extra health points the player may have.
     pub max_health: i8,
     /// How much more (or less) health the player may have, as a share of what they would:
@@ -126,11 +130,20 @@ pub struct Modifiers {
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, home_warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0 }
     }
 }
 
 impl Modifiers {
+    /// How warm the player feels in air (and fire's heat) of `air` °C: `warmth` adds as it
+    /// is, then `home_warmth` lifts what that comes to toward `comfort_top` and no further.
+    /// What is already at or above the top is left as it is: a home warms a cold night and
+    /// adds nothing to a hot day.
+    pub fn felt(&self, air: f32, comfort_top: f32) -> f32 {
+        let base = air + self.warmth;
+        if base >= comfort_top { base } else { (base + self.home_warmth).min(comfort_top) }
+    }
+
     /// Several effects' modifiers together.
     pub fn combine<'a>(all: impl IntoIterator<Item = &'a Modifiers>) -> Modifiers {
         all.into_iter().fold(Modifiers::default(), |sum, m| Modifiers {
@@ -140,6 +153,7 @@ impl Modifiers {
                 (a, b) => a.or(b),
             },
             warmth: sum.warmth + m.warmth,
+            home_warmth: sum.home_warmth + m.home_warmth,
             max_health: sum.max_health.saturating_add(m.max_health),
             max_health_share: sum.max_health_share * m.max_health_share,
             speed: sum.speed * m.speed,
@@ -239,6 +253,17 @@ impl Condition {
             Condition::HomeWalls(_, share) => into.push(*share),
             Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.home_walls(into)),
             Condition::Not(c) | Condition::Sheltered(c) => c.home_walls(into),
+            _ => {}
+        }
+    }
+
+    /// The temperatures `FeltAbove` asks anywhere in this condition that feeling warmer
+    /// brings it on: not under a `Not`, where feeling warmer takes it away.
+    fn felt_above(&self, into: &mut Vec<f32>) {
+        match self {
+            Condition::FeltAbove(t) => into.push(*t),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.felt_above(into)),
+            Condition::Sheltered(c) => c.felt_above(into),
             _ => {}
         }
     }
@@ -711,6 +736,9 @@ impl EffectRegistry {
         }
         let (mut near, mut held, mut worn) = (Vec::new(), Vec::new(), Vec::new());
         for def in &defs {
+            if !(def.modifiers.home_warmth.is_finite() && def.modifiers.home_warmth >= 0.0) {
+                return Err(RegistryError(format!("effect `{}` adds {} home warmth: a home only warms, 0 or more", def.name, def.modifiers.home_warmth)));
+            }
             if !(def.lingers.is_finite() && def.lingers >= 0.0) || (def.lingers > 0.0 && def.when.is_none()) {
                 return Err(RegistryError(format!("effect `{}` lingers {} seconds: it takes 0 or more, and a `when` to linger after", def.name, def.lingers)));
             }
@@ -914,6 +942,18 @@ impl EffectRegistry {
         &self.home_tags
     }
 
+    /// The coolest a debuff comes on at as the player feels warmer (`FeltAbove`): Hot.
+    /// None when no debuff asks.
+    pub fn too_warm_at(&self) -> Option<f32> {
+        let mut at = Vec::new();
+        for def in self.defs.iter().filter(|d| d.kind == Kind::Debuff) {
+            for when in def.when.iter() {
+                when.felt_above(&mut at);
+            }
+        }
+        at.into_iter().reduce(f32::min)
+    }
+
     /// The highest announced effect (the last listed) whose home asks the home met in
     /// `before` and not in `after`, short in one of `tags`, with that tag and the count it
     /// wants: what a home loses when its lights burn out. Only `HomeHas` asks are judged (the
@@ -1058,6 +1098,21 @@ impl EffectRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Warmth adds as it is; a home's warmth lifts what that comes to up to the top of the
+    /// comfortable band and no further, and adds nothing at or above it.
+    #[test]
+    fn a_homes_warmth_tops_out_at_the_comfortable_band() {
+        let home = Modifiers { home_warmth: 15.0, ..Default::default() };
+        assert_eq!(home.felt(0.0, 29.0), 15.0, "a cold night gets all of it");
+        assert_eq!(home.felt(20.0, 29.0), 29.0, "a mild day is lifted to the top, not past it");
+        assert_eq!(home.felt(29.0, 29.0), 29.0);
+        assert_eq!(home.felt(34.0, 29.0), 34.0, "a hot day is no hotter, nor cooler");
+        let soaked = Modifiers { warmth: -4.0, home_warmth: 2.0, ..Default::default() };
+        assert_eq!(soaked.felt(10.0, 29.0), 8.0, "plain warmth first, then the home's");
+        let combined = Modifiers::combine([&home, &soaked]);
+        assert_eq!((combined.warmth, combined.home_warmth), (-4.0, 17.0));
+    }
 
     /// A shelter tag always wins, furniture or not; a solid untagged block is draughty
     /// unless it is furniture; anything else is no wall.
