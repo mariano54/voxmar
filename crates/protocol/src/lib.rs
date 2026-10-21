@@ -53,7 +53,9 @@ pub use voxmar_engine::weather::Weather;
 // 55 is unused.
 // 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
 // 57: tools wear (ItemStack::wear) and ServerMessage::ToolWore.
-pub const PROTOCOL_VERSION: u32 = 57;
+// 60: ServerMessage::Shown, what stands on the blocks that show what they hold (a shelf's
+// things; 58 and 59 are other lanes').
+pub const PROTOCOL_VERSION: u32 = 60;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -247,6 +249,11 @@ pub enum ServerMessage {
     /// What the player holds wore down past its warning (`tool::Wear::warn`), or with
     /// `broke` wore out and broke: the hand hears it, and a break shows a puff of chips.
     ToolWore { item: BlockId, broke: bool },
+    /// What stands on each block that shows what it holds (`BlockDef::shows`: a mantel
+    /// shelf's things), by place, in order: the item in each of its first slots, a spot
+    /// apiece; a block with nothing on it is left out. Sent whenever that changes, to
+    /// everyone, and on joining.
+    Shown { at: Vec<(IVec3, Vec<Option<BlockId>>)> },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

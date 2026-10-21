@@ -50,6 +50,10 @@
         // bedded with rushes.
         (ingredients: ["{name}_chair", "{name}_planks", "{name}_planks"], output: "{name}_rocking_chair", skill: "core:construction", level: 4, xp: 4.0),
         (ingredients: ["{name}_planks", "{name}_planks", "{name}_planks", "stick", "stick", "rush", "rush"], output: "{name}_cradle", skill: "core:construction", level: 4, xp: 4.0),
+        // Lived in: a shelf hung high on two stick brackets for a mantel; a bench with a hide
+        // thrown over it.
+        (ingredients: ["{name}_shelf", "stick", "stick"], output: "{name}_mantel_shelf", skill: "core:construction", level: 3, xp: 3.0),
+        (ingredients: ["{name}_bench", "hide"], output: "{name}_fireside_bench", skill: "core:construction", level: 2, xp: 2.0),
         (ingredients: ["rush", "rush", "rush", "rush"], output: "rush_mat", skill: "core:crafting", level: 1, xp: 1.0),
         // A window box: a trough of planks filled with earth, and a poppy and a dandelion planted in it.
         (ingredients: ["tag:planks", "tag:planks", "tag:planks", "dirt", "poppy", "dandelion"], output: "window_box", skill: "core:construction", level: 3, xp: 3.0),

@@ -777,6 +777,8 @@ pub(crate) struct Server {
     blaze_risked: Vec<IVec3>,
     /// The smouldering blocks players were last told of.
     smoulders_sent: Vec<IVec3>,
+    /// What players were last told stands on the blocks that show what they hold.
+    shown_sent: Vec<(IVec3, Vec<Option<voxmar_engine::block::BlockId>>)>,
     /// Whose doing a fire that starts now is (a player's key, `player_key`): the player whose
     /// message is being handled or whose action commits, whoever lights a hearth as it is lit
     /// (`hearth_blaze`), a burning block's own fire as it spreads; none for a flood or a
@@ -947,6 +949,7 @@ impl Server {
             blazes,
             blaze_risked: Vec::new(),
             smoulders_sent: Vec::new(),
+            shown_sent: Vec::new(),
             fire_origin: None,
             changed_by: None,
             planter_grown,

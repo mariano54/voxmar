@@ -518,6 +518,7 @@ pub(crate) fn receive(
             }
             ServerMessage::Bark { creature, bark } => creatures.bark(creature, bark),
             ServerMessage::Smoulders { at } => world.smoulders = at.into_iter().collect(),
+            ServerMessage::Shown { at } => world.shown = at.into_iter().collect(),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
             ServerMessage::Station { block, load, fire } => stations.tell(block, load, fire, time.elapsed_secs_f64()),
         }

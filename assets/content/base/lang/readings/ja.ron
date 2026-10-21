@@ -258,6 +258,8 @@
     "block.base.{name}_pot_crane": "{name}のなべかけ",
     "block.base.{name}_rocking_chair": "{name}のゆりいす",
     "block.base.{name}_cradle": "{name}のゆりかご",
+    "block.base.{name}_mantel_shelf": "{name}のろだな",
+    "block.base.{name}_fireside_bench": "{name}のろばたのこしかけ",
     "block.base.rush_mat": "いぐさのしきもの",
     "block.base.{name}_stair_cupboard": "{name}のかいだんだんす",
     "block.base.{name}_wardrobe": "{name}のようふくだんす",

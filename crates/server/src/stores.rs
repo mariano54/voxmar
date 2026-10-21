@@ -9,7 +9,7 @@ use voxmar_engine::block::BlockId;
 use voxmar_engine::glam::IVec3;
 use voxmar_engine::inventory::{ItemStack, Store};
 use voxmar_engine::traits;
-use voxmar_protocol::PlayerId;
+use voxmar_protocol::{PlayerId, ServerMessage};
 
 use crate::Server;
 
@@ -17,6 +17,34 @@ use crate::Server;
 const SLACK: f32 = 1.5;
 
 impl Server {
+    /// What stands on each block that shows what it holds (`BlockDef::shows`: a mantel
+    /// shelf's things): the item in each of its first slots, a spot apiece, by place. One
+    /// with nothing on it is left out.
+    pub(crate) fn shown(&self) -> Vec<(IVec3, Vec<Option<BlockId>>)> {
+        let blocks = &self.content.blocks;
+        let mut shown: Vec<(IVec3, Vec<Option<BlockId>>)> = self
+            .factory
+            .iter()
+            .filter_map(|(pos, block, state)| {
+                let spots = blocks.def(block).shows.len();
+                let items: Vec<Option<BlockId>> = state.bin.iter().take(spots).map(|slot| slot.as_ref().map(|stack| stack.item)).collect();
+                items.iter().any(Option::is_some).then_some((pos, items))
+            })
+            .collect();
+        shown.sort_by_key(|(pos, _)| pos.to_array());
+        shown
+    }
+
+    /// Tells every player what stands on the blocks that show it, when that changed since
+    /// they were last told (a player joining is told on joining).
+    pub(crate) fn send_shown(&mut self) {
+        let shown = self.shown();
+        if shown != self.shown_sent {
+            self.broadcast(ServerMessage::Shown { at: shown.clone() });
+            self.shown_sent = shown;
+        }
+    }
+
     /// `agent` opens the store at `pos`. One the world placed (a village's barrel) is made
     /// a store the first time it is opened.
     pub(crate) fn open_store(&mut self, agent: PlayerId, pos: IVec3) {
@@ -75,7 +103,8 @@ impl Server {
         count(&state.bin, -1);
         state.bin.clone_from(&store.slots);
         let blocks = &self.content.blocks;
-        let kind = format!("stocked:{}", blocks.def(block).name);
+        // A store turned another way is tallied as the store itself.
+        let kind = format!("stocked:{}", blocks.def(block).form_of().unwrap_or(&blocks.def(block).name));
         let moved: Vec<(String, i64)> = moved.into_iter().filter(|&(_, n)| n != 0).map(|(item, n)| (blocks.def(item).name.clone(), n)).collect();
         for (item, n) in moved {
             if n > 0 {
@@ -109,6 +138,21 @@ impl Server {
                 self.close_store(agent);
             }
         }
+    }
+}
+
+
+/// Tells players what stands on the blocks that show what they hold, five times a second:
+/// a thing put on a shelf by hand, a chute or another player shows soon after.
+pub(crate) struct Shelves;
+
+impl crate::process::Process for Shelves {
+    fn tier(&self) -> voxmar_engine::schedule::Tier {
+        voxmar_engine::schedule::Tier::Medium
+    }
+
+    fn run(&mut self, server: &mut Server) {
+        server.send_shown();
     }
 }
 

@@ -159,6 +159,9 @@ pub struct ClientWorld {
     /// Blocks smouldering, about to catch fire, as the server last said
     /// (`ServerMessage::Smoulders`): they smoke and crackle until they catch or are saved.
     pub smoulders: FxHashSet<IVec3>,
+    /// What stands on the blocks that show what they hold, a spot apiece, as the server
+    /// last said (`ServerMessage::Shown`): a mantel shelf's things (`drops::shelf_things`).
+    pub shown: FxHashMap<IVec3, Vec<Option<BlockId>>>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -198,6 +201,7 @@ impl ClientWorld {
             stats: WorldStats::default(),
             fires: FxHashSet::default(),
             smoulders: FxHashSet::default(),
+            shown: FxHashMap::default(),
         }
     }
 

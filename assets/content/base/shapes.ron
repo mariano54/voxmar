@@ -258,6 +258,22 @@
             (from: (3, 2.5, 2), to: (13, 5, 14), textures: All("furniture_linen")),
             (from: (5, 5, 10), to: (11, 6.5, 13.5), textures: All("furniture_linen")),
         ]),
+        // A mantel shelf on the wall behind it (south), high in its cell: a deep board on two
+        // brackets, a lip along its front. What it holds stands on the board (`shows`).
+        "mantel_shelf": (boxes: [
+            (from: (0, 12, 10), to: (16, 14, 16)),
+            (from: (2, 7, 13), to: (4, 12, 16)),
+            (from: (12, 7, 13), to: (14, 12, 16)),
+            (from: (0, 14, 10), to: (16, 14.5, 10.5)),
+        ]),
+        // A fireside bench, low and long, its seat across the cell, a fleece thrown over it.
+        "fireside_bench": (boxes: [
+            (from: (0, 5, 3), to: (16, 7, 13)),
+            (from: (1, 0, 4), to: (3, 5, 12), textures: All("furniture_grain")),
+            (from: (13, 0, 4), to: (15, 5, 12), textures: All("furniture_grain")),
+            (from: (2, 7, 3.5), to: (14, 8, 12.5), textures: All("furniture_linen")),
+            (from: (2, 4, 2.5), to: (14, 7, 3.5), textures: All("furniture_linen")),
+        ]),
         // A rushlight holder: a foot, a post, an arm to the east and the rush burning in its
         // clip at the arm's end.
         "rushlight": (boxes: [
