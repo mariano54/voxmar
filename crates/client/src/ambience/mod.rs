@@ -269,6 +269,8 @@ struct Ambient {
     placed: (Sender<Placed>, Receiver<Placed>),
     /// The audible beds, as last logged.
     logged: String,
+    /// The home ladder's effects, lowest first, for the `home` axis.
+    home: Vec<voxmar_engine::effect::EffectId>,
 }
 
 #[derive(Component)]
@@ -310,7 +312,7 @@ fn start(mut commands: Commands, launch: Res<Launch>, world: Res<ClientWorld>, c
             (ambience, patters)
         }
     };
-    let kinds = Arc::new(kinds(&ambience, &world.registry, &launch.content.multiblocks, &voxmar_server::wall_shelters(&launch.content)));
+    let kinds = Arc::new(kinds(&ambience, &world.registry, &launch.content.multiblocks, &voxmar_server::wall_shelters(&launch.content), voxmar_server::roof_scan(&launch.content)));
     let bed_synths = ambience.beds.iter().filter_map(|b| match b.sound {
         BedSound::Synth(synth) => Some(synth),
         BedSound::Recorded(_) => None,
@@ -370,7 +372,9 @@ impl Ambient {
     /// The ambience before anything is heard, its clips to come from `clips_rx`.
     fn new(ambience: Ambience, roof_patters: Vec<Option<u8>>, kinds: Arc<Kinds>, content: Content, clips_rx: Receiver<Synthesized>) -> Self {
         let axes = ambience.axes();
+        let home = ambience.home_ladder(&content.effects);
         Self {
+            home,
             mixer: Mixer::new(&ambience, 0x616d_6269),
             roof_patters,
             roof: RoofLook::default(),
@@ -404,7 +408,7 @@ impl Ambient {
 }
 
 /// What the enclosure scan needs of each block.
-fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_engine::multiblock::MultiblockRegistry, walls: &[Option<voxmar_engine::effect::Shelter>]) -> Kinds {
+fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_engine::multiblock::MultiblockRegistry, walls: &[Option<voxmar_engine::effect::Shelter>], roof_scan: i32) -> Kinds {
     let ids = (0..registry.len()).map(|id| registry.info(voxmar_engine::block::BlockId(id as u16)));
     let group = ambience.block_groups(registry);
     // A structure's core in a group heard only while lit, and any block in a group heard only
@@ -428,6 +432,8 @@ fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_eng
         groups: ambience.groups.len(),
         walls: ambience.shelter.walls,
         roof: ambience.shelter.roof,
+        roof_scan,
+        sky_judged: (0..ambience.groups.len()).map(|g| ambience.sounds.iter().any(|s| s.at == defs::Placement::OpenBlock(g))).collect(),
     }
 }
 
@@ -775,6 +781,7 @@ fn listen(
     env.set(Fixed::Settlement, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.settlement));
     env.set(Fixed::SettlementEdge, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.edge));
     env.set(Fixed::SettlementPeople, ambient.place.as_ref().map_or(0.0, |place| place.people));
+    env.set(Fixed::Home, defs::home_step(&ambient.home, &player.vitals.effects));
     surroundings.settlement = ambient.place.as_ref().and_then(|place| Some((place.id?, place.edge)));
     surroundings.surveyed = ambient.place_survey;
     let shown = &weather.current;

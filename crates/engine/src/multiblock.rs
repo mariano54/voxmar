@@ -13,7 +13,7 @@
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
 
-use crate::block::{BlockId, BlockRegistry, RegistryError};
+use crate::block::{BlockId, BlockRegistry, RegistryError, WARD_LEAST, WARD_MOST};
 use crate::glam::IVec3;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -29,6 +29,10 @@ pub struct MultiblockDef {
     /// Lit, it becomes the player's home, where they wake after dying.
     #[serde(default)]
     pub home: bool,
+    /// Lit, how many blocks round its core its fire keeps the wild back at night (as a
+    /// campfire's `BlockDef::ward`). 0 for none, else 2 to 24.
+    #[serde(default)]
+    pub ward: f32,
     /// Alternative fuel stacks consumed to light it. Empty means it needs no fuel.
     #[serde(default)]
     pub fuels: Vec<(String, u8)>,
@@ -121,6 +125,7 @@ pub struct Multiblock {
     pub title: String,
     pub hint: String,
     pub home: bool,
+    pub ward: f32,
     pub fuels: Vec<(BlockId, u8)>,
     pub heat: u8,
     pub lit_by: Option<String>,
@@ -306,6 +311,9 @@ impl MultiblockRegistry {
                 }
                 Ok((item, *count))
             }).collect::<Result<Vec<_>, RegistryError>>()?;
+            if def.ward != 0.0 && !(WARD_LEAST..=WARD_MOST).contains(&def.ward) {
+                return Err(bad(format!("it wards {} blocks round it: 0 for none, else {WARD_LEAST} to {WARD_MOST}", def.ward)));
+            }
             if let Some(tag) = &def.lit_by
                 && !blocks.ids().any(|b| blocks.def(b).has_tag(tag))
             {
@@ -352,7 +360,7 @@ impl MultiblockRegistry {
                     Some(Smoulder { hours: s.hours, wood, done, early, spoiled, burning, spent, stages })
                 }
             };
-            multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, fuels, heat: def.heat, lit_by: def.lit_by, smoulder, core: core_takes, cells });
+            multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, ward: def.ward, fuels, heat: def.heat, lit_by: def.lit_by, smoulder, core: core_takes, cells });
         }
         Ok(Self { multiblocks })
     }
@@ -411,6 +419,26 @@ mod tests {
         assert!(load("missing", 32).is_err());
         assert!(load("fuel", 0).is_err());
         assert!(load("fuel", crate::inventory::MAX_STACK + 1).is_err());
+    }
+
+    /// A lit fire's ward (`ward`), a multiblock's or a block's, is none or 2 to 24 blocks.
+    #[test]
+    fn wards_out_of_range_are_refused() {
+        let core = BlockDef { name: "t:core".into(), tags: vec!["multiblock_core".into()], ..Default::default() };
+        let blocks = BlockRegistry::new(vec![core.clone()]).unwrap();
+        let load = |ward: f32| {
+            let source = format!("(multiblocks: [(name: \"hearth\", ward: {ward:?}, layers: [[\"C\"]], key: {{'C': \"core\"}}, core: 'C')])");
+            MultiblockRegistry::new(vec![MultiblockRegistry::read("t", &source).unwrap()], &blocks).map(|m| m.multiblocks[0].ward).map_err(|e| e.to_string())
+        };
+        let fire = |ward: f32| BlockRegistry::new(vec![BlockDef { name: "t:fire".into(), ward, ..Default::default() }]).map(|_| ()).map_err(|e| e.to_string());
+        for ward in [0.0, 2.0, 16.0, 24.0] {
+            assert_eq!(load(ward), Ok(ward));
+            assert_eq!(fire(ward), Ok(()));
+        }
+        for ward in [-1.0, 1.0, 25.0] {
+            assert!(load(ward).is_err_and(|e| e.contains("2 to 24")), "{ward}");
+            assert!(fire(ward).is_err_and(|e| e.contains("2 to 24")), "{ward}");
+        }
     }
 
     /// A smouldering structure is lit by a tagged item in hand, chars cells it names into

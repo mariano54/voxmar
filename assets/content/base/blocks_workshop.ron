@@ -30,7 +30,7 @@
         // A clamp's flue while it smoulders: a glow and a thread of smoke, warm to stand by.
         (
             name: "clamp_flue", render: Plant, solid: false, sound: Wood, textures: All("clamp_flue"),
-            light: 6, drops: "core:air", hardness: 0.0, color: (200, 90, 30), tags: ["creative_only", "fire", "multiblock_core"],
+            light: 6, drops: "core:air", hardness: 0.0, color: (200, 90, 30), tags: ["creative_only", "fire", "multiblock_core", "clamp_burning"],
             particles: [
                 (style: Smoke, rate: 3.0, at: (0.5, 0.4, 0.5), spread: 0.1, size: 1.0, height: 3.0, color: Some((110, 106, 100))),
                 (style: Ember, rate: 0.6, at: (0.5, 0.2, 0.5), spread: 0.1, size: 0.6, height: 1.0, color: Some((226, 84, 16))),
