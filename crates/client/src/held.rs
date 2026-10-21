@@ -42,7 +42,7 @@ impl Plugin for HeldPlugin {
         app.init_resource::<Handled>()
             .init_resource::<Motion>()
             .init_resource::<HeldClock>()
-            .add_systems(Update, show.after(crate::drops::show).after(crate::fight_fx::Reacted).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, show.after(crate::drops::shelf_things).after(crate::figures::show).after(crate::fight_fx::Reacted).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut motion: ResMut<Motion>| *motion = Motion::default());
     }
 }
@@ -717,7 +717,8 @@ pub fn turn_vector(degrees: Vec3) -> Vec3 {
     Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll).to_scaled_axis()
 }
 
-/// Puts the item in hand among the models to draw.
+/// Puts the item in hand among the models to draw, last of all (after the shelves' things
+/// and the figures' held ones), so it is the first the renderer keeps.
 #[allow(clippy::too_many_arguments)]
 fn show(
     time: Res<Time>,

@@ -121,6 +121,9 @@
         // Coal or charcoal on a stick makes four torches, in the hand's grid: light for the
         // first night.
         (pattern: [["coal_ore|charcoal"], ["stick"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
+        // A firebrand burnt out in the hand leaves its charred end, enough to tip one torch
+        // before there is coal: the light that burns out leads to one that lasts.
+        (pattern: [["charred_stick"], ["stick"]], output: "torch", skill: "core:engineering", xp: 1.0),
         // Two stones crossed make shears, for wool; two planks a pail, for milk.
         (pattern: [["cobblestone", ""], ["", "cobblestone"]], output: "shears", skill: "core:engineering", xp: 10.0),
         (pattern: [["{name}_planks", ""], ["", "{name}_planks"]], output: "pail", skill: "core:engineering", xp: 10.0),
