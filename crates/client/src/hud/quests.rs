@@ -55,6 +55,7 @@ impl Plugin for QuestsPlugin {
             .init_resource::<ShapeImages>()
             .init_resource::<TrackerRoom>()
             .init_resource::<Recentre>()
+            .init_resource::<FitWay>()
             .init_resource::<ZoomAt>()
             .add_systems(PostStartup, (spawn, spawn_tracker))
             .add_systems(OnEnter(Screen::InGame), keep_known_pins)
@@ -924,13 +925,18 @@ fn draw(
     (images, style, look): (Res<HudImages>, Res<InterfaceStyle>, Res<QuestLook>),
     (mut shapes, mut assets): (ResMut<ShapeImages>, ResMut<Assets<Image>>),
     settings: Res<Settings>,
-    (viewer, mut way_cache): (Res<super::recipes::RecipeViewer>, Local<WayCache>),
+    (viewer, mut way_cache, fit_way): (Res<super::recipes::RecipeViewer>, Local<WayCache>, Res<FitWay>),
     chapters_column: Query<Entity, With<Chapters>>,
     (mut web, stage): (Query<(Entity, &mut ScrollPosition), With<Web>>, Query<&ComputedNode, With<Stage>>),
     detail: Query<Entity, With<Detail>>,
     (mut recentre, mut zoom_at): (ResMut<Recentre>, ResMut<ZoomAt>),
     mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool, IVec2)>>,
 ) {
+    // New content (a world played with other packages), new ways: cleared while the book
+    // is shut too.
+    if launch.is_changed() {
+        way_cache.0.clear();
+    }
     if !ui.quests_open {
         *drawn = None;
         return;
@@ -939,7 +945,7 @@ fn draw(
     // window changes it. The card over its right side leaves the layout as it is.
     let room = stage.single().map_or(Vec2::ZERO, |computed| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
     let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some(), room.as_ivec2());
-    if drawn.as_ref() == Some(&wanted) && !locale.is_changed() && !recentre.0 {
+    if drawn.as_ref() == Some(&wanted) && !locale.is_changed() && !recentre.0 && !fit_way.is_changed() {
         return;
     }
     // Opened, or turned to another chapter, the canvas comes to the quest picked: again
@@ -949,9 +955,6 @@ fn draw(
     let zoomed = zoom_at.0.take();
     let refit = drawn.as_ref().is_none_or(|(was, ..)| was.picked != view.picked);
     *drawn = Some(wanted);
-    if launch.is_changed() {
-        way_cache.0.clear();
-    }
     let content = &launch.content;
     let font = &font.0;
     let ages = chapters(content);
@@ -1332,6 +1335,10 @@ fn draw(
                     if let Some(book) = viewer.book() {
                         let key = format!("{}/{t}/{g}", quest.name);
                         let ways = way_cache.0.entry(key.clone()).or_insert_with(|| goal_ways(content, book, package(quest), goal));
+                        let ways = match &fit_way.0 {
+                            Some(way) if (t, g) == (0, 0) => std::slice::from_ref(way),
+                            _ => ways.as_slice(),
+                        };
                         if !ways.is_empty() {
                             let shown = view.ways.get(&key).copied().unwrap_or(0) % ways.len();
                             way_card(detail, font, &images, &launch, &locale, &ways[shown], (key, shown, ways.len()));
@@ -1768,12 +1775,19 @@ fn drag_web(
 #[derive(Default)]
 struct WayCache(std::collections::HashMap<String, Vec<Entry>>);
 
+/// A way the gate's text-fit tour shows under the picked quest's first goal in place of
+/// its own: a recipe longer than any shipped, as a mod may add.
+#[derive(Resource, Default)]
+pub(crate) struct FitWay(pub(crate) Option<Entry>);
+
 /// The items a goal's name stands for: one item, or each item with a `tag:` (none for
 /// `any`).
-fn goal_items(content: &Content, package: &str, name: &str) -> Vec<BlockId> {
+fn goal_items(content: &Content, book: &RecipeBook, package: &str, name: &str) -> Vec<BlockId> {
     match name.strip_prefix("tag:") {
+        // A creative-only one only where the world lays it (an ore sample a vein shows).
         Some(tag) => {
-            let mut items: Vec<BlockId> = content.blocks.tagged(tag).map(|b| content.blocks.item_of(b)).collect();
+            let creative = |b: BlockId| content.blocks.def(b).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY);
+            let mut items: Vec<BlockId> = content.blocks.tagged(tag).filter(|&b| !creative(b) || book.laid(&content.blocks, b)).map(|b| content.blocks.item_of(b)).collect();
             items.sort();
             items.dedup();
             items
@@ -1793,7 +1807,7 @@ pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, package: &str, goa
         _ => return Vec::new(),
     };
     let mut all: Vec<Entry> = Vec::new();
-    for item in goal_items(content, package, name) {
+    for item in goal_items(content, book, package, name) {
         for way in item_ways(content, book, goal, item) {
             if counts(content, goal, &way) && !all.contains(&way) {
                 all.push(way);
@@ -1812,8 +1826,6 @@ pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, package: &str, goa
 /// teaches the work itself); to look an item up, none, for looking it up is its lesson.
 pub(crate) fn counts(content: &Content, goal: &Goal, way: &Entry) -> bool {
     let method = &way.method;
-    // A station's or a block's tag, as the goal names it, on a block the way names by its own.
-    let carries = |tag: &str, named: &str| tag == named || content.blocks.tagged(tag).any(|b| content.blocks.def(b).has_tag(named));
     // Left to work in a home station whose work counts as cooking (an earth clamp's fired
     // clay), at that station by its name.
     let station_cooks = |at: Option<&str>| match method {
@@ -1823,9 +1835,9 @@ pub(crate) fn counts(content: &Content, goal: &Goal, way: &Entry) -> bool {
     };
     match goal {
         Goal::Cook(..) => matches!(method, Method::Cook { .. }) || station_cooks(None),
-        Goal::CookAt(_, at, _) => matches!(method, Method::Cook { station, .. } if carries(station, at)) || station_cooks(Some(at)),
+        Goal::CookAt(_, at, _) => matches!(method, Method::Cook { station, .. } if station == at) || station_cooks(Some(at)),
         Goal::Craft(..) => matches!(method, Method::Craft { .. }),
-        Goal::CraftNear(_, at, _) => matches!(method, Method::Craft { near: Some(near), .. } if carries(near, at)),
+        Goal::CraftNear(_, at, _) => matches!(method, Method::Craft { near: Some(near), .. } if near == at),
         Goal::Catch(..) => matches!(method, Method::Catch { .. }),
         Goal::Pick(..) | Goal::Mine(..) => matches!(method, Method::Break { .. } | Method::Harvest { .. } | Method::Found { .. }),
         Goal::Have(..) | Goal::Placed(..) => !matches!(method, Method::Reward { .. }),
@@ -1864,15 +1876,17 @@ fn item_ways(content: &Content, book: &RecipeBook, goal: &Goal, item: BlockId) -
 }
 
 /// One way of getting an item, small, under the goal that asks for it: what goes in, an
-/// arrow, what comes out, and, where there are several ways, under them arrows to turn to
+/// arrow, what comes out (on more lines, if a mod's recipe asks more than fits), and, where there are several ways, under them arrows to turn to
 /// the next with "1/3" between them (on a line of their own, so a recipe of many inputs
 /// still fits the column); under it, the recipe viewer's words for how it is done.
 fn way_card(detail: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, launch: &Launch, locale: &Locale, entry: &Entry, (key, shown, of): (String, usize, usize)) {
     let content = &launch.content;
-    let card = Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(space::HAIR), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, ..default() };
+    let card = Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(space::HAIR), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, max_width: Val::Percent(100.0), ..default() };
     let line = || Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() };
     detail.spawn((card, Piece::Well.image())).with_children(|card| {
-        card.spawn(line()).with_children(|card| {
+        // A recipe of more inputs than the column holds (a mod's) wraps onto more lines.
+        let recipe = Node { flex_wrap: FlexWrap::Wrap, justify_content: JustifyContent::Center, row_gap: Val::Px(space::HAIR), max_width: Val::Percent(100.0), ..line() };
+        card.spawn(recipe).with_children(|card| {
             super::recipes::way_inputs(card, font, images, content, &entry.method, None, None);
             card.spawn(shadowed(font, "→", BODY, GOLD));
             let (low, high) = entry.count;
@@ -1993,7 +2007,8 @@ fn track(
     tracker: Query<Entity, With<Tracker>>,
     mut visibility: Query<&mut Visibility, With<Tracker>>,
     unpins: Query<(&Unpin, &Interaction), Changed<Interaction>>,
-    mut drawn: Local<Option<(Vec<String>, u32, String)>>,
+    viewer: Res<super::recipes::RecipeViewer>,
+    mut drawn: Local<Option<(Vec<String>, u32, String, String, bool, Vec<BlockId>)>>,
 ) {
     let content = &launch.content;
     for (unpin, interaction) in &unpins {
@@ -2008,16 +2023,22 @@ fn track(
         shown.set_if_neq(if screen || settings.pinned_quests.is_empty() { Visibility::Hidden } else { Visibility::Inherited });
     }
     // The language too: one changed in the menus, out of a game, is not seen changing here.
-    let wanted = (settings.pinned_quests.clone(), player.quests_rev, locale.code().to_owned());
+    let book_key = settings.quests_key.name(&locale);
+    // The kinds of thing carried, which choose the way a family of recipes is shown.
+    let mut held: Vec<BlockId> = player.inventory.slots.iter().flatten().map(|stack| stack.item).collect();
+    held.sort();
+    held.dedup();
+    let wanted = (settings.pinned_quests.clone(), player.quests_rev, locale.code().to_owned(), book_key.clone(), viewer.book().is_some(), held.clone());
     if drawn.as_ref() == Some(&wanted) {
         return;
     }
     *drawn = Some(wanted);
     let Ok(tracker) = tracker.single() else { return };
     let font = &font.0;
-    let backing = SHADOW.with_alpha(content.quests.tracker().backing_alpha);
+    let look = content.quests.tracker();
+    let backing = SHADOW.with_alpha(look.backing_alpha);
     commands.entity(tracker).despawn_children().with_children(|tracker| {
-        for name in &settings.pinned_quests {
+        for (n, name) in settings.pinned_quests.iter().enumerate() {
             let Some(quest) = content.quests.get(name) else { continue };
             let state = state(&player, name);
             let done = state.is_some_and(|s| s.done);
@@ -2044,15 +2065,69 @@ fn track(
                     }
                     return;
                 }
+                // Under its next goal, near the top, one way to meet it, in the recipe book's
+                // words.
+                let mut how = (n < look.ways).then(|| viewer.book()).flatten();
                 for (goal, progress) in best_task(quest, state) {
                     let met = progress.0 >= progress.1;
                     card.spawn((shadowed(font, goal_line(&locale, content, quest, goal, progress, met), BODY, if met { GOLD } else { TEXT }), TrackerLine, TrackerGoal));
+                    if !met && let Some(book) = how.take() && let Some(way) = tracker_way(&locale, &launch, book, quest, goal, &held) {
+                        card.spawn((shadowed(font, way, BODY, SOFT), TrackerHow));
+                    }
                 }
                 card.spawn((Node { display: Display::None, ..default() }, shadowed(font, "", BODY, MUTED), TrackerMore));
+                // The key that opens the book here, under the top quest.
+                if n == 0 && look.book_key {
+                    card.spawn(shadowed(font, locale.format("quest.tracker.book", &[("key", &book_key)]), BODY, MUTED));
+                }
             });
         }
     });
 }
+
+/// The tracker's line under a goal: the first way the quest book shows for it, as the
+/// recipe viewer first words it ("Break Coal Ore with Stone Pickaxe").
+pub(crate) fn tracker_way(locale: &Locale, launch: &Launch, book: &RecipeBook, quest: &QuestDef, goal: &Goal, held: &[BlockId]) -> Option<String> {
+    let content = &launch.content;
+    let way = goal_ways(content, book, package(quest), goal).into_iter().next()?;
+    let mut lines = super::recipes::describe(locale, launch, &way.method).into_iter().map(|(line, _)| line);
+    let mut words = lines.next()?;
+    // Made near a block, the block too: the grid alone says too little.
+    if let Method::Craft { near: Some(_), .. } = &way.method
+        && let Some(near) = lines.next()
+    {
+        words = format!("{words}{}{near}", locale.get("language.comma"));
+    }
+    // Made, what goes in too, each once in the order laid in. Of a family made from any wood
+    // (or stone), the one from what the player carries, or is a step from.
+    let made_from_held = |item: &BlockId| book.making(*item).iter().any(|e| matches!(&e.method, Method::Craft { variants, .. } if variants.iter().flatten().flatten().any(|i| held.binary_search(i).is_ok())));
+    let score = |cells: &[Option<BlockId>]| cells.iter().flatten().map(|item| if held.binary_search(item).is_ok() { 2 } else { u32::from(made_from_held(item)) }).sum::<u32>();
+    let mut inputs: Vec<BlockId> = match &way.method {
+        Method::Craft { variants, .. } => {
+            let best = variants.iter().enumerate().max_by_key(|(i, cells)| (score(&cells[..]), std::cmp::Reverse(*i)));
+            best.map(|(_, cells)| cells.iter().flatten().copied().collect()).unwrap_or_default()
+        }
+        Method::Cook { input, with, .. } => [*input].into_iter().chain(with.iter().map(|(item, _)| *item)).collect(),
+        Method::Work { input, .. } => vec![*input],
+        _ => Vec::new(),
+    };
+    let mut seen = Vec::new();
+    inputs.retain(|item| !seen.contains(item) && {
+        seen.push(*item);
+        true
+    });
+    let words = if inputs.is_empty() {
+        words
+    } else {
+        let list: Vec<String> = inputs.iter().map(|&item| locale.block(content.blocks.def(item))).collect();
+        locale.format("quest.tracker.from", &[("how", &words), ("list", &list.join(locale.get("language.comma")))])
+    };
+    Some(locale.format("quest.tracker.how", &[("way", &words)]))
+}
+
+/// The way to meet a tracked goal, under it.
+#[derive(Component)]
+pub struct TrackerHow;
 
 /// A line of the tracker: a goal's progress, or a quest done (for the gate to read).
 #[derive(Component)]
@@ -2534,12 +2609,17 @@ pub(crate) mod tests {
         // Cooking at a campfire shows only a campfire's cooking, the least skilled first; meat
         // to cook, only cooking.
         let at_fire = ways(Goal::CookAt("tag:edible".into(), "campfire".into(), 1));
-        assert!(!at_fire.is_empty() && at_fire.iter().all(|e| matches!(&e.method, Method::Cook { station, .. } if counts(&content, &Goal::CookAt(String::new(), "campfire".into(), 1), e) && !station.is_empty())), "{at_fire:?}");
+        assert!(!at_fire.is_empty() && at_fire.iter().all(|e| matches!(&e.method, Method::Cook { station, .. } if station == "campfire")), "{at_fire:?}");
         assert!(at_fire.windows(2).all(|w| level(&w[0].method) <= level(&w[1].method)));
         assert!(ways(Goal::Cook("tag:meat".into(), 1)).iter().all(|e| matches!(e.method, Method::Cook { .. })));
         // Planks split on a chopping block: only that block's crafting.
         let split = ways(Goal::CraftNear("tag:planks".into(), "chopping_block".into(), 1));
-        assert!(!split.is_empty() && split.iter().all(|e| matches!(&e.method, Method::Craft { near: Some(_), .. })), "{split:?}");
+        assert!(!split.is_empty() && split.iter().all(|e| matches!(&e.method, Method::Craft { near: Some(near), .. } if near == "chopping_block")), "{split:?}");
+        // An ore sample the world never lays (no vein of it yet) is no way to read the ground.
+        let samples = goal_items(&content, &book, "base", "tag:ore_sample");
+        assert!(!samples.is_empty() && samples.iter().all(|&b| book.laid(&content.blocks, b)), "{samples:?}");
+        let unlaid: Vec<BlockId> = content.blocks.tagged("ore_sample").filter(|&b| !book.laid(&content.blocks, b)).collect();
+        assert!(!unlaid.is_empty() && unlaid.iter().all(|b| !samples.contains(b)), "a sample the world never lays is left out: {unlaid:?}");
         // A catch shows only the line's ways; looking an item up shows none, for that is its
         // lesson.
         let fish = ways(Goal::Catch("tag:fish".into(), 1));
@@ -2557,11 +2637,24 @@ pub(crate) mod tests {
                 if name == "any" || name == "Kinds" {
                     continue;
                 }
-                assert!(!goal_items(&content, package(quest), name).is_empty(), "{}: {goal:?} names no item", quest.name);
+                assert!(!goal_items(&content, &book, package(quest), name).is_empty(), "{}: {goal:?} names no item", quest.name);
                 let ways = goal_ways(&content, &book, package(quest), goal);
                 assert!(!ways.is_empty(), "{}: {goal:?} shows no way to get it", quest.name);
                 for way in &ways {
-                    assert!(counts(&content, goal, way), "{}: {goal:?} shows {way:?}, which does not count", quest.name);
+                    // What the server counts, said for each kind on its own.
+                    let station_name = |b: BlockId| content.blocks.def(b).name.rsplit(':').next().unwrap_or_default().to_owned();
+                    let fits = match (goal, &way.method) {
+                        (Goal::Cook(..), Method::Cook { .. } | Method::Work { .. }) => true,
+                        (Goal::CookAt(_, at, _), Method::Cook { station, .. }) => station == at,
+                        (Goal::CookAt(_, at, _), Method::Work { station, .. }) => station_name(*station) == *at,
+                        (Goal::Craft(..), Method::Craft { .. }) => true,
+                        (Goal::CraftNear(_, at, _), Method::Craft { near, .. }) => near.as_deref() == Some(at.as_str()),
+                        (Goal::Catch(..), Method::Catch { .. }) => true,
+                        (Goal::Pick(..) | Goal::Mine(..), Method::Break { .. } | Method::Harvest { .. } | Method::Found { .. }) => true,
+                        (Goal::Have(..) | Goal::Placed(..), method) => !matches!(method, Method::Reward { .. }),
+                        _ => false,
+                    };
+                    assert!(fits, "{}: {goal:?} shows {way:?}, which the server does not count", quest.name);
                     assert!(!creative(way.output), "{}: {goal:?} names a creative-only item: {way:?}", quest.name);
                 }
                 kinds.insert(std::mem::discriminant(goal));
@@ -2572,6 +2665,39 @@ pub(crate) mod tests {
         assert!(shown > 100, "{shown}");
     }
 
+    /// A tracked goal says under it how to meet it, in the recipe book's words: the rock's
+    /// tool, what a thing is made from; a goal to look up says nothing, for that is its lesson.
+    #[test]
+    fn the_tracker_says_how_to_meet_a_goal() {
+        let content = content();
+        let book = voxmar_server::recipe_book(&content).unwrap();
+        let locale = Locale::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), "en");
+        let launch = Launch { name: "tester".into(), host: false, content: content.clone() };
+        let quest = content.quests.iter().find(|q| q.tasks.iter().flatten().any(|g| matches!(g, Goal::Mine(name, _) if name.ends_with("coal_ore")))).unwrap();
+        let way = |goal: Goal| tracker_way(&locale, &launch, &book, quest, &goal, &[]);
+        let mined = way(Goal::Mine("coal_ore".into(), 1)).unwrap();
+        assert!(mined.starts_with("How: ") && mined.contains("Coal Ore") && mined.contains("Pickaxe"), "{mined}");
+        let made = way(Goal::Craft("campfire".into(), 1)).unwrap();
+        assert!(made.contains("Stick") || made.contains("Log"), "what goes in: {made}");
+        assert_eq!(way(Goal::LookUp("stone_pickaxe".into())), None);
+        // Of a family made from any wood, the one from the wood carried, or a step from it.
+        let mut held = vec![content.blocks.id("base:spruce_log").unwrap()];
+        held.sort();
+        let table = tracker_way(&locale, &launch, &book, quest, &Goal::Craft("crafting_table".into(), 1), &held).unwrap();
+        assert!(table.contains("Spruce Planks"), "{table}");
+        // Split near a block, the block named.
+        let split = way(Goal::CraftNear("tag:planks".into(), "chopping_block".into(), 1)).unwrap();
+        assert!(split.contains("Chopping Block"), "{split}");
+        // The first quest of every chapter says how to begin it.
+        for age in chapters(&content) {
+            let first = content.quests.iter().find(|q| q.age == age).unwrap();
+            let goal = &first.tasks[0][0];
+            if matches!(goal, Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::Have(name, _) if name != "any") {
+                assert!(tracker_way(&locale, &launch, &book, first, goal, &[]).is_some(), "{}: {goal:?}", first.name);
+            }
+        }
+    }
+
     /// Each chapter has a name in Japanese, and the tracker's numbers come from the data.
     #[test]
     fn chapters_are_named_and_the_tracker_is_data() {
@@ -2580,7 +2706,7 @@ pub(crate) mod tests {
         for age in chapters(&content) {
             assert!(ja.find(&format!("quest.age.{age}")).is_some(), "no Japanese name for the {age} chapter");
         }
-        assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true });
+        assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true, ways: 1, book_key: true });
     }
 
     /// The Nomad age is the first chapter, and a new player's quest is a Nomad one, though
