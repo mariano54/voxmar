@@ -898,7 +898,7 @@
             seek: ["clay"],
             halt: (near: 6.0, seconds: (12.0, 20.0)),
             meetings: [(who: 0, greets: 2, lines: [
-                (name: "fire", wants: ("clay", 2), gives: [Cook("pit_kiln", 8, 1)], once: Player),
+                (name: "fire", wants: ("clay", 2), gives: [Cook("village_kiln", 8, 1)], once: Player),
                 (name: "pot", needs: [Below("crafting", 8)], wants: ("fired_clay", 1), gives: [Xp("crafting", 12.0)], once: Player),
             ])],
         ),
