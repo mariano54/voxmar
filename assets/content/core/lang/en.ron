@@ -515,6 +515,7 @@
     "quest.tracker.opens": "Opens: {list}",
     "quest.tracker.more": "+{count} More",
     "quest.tracker.how": "How: {way}",
+    "quest.tracker.first": "First: {way}",
     "quest.tracker.from": "{how}: {list}",
     "quest.tracker.book": "{key}: Quest book",
     "quest.any": "anything",

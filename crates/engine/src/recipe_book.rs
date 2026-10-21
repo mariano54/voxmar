@@ -110,6 +110,9 @@ pub struct RecipeBook {
     uses: FxHashMap<BlockId, Vec<usize>>,
     /// What the world lays, as each is held ([`listed_as`]).
     laid: std::collections::HashSet<BlockId>,
+    /// The creative-only blocks a way breaks that the world never lays (a zinc ore sample
+    /// no vein sets down): ways no player meets.
+    unlaid: std::collections::HashSet<BlockId>,
 }
 
 /// The block `id` is held as: itself, or for one of its placed forms (another look, a
@@ -370,6 +373,12 @@ impl RecipeBook {
         self.laid.contains(&listed_as(blocks, block))
     }
 
+    /// Whether a player can meet `entry`: not by breaking a creative-only block the world
+    /// never lays (as [`found`](Self::found) was told).
+    pub fn met(&self, entry: &Entry) -> bool {
+        !matches!(entry.method, Method::Break { block, .. } if self.unlaid.contains(&block))
+    }
+
     /// Adds what the world lays (`placed`, from its generator's data) that breaking gives
     /// back as itself: found, not made. Items that are never placed (seeds) are left out,
     /// and so are furnishings: one the world placed (a village's bed) gives nothing broken.
@@ -379,6 +388,15 @@ impl RecipeBook {
         placed.sort();
         placed.dedup();
         self.laid.extend(placed.iter().map(|&b| listed_as(blocks, b)));
+        let laid = &self.laid;
+        self.unlaid = self
+            .entries
+            .iter()
+            .filter_map(|e| match e.method {
+                Method::Break { block, .. } if blocks.def(block).has_tag(CREATIVE_ONLY) && !laid.contains(&listed_as(blocks, block)) => Some(block),
+                _ => None,
+            })
+            .collect();
         // A crop the world lays ripe (a wild cabbage) is foraged as it stands.
         for (_, crop) in content.crops.iter().filter(|(_, crop)| placed.contains(&crop.ripe())) {
             for (item, loot) in &crop.forage {
