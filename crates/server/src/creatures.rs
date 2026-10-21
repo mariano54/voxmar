@@ -3517,6 +3517,38 @@ mod way_tests {
         }
     }
 
+    /// A deer, a reindeer or a boar led with food held up follows the player through an
+    /// open gate set beside a fence's corner (a fence run out from the gate's post, along
+    /// the side it comes from) within 20 s. Before: coming down along that fence, its long
+    /// head met it at the turn into the gate, it took no way open and went round and round
+    /// in the corner.
+    #[test]
+    fn deer_and_boar_led_with_food_come_through_a_gate_beside_a_fence_corner() {
+        for name in ["base:reindeer", "base:wild_boar", "base:red_deer"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            let (fence, across) = (server.content.blocks.expect("base:oak_fence_east"), server.content.blocks.expect("base:oak_fence"));
+            for z in -14..=14 {
+                server.world.set_block(c + IVec3::new(1, 0, z), fence);
+            }
+            server.world.set_block(c + IVec3::new(1, 0, -1), server.content.blocks.expect("base:oak_fence_gate_open_east"));
+            for x in -14..=0 {
+                server.world.set_block(c + IVec3::new(x, 0, -2), across);
+            }
+            let to = c.as_vec3() + Vec3::new(5.5, 0.0, -0.5);
+            let player = join(&mut server, to);
+            let species = server.content.creatures.get(server.content.creatures.find(name).expect(name));
+            let food = species.favourite[0];
+            let held = server.players.get_mut(&player).unwrap();
+            held.inventory.add(food, 1);
+            held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == food)).expect("the food is held");
+            let id = put(&mut server, name, c.as_vec3() + Vec3::new(-3.5, 0.0, 2.5), Vec3::X);
+            let came = comes(&mut server, id, to, 20);
+            let at = server.creatures.live[&id].body.position - c.as_vec3();
+            assert!(came.is_some(), "{name} never came through the gate: at {at:.2}");
+        }
+    }
+
     /// Broad cattle (an aurochs 1.1 across, a bison 1.0) led with food held up follow the
     /// player through an open double gate in a fence within 20 s, but not through an open
     /// gate one wide in 20 s, even started in line with it: that still keeps them out, as a

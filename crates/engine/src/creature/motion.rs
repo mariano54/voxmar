@@ -338,9 +338,14 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // where it gets most of the way at its level but its head meets a step (`head_step`),
     // not round it. A high head at a wall two high, or under a lintel, finds no way there.
     let ahead = |to: Vec3| Body { position: to, yaw: yaw_of(heading), ..*body };
+    // Its head clear there facing the way it goes, or, going on the way it faces, still
+    // facing that way: `step` holds its facing where its turned head would meet something
+    // (edging along a wall, or into a gap with a fence across the corner before it).
+    let onward = heading.dot(body.forward()) >= -1e-4;
+    let clear = |to: Vec3| !ahead(to).head_blocked(world) || onward && !Body { position: to, ..*body }.head_blocked(world);
     let level = goes(0.0);
     let up = movement.jump > 0.0 && level.is_none_or(|to| ahead(to).head_step(world, heading, pace, hop_speed(movement, dt), movement.step));
-    let Some(to) = level.filter(|&to| !ahead(to).head_blocked(world)).or_else(|| if up { goes(1.05).filter(|&to| !ahead(to).head_blocked(world)) } else { None }) else {
+    let Some(to) = level.filter(|&to| clear(to)).or_else(|| if up { goes(1.05).filter(|&to| !ahead(to).head_blocked(world)) } else { None }) else {
         return false;
     };
     // What it would come down on along its way, from here to as far ahead as it carries
