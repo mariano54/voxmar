@@ -276,6 +276,31 @@ impl Fire {
     }
 }
 
+/// How a game bird sits tight (docs/creature-ai.md, "Flush"): a player it has noticed
+/// beyond `hold` blocks it lets be, crouched still in the grass and hoping not to be seen;
+/// one who comes within `hold` it bursts away from, at `burst` times its run for its first
+/// `seconds`, and its kin burst with it. So a stalker who keeps coming gets close, and is
+/// startled at the last. Hurt, it flees as any prey does; a kept bird or one on an errand
+/// sits tight for no one.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Flush {
+    pub hold: f32,
+    pub burst: f32,
+    pub seconds: f32,
+}
+
+impl Flush {
+    /// Close enough to be a surprise, but not so close it is stepped on; a burst faster
+    /// than its run, and short.
+    pub fn check(&self) -> Result<(), String> {
+        if !(1.0..=6.0).contains(&self.hold) || !(1.0..=2.5).contains(&self.burst) || !(0.2..=3.0).contains(&self.seconds) {
+            return Err(format!("`flush` needs hold 1 to 6 blocks, burst 1 to 2.5 and seconds 0.2 to 3, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
 /// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
 /// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
@@ -687,6 +712,10 @@ pub struct CreatureDef {
     /// hunter on foot can run it down. Unset, it runs flat out as long as it flees.
     #[serde(default)]
     pub tires: Option<Tires>,
+    /// It sits tight and then bursts away (`Flush`): a game bird lets a player close and
+    /// startles them. Unset, it flees at its kind's distance.
+    #[serde(default)]
+    pub flush: Option<Flush>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -1174,6 +1203,12 @@ impl CreatureRegistry {
             }
             if let Some(tires) = def.tires {
                 tires.check().map_err(error)?;
+            }
+            if let Some(flush) = def.flush {
+                if def.boss || def.supernatural || def.attack.is_some() {
+                    return Err(error("sits tight and bursts away (`flush`), which is for prey: not a boss, a supernatural kind or one that attacks".into()));
+                }
+                flush.check().map_err(error)?;
             }
             def.death.check().map_err(error)?;
             def.senses.check().map_err(error)?;

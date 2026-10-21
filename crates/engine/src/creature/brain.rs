@@ -1189,6 +1189,49 @@ pub(super) mod tests {
         }
     }
 
+    /// A game bird that sits tight (`creature::Flush`) crouches still while a noticed
+    /// player is beyond its `hold`, then bursts away when they come within it: its first
+    /// `seconds` at `burst` times its run, then at its run. Kept, it flees at its kind's
+    /// distance as ever. Bad numbers, or a flush on a kind that attacks, are refused.
+    #[test]
+    fn a_game_bird_sits_tight_then_bursts_away() {
+        let bird = species(&format!(
+            "(creatures: [(name: \"quail\", health: 2, {BODY}, movement: (walk: 1.0, run: 5.0), flush: (hold: 2.5, burst: 2.0, seconds: 0.6), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 10.0)), (do: Freeze)])])"
+        ));
+        let far = [player(Vec3::new(6.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&bird.def.temperament, 2);
+        for _ in 0..10 {
+            let decision = think(&bird, &mut mind, &situation(&far));
+            assert_eq!((doing(&bird, &mind), decision.pose, decision.goal, decision.speed), ("hide", Pose::Crouched, None, 0.0), "sits tight at six blocks");
+        }
+        let near = [player(Vec3::new(2.0, 0.0, 0.0))];
+        let full = 5.0 * mind.personality.pace();
+        let ran: Vec<u32> = (0..6)
+            .map(|_| {
+                let decision = think(&bird, &mut mind, &situation(&near));
+                assert_eq!(doing(&bird, &mind), "flee");
+                (decision.speed / full * 100.0).round() as u32
+            })
+            .collect();
+        // Thinking every 0.2 s: three at the burst, then its run.
+        assert_eq!(ran, [200, 200, 200, 100, 100, 100], "{ran:?}");
+        let _ = think(&bird, &mut mind, &situation(&far));
+        assert_eq!(doing(&bird, &mind), "flee", "flushed, it runs clear and does not settle again at six blocks");
+        let mut kept = Mind::new(&bird.def.temperament, 2);
+        let _ = think(&bird, &mut kept, &Situation { kept: true, ..situation(&far) });
+        assert_eq!(doing(&bird, &kept), "flee", "a kept bird sits tight for no one");
+
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("flush: (hold: 3.0, burst: 1.8, seconds: 1.0)"), Ok(()));
+        for bad in ["flush: (hold: 0.5, burst: 1.8, seconds: 1.0)", "flush: (hold: 8.0, burst: 1.8, seconds: 1.0)", "flush: (hold: 3.0, burst: 3.0, seconds: 1.0)", "flush: (hold: 3.0, burst: 0.5, seconds: 1.0)", "flush: (hold: 3.0, burst: 1.8, seconds: 5.0)"] {
+            assert!(build(bad).is_err_and(|e| e.contains("`flush` needs")), "{bad}");
+        }
+        assert!(build("flush: (hold: 3.0, burst: 1.8, seconds: 1.0), attack: (damage: (1, 3))").is_err_and(|e| e.contains("for prey")));
+    }
+
     #[test]
     fn fire_out_of_range_is_refused() {
         let build = |creature: &str| {
