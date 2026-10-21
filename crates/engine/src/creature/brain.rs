@@ -1283,6 +1283,17 @@ pub(super) mod tests {
         hurt.memories.retain(|(m, _)| !matches!(m, Memory::ScaredBy(_)));
         let _ = think(&bird, &mut hurt, &situation(&far));
         assert_eq!(doing(&bird, &hurt), "flee", "wounded, at six blocks from the one who hurt it");
+        // Nor does a bystander nearer than the hunter, beyond its hold, hide the hunter from it.
+        let _ = think(&bird, &mut hurt, &situation(&[Seen { id: 2, ..player(Vec3::new(4.0, 0.0, 0.0)) }, far[0]]));
+        assert_eq!(doing(&bird, &hurt), "flee", "a bystander at four blocks, the hunter at six");
+        // It hides out to its widest flight.
+        let wide = species(&format!(
+            "(creatures: [(name: \"quail\", health: 2, {BODY}, movement: (walk: 1.0, run: 5.0), flush: (hold: 2.5, burst: 2.0, seconds: 0.6), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 4.0)), (do: Flee(radius: 10.0))])])"
+        ));
+        let mut calm = Mind::new(&wide.def.temperament, 2);
+        let widest = 10.0 * (0.5 + calm.personality.fear());
+        let _ = think(&wide, &mut calm, &situation(&[player(Vec3::new(widest - 1.0, 0.0, 0.0))]));
+        assert_eq!(doing(&wide, &calm), "hide", "{:.1} blocks off, inside its widest flight", widest - 1.0);
         // Beyond the distance it would flee at, it lives its day rather than sit tight.
         let mut calm = Mind::new(&bird.def.temperament, 2);
         let flees_at = 10.0 * (0.5 + calm.personality.fear());

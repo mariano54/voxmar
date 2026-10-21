@@ -107,6 +107,9 @@ const LURED_WITHIN: f32 = 3.0;
 /// Blocks from a scavenger that it snatches food lying on the ground from (its brain asks
 /// within `modules::SNATCH`, 1.3, of where the food lay).
 const SNATCH_REACH: f32 = 1.6;
+/// Seconds a scavenger leaves be food it got stuck short of (`Live::no_scrap`): a fox at a
+/// pen's fence with the meat inside goes about its day.
+const SCRAP_GIVE_UP: u64 = 30;
 
 /// A live creature.
 #[derive(Clone, Debug)]
@@ -211,6 +214,10 @@ pub struct Live {
     /// (`creature::Scavenge`): it drops it if killed first. Only wild ones steal, and those
     /// are never saved, so it goes with one that leaves the loaded world.
     pub carrying: Option<ItemStack>,
+    /// Food on the ground it found no way to (`creature::Scavenge`): where it lay, and the
+    /// tick until which it leaves food there be (`SCRAP_GIVE_UP`), as a chase it found no
+    /// way to win is given up (`brain::Memory::NoWay`). Not saved.
+    pub no_scrap: Option<(Vec3, u64)>,
     /// The last view each player was sent, to send only changes.
     sent: Option<CreatureView>,
     pub(crate) changed: bool,
@@ -921,7 +928,16 @@ impl Server {
                     kept: creature.owner.is_some(),
                     errand: self.villagers.errand(id, handoff).or_else(|| self.wandering.errand(id)),
                     ward: if warded { self.creatures.ward_at(position) } else { None },
-                    scrap: species.def.scavenge.as_ref().filter(|_| creature.owner.is_none()).and_then(|s| self.items.scrap_near(position, s.reach, &species.scraps)),
+                    scrap: species.def.scavenge.as_ref().filter(|_| creature.owner.is_none()).and_then(|s| {
+                        // Food it sees (its look, as for a player: `in_view`) or smells close by
+                        // (`Senses::close`), and none it lately found no way to.
+                        let senses = &species.def.senses;
+                        let given_up = creature.no_scrap.filter(|&(_, until)| self.tick < until).map(|(at, _)| at);
+                        self.items.scrap_near(position, s.reach, &species.scraps, |at| {
+                            let d = at.distance(position);
+                            given_up.is_none_or(|g| g.distance(at) > 1.5) && (d < senses.close || d < senses.sight && self.in_view(&creature.body, senses.field, at + Vec3::Y * 0.2))
+                        })
+                    }),
                     carrying: creature.carrying.is_some(),
                     dt: every as f32 * dt,
                     // By its own count of thoughts, never the tick it thinks on.
@@ -1286,6 +1302,14 @@ impl Server {
         if over || wanted != Vec3::ZERO && (!gained || detour != 0.0) {
             creature.stuck += if gained && !over { dt * 0.5 } else { dt };
             if creature.stuck > 2.0 {
+                // Stuck short of food on the ground (a fence, a wall between): it leaves food
+                // there be for a while.
+                if creature.carrying.is_none()
+                    && doing_any(species, &creature.mind, &["scavenge"])
+                    && let Some(goal) = decision.goal
+                {
+                    creature.no_scrap = Some((goal, self.tick + SCRAP_GIVE_UP * TICKS_PER_SECOND as u64));
+                }
                 creature.decision.goal = None;
                 creature.mind.goal = None;
                 creature.stuck = 0.0;
@@ -1830,6 +1854,7 @@ impl Server {
             needs: Needs::default(),
             climate_fit: 1.0,
             carrying: None,
+            no_scrap: None,
             sent: None,
             changed: true,
         };
@@ -6355,6 +6380,55 @@ mod fight_tests {
         let moved = server.creatures.live[&bear].body.position.with_y(0.0).distance(from.with_y(0.0));
         assert!(moved < 0.1, "the held bear moved {moved:.2} blocks");
         assert_eq!(server.players[&player].health, health, "the held bear's blow landed");
+    }
+
+    /// A fox goes only for meat it senses (`creature::Scavenge`): not meat shut in a stone
+    /// hut out of its sight and smell. Meat it sees through a fence but cannot get to, it
+    /// gives up on (`Live::no_scrap`) rather than mill at the fence.
+    #[test]
+    fn a_fox_gives_up_on_meat_it_cannot_reach() {
+        for (what, fenced) in [("hut", false), ("fence", true)] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 48);
+            let id = put(&mut server, "base:fox", c.as_vec3() + Vec3::new(0.5, 0.0, 0.5), Vec3::X);
+            let meat = c + IVec3::new(9, 0, 0);
+            let ring: Vec<IVec3> = (-2..=2).flat_map(|i| [IVec3::new(i, 0, -2), IVec3::new(i, 0, 2), IVec3::new(-2, 0, i), IVec3::new(2, 0, i)]).map(|d| meat + d).collect();
+            if fenced {
+                let fence = server.content.blocks.expect("base:oak_fence_east");
+                for cell in ring {
+                    server.world.set_block(cell, fence);
+                }
+            } else {
+                wall(&mut server, ring, 3);
+                let stone = server.content.blocks.expect("base:stone");
+                for d in (-2..=2).flat_map(|x| (-2..=2).map(move |z| IVec3::new(x, 3, z))) {
+                    server.world.set_block(meat + d, stone);
+                }
+            }
+            let venison = server.content.blocks.id("base:raw_venison").expect("venison");
+            server.items.spawn(ItemStack::new(venison, 3), voxmar_engine::dropped::Loose::new(meat.as_vec3() + Vec3::new(0.5, 0.0, 0.5), Vec3::ZERO), 0.0);
+            join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, -30.5));
+            let scavenging = |server: &Server| doing_any(server.content.creatures.get(server.creatures.live[&id].species), &server.creatures.live[&id].mind, &["scavenge"]);
+            let (mut tried, mut late) = (false, 0);
+            for _ in 0..40 * TICKS_PER_SECOND {
+                server.tick += 1;
+                server.tick_creatures();
+                tried |= scavenging(&server);
+                // Once it has given the meat up (and thought again since), it leaves it be.
+                let since = |until: u64| until - SCRAP_GIVE_UP * TICKS_PER_SECOND as u64 + TICKS_PER_SECOND as u64;
+                let given_up = server.creatures.live[&id].no_scrap.is_some_and(|(_, until)| (since(until)..until).contains(&server.tick));
+                if given_up && scavenging(&server) {
+                    late += 1;
+                }
+            }
+            assert!(server.creatures.live[&id].carrying.is_none(), "{what}: the fox got the meat");
+            if fenced {
+                assert!(tried && server.creatures.live[&id].no_scrap.is_some(), "{what}: the fox never tried for the meat, or never gave it up");
+                assert_eq!(late, 0, "{what}: the fox still milled at the fence once it gave the meat up");
+            } else {
+                assert!(!tried, "{what}: the fox went for meat it could neither see nor smell");
+            }
+        }
     }
 
     /// A game bird sits tight (`creature::Flush`): a player walking up to it in the open is

@@ -284,8 +284,10 @@ struct Flee {
 impl Flee {
     fn threat(&self, ctx: &Ctx) -> Option<Seen> {
         let radius = flees_at(ctx, self.radius);
+        // One who hurt it while it is still afraid, or come within its distance again: not a
+        // bystander nearer than them, once its fright has faded.
         ctx.attacker()
-            .filter(|_| ctx.mind.fear > 0.0)
+            .filter(|p| ctx.mind.fear > 0.0 || ctx.distance(p.position) < radius)
             .or_else(|| ctx.nearest().filter(|p| !p.tempting && ctx.distance(p.position) < sitting(ctx, p).map_or(radius, |f| f.hold)))
             .copied()
     }
@@ -389,10 +391,16 @@ impl Module for Hide {
         if flush(ctx).is_none() || ctx.mind.fear >= 0.3 || ctx.attacker().is_some() {
             return None;
         }
-        let wary = ctx.creature.behaviours.iter().find_map(|b| match b.behaviour {
-            Behaviour::Flee { radius } => Some(flees_at(ctx, radius)),
-            _ => None,
-        })?;
+        // Its widest flight, as `Warn` takes the widest hunt.
+        let wary = ctx
+            .creature
+            .behaviours
+            .iter()
+            .filter_map(|b| match b.behaviour {
+                Behaviour::Flee { radius } => Some(flees_at(ctx, radius)),
+                _ => None,
+            })
+            .reduce(f32::max)?;
         let p = ctx.nearest().filter(|p| !p.tempting && sitting(ctx, p).is_some_and(|f| (f.hold..wary).contains(&ctx.distance(p.position))))?;
         Want::at(2.0, *p)
     }
