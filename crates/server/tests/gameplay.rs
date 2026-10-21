@@ -8427,6 +8427,7 @@ impl Fresh {
     /// `item` (the player counts the drops coming, as one watching them would). Then waits for
     /// them to arrive.
     fn gather_from(&mut self, tool: &str, stands: &[Vec3], mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.make_room_for(item, need, tool);
         self.hold(tool);
         let id = self.c.content.blocks.expect(item);
         let mut owed = self.have(item);
@@ -8471,6 +8472,7 @@ impl Fresh {
     /// As [`Fresh::gather_from`] over open ground: the player walks up to the nearest block
     /// that is out of the pull and goes on.
     fn gather(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.make_room_for(item, need, tool);
         self.hold(tool);
         let id = self.c.content.blocks.expect(item);
         let mut owed = self.have(item);
@@ -8501,6 +8503,7 @@ impl Fresh {
     /// `targets` until `need` of `item` are carried or lie loose, then collects them; as in
     /// `gather`, what lies out of every reach is dug again.
     fn gather_chance(&mut self, tool: &str, mut targets: Vec<IVec3>, item: &str, need: u32) {
+        self.make_room_for(item, need, tool);
         self.hold(tool);
         // Only a target that can give `item`, as its drop or `instead`, is broken: another
         // block laid over the plot (the farm's copper) is passed over.
@@ -9395,6 +9398,23 @@ impl Fresh {
     /// takes nothing more in (a quest's reward, a craft, dug clay), and cooked food takes a
     /// slot each, so by the Farm age a player clears theirs out as this does.
     fn make_room(&mut self, free: usize) {
+        self.make_room_keeping(free, &[]);
+    }
+
+    /// Makes room for `need` of `item` in all, before gathering it with `tool` (both kept): the
+    /// pack fills with the way's loot as it goes, the hunt's and the gravel's more on one run
+    /// than another, and a drop with no room for it lies under the player for good.
+    fn make_room_for(&mut self, item: &str, need: u32, tool: &str) {
+        let id = self.c.content.blocks.expect(item);
+        let most = voxmar_engine::inventory::max_stack(id) as u32;
+        let topped: u32 = self.c.inventory.slots.iter().flatten().filter(|s| s.item == id).map(|s| most.saturating_sub(s.count as u32)).sum();
+        let more = need.saturating_sub(self.have(item)).saturating_sub(topped);
+        if more > 0 {
+            self.make_room_keeping(more.div_ceil(most) as usize, &[item, tool]);
+        }
+    }
+
+    fn make_room_keeping(&mut self, free: usize, keep: &[&str]) {
         const SPARE: [&str; 7] = ["base:burnt_food", "base:feather", "base:flint_pickaxe", "base:raw_small_game", "base:cooked_small_game", "base:oak_planks", "base:bread"];
         let slots = voxmar_engine::inventory::SLOTS;
         let empty = |c: &Client| (0..slots).filter(|&s| c.inventory.get(s).is_none()).count();
@@ -9403,7 +9423,7 @@ impl Fresh {
         }
         let back = self.at;
         assert!(self.hop_near(Self::middle(self.rel(29, 0, -10)), 0.5), "no room at the plot's far corner");
-        for item in SPARE {
+        for item in SPARE.into_iter().filter(|i| !keep.contains(i)) {
             let id = self.c.content.blocks.expect(item);
             while empty(&self.c) < free {
                 let Some(slot) = (0..slots).find(|&s| self.c.inventory.get(s).is_some_and(|x| x.item == id)) else { break };
