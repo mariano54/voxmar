@@ -6,10 +6,11 @@
 // - A voice is the sounds of one kind of animal, each event several recordings, one
 //   picked at random each time at a slightly different pitch. Events: step, idle,
 //   graze, alert, rest, call, ready (to breed), attack, warn (warning a player off before
-//   it attacks), hurt, death, and the barks of settlements' people: greet, alarm, content.
-//   A voice lacking one takes it from the voice it is `like`, then falls back to the
-//   nearest event it has (alert and ready to call, call to idle, attack, warn and hurt to
-//   alert, death to hurt).
+//   it attacks), hurt, death, and the barks of settlements' people: greet, alarm, content;
+//   and `tamed`, as the player tames it (its idle sound unless it gives one). A voice
+//   lacking one takes it from the voice it is `like`, then falls back to the nearest
+//   event it has (alert and ready to call, call to idle, attack, warn and hurt to alert,
+//   death to hurt).
 // - `size` is the height in blocks of the animal recorded: a species of another height
 //   sounds higher or lower (by the square root of the ratio), each individual a little
 //   more for its genes, the young higher still. A species' `pitch` overrides it.
