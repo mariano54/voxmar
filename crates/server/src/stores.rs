@@ -246,6 +246,8 @@ impl Server {
         player.changed(traits::INVENTORY);
         for (kind, item, n) in stocked {
             self.tally(agent, &kind, &item, n);
+            // Put away with the key, for a quest's `PutAway` (a move by hand is not).
+            self.tally(agent, "put_away", &item, n);
         }
         self.pull_store(agent);
         self.tell_store(agent, Words::key("store.put_away").with("count", Words::text(moved)));
@@ -600,16 +602,25 @@ mod tests {
         assert_eq!(slot(&server, 13), Some((stone, 3)), "the barrel holds no cobblestone");
         let stocked = server.players[&1].tallies.get("stocked:base:barrel:base:oak_planks").copied();
         assert_eq!(stocked, Some(84), "what went in counts for a quest's Stocked, as a move in does");
+        let put_away = server.players[&1].tallies.get("put_away:base:oak_planks").copied();
+        assert_eq!(put_away, Some(84), "and for a quest's PutAway, which only H counts");
     }
 
-    /// Planks put away with H into a home's store count for Put It Away, which asks for
-    /// planks in any store (`Stocked` by the store tag), however many kinds of store.
+    /// Planks put away with H into a home's store count for Put It Away (`PutAway`);
+    /// planks moved into the store by hand do not, though they are stocked.
     #[test]
     fn planks_put_away_finish_put_it_away() {
         let mut server = fixture();
         home_barrel(&mut server, "base:oak_planks", 1);
         // Open: From the Shelves, the quest before it, is done.
         server.players.get_mut(&1).unwrap().quests_done.push("base:from_the_shelves".into());
+        // Planks moved in by hand count for Stocked, not for the key the quest teaches.
+        give(&mut server, 0, "base:oak_planks", 40);
+        open(&mut server);
+        act(&mut server, "core:transfer", ActionTarget::Slots { from: 0, to: STORE as u8, count: 40 });
+        server.close_store(1);
+        server.update_quests(1);
+        assert!(!server.players[&1].quests_done.iter().any(|q| q == "base:put_it_away"), "done by moving planks in by hand");
         give(&mut server, 12, "base:oak_planks", 20);
         act(&mut server, "base:put_away", ActionTarget::None);
         server.update_quests(1);

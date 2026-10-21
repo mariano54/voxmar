@@ -244,7 +244,7 @@
         (
             name: "put_it_away", age: "nomad", branch: "home", title: "Put It Away",
             why: "Back from a day out with a full pack, there is no need to sort it by hand. At home, press H (the Put away key in the settings): every stack in your pack whose kind a store in your home already holds goes into that store, nearest first, and your hotbar stays as it is. Keep a few planks in a crate stack, carry more home and put thirty-two away.",
-            tasks: [[Stocked("tag:planks", "tag:storage", 32)]],
+            tasks: [[PutAway("tag:planks", 32)]],
             after: ["from_the_shelves"],
             side: true,
             rewards: [Xp("crafting", 30.0), Item("oak_crate_stack", 1)],

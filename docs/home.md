@@ -528,7 +528,8 @@ pack into the stores, so a home stays useful without sorting by hand.
 - **Quests.** What goes in is tallied by each store's block (`stocked:`), as a move into an
   open store is, so a quest's `Stocked` counts clay put away with H. The Nomad home side
   quest **Put It Away** (after From the Shelves) teaches the key: thirty-two planks into
-  any store (`Stocked("tag:planks", "tag:storage", 32)`). Test:
+  any store with the key (`PutAway("tag:planks", 32)`, a `put_away:ITEM` tally only
+  `put_away` keeps; a move by hand counts for `Stocked` only). Test:
   `planks_put_away_finish_put_it_away`.
 - **Which stores count.** Those in the home box (the same `home_stores` that Lay and the
   stations draw from, nearest first), and only while the player stands in their own home.

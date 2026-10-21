@@ -356,7 +356,8 @@ counted again from the world's cells; a quest finished drops the cells no open q
 counts),
 `Stocked(item, store, n)` (that item put in a store of that block, or of any store block
 with a `tag:` store, and left there: `stocked:STORE:ITEM`, in `push_store` and `put_away`,
-net of what is taken back out; Put It Away asks planks in any `tag:storage` store), `CraftNear(item,
+net of what is taken back out), `PutAway(item, n)` (put away into a home's stores with
+the Put away key: `put_away:ITEM`, in `put_away` only; Put It Away asks it), `CraftNear(item,
 near, n)` (made by a recipe with `near`, by that tag: `crafted_near:TAG`, beside `crafted`)
 and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever empties
 the snare gets the credit and the catch, as with a shared lit fire, until traps have
