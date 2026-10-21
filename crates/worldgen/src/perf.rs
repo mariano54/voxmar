@@ -11,6 +11,8 @@
 //!   core, cold and warm;
 //! - `land_samples`: the cost of one sample of the land on the rivers' and trails' 8-block
 //!   grids, the work most of a new region's time goes to;
+//! - `light_and_mesh`: what lighting a column and meshing its chunks costs, on the full
+//!   game's content, and the slowest of them;
 //! - `distant_tiles`: the cost of one sample of the client's distant land round spawn,
 //!   stage by stage, cold and warm;
 //!
@@ -135,6 +137,62 @@ fn generation_stages() {
     println!("{:>14} {:9.3}   ({lit} columns)", "light", ms(light, lit));
     println!("{:>14} {:9.3}   (all {COLUMN_CHUNKS} chunks of each)", "mesh", ms(mesh, lit));
     crate::parallel::set_enabled(true);
+}
+
+/// `cargo test --release -p voxmar_worldgen light_and_mesh -- --ignored --nocapture`
+/// lights and meshes the inner 6×6 columns of four areas of the full game's content,
+/// generated first on every core, `ROUNDS` times over, and reports the CPU time per column
+/// of lighting, and of meshing (the median, the slowest hundredth and the slowest), and
+/// per chunk of meshing, with the quads made: a client's meshing job is one column's.
+#[test]
+#[ignore]
+fn light_and_mesh() {
+    const ROUNDS: usize = 5;
+    prefer_fast_cores();
+    let (content, world_content) = crate::full_content();
+    let registry = content.blocks.clone();
+    let mut areas = Vec::new();
+    for seed in [1, 3] {
+        let world = Overworld::with_content(seed, registry.clone(), world_content);
+        for &(cx, cz) in &AREAS[..2] {
+            let area: Vec<Arc<Column>> = crate::tests::generate_area(&world, ColumnPos::new(cx, cz), 8).into_iter().map(Arc::new).collect();
+            areas.push(area);
+        }
+    }
+    let (mut light, mut chunks, mut columns, mut quads) = (Duration::ZERO, Vec::new(), Vec::new(), 0);
+    for round in 0..ROUNDS {
+        for area in &areas {
+            for j in 1..7 {
+                for i in 1..7 {
+                    let around: [Arc<Column>; 9] = std::array::from_fn(|k| area[(j + k / 3 - 1) * 8 + i + k % 3 - 1].clone());
+                    let start = thread_time();
+                    let region = LitRegion::compute(&registry, &around);
+                    light += thread_time() - start;
+                    let column = thread_time();
+                    for cy in 0..COLUMN_CHUNKS {
+                        let start = thread_time();
+                        let mesh = std::hint::black_box(mesh_chunk(&registry, &region, &around[4], cy, 1));
+                        chunks.push(thread_time() - start);
+                        if round == 0 {
+                            quads += [&mesh.opaque, &mesh.cutout, &mesh.inner, &mesh.translucent, &mesh.fringe].iter().map(|b| b.indices.len() / 6).sum::<usize>();
+                        }
+                    }
+                    columns.push(thread_time() - column);
+                }
+            }
+        }
+    }
+    let ms = |d: Duration| d.as_secs_f64() * 1e3;
+    let spread = |times: &mut Vec<Duration>| {
+        times.sort_unstable();
+        let at = |q: f64| ms(times[((times.len() - 1) as f64 * q) as usize]);
+        format!("median {:.3}, p99 {:.3}, slowest {:.3}", at(0.5), at(0.99), at(1.0))
+    };
+    let n = columns.len();
+    let total: Duration = columns.iter().sum();
+    println!("{n} columns ({} quads a column): light {:.3} ms a column", quads * ROUNDS / n, ms(light) / n as f64);
+    println!("mesh a column {:.3} ms: {}", ms(total) / n as f64, spread(&mut columns));
+    println!("mesh a chunk: {}", spread(&mut chunks));
 }
 
 /// `cargo test --release -p voxmar_worldgen first_column -- --ignored --nocapture`
