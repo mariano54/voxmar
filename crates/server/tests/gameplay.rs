@@ -8344,16 +8344,17 @@ impl Pacing {
         out
     }
 
-    /// The longest wait with nothing new that began at `since` or later, up to `to`: its
-    /// seconds, the second it began, and the new thing that ended it (none, if the run did).
+    /// The longest wait with nothing new between `since` and `to`, counted from `since` for
+    /// one that began before it: its seconds, the second it began, and the new thing that
+    /// ended it (none, if `to` did).
     fn longest_gap(&self, since: f32, to: f32) -> (f32, f32, Option<&str>) {
-        let mut times: Vec<(f32, Option<&str>)> = self.new.iter().map(|(at, _, name)| (*at, Some(name.as_str()))).collect();
-        times.push((to, None));
-        let mut from = 0.0;
-        let mut longest = (0.0, 0.0, None);
+        let times = self.new.iter().map(|(at, _, name)| (*at, Some(name.as_str()))).take_while(|&(at, _)| at < to).chain([(to, None)]);
+        let mut from = 0.0f32;
+        let mut longest = (0.0, since, None);
         for (at, name) in times {
-            if from >= since && at - from > longest.0 {
-                longest = (at - from, from, name);
+            let start = from.max(since);
+            if at > since && at - start > longest.0 {
+                longest = (at - start, start, name);
             }
             from = from.max(at);
         }
@@ -9777,7 +9778,12 @@ impl Fresh {
                 self.wait(5.0, &format!("throwing away {item}"), |c| c.inventory.get(slot).is_none_or(|x| x.item != id));
             }
         }
-        assert!(empty(&self.c) >= free, "only {} slots empty after throwing away the spare", empty(&self.c));
+        assert!(
+            empty(&self.c) >= free,
+            "only {} slots empty after throwing away the spare, the pack holding {:?}",
+            empty(&self.c),
+            (0..slots).filter_map(|s| self.c.inventory.get(s)).map(|x| format!("{} {}", x.count, self.c.content.blocks.def(x.item).name)).collect::<Vec<_>>()
+        );
         self.c.tp(back);
         self.at = back;
     }
@@ -10212,6 +10218,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let (hearth, end) = (f.marks.iter().find(|m| m.name == "hearth_lit").expect("the hearth lit").at, f.secs());
     let pacing = f.pacing.borrow();
     let (gap, from, ended) = pacing.longest_gap(hearth, end);
+    eprintln!("from the lit hearth: the longest wait with nothing new {gap:.1} s from {from:.1} s, ended by {}", ended.unwrap_or("the end of the run"));
     assert!(gap <= PACING_WAIT, "{gap:.1} s with nothing new from {from:.1} s on the Farm line (the hearth lit at {hearth:.1} s), ended by {}", ended.unwrap_or("the end of the run"));
 }
 
@@ -10243,8 +10250,9 @@ const PACING_NEW: usize = 5;
 /// clay at the pit kiln, 29 to 40 s in 32 runs, Oct 20).
 const PACING_STRETCH: f32 = 60.0;
 
-/// The longest the Farm line, from the lit hearth, may go with nothing new, in server
-/// seconds: no longer than one action may go on (`PACING_STRETCH`).
+/// The longest the Nomad line from the first campfire to the lit hearth, and the Farm line
+/// from the lit hearth on, may go with nothing new, in server seconds: no longer than one
+/// action may go on (`PACING_STRETCH`).
 const PACING_WAIT: f32 = PACING_STRETCH;
 
 /// The pacing check's report: what was new in each window of the run, by kind, and the
@@ -10356,8 +10364,17 @@ fn finish(mut f: Fresh) {
         f.mined, f.c.deaths, f.restocks, settle.0, settle.1, f.secs()
     );
     eprintln!("{report}");
-    // The Nomad line paced as the Farm's is, by the same floors.
+    // The Nomad line paced as the Farm's is, by the same floors, and from the first campfire
+    // to the lit hearth never longer with nothing new than one action may go on.
     check_pacing(&mut f);
+    let at = |name: &str| f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached")).at;
+    let (fire, hearth) = (at("first_night"), at("hearth_lit"));
+    {
+        let pacing = f.pacing.borrow();
+        let (gap, from, ended) = pacing.longest_gap(fire, hearth);
+        eprintln!("from the first campfire to the lit hearth: the longest wait with nothing new {gap:.1} s from {from:.1} s, ended by {}", ended.unwrap_or("the lit hearth"));
+        assert!(gap <= PACING_WAIT, "{gap:.1} s with nothing new from {from:.1} s on the Nomad line (the first campfire at {fire:.1} s, the hearth lit at {hearth:.1} s), ended by {}", ended.unwrap_or("the lit hearth"));
+    }
     for &(name, budget) in FRESH_BUDGETS {
         let m = f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached"));
         assert!(m.at <= budget, "{name} took {:.1} server seconds, over its budget of {budget}", m.at);
