@@ -1905,6 +1905,16 @@ mod tests {
         assert_eq!(way("base:cook", &["pit_kiln", "clay"]), Some("fire_in_kiln".into()));
         assert_eq!(way("base:cook", &["crucible", "copper_ore"]), Some("smelt".into()));
         assert_eq!(way("base:cook", &["campfire", "raw_beef"]), None);
+        // The Farm age's hand stations are heard at their work, never as food on a fire,
+        // and what each gives as it comes off them.
+        assert_eq!(way("base:cook", &["quern_stones", "wheat"]), Some("grind".into()));
+        assert_eq!(way("base:cook", &["spindle_stand", "wool"]), Some("spin".into()));
+        assert_eq!(way("base:cook", &["loom_frame", "wool"]), Some("weave".into()));
+        assert_eq!(way("base:cook", &["old_quern_stones", "wheat"]), None, "a village's quern works nothing");
+        let gives = |item: &str| recorded.actions["base:cook"].brings.iter().find(|b| b.tags.iter().all(|t| blocks.def(id(item)).has_tag(t))).map(|b| b.tags.join("+"));
+        for (item, heard) in [("flour", "flour"), ("twine", "twine"), ("red_cloth", "cloth"), ("cooked_beef", "cooked"), ("burnt_food", "burnt")] {
+            assert_eq!(gives(item).as_deref(), Some(heard), "{item}");
+        }
         // An animal tended with shears or a pail is silent on the click, and heard by the
         // wool or milk the server gives; fed, as ever. A swarm is heard by the skep of bees
         // it brings, a full skep's honey as the server cuts it (`Done`), never on the click.
@@ -1923,8 +1933,26 @@ mod tests {
         assert!(!bees_taken(&content.bees, id("bee_nest"), BlockId::AIR), "a nest gone may be broken");
         assert!(!bees_taken(&content.bees, id("bee_skep"), id("honey_skep")), "a skep filling");
         // What is swung: a door as ever, a gate, shutters, a hatch, a curtain each its own.
-        for (block, heard) in [("wooden_door", None), ("balcony_door_open", None), ("oak_fence_gate", Some("gate")), ("oak_fence_gate_open", Some("gate")), ("wooden_shutters", Some("shutters")), ("oak_shuttered_window", Some("shutters")), ("oak_hatch", Some("hatch")), ("red_curtain", Some("curtain"))] {
+        for (block, heard) in [("wooden_door", None), ("balcony_door", None), ("wooden_door_open", Some("shut")), ("wooden_door_open_top", Some("shut")), ("balcony_door_open", Some("shut")), ("oak_fence_gate", Some("gate")), ("oak_fence_gate_open", Some("gate")), ("wooden_shutters", Some("shutters")), ("oak_shuttered_window", Some("shutters")), ("oak_hatch", Some("hatch")), ("red_curtain", Some("curtain"))] {
             assert_eq!(way("base:open", &[block]), heard.map(str::to_owned), "{block}");
+        }
+        // A store by what is opened; a bed and a seat by what they are made of.
+        for (action, block, heard) in [
+            ("base:open_store", "chest", None),
+            ("base:open_store", "crate", None),
+            ("base:open_store", "barrel", Some("barrel")),
+            ("base:open_store", "oak_barrel_rack", Some("barrel")),
+            ("base:open_store", "oak_cupboard", Some("cupboard")),
+            ("base:open_store", "dark_oak_wardrobe", Some("cupboard")),
+            ("base:open_store", "earthen_jar", Some("jar")),
+            ("base:open_store", "cobalt_basket", Some("basket")),
+            ("base:sleep", "sleeping_bag", None),
+            ("base:sleep", "oak_bed", Some("bed_frame")),
+            ("base:sit", "birch_stool", Some("wooden_seat")),
+            ("base:sit", "oak_settle", Some("wooden_seat")),
+            ("base:sit", "red_cushion", None),
+        ] {
+            assert_eq!(way(action, &[block]), heard.map(str::to_owned), "{action} at {block}");
         }
         // Each station loaded at its empty block sounds of its own; emptied, as before.
         for station in &content.stations.stations {
@@ -2167,10 +2195,11 @@ mod tests {
             assert!(recorded.actions.contains_key(name), "no sound for {name}");
         }
         assert!(!recorded.pickup.is_empty(), "no pickup pop");
-        // What fishing and cooking bring is heard as it lands: a catch, food done or burnt.
+        // What fishing and cooking bring is heard as it lands: a catch, food done or burnt,
+        // and the flour, twine and cloth of the Farm age's hand stations.
         let brings = |name: &str| recorded.actions[name].brings.iter().map(|b| b.tags.join("+")).collect::<Vec<_>>();
         assert_eq!(brings("base:fish"), ["fish+raw"]);
-        assert_eq!(brings("base:cook"), ["burnt", "cooked"]);
+        assert_eq!(brings("base:cook"), ["burnt", "cooked", "flour", "twine", "cloth"]);
         // Every tag a result is told by is one some item has.
         for brought in recorded.actions.values().flat_map(|sound| &sound.brings) {
             for tag in &brought.tags {

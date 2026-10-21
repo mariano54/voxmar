@@ -474,6 +474,7 @@
     "settings.key.quests.hint": "クエストブックを開閉する。",
     "quest.hint": "クエストをクリックで詳しく。ドラッグで見渡し、ホイールか＋と－で拡大縮小。「！」は報酬が待っている。",
     "quest.current": "現在のクエスト",
+    "quest.open_now": "今できること",
     "quest.pick": "クエストを選ぶと、やる理由が出る。",
     "quest.empty": "ここにはまだクエストがない。",
     "quest.status.done": "達成済み",

@@ -27,6 +27,7 @@ use voxmar_engine::content::Content;
 use voxmar_engine::lang::{def_key, title_from_id};
 use voxmar_engine::quest::{Goal, QuestDef, QuestState, Reward};
 use voxmar_engine::quest_path::QuestPath;
+use voxmar_engine::recipe_book::{Entry, Method, RecipeBook};
 
 use super::HudImages;
 use super::inventory::InterfaceStyle;
@@ -243,6 +244,15 @@ fn state<'a>(player: &'a LocalPlayer, name: &str) -> Option<&'a QuestState> {
 /// Whether a quest is finished and its rewards wait to be claimed.
 pub fn claimable(player: &LocalPlayer, name: &str) -> bool {
     state(player, name).is_some_and(|s| s.done && !s.claimed)
+}
+
+/// What the player can do now, in every chapter: the quests with rewards waiting first,
+/// then those open, each in the book's order.
+pub(crate) fn open_now<'a>(content: &'a Content, player: &LocalPlayer) -> Vec<&'a QuestDef> {
+    let ages = chapters(content);
+    let in_order = || ages.iter().flat_map(|age| content.quests.iter().filter(move |q| q.age == *age));
+    let waiting = in_order().filter(|q| claimable(player, &q.name));
+    waiting.chain(in_order().filter(|q| standing(content, player, q) == Standing::Open)).collect()
 }
 
 pub fn standing(content: &Content, player: &LocalPlayer, quest: &QuestDef) -> Standing {
@@ -562,6 +572,9 @@ struct QuestScreen;
 struct ChapterButton(usize);
 #[derive(Component)]
 struct Chapters;
+/// A quest in the chapters' column's list of those open now: pressed, the book turns to it.
+#[derive(Component)]
+struct OpenQuest(String);
 #[derive(Component)]
 pub(crate) struct Web;
 /// The web's quests and lines, inside the well, at its margins (which centre a web smaller
@@ -704,8 +717,9 @@ fn spawn(mut commands: Commands, font: Res<UiFont>, style: Res<InterfaceStyle>) 
             // The chapters, the web filling what is left, and the picked quest's page at the
             // right.
             card.spawn(Node { flex_grow: 1.0, min_height: Val::ZERO, column_gap: Val::Px(space::GAP), ..default() }).with_children(|columns| {
-                let chapters = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), width: Val::Px(CHAPTERS), flex_shrink: 0.0, overflow: Overflow::scroll_y(), ..default() };
-                columns.spawn((chapters, Chapters));
+                // The chapters and the list of what is open now, scrolled when it runs long.
+                let chapters = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), width: Val::Px(CHAPTERS), min_height: Val::ZERO, flex_shrink: 0.0, overflow: Overflow::scroll_y(), ..default() };
+                columns.spawn((chapters, Chapters, ScrollList));
                 let web = Node {
                     flex_grow: 1.0,
                     flex_basis: Val::ZERO,
@@ -772,16 +786,36 @@ fn book_shown(ui: Res<UiState>) -> bool {
     ui.quests_open && !ui.recipes_open
 }
 
-#[allow(clippy::type_complexity)]
-fn pick(
-    launch: Res<Launch>,
-    chapters_pressed: Query<(&ChapterButton, &Interaction), Changed<Interaction>>,
-    nodes: Query<(&QuestNode, &Interaction), Changed<Interaction>>,
-    pins: Query<&Interaction, (Changed<Interaction>, With<PinButton>)>,
-    mut view: ResMut<QuestView>,
-    mut settings: ResMut<Settings>,
-) {
+/// What the book's pages are pressed by: its chapters, its quests on the web, the list of
+/// those open now (and the mouse and touches, to tell a new press from one held while the
+/// list is drawn again), and the pin.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Presses<'w, 's> {
+    chapters: Query<'w, 's, (&'static ChapterButton, &'static Interaction), Changed<Interaction>>,
+    nodes: Query<'w, 's, (&'static QuestNode, &'static Interaction), Changed<Interaction>>,
+    listed: Query<'w, 's, (&'static OpenQuest, &'static Interaction), Changed<Interaction>>,
+    mouse: Res<'w, ButtonInput<MouseButton>>,
+    touches: Res<'w, Touches>,
+    pins: Query<'w, 's, &'static Interaction, (Changed<Interaction>, With<PinButton>)>,
+}
+
+fn pick(launch: Res<Launch>, presses: Presses, mut view: ResMut<QuestView>, mut settings: ResMut<Settings>, mut recentre: ResMut<Recentre>) {
     let content = &launch.content;
+    let Presses { chapters: chapters_pressed, nodes, listed, mouse, touches, pins } = presses;
+    let new_press = mouse.just_pressed(MouseButton::Left) || touches.any_just_pressed();
+    // One from the list of those open now, wherever it is: brought to the middle too, the
+    // one picked already as well. Only on a new press: the list is drawn again under a held
+    // one.
+    for (open, interaction) in &listed {
+        if *interaction == Interaction::Pressed
+            && new_press
+            && let Some(quest) = content.quests.get(&open.0)
+        {
+            view.chapter = chapters(content).iter().position(|age| *age == quest.age).unwrap_or(view.chapter);
+            view.picked = Some(quest.name.clone());
+            recentre.0 = true;
+        }
+    }
     for (chapter, interaction) in &chapters_pressed {
         if *interaction == Interaction::Pressed && view.chapter != chapter.0 {
             view.chapter = chapter.0;
@@ -890,7 +924,7 @@ fn draw(
     (images, style, look): (Res<HudImages>, Res<InterfaceStyle>, Res<QuestLook>),
     (mut shapes, mut assets): (ResMut<ShapeImages>, ResMut<Assets<Image>>),
     settings: Res<Settings>,
-    viewer: Res<super::recipes::RecipeViewer>,
+    (viewer, mut way_cache): (Res<super::recipes::RecipeViewer>, Local<WayCache>),
     chapters_column: Query<Entity, With<Chapters>>,
     (mut web, stage): (Query<(Entity, &mut ScrollPosition), With<Web>>, Query<&ComputedNode, With<Stage>>),
     detail: Query<Entity, With<Detail>>,
@@ -915,6 +949,9 @@ fn draw(
     let zoomed = zoom_at.0.take();
     let refit = drawn.as_ref().is_none_or(|(was, ..)| was.picked != view.picked);
     *drawn = Some(wanted);
+    if launch.is_changed() {
+        way_cache.0.clear();
+    }
     let content = &launch.content;
     let font = &font.0;
     let ages = chapters(content);
@@ -957,6 +994,26 @@ fn draw(
                         });
                     });
                 });
+            }
+            // Under the chapters, what can be done now, from any of them: a reward waiting
+            // marked with a gold "!".
+            let open = open_now(content, &player);
+            if !open.is_empty() {
+                let heading = Node { flex_shrink: 0.0, margin: UiRect::top(Val::Px(space::INNER)), ..default() };
+                column.spawn((heading, shadowed(font, locale.get("quest.open_now").to_owned(), BODY, ACCENT), TightLine));
+            }
+            for quest in open {
+                let waiting = claimable(&player, &quest.name);
+                let node = Node { flex_shrink: 0.0, padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
+                let style = ButtonStyle::Secondary;
+                let mut row = column.spawn((Button, style, node, style.pieces()[0].image(), OpenQuest(quest.name.clone())));
+                if view.picked.as_deref() == Some(quest.name.as_str()) {
+                    row.insert(crate::ui::widgets::Selected);
+                }
+                let words = if waiting { format!("! {}", title(&locale, quest)) } else { title(&locale, quest) };
+                // At its own line's height, not `TightLine`'s: the row is only as tall as its
+                // words, and a tight line's ink reaches past it.
+                row.with_child(text(font, words, BODY, if waiting { GOLD } else { TEXT }));
             }
         });
     }
@@ -1258,25 +1315,26 @@ fn draw(
                         Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) | Goal::LookUp(name) => item_id(content, package(quest), name),
                         _ => None,
                     };
-                    let Some(item) = asked else {
-                        detail.spawn((Node { flex_shrink: 0.0, ..default() }, line));
-                        continue;
-                    };
-                    detail.spawn(Node { flex_shrink: 0.0, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
-                        super::recipes::item_cell(row, font, &images, Some(item), None);
-                        row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, line));
-                    });
-                    // How to make it, the way the recipe viewer draws it, for what a goal
-                    // makes.
-                    if matches!(goal, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::CraftNear(..) | Goal::Placed(..) | Goal::Have(..))
-                        && let Some(book) = viewer.book()
-                    {
-                        let ways = book.making(item);
+                    match asked {
+                        Some(item) => {
+                            detail.spawn(Node { flex_shrink: 0.0, align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|row| {
+                                super::recipes::item_cell(row, font, &images, Some(item), None);
+                                row.spawn((Node { flex_grow: 1.0, flex_basis: Val::ZERO, min_width: Val::ZERO, ..default() }, line));
+                            });
+                        }
+                        None => {
+                            detail.spawn((Node { flex_shrink: 0.0, ..default() }, line));
+                        }
+                    }
+                    // How to get it (or any of a tag's), the way the recipe viewer draws it,
+                    // with the words that say how: made, found, broken or caught, so the book
+                    // itself teaches the goal.
+                    if let Some(book) = viewer.book() {
+                        let key = format!("{}/{t}/{g}", quest.name);
+                        let ways = way_cache.0.entry(key.clone()).or_insert_with(|| goal_ways(content, book, package(quest), goal));
                         if !ways.is_empty() {
-                            let key = format!("{}/{t}/{g}", quest.name);
                             let shown = view.ways.get(&key).copied().unwrap_or(0) % ways.len();
-                            let entry = ways[shown];
-                            way_card(detail, font, &images, content, &locale, entry, (key, shown, ways.len()));
+                            way_card(detail, font, &images, &launch, &locale, &ways[shown], (key, shown, ways.len()));
                         }
                     }
                 }
@@ -1706,28 +1764,137 @@ fn drag_web(
     }
 }
 
-/// One way of making an item, small, under the goal that asks for it: what goes in, an
-/// arrow, what comes out, and, where there are several ways, arrows to turn to the next
-/// with "1/3" between them.
-fn way_card(detail: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, content: &Content, locale: &Locale, entry: &voxmar_engine::recipe_book::Entry, (key, shown, of): (String, usize, usize)) {
-    let card = Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, ..default() };
+/// Each goal's ways (by quest, task and goal), worked out once for the content played.
+#[derive(Default)]
+struct WayCache(std::collections::HashMap<String, Vec<Entry>>);
+
+/// The items a goal's name stands for: one item, or each item with a `tag:` (none for
+/// `any`).
+fn goal_items(content: &Content, package: &str, name: &str) -> Vec<BlockId> {
+    match name.strip_prefix("tag:") {
+        Some(tag) => {
+            let mut items: Vec<BlockId> = content.blocks.tagged(tag).map(|b| content.blocks.item_of(b)).collect();
+            items.sort();
+            items.dedup();
+            items
+        }
+        None => item_id(content, package, name).into_iter().collect(),
+    }
+}
+
+/// The ways a goal's item (or any of a tag's) is got, from the recipe book, each once and
+/// only those that count for the goal ([`counts`]), the least skilled first. For a plant
+/// to pick or a rock to mine, breaking or harvesting that very block comes first; a block
+/// the book has no way to (one found in the world that drops itself) is broken where it
+/// lies, unless no player can come by it.
+pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, package: &str, goal: &Goal) -> Vec<Entry> {
+    let name = match goal {
+        Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Have(name, _) | Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Catch(name, _) => name,
+        _ => return Vec::new(),
+    };
+    let mut all: Vec<Entry> = Vec::new();
+    for item in goal_items(content, package, name) {
+        for way in item_ways(content, book, goal, item) {
+            if counts(content, goal, &way) && !all.contains(&way) {
+                all.push(way);
+            }
+        }
+    }
+    all.sort_by_key(|way| level(&way.method));
+    all
+}
+
+/// Whether a way of getting an item counts for a goal: a goal to cook, cooking at a
+/// station, or a home station's work that counts as cooking (the station it names, for one
+/// at a station); to craft, crafting (near the
+/// block it names, for one near a block); to catch, a line's catch; to pick or mine,
+/// breaking or harvesting; to carry or set down, any way but a quest's reward (the goal
+/// teaches the work itself); to look an item up, none, for looking it up is its lesson.
+pub(crate) fn counts(content: &Content, goal: &Goal, way: &Entry) -> bool {
+    let method = &way.method;
+    // A station's or a block's tag, as the goal names it, on a block the way names by its own.
+    let carries = |tag: &str, named: &str| tag == named || content.blocks.tagged(tag).any(|b| content.blocks.def(b).has_tag(named));
+    // Left to work in a home station whose work counts as cooking (an earth clamp's fired
+    // clay), at that station by its name.
+    let station_cooks = |at: Option<&str>| match method {
+        Method::Work { station, .. } => content.stations.stations.iter().any(|s| s.empty == *station && s.works.iter().any(|w| w.output == way.output && w.counts.as_deref() == Some("cooked")))
+            && at.is_none_or(|at| content.blocks.def(*station).name.rsplit(':').next() == Some(at)),
+        _ => false,
+    };
+    match goal {
+        Goal::Cook(..) => matches!(method, Method::Cook { .. }) || station_cooks(None),
+        Goal::CookAt(_, at, _) => matches!(method, Method::Cook { station, .. } if carries(station, at)) || station_cooks(Some(at)),
+        Goal::Craft(..) => matches!(method, Method::Craft { .. }),
+        Goal::CraftNear(_, at, _) => matches!(method, Method::Craft { near: Some(near), .. } if carries(near, at)),
+        Goal::Catch(..) => matches!(method, Method::Catch { .. }),
+        Goal::Pick(..) | Goal::Mine(..) => matches!(method, Method::Break { .. } | Method::Harvest { .. } | Method::Found { .. }),
+        Goal::Have(..) | Goal::Placed(..) => !matches!(method, Method::Reward { .. }),
+        _ => false,
+    }
+}
+
+/// The level in its skill a way takes, 1 for one that takes none.
+fn level(method: &Method) -> u8 {
+    match method {
+        Method::Craft { level, .. } | Method::Cook { level, .. } | Method::Work { level, .. } | Method::Harvest { level, .. } | Method::Break { level, .. } | Method::Catch { level, .. } | Method::Trap { level, .. } | Method::Bees { level, .. } | Method::Found { level, .. } => (*level).max(1),
+        _ => 1,
+    }
+}
+
+fn item_ways(content: &Content, book: &RecipeBook, goal: &Goal, item: BlockId) -> Vec<Entry> {
+    let plant = content.blocks.item_of(item);
+    let mut ways: Vec<&Entry> = book.making(item);
+    if matches!(goal, Goal::Pick(..) | Goal::Mine(..)) {
+        let from = |block: BlockId| content.blocks.item_of(block) == plant;
+        let at: Vec<&Entry> = book.entries().iter().filter(|e| matches!(e.method, Method::Break { block, .. } | Method::Harvest { crop: block, .. } if from(block))).collect();
+        if !at.is_empty() {
+            ways = at;
+        }
+    }
+    let info = content.blocks.info(item);
+    // Never one a player cannot come by (a creative-only block, as polished granite).
+    let creative = content.blocks.def(item).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY);
+    if !creative && !ways.iter().any(|e| counts(content, goal, e)) && info.drop_count > 0 && content.blocks.item_of(info.drops) == plant {
+        let rule = content.tools.rule(item);
+        let tool = rule.and_then(|rule| content.tools.first_of(rule.tool?, rule.tier));
+        let (skill, level) = rule.map_or((None, 1), |rule| (rule.skill, rule.level));
+        return vec![Entry { method: Method::Break { block: item, tool, skill, level, chance: 1.0 }, output: plant, count: (info.drop_count, info.drop_count) }];
+    }
+    ways.into_iter().cloned().collect()
+}
+
+/// One way of getting an item, small, under the goal that asks for it: what goes in, an
+/// arrow, what comes out, and, where there are several ways, under them arrows to turn to
+/// the next with "1/3" between them (on a line of their own, so a recipe of many inputs
+/// still fits the column); under it, the recipe viewer's words for how it is done.
+fn way_card(detail: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, launch: &Launch, locale: &Locale, entry: &Entry, (key, shown, of): (String, usize, usize)) {
+    let content = &launch.content;
+    let card = Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(space::HAIR), padding: UiRect::all(Val::Px(space::HAIR)), flex_shrink: 0.0, align_self: AlignSelf::FlexStart, ..default() };
+    let line = || Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() };
     detail.spawn((card, Piece::Well.image())).with_children(|card| {
-        super::recipes::way_inputs(card, font, images, content, &entry.method, None, None);
-        card.spawn(shadowed(font, "→", BODY, GOLD));
-        let (low, high) = entry.count;
-        super::recipes::item_cell(card, font, images, Some(entry.output), (high > 1 && low == high).then(|| high.to_string()));
+        card.spawn(line()).with_children(|card| {
+            super::recipes::way_inputs(card, font, images, content, &entry.method, None, None);
+            card.spawn(shadowed(font, "→", BODY, GOLD));
+            let (low, high) = entry.count;
+            super::recipes::item_cell(card, font, images, Some(entry.output), (high > 1 && low == high).then(|| high.to_string()));
+        });
         if of > 1 {
-            let arrow = |card: &mut ChildSpawnerCommands, label: &str, step: i32| {
-                let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), justify_content: JustifyContent::Center, align_items: AlignItems::Center, flex_shrink: 0.0, ..default() };
-                card.spawn((Button, crate::ui::widgets::HoverLight, WayStep { key: key.clone(), step, of }, node, Piece::Well.image())).with_children(|b| {
-                    b.spawn((shadowed(font, label.to_owned(), BODY, TEXT), TightLine));
-                });
-            };
-            arrow(card, "◂", -1);
-            card.spawn((text(font, locale.format("recipes.page", &[("page", &(shown + 1)), ("pages", &of)]), BODY, SOFT), TightLine));
-            arrow(card, "▸", 1);
+            card.spawn(line()).with_children(|card| {
+                let arrow = |card: &mut ChildSpawnerCommands, label: &str, step: i32| {
+                    let node = Node { width: Val::Px(SLOT), height: Val::Px(SLOT), justify_content: JustifyContent::Center, align_items: AlignItems::Center, flex_shrink: 0.0, ..default() };
+                    card.spawn((Button, crate::ui::widgets::HoverLight, WayStep { key: key.clone(), step, of }, node, Piece::Well.image())).with_children(|b| {
+                        b.spawn((shadowed(font, label.to_owned(), BODY, TEXT), TightLine));
+                    });
+                };
+                arrow(card, "◂", -1);
+                card.spawn((text(font, locale.format("recipes.page", &[("page", &(shown + 1)), ("pages", &of)]), BODY, SOFT), TightLine));
+                arrow(card, "▸", 1);
+            });
         }
     });
+    for (words, color) in super::recipes::describe(locale, launch, &entry.method) {
+        detail.spawn((Node { flex_shrink: 0.0, padding: UiRect::left(Val::Px(PX)), ..default() }, text(font, words, BODY, color)));
+    }
 }
 
 /// The pinned quests at the right of the screen.
@@ -2311,6 +2478,98 @@ pub(crate) mod tests {
         assert_eq!(path_head(&[Done, Waiting, Waiting]), Some(1));
         assert_eq!(path_head(&[Done, Done]), Some(1));
         assert_eq!(path_head(&[]), None);
+    }
+
+    /// The list of what can be done now: rewards waiting first, then the quests open, in
+    /// the book's order; none done or still waiting on another.
+    #[test]
+    fn open_now_lists_rewards_waiting_then_open_quests() {
+        let content = content();
+        let mut player = LocalPlayer::default();
+        let fresh: Vec<String> = open_now(&content, &player).iter().map(|q| q.name.clone()).collect();
+        assert!(!fresh.is_empty() && fresh.iter().all(|n| content.quests.get(n).unwrap().after.is_empty()), "{fresh:?}");
+        // Done, one that alone opens another: its reward waits at the top, and what it
+        // opened joins the open ones.
+        let opens = |name: &str| content.quests.iter().filter(|q| q.after == [name.to_owned()]).map(|q| q.name.clone()).collect::<Vec<_>>();
+        let first = fresh.iter().find(|n| !opens(n).is_empty()).expect("a first quest opens another").clone();
+        player.quests.push(QuestState { name: first.clone(), done: true, claimed: false, tasks: Vec::new() });
+        let then: Vec<String> = open_now(&content, &player).iter().map(|q| q.name.clone()).collect();
+        assert_eq!(then[0], first, "its reward waits: first");
+        assert!(!then[1..].contains(&first), "done, it is no longer open: {then:?}");
+        assert!(opens(&first).iter().all(|n| then.contains(n) && !fresh.contains(n)), "what it opened joins: {then:?}");
+        // Open across chapters, they come in the book's order, the first chapter first.
+        let mut far = LocalPlayer::default();
+        far.quests = content.quests.iter().step_by(2).map(|q| QuestState { name: q.name.clone(), done: true, claimed: true, tasks: Vec::new() }).collect();
+        let ages = chapters(&content);
+        let at: Vec<usize> = open_now(&content, &far).iter().map(|q| ages.iter().position(|a| *a == q.age).unwrap()).collect();
+        assert!(at.windows(2).all(|w| w[0] <= w[1]) && at.first() != at.last(), "{at:?}");
+    }
+
+    /// A goal shows how its item is got without leaving the book: a rock to mine, broken
+    /// with the tool it takes; a crop to pick, harvested; a thing to make, its recipes; a
+    /// tag's goal, the ways of each item with it.
+    #[test]
+    fn each_goal_shows_how_its_item_is_got() {
+        let content = content();
+        let book = voxmar_server::recipe_book(&content).unwrap();
+        let id = |name: &str| content.blocks.id(name).unwrap();
+        let ways = |goal: Goal| goal_ways(&content, &book, "base", &goal);
+        let coal = id("base:coal_ore");
+        let mined = ways(Goal::Mine("coal_ore".into(), 1));
+        assert!(!mined.is_empty() && mined.iter().all(|e| matches!(e.method, Method::Break { block, .. } if block == coal)), "{mined:?}");
+        assert!(mined.iter().any(|e| matches!(e.method, Method::Break { tool: Some(_), .. })), "it names the tool it takes: {mined:?}");
+        let picked = ways(Goal::Pick("wheat_crop".into(), 1));
+        assert!(picked.iter().any(|e| matches!(e.method, Method::Harvest { forage: false, .. })), "{picked:?}");
+        // Clay, found in the world and dropping itself, has no recipe: it is dug where it lies.
+        let clay = id("base:clay");
+        let dug = ways(Goal::Have("clay".into(), 1));
+        assert!(matches!(dug.as_slice(), [Entry { method: Method::Found { .. } | Method::Break { .. }, output, .. }] if *output == clay), "{dug:?}");
+        let campfire = id("base:campfire");
+        assert_eq!(ways(Goal::Craft("campfire".into(), 1)), book.making(campfire).into_iter().cloned().collect::<Vec<_>>());
+        // A tag's goal: a way for each log, each once.
+        let logs = ways(Goal::Have("tag:log".into(), 1));
+        let outputs: Vec<BlockId> = logs.iter().map(|e| e.output).collect();
+        assert!(outputs.contains(&id("base:oak_log")) && outputs.contains(&id("base:spruce_log")), "{logs:?}");
+        assert!(logs.iter().enumerate().all(|(i, e)| !logs[..i].contains(e)), "each once");
+        // Cooking at a campfire shows only a campfire's cooking, the least skilled first; meat
+        // to cook, only cooking.
+        let at_fire = ways(Goal::CookAt("tag:edible".into(), "campfire".into(), 1));
+        assert!(!at_fire.is_empty() && at_fire.iter().all(|e| matches!(&e.method, Method::Cook { station, .. } if counts(&content, &Goal::CookAt(String::new(), "campfire".into(), 1), e) && !station.is_empty())), "{at_fire:?}");
+        assert!(at_fire.windows(2).all(|w| level(&w[0].method) <= level(&w[1].method)));
+        assert!(ways(Goal::Cook("tag:meat".into(), 1)).iter().all(|e| matches!(e.method, Method::Cook { .. })));
+        // Planks split on a chopping block: only that block's crafting.
+        let split = ways(Goal::CraftNear("tag:planks".into(), "chopping_block".into(), 1));
+        assert!(!split.is_empty() && split.iter().all(|e| matches!(&e.method, Method::Craft { near: Some(_), .. })), "{split:?}");
+        // A catch shows only the line's ways; looking an item up shows none, for that is its
+        // lesson.
+        let fish = ways(Goal::Catch("tag:fish".into(), 1));
+        assert!(!fish.is_empty() && fish.iter().all(|e| matches!(e.method, Method::Catch { .. })), "{fish:?}");
+        assert!(ways(Goal::LookUp("stone_pickaxe".into())).is_empty());
+        // Every goal on an item or a tag in the books, of every kind, shows at least one way,
+        // so none leaves a player to guess; each way counts for its goal, and none gets a
+        // creative-only item.
+        let creative = |b: BlockId| content.blocks.def(b).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY);
+        let mut shown = 0;
+        let mut kinds = std::collections::HashSet::new();
+        for quest in content.quests.iter() {
+            for goal in quest.tasks.iter().flatten() {
+                let (Goal::Pick(name, _) | Goal::Mine(name, _) | Goal::Craft(name, _) | Goal::Cook(name, _) | Goal::CookAt(name, _, _) | Goal::CraftNear(name, _, _) | Goal::Placed(name, _) | Goal::Have(name, _) | Goal::Catch(name, _)) = goal else { continue };
+                if name == "any" || name == "Kinds" {
+                    continue;
+                }
+                assert!(!goal_items(&content, package(quest), name).is_empty(), "{}: {goal:?} names no item", quest.name);
+                let ways = goal_ways(&content, &book, package(quest), goal);
+                assert!(!ways.is_empty(), "{}: {goal:?} shows no way to get it", quest.name);
+                for way in &ways {
+                    assert!(counts(&content, goal, way), "{}: {goal:?} shows {way:?}, which does not count", quest.name);
+                    assert!(!creative(way.output), "{}: {goal:?} names a creative-only item: {way:?}", quest.name);
+                }
+                kinds.insert(std::mem::discriminant(goal));
+                shown += 1;
+            }
+        }
+        assert!(kinds.len() >= 9, "every kind of goal on an item is checked: {}", kinds.len());
+        assert!(shown > 100, "{shown}");
     }
 
     /// Each chapter has a name in Japanese, and the tracker's numbers come from the data.

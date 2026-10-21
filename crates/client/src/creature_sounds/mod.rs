@@ -177,9 +177,11 @@ pub struct CreatureSound {
     /// An answer to the player's own hand (a fed ewe's munch): always heard, as an event's
     /// `chance` thins only what a creature does unbidden.
     pub answering: bool,
-    /// Its own idle noise as it wanders (`kind` is then `Idle`): a call or a contented
-    /// sound, by its voice's share of calls at this hour ([`defs::Calls`]).
-    pub chatter: bool,
+    /// Its own noise as it wanders, with the roll (0..1) that also set its pause after
+    /// (a low roll, a short one): a call when the roll falls under its voice's share of
+    /// calls at this hour ([`defs::Calls`]), else a contented sound. `kind` is `Idle` until
+    /// it is heard.
+    pub chatter: Option<f32>,
 }
 
 /// What creatures did this frame that may be heard; drained each frame.
@@ -391,7 +393,16 @@ fn play(
     mix: Option<Res<Mix>>,
     mut cues: MessageWriter<SoundCue>,
 ) {
-    let asked = std::mem::take(&mut asked.0);
+    let mut asked = std::mem::take(&mut asked.0);
+    let part = defs::Part::at(cycle.map_or(0.25, |cycle| cycle.ticks.rem_euclid(voxmar_protocol::TICKS_PER_DAY as f64) / voxmar_protocol::TICKS_PER_DAY as f64));
+    // What each chatter is, before it is counted: a call is counted as a call.
+    if let Some(voices) = &voices {
+        for sound in asked.iter_mut() {
+            if let (Some(roll), Some(voice)) = (sound.chatter, voices.bank.voice(sound.species)) {
+                sound.kind = chatter(voice.calls.at(part), roll);
+            }
+        }
+    }
     for sound in &asked {
         *heard.asked.entry(sound.kind).or_default() += 1;
     }
@@ -411,15 +422,11 @@ fn play(
     let Ok(ear) = listener.single().map(|t| t.translation()) else { return };
     let now = time.elapsed_secs();
     let master = MASTER * settings.sound_volume as f32 / 100.0;
-    let part = defs::Part::at(cycle.map_or(0.25, |cycle| cycle.ticks.rem_euclid(voxmar_protocol::TICKS_PER_DAY as f64) / voxmar_protocol::TICKS_PER_DAY as f64));
     let mut wanted: Vec<Voiced> = Vec::new();
-    for mut sound in asked {
+    for sound in asked {
         let creature = &launch.content.creatures.get(sound.species).def;
         let distance = sound.position.distance(ear);
         let Some(voice) = bank.voice(sound.species) else { continue };
-        if sound.chatter {
-            sound.kind = chatter(voice.calls.at(part), random(counter));
-        }
         // How heavy it is, by the volume of its body, against a sheep's.
         let (width, height) = creature.body.size;
         let scale = sound.scale.max(0.2) * if sound.young { 0.6 } else { 1.0 };

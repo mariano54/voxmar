@@ -453,6 +453,23 @@ or a way to shape what is built, and each paying bread:
 | Steps and Slabs | A Chopping Block, A Bench to Work At | Slabs and stairs made, two of each set down | Construction 30, 1 bread |
 | A Fence and a Gate | Steps and Slabs, A Bench to Work At | Posts, fences and a gate: a fence is two high to creatures; the gate swings open | Construction 40, 2 bread |
 
+## Fire, food and night in the Nomad book (Oct 20)
+
+Three side quests (`side: true`) on the way to the lit Homestead Hearth teach what a fire, a
+meal and a home at night give, each by the buff it names (`Felt`), so they hold whatever
+the buff comes to need. They sit on the cooking and home paths: the main line's walk
+(`the_main_quest_line_earns_every_level_it_asks_for`) counts no buffs. Each pays bread:
+
+| Quest | Path | After | Teaches | Pays |
+|---|---|---|---|---|
+| A Hot Meal | Cooking | First Night | Eating when hurt; cooked meat leaves you Hearty (`hearty`) | Cooking 20, 1 bread |
+| By the Fire | Home | First Night, Crafting Table | A stool made, and sitting by the fire (`fireside`): heal half as fast again, warmed | Construction 20, 1 bread |
+| An Evening In | Home | Homestead Hearth | After dark, under the roof within four blocks of the lit hearth (`evening_in`) | Construction 40, 2 bread |
+
+A Fence and a Gate counts `plain_fence`, the straight length alone, so gates and corners
+(which carry `fence` too) are not its six fences; `content.rs`
+`a_fence_and_a_gate_wants_fences_not_gates` holds it.
+
 ## Readable to a newcomer (Oct 13)
 
 Every Nomad and Farm quest was read as someone who has never played would: does its text
