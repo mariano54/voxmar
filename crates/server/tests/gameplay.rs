@@ -3530,11 +3530,13 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         // The last round's harvest the player would take or draw in comes in once its pickup
         // delay is out, which on a loaded server lands after the /clear and fills a slot the
         // wait below wants empty: let it come in first, by the server's own rule. What came
-        // to rest beyond the magnet stays where it is.
+        // to rest beyond the magnet stays where it is. One still sliding under 0.1 a second
+        // goes about 0.012 further, so it counts as settled only that far clear of the magnet.
         client.pump_until(|c| {
             c.items.values().all(|i| {
                 let item = voxmar_engine::dropped::Loose::new(i.position, i.velocity);
-                let settled = i.velocity.length() < 0.1 || voxmar_engine::dropped::middle(c.position).distance(item.centre()) >= voxmar_engine::dropped::CLAIM;
+                let away = voxmar_engine::dropped::middle(c.position).distance(item.centre());
+                let settled = i.velocity == Vec3::ZERO || (i.velocity.length() < 0.1 && away >= voxmar_engine::dropped::MAGNET + 0.02) || away >= voxmar_engine::dropped::CLAIM;
                 settled && item.pull(c.position) == voxmar_engine::dropped::Pull::Left
             })
         });
