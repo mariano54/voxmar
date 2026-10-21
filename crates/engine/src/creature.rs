@@ -235,7 +235,7 @@ impl Warn {
 }
 
 /// How a wild creature takes fire (docs/creature-ai.md, "Fire"). A player holding a fire at
-/// it (anything tagged `fire`: a torch) within `give` blocks, in its sight, it backs away
+/// it (anything tagged `fire`: a torch) within `give` blocks, one it has noticed, it backs away
 /// from, facing them, until they are `give` off, its warning let lapse; unless it was
 /// provoked, or is one of the bold (`fear` is the share of its kind that give ground, each
 /// individual by its own roll; the rest stand theirs).

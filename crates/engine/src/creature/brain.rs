@@ -1068,11 +1068,25 @@ pub(super) mod tests {
         }
         let _ = think(&wolf, &mut mind, &situation(&[Seen { fire: false, ..off[0] }]));
         assert_eq!((doing(&wolf, &mind), mind.attacker()), ("hunt", Some(1)), "the torch put away, its warning ran out long since");
-        // A torch it cannot see, or one in a creative player's hand, is no flame to it.
-        for unseen in [Seen { in_view: false, ..torch[0] }, Seen { creative: true, ..torch[0] }] {
+        // A torch from one it has not noticed (unseen, past its `close`), or in a creative
+        // player's hand, is no flame to it.
+        let behind = Seen { in_view: false, position: Vec3::new(3.5, 0.0, 0.0), ..torch[0] };
+        for unseen in [behind, Seen { creative: true, ..torch[0] }] {
             let mut mind = Mind::new(&wolf.def.temperament, 2);
             let _ = think(&wolf, &mut mind, &situation(&[unseen]));
             assert_ne!(doing(&wolf, &mind), "fire", "{unseen:?}");
+        }
+        // Noticed, it backs from the flame though it turns from it, and never hunts them.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let _ = think(&wolf, &mut mind, &situation(&[Seen { in_view: true, ..behind }]));
+        for _ in 0..10 {
+            let _ = think(&wolf, &mut mind, &situation(&[behind]));
+            assert_eq!(doing(&wolf, &mind), "fire", "turned from the flame, it still backs from it");
+        }
+        let away = [Seen { position: Vec3::new(6.0, 0.0, 0.0), ..behind }];
+        for _ in 0..10 {
+            let _ = think(&wolf, &mut mind, &situation(&away));
+            assert_ne!(doing(&wolf, &mind), "hunt", "unseen past the torch, it does not go for them");
         }
         // Struck, it fights; kept, or on an errand, fire is nothing to it; nor to a bold one.
         let mut mind = Mind::new(&wolf.def.temperament, 2);

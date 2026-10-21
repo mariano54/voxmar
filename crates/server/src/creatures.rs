@@ -6168,7 +6168,9 @@ mod fight_tests {
         for name in ["base:rabbit", "base:red_deer"] {
             let mut server = crate::test_server();
             let c = pen(&mut server, 48);
-            let id = put(&mut server, name, c.as_vec3() + Vec3::new(4.5, 0.0, 0.5), Vec3::X);
+            // Facing the player, so it sees them come, and far enough off that its double take
+            // (`Senses::react`) does not let them walk up and take it.
+            let id = put(&mut server, name, c.as_vec3() + Vec3::new(8.5, 0.0, 0.5), -Vec3::X);
             let player = join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
             let (mut winded, mut caught) = (false, None);
             for tick in 0..20 * TICKS_PER_SECOND as u64 {

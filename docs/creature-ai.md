@@ -174,14 +174,15 @@ back off, or to creep closer behind it. A blow skips the double take.
   The gate's Narrow and Feel steps summon their bear held and let it go with the first
   blow, as Climb does its wolf: stepping close is meant to provoke it.
 - **Fire** (Oct 21): a creature whose kind has a `fire` (creatures.ron) is afraid of it.
-  A player holding a fire (an item tagged `fire`: a torch) at it, in its sight, within its
-  `give` blocks, it backs away from, facing them (in its warning stance, for one that
+  A player holding a fire (an item tagged `fire`: a torch) at it, one it has noticed
+  (`Senses`: seen where it looks, or close by, and kept in mind a while as it turns away),
+  within its `give` blocks, it backs away from, facing them (in its warning stance, for one that
   warns), until they are `give` off and a block more (`FIRE_EXIT`); a warning it was giving
   lapses. Its kind's `fear` is the share that give ground, each individual by its own
   roll (`Fire::gives_ground`); the bold rest stand theirs. Held off, one that warns
   warns from beyond the torch as long as it is held and never comes for them by its
-  warning's time (only within its `near`, which the torch keeps it out of); put away, it
-  does. At night, unless `ward: false`, it keeps out of a lit fire's ward: a block's
+  warning's time (only within its `near`, which the torch keeps it out of), nor hunts them
+  unwarned when it does not see them; put away, it does. At night, unless `ward: false`, it keeps out of a lit fire's ward: a block's
   `ward` (a campfire, 8 blocks) or a lit multiblock's (the Homestead Hearth 16, the
   Crucible Kiln 10). Standing in one it walks out past its edge, a stroll (roam or
   wander) that would end in one is dropped, and a player standing in one it neither

@@ -599,6 +599,11 @@ impl Module for Hunt {
         if def.warn.is_some() && prey.in_view {
             return None;
         }
+        // A torch held keeps one that gives ground before fire from going for them, seen or
+        // not (`Fire`); it warns them from beyond it, if it sees them.
+        if prey.fire && def.fire.is_some_and(|f| f.gives_ground(ctx.mind.seed)) {
+            return None;
+        }
         Want::at(2.5 * personality.aggression, *prey)
     }
 
@@ -714,13 +719,14 @@ struct Fire;
 pub const FIRE_EXIT: f32 = 1.0;
 
 impl Fire {
-    /// The player holding a fire at it, near enough to give ground from.
+    /// The player holding a fire at it, near enough to give ground from: one it has noticed
+    /// (`Senses`), so a flame it lost sight of as it turned away it still backs from.
     fn bearer<'a>(ctx: &'a Ctx, fire: crate::creature::Fire) -> Option<&'a Seen> {
         if !fire.gives_ground(ctx.mind.seed) {
             return None;
         }
         let slack = if ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == "fire") { FIRE_EXIT } else { 0.0 };
-        ctx.at.players.iter().find(|p| p.fire && p.in_view && !p.creative && !p.friend && ctx.distance(p.position) < fire.give + slack)
+        ctx.at.players.iter().find(|p| p.fire && !p.creative && !p.friend && ctx.distance(p.position) < fire.give + slack)
     }
 }
 
