@@ -473,6 +473,9 @@ steps! {
     /// with none of its flames in reach of its thatch, its jettied houses stand out on
     /// their beams, and its row houses stand wall to wall under one roof.
     Settlements,
+    /// Back at the settlement, the player steps up to one of its people, who greets them
+    /// unasked (`people.react`): a greeting heard of someone close by.
+    Greeting,
     /// The home with a byre nearest the walled town (in the nearest place that has one)
     /// stands as planned: earth floor, a trough, hay, one doorway through the wall across
     /// and a back door, the family's beds in the room before it.
@@ -1832,6 +1835,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => 2.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
+        // The people come again, then the greeting, then home.
+        Step::Greeting => SETTLEMENT_PEOPLE + GREETING_WAIT + 20.0 + STEP_LIMIT,
         // The look for a byre, a fresh area round it to generate, and the observer home.
         Step::Byres => BYRE_SEARCH + SETTLEMENT_LOAD + 20.0 + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
@@ -2164,6 +2169,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Tarns => tarns(world, gate, now, in_phase),
         Step::Settlements => settlements(world, gate, now, in_phase),
+        Step::Greeting => greeting(world, gate, now, in_phase),
         Step::Byres => byres(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
@@ -18423,6 +18429,81 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     gate.check("settlements: back", Err("the observer never came back over the test ground".into()));
                 }
                 gate.observer_home = None;
+                gate.next(Step::Greeting, now);
+            }
+        }
+    }
+}
+
+/// Server seconds a person stood beside has to greet the player unasked.
+const GREETING_WAIT: f32 = 10.0;
+
+/// Blocks within which a greeting heard counts as the person stood beside's.
+const GREETING_NEAR: f32 = 6.0;
+
+/// Back in the settlement the Settlements step judged, the player stands where one of its
+/// people stands, and someone there greets them unasked (`people.react.greet`, a bark of
+/// the server's own, not `/creatures bark`). Then the player goes back to the test ground.
+fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    let feet = gate.feet;
+    let home = |world: &mut World| world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+    match gate.phase {
+        0 => {
+            let at = gate.settlement;
+            if at == IVec3::ZERO {
+                gate.check("settlement greeting", Err("no settlement to be greeted in".into()));
+                gate.next(Step::Byres, now);
+                return;
+            }
+            world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // The nearest of its people drawn, and the player where they stand.
+        1 => {
+            let content = world.resource::<Launch>().content.clone();
+            let feet = world.resource::<LocalPlayer>().position;
+            let nearest = world
+                .resource::<crate::creatures::Creatures>()
+                .views()
+                .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager && v.position.distance(feet) < 32.0)
+                .min_by(|a, b| a.position.distance(feet).total_cmp(&b.position.distance(feet)).then(a.id.cmp(&b.id)))
+                .map(|v| v.position);
+            let Some(to) = nearest else {
+                if gate.server_in_phase() > SETTLEMENT_PEOPLE {
+                    gate.check("settlement greeting", Err("no one of the settlement came to the player standing in its square".into()));
+                    home(world);
+                    gate.phase = 2;
+                    gate.advance(now);
+                }
+                return;
+            };
+            world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
+            world.resource::<Net>().command(&format!("tp {} {} {}", to.x, to.y, to.z));
+            gate.advance(now);
+        }
+        // A greeting heard, unasked, of someone near.
+        2 => {
+            let content = world.resource::<Launch>().content.clone();
+            let feet = world.resource::<LocalPlayer>().position;
+            let creatures = world.resource::<crate::creatures::Creatures>();
+            let greeter = world.resource::<crate::creature_sounds::Heard>().barks.iter().filter(|b| b.1 == crate::creature_sounds::Kind::Greet).find_map(|b| {
+                let v = creatures.views().find(|v| v.id == b.0)?;
+                let d = v.position.distance(feet);
+                (d <= GREETING_NEAR).then(|| (content.creatures.get(v.species).def.name.clone(), d))
+            });
+            if greeter.is_none() && gate.server_in_phase() < GREETING_WAIT {
+                return;
+            }
+            gate.check("settlement greeting", greeter.map(|(name, d)| format!("a {name} {d:.1} blocks off greeted the player unasked")).ok_or_else(|| format!("no one within {GREETING_NEAR} greeted the player in {GREETING_WAIT} server seconds")));
+            home(world);
+            gate.advance(now);
+        }
+        _ => {
+            let back = world.resource::<LocalPlayer>().position.xz().distance(gate.feet.xz().as_vec2() + 0.5) < 2.0;
+            if back || gate.server_in_phase() > 20.0 {
+                if !back {
+                    gate.check("settlement greeting: back", Err("the player never came back to the test ground".into()));
+                }
                 gate.next(Step::Byres, now);
             }
         }
@@ -18943,14 +19024,21 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     let planned_at: rustc_hash::FxHashSet<IVec3> = all_flames.iter().map(|r| r.0).filter(|p| (p.xz() - at.xz()).abs().max_element() <= TOWN_REACH + reach).collect();
     let on_ground: FxHashMap<IVec3, BlockId> = generator.settlement_planned_on_ground(at.xz(), &|b| generator.settlement_flame(b)).into_iter().collect();
     let mut flames = flames;
-    let mut looked: rustc_hash::FxHashSet<IVec3> = rustc_hash::FxHashSet::default();
+    // Each cell looked at once, kept in a flat grid over the box the look can reach rather
+    // than a set of every cell.
+    let (low_y, high_y) = planned.iter().fold((i32::MAX, i32::MIN), |(l, h), r| (l.min(r.0.y), h.max(r.0.y)));
+    let low = IVec3::new(at.x - TOWN_REACH - reach, low_y - reach, at.z - TOWN_REACH - reach);
+    let size = IVec3::new(2 * (TOWN_REACH + reach) + 1, high_y - low_y + 2 * reach + 1, 2 * (TOWN_REACH + reach) + 1);
+    let mut looked = vec![false; (size.x * size.y * size.z) as usize];
     let mut unplanned: Vec<String> = Vec::new();
     for &(r, _) in &planned {
         for z in -reach..=reach {
             for y in -reach..=reach {
                 for x in -reach..=reach {
                     let p = r + IVec3::new(x, y, z);
-                    if looked.insert(p)
+                    let d = p - low;
+                    let cell = &mut looked[((d.y * size.z + d.z) * size.x + d.x) as usize];
+                    if !std::mem::replace(cell, true)
                         && !planned_at.contains(&p)
                         && let Some(b) = observer.world.block(p).filter(|&b| generator.settlement_flame(b))
                     {

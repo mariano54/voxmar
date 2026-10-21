@@ -130,6 +130,22 @@ pub(super) struct PeopleFile {
     shrine: Option<String>,
     #[serde(default)]
     live: LiveFile,
+    #[serde(default)]
+    react: ReactFile,
+}
+
+/// `people.react` as written: each field it gives replaces the one before.
+#[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReactFile {
+    greet: Option<f32>,
+    greet_for: Option<f32>,
+    greet_every: Option<f32>,
+    fear: Option<f32>,
+    afraid: Option<f32>,
+    rain: Option<f32>,
+    shelter: Option<Vec<Place>>,
+    outdoor: Option<Vec<String>>,
 }
 
 /// `people.live` as written: each number it gives replaces the one before.
@@ -245,6 +261,7 @@ pub struct PeopleDef {
     /// The work or kind of building `Shrine` sends people to.
     pub shrine: String,
     pub live: LiveDef,
+    pub react: ReactDef,
     setters: BTreeMap<String, String>,
     pub(crate) notes: Vec<String>,
 }
@@ -262,9 +279,36 @@ impl Default for PeopleDef {
             newcomers_per_day: 1.0,
             shrine: "shrine".into(),
             live: LiveDef::default(),
+            react: ReactDef::default(),
             setters: BTreeMap::new(),
             notes: Vec::new(),
         }
+    }
+}
+
+/// How settlements' people react to what is about them (`people.react`;
+/// crates/server/src/villagers.rs). Distances in blocks, times in seconds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReactDef {
+    /// A player within `greet` (and as far up or down) is greeted: they stop, turn to
+    /// them and hum a greeting for `greet_for`, each greeting once in `greet_every`.
+    pub greet: f32,
+    pub greet_for: f32,
+    pub greet_every: f32,
+    /// A monster or a hunter within `fear` sends them home crying out, for `afraid`;
+    /// guards stand their ground.
+    pub fear: f32,
+    pub afraid: f32,
+    /// Rain of at least `rain` (its precipitation, 0 to 1) sends them home from the
+    /// `shelter` places, and from work at the `outdoor` works (a field, a pen).
+    pub rain: f32,
+    pub shelter: Vec<Place>,
+    pub outdoor: Vec<String>,
+}
+
+impl Default for ReactDef {
+    fn default() -> Self {
+        Self { greet: 4.0, greet_for: 3.0, greet_every: 90.0, fear: 12.0, afraid: 30.0, rain: 0.2, shelter: Vec::new(), outdoor: Vec::new() }
     }
 }
 
@@ -432,6 +476,16 @@ impl PeopleDef {
             };
         }
         take!(most, per_settlement, nearby, active, release, forget, margin, scan_pad, scan_every, errand_every, search, search_per_tick, failed_for, stuck, no_way_retry, patrol_pause, repath, help, call_every, give_up, calm, handoff, scale, spots);
+        let r = file.react;
+        macro_rules! react {
+            ($($field:ident),*) => {
+                $(if let Some(v) = r.$field {
+                    self.note_setter(at, package, concat!("react.", stringify!($field)));
+                    self.react.$field = v;
+                })*
+            };
+        }
+        react!(greet, greet_for, greet_every, fear, afraid, rain, shelter, outdoor);
         Ok(())
     }
 
@@ -498,16 +552,24 @@ impl PeopleDef {
         {
             return fail("live: a people reserve above nothing, at most 48 a settlement within 96 blocks, active under release under forget, searches above nothing (a tick's at least one way's), times above nothing, a scale low to high and no distance below nothing".into());
         }
+        let r = &self.react;
+        // Sleep and Home are where rain sends people: sheltering from them would leave
+        // nowhere to go.
+        if [r.greet_for, r.greet_every, r.afraid].iter().any(|&t| t <= 0.0) || r.greet_for >= r.greet_every || r.greet < 0.0 || r.fear < 0.0 || !(0.0..=1.0).contains(&r.rain) || r.shelter.iter().any(|p| matches!(p, Place::Sleep | Place::Home)) {
+            return fail("react: times above nothing, a greeting shorter than the wait between them, no distance below nothing, rain within 0 to 1, and no shelter from Sleep or Home".into());
+        }
         Ok(())
     }
 
-    /// Checks what the people are against the rest of the content: every species is a
-    /// villager (placed by settlements, never by the land), and every job and folk work
-    /// names a work or kind of building there is (`works`).
     /// Every species that may live in a settlement, as written.
     pub fn species(&self) -> Vec<&str> {
         self.jobs.iter().map(|j| j.species.as_str()).chain(self.folk.iter().map(|f| f.species.as_str())).chain(self.guards.iter().map(|g| g.species.as_str())).collect()
     }
+
+    /// Checks what the people are against the rest of the content: every species is a
+    /// villager (placed by settlements, never by the land), and every job and folk work,
+    /// the shrine and each of `react.outdoor` names a work or kind of building there is
+    /// (`works`).
 
     pub fn check_against(&self, creatures: &voxmar_engine::creature::CreatureRegistry, works: &[String]) -> Result<(), ContentError> {
         let fail = |what: String| Err(ContentError(format!("settlements.ron: people: {what}")));
@@ -519,7 +581,7 @@ impl PeopleDef {
                 None => return fail(format!("there is no creature called `{name}`")),
             }
         }
-        let places = self.jobs.iter().map(|j| &j.at).chain(self.folk.iter().filter_map(|f| f.work.as_ref())).chain(std::iter::once(&self.shrine));
+        let places = self.jobs.iter().map(|j| &j.at).chain(self.folk.iter().filter_map(|f| f.work.as_ref())).chain(std::iter::once(&self.shrine)).chain(&self.react.outdoor);
         for name in places {
             if !works.contains(name) {
                 return fail(format!("no building's work or kind is `{name}`"));
