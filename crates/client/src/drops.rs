@@ -9,7 +9,7 @@
 use bevy::prelude::*;
 use rustc_hash::FxHashMap;
 use voxmar_engine::action::ActionTarget;
-use voxmar_engine::block::{BlockId, RenderKind, Sound, Tint};
+use voxmar_engine::block::{BlockId, Facing, RenderKind, Sound, Tint};
 use voxmar_engine::coords::{CHUNK_SIZE, ColumnPos};
 use voxmar_engine::dropped::SIZE;
 use voxmar_engine::inventory::ItemStack;
@@ -49,7 +49,7 @@ pub struct DropsPlugin;
 impl Plugin for DropsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Drops>()
-            .add_systems(Update, (throw, show).chain().run_if(in_state(Screen::InGame)))
+            .add_systems(Update, (throw, show, shelf_things).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut drops: ResMut<Drops>, mut models: ResMut<ItemModels>| {
                 *drops = Drops::default();
                 models.0.clear();
@@ -225,6 +225,43 @@ pub(crate) fn show(
     }
 }
 
+/// What stands on the blocks that show what they hold (a mantel shelf's things, as the
+/// server last said: `ClientWorld::shown`), each drawn still on its spot (`BlockDef::shows`),
+/// as large as it lies dropped, turned to face out as the block does. At the front, before
+/// the drops (`show` cut them to what is drawn, nearest first): the renderer keeps the first
+/// models, so a crowd of dropped stacks never leaves a shelf bare. What a player or a figure
+/// holds goes in front of these after (`held::show` and `figures::show` run after this).
+pub(crate) fn shelf_things(player: Res<LocalPlayer>, world: Res<ClientWorld>, pieces: Option<Res<TexturePieces>>, mut models: ResMut<ItemModels>) {
+    let eye = player.eye();
+    let mut shelved = Vec::new();
+    for (&pos, things) in &world.shown {
+        let Some(block) = world.block(pos) else { continue };
+        let def = world.registry.def(block);
+        if def.shows.is_empty() || (pos.as_vec3() + Vec3::splat(0.5)).distance(eye) > DRAWN_WITHIN {
+            continue;
+        }
+        let light = [sky_light(&world, pos), block_light(&world, pos)];
+        let yaw = shelf_yaw(def.faces.unwrap_or_default());
+        for (&spot, thing) in def.shows.iter().zip(things) {
+            let Some(item) = *thing else { continue };
+            let Look { shape, size, layers, tinted, tint } = look_of(&world, pieces.as_deref(), item, pos);
+            let center = pos.as_vec3() + Vec3::from_array(spot) + Vec3::Y * (size / 2.0);
+            shelved.push(ItemModel { center, phase: 0.0, offset: Vec3::ZERO, size, shape, layers, tinted, tint, light, held: None, posed: Some(Vec3::Y * yaw) });
+        }
+    }
+    shelved.append(&mut models.0);
+    models.0 = shelved;
+}
+
+/// How far a thing on a shelf facing `facing` is turned about the vertical, in radians: a
+/// flat one faces out of the shelf, as it would stood against the wall behind it.
+fn shelf_yaw(facing: Facing) -> f32 {
+    match facing {
+        Facing::North | Facing::South => 0.0,
+        Facing::East | Facing::West => std::f32::consts::FRAC_PI_2,
+    }
+}
+
 /// How many copies of an item a stack shows, as Minecraft's: one, then more for bigger
 /// stacks, up to five.
 fn copies(count: u8) -> usize {
@@ -337,6 +374,13 @@ pub(crate) fn block_light(world: &ClientWorld, cell: IVec3) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A flat thing on a shelf faces out of it whichever way the shelf faces: square to
+    /// the room for one facing north or south, turned a quarter for one facing east or west.
+    #[test]
+    fn a_shelfs_things_face_out_of_it() {
+        assert_eq!(Facing::ALL.map(shelf_yaw), [0.0, std::f32::consts::FRAC_PI_2, 0.0, std::f32::consts::FRAC_PI_2]);
+    }
 
     #[test]
     fn bigger_stacks_show_more_copies() {

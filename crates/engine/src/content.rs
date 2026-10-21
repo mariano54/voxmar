@@ -653,6 +653,13 @@ impl Content {
             holds[machine.block.0 as usize] = machine.holds.clone();
         }
         crate::inventory::set_store_holds(holds);
+        // A block that shows what it holds is a store with a slot for each spot it shows.
+        for id in blocks.ids().filter(|&id| !blocks.def(id).shows.is_empty()) {
+            let spots = blocks.def(id).shows.len();
+            if !machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() >= spots) {
+                return Err(RegistryError(format!("block `{}` shows {spots} things, but is no store (machines.ron) with a slot for each", blocks.def(id).name)));
+            }
+        }
         // A furnishing gives itself back only where a player placed it: one that drops
         // nothing anyway has no business with the tag.
         if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag("furnishing") && (blocks.info(id).drops.is_air() || blocks.info(id).drop_count == 0)) {
@@ -677,6 +684,14 @@ impl Content {
             let key = format!("quest.age.{age}");
             if let Some(lang) = languages.iter().find(|lang| !lang.defines(&key)) {
                 return Err(RegistryError(format!("lang/{}.ron: a quest opens the age `{age}`, and `{key}` has no words", lang.code())));
+            }
+        }
+        // How a worn tool is mended, by a tag and where, has words in every language: its
+        // tooltip says it, and so does the line when it is nearly worn out.
+        let mend_words: Vec<String> = tools.mend_by_tags().iter().map(|t| format!("item.mend.tag.{t}")).chain(tools.mend_tags().iter().map(|t| format!("item.mend.near.{t}"))).collect();
+        for key in mend_words.into_iter().chain(["item.mend".to_owned(), "tool.nearly_worn".to_owned()]) {
+            if let Some(lang) = languages.iter().find(|lang| !lang.defines(&key)) {
+                return Err(RegistryError(format!("lang/{}.ron: tools are mended, and `{key}` has no words", lang.code())));
             }
         }
         let mut content = Self {
