@@ -9873,11 +9873,94 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         }
     };
     let bricks_done = |f: &Fresh| quest_status(&f.c, "brick_by_brick").0;
+    // The Kiln Ring's ground, chosen flat and clear, whatever the earlier steps left on it.
+    let centre = f.rel(13, 0, 9);
+    let ring_stand = Fresh::middle(f.rel(13, 0, 6));
+    // Its far side and pillars laid while the clamp chars, once the bricks are shaped; the
+    // near side waits for the crucible, set down over it.
+    let far = [(-1, 0, 0), (1, 0, 0), (-1, 0, 1), (0, 0, 1), (1, 0, 1), (-1, 1, 1), (1, 1, 1)];
+    let near = [(-1, 0, -1), (0, 0, -1), (1, 0, -1), (-1, 1, -1), (1, 1, -1)];
+    let lay = |f: &mut Fresh, bricks: &[(i32, i32, i32)]| {
+        f.walk_toward(ring_stand, 0.05);
+        for &(dx, dy, dz) in bricks {
+            f.place(tempered, centre + IVec3::new(dx, dy - 1, dz));
+        }
+    };
+    let mut ring_begun = false;
+    let clear_ring = |f: &mut Fresh| {
+        f.c.fill(f.origin, IVec3::new(12, 0, 8), IVec3::new(14, 2, 10), "air");
+        let site: Vec<IVec3> = (12..=14).flat_map(|x| (0..=2).flat_map(move |y| (8..=10).map(move |z| IVec3::new(x, y, z)))).map(|p| f.origin + p).collect();
+        f.c.pump_until(|c| site.iter().all(|&p| c.world.block(p) == Some(BlockId::AIR)));
+    };
     while !spent(&f.c) {
-        if bricks_done(&f) {
-            f.wait(500.0, "the clamp charring", spent);
-        } else {
+        if !bricks_done(&f) {
             brick_work(&mut f);
+        } else if !ring_begun {
+            clear_ring(&mut f);
+            lay(&mut f, &far);
+            ring_begun = true;
+        } else if !quest_status(&f.c, "shelves_and_cupboards").0 {
+            // Shelves and Cupboards, after A Table for Two: an oak shelf (Construction 4) and
+            // a cupboard (Construction 6) at the crafting table, set by the hearth beside it.
+            f.at_table(site.table);
+            while f.have(planks) < 14 {
+                f.craft(&[(0, log, 1)], planks, 4);
+            }
+            if f.have(stick) < 1 {
+                f.craft(&[(0, planks, 1), (3, planks, 1)], stick, 4);
+            }
+            f.craft(&[0, 1, 2, 6, 7, 8].map(|cell| (cell, planks, 1)), "base:oak_shelf", 1);
+            f.craft(&[(0, planks, 1), (1, planks, 1), (2, planks, 1), (3, planks, 1), (4, stick, 1), (5, planks, 1), (6, planks, 1), (7, planks, 1), (8, planks, 1)], "base:oak_cupboard", 1);
+            f.wait(5.0, "the server counting the shelf and the cupboard", |c| quest_status(c, "shelves_and_cupboards").0);
+            f.walk_toward(Fresh::middle(f.rel(4, 0, 4)), 0.05);
+            for (x, item) in [(2, "base:oak_shelf"), (6, "base:oak_cupboard")] {
+                f.place(item, f.rel(x, -1, 5));
+            }
+        } else if !quest_status(&f.c, "a_place_to_pray").0 {
+            // A Place to Pray, open since A Pit Kiln: eight cobblestone (from the stone the
+            // first days dug) fired in the pit kiln, now free, into stone; four stone in a
+            // square make four stone bricks, and seven bricks an altar at the table.
+            let (cobble, stone) = ("base:cobblestone", "base:stone");
+            f.make_room(4);
+            let quarry = (9..=17).flat_map(|x| (-3..=4).map(move |z| IVec3::new(x, 0, z))).filter(|p| !(p.x == 9 && p.z >= 3)).map(|p| o + p).collect();
+            f.cobble("base:stone_pickaxe", quarry, 8);
+            let kiln = |c: &Client| c.world.block(site.kiln).map(|b| c.content.blocks.def(b).name.clone()).unwrap_or_default();
+            let use_kiln = ActionTarget::Block { block: site.kiln, face: Face::PosY };
+            f.walk_toward(Fresh::middle(site.kiln), 3.0);
+            while f.have(stone) < 8 {
+                match kiln(&f.c).as_str() {
+                    "base:pit_kiln_firing" => f.wait(20.0, "the pit kiln firing its load", |c| kiln(c) == "base:pit_kiln_fired"),
+                    "base:pit_kiln_fired" => {
+                        let before = f.have(stone) + f.have("base:fired_clay");
+                        f.propose("base:use_station", use_kiln);
+                        f.wait(5.0, "taking what the pit kiln fired", |c| kiln(c) == "base:pit_kiln" && holding(c, stone) + holding(c, "base:fired_clay") > before);
+                    }
+                    _ => {
+                        f.hold(cobble);
+                        f.propose("base:use_station", use_kiln);
+                        f.wait(5.0, "loading the pit kiln with cobblestone", |c| kiln(c) == "base:pit_kiln_firing");
+                    }
+                }
+            }
+            f.craft(&[0, 1, 3, 4].map(|cell| (cell, stone, 2)), "base:stone_bricks", 8);
+            f.at_table(site.table);
+            f.craft(&[0, 1, 2, 4, 6, 7, 8].map(|cell| (cell, "base:stone_bricks", 1)), "base:stone_altar", 1);
+            f.wait(5.0, "the server counting the altar", |c| quest_status(c, "a_place_to_pray").0);
+            // Set down by the hearth, and the brick left over put by in the chest.
+            f.walk_toward(Fresh::middle(f.rel(4, 0, 4)), 0.05);
+            f.place("base:stone_altar", f.rel(6, -1, 3));
+            let brick = f.c.content.blocks.expect("base:stone_bricks");
+            if let Some(from) = (0..voxmar_engine::inventory::SLOTS).find(|&s| f.c.inventory.get(s).is_some_and(|x| x.item == brick)) {
+                f.propose("base:open_store", ActionTarget::Block { block: chest, face: Face::PosY });
+                f.wait(5.0, "the chest opening", |c| c.inventory.store.is_some());
+                let count = f.c.inventory.get(from).map_or(0, |x| x.count);
+                let to = voxmar_engine::inventory::STORE + f.c.inventory.store.as_ref().and_then(|store| store.slots.iter().position(Option::is_none)).expect("room in the chest");
+                f.propose("core:transfer", ActionTarget::Slots { from: from as u8, to: to as u8, count });
+                f.wait(5.0, "the stone brick going into the chest", |c| c.inventory.get(from).is_none_or(|x| x.item != brick));
+                f.propose("core:stow", ActionTarget::None);
+            }
+        } else {
+            f.wait(500.0, "the clamp charring", spent);
         }
     }
     // Opened (roof and walls dug away), its charcoal heaps broken: four charcoal a heap.
@@ -9922,23 +10005,18 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     assert!(f.have(charcoal) >= 32, "the clamp's charcoal fell short of the kiln's charge: {}", f.have(charcoal));
     f.wait(5.0, "the server counting the charge carried", |c| quest_status(c, "the_kiln_charge").0);
     f.mark("the_kiln_charge");
-    // The Kiln Ring, then the crucible set down in its middle, and the kiln lit: eight
-    // tempered kiln bricks round the crucible's cell, one more on each corner of the ring; the crucible
-    // right-clicked with the charge in hand.
-    let centre = f.rel(13, 0, 9);
-    // The site cleared first, whatever the earlier steps left on it.
-    f.c.fill(f.origin, IVec3::new(12, 0, 8), IVec3::new(14, 2, 10), "air");
-    let site: Vec<IVec3> = (12..=14).flat_map(|x| (0..=2).flat_map(move |y| (8..=10).map(move |z| IVec3::new(x, y, z)))).map(|p| f.origin + p).collect();
-    f.c.pump_until(|c| site.iter().all(|&p| c.world.block(p) == Some(BlockId::AIR)));
-    f.walk_toward(Fresh::middle(f.rel(13, 0, 6)), 0.05);
+    // The crucible set down in the middle of The Kiln Ring, the ring finished, and the kiln
+    // lit: eight tempered kiln bricks round the crucible's cell, one more on each corner of
+    // the ring; the crucible right-clicked with the charge in hand.
+    // The far side, if the clamp was spent before it was laid.
+    if !ring_begun {
+        clear_ring(&mut f);
+        lay(&mut f, &far);
+    }
+    f.walk_toward(ring_stand, 0.05);
     let core = f.place("base:crucible", centre - IVec3::Y);
     f.mark("the_crucible");
-    for (dx, dz) in [(-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)] {
-        f.place(tempered, centre + IVec3::new(dx, -1, dz));
-    }
-    for (dx, dz) in [(-1, -1), (1, -1), (-1, 1), (1, 1)] {
-        f.place(tempered, centre + IVec3::new(dx, 0, dz));
-    }
+    lay(&mut f, &near);
     f.mark("the_kiln_ring");
     f.hold(charcoal);
     f.propose("base:light", ActionTarget::Block { block: core, face: Face::PosY });
