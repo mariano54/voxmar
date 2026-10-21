@@ -1532,7 +1532,12 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
 
 #[test]
 fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
-    let mut client = Client::join();
+    // A pack that turns mutation off (`genetics`), so the chick's genes are only ever its
+    // parents': at the world's chance one birth in some 270 drew an allele neither had.
+    // That births mutate at the data's chance is `genes`' test.
+    let (assets, content) = with_mod("breeding-no-mutation", &[("creatures.ron", "(genetics: (mutation: 0.0), creatures: [])")]);
+    assert_eq!(content.creatures.genetics().mutation, 0.0);
+    let mut client = join_content(content);
     let hen = client.content.creatures.find("junglefowl").expect("junglefowl in the content");
     let wheat = client.content.blocks.id("base:wheat").unwrap();
     client.ok("/summon junglefowl 2 ~ ~ ~");
@@ -1570,7 +1575,7 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
         client.pump_until(|_| Instant::now() > until);
     }
     // The chick inherits its plumage from its parents: each of its two alleles is one of
-    // theirs (no mutation is that likely here).
+    // theirs.
     let genes = &client.content.creatures.get(hen).def.genes;
     assert!(!genes.is_empty(), "junglefowl have genes");
     let alleles = |v: &voxmar_protocol::CreatureView| match voxmar_engine::genes::unpack(genes, &v.genes).0[0] {
@@ -1580,6 +1585,8 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
     let parents: Vec<u8> = hens.iter().flat_map(|id| alleles(&client.creatures[id])).collect();
     let chick = client.creatures.values().find(|v| v.young && v.kept).expect("born");
     assert!(alleles(chick).iter().all(|a| parents.contains(a)), "{:?} from parents {parents:?}", alleles(chick));
+    drop(client);
+    std::fs::remove_dir_all(&assets).unwrap();
 }
 
 #[test]

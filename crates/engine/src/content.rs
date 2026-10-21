@@ -274,6 +274,7 @@ impl Content {
         let mut defence = Setting::<DefenceTraining>::default();
         let mut condition = Setting::<ConditionRules>::default();
         let mut climbing = Setting::<Climbing>::default();
+        let mut genetics = Setting::<crate::creature::Genetics>::default();
         let mut fishing_rules = Setting::<crate::fishing::FishingRules>::default();
         let mut notes = Vec::new();
         let mut cooking = Vec::new();
@@ -360,6 +361,7 @@ impl Content {
                         defence.set(package, &name, "Defence training", read.defence, &mut notes);
                         condition.set(package, &name, "condition rules", read.condition, &mut notes);
                         climbing.set(package, &name, "climbing", read.climbing, &mut notes);
+                        genetics.set(package, &name, "genetics", read.genetics, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons, machines).
@@ -512,7 +514,7 @@ impl Content {
         let mut blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
         blocks.rename(renames)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
-        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value, climbing: climbing.value };
+        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value, climbing: climbing.value, genetics: genetics.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;

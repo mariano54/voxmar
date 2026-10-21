@@ -54,6 +54,9 @@
     // gap would otherwise come down on a fence two high beyond it. Anything that jumps at
     // all still gets up a block.
     climbing: (step_rise: 1.45),
+    // How often a gene mutates at a birth, before aether raises it up to five times
+    // (docs/breeding.md, "Mutation"): from 0 to 0.2.
+    genetics: (mutation: 0.005),
     creatures: [
         // --- Small and common: where everyone starts -------------------------------------
         (

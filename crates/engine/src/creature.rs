@@ -664,6 +664,8 @@ struct CreatureFile {
     condition: Option<condition::SetConditionRules>,
     #[serde(default)]
     climbing: Option<SetClimbing>,
+    #[serde(default)]
+    genetics: Option<SetGenetics>,
 }
 
 /// One package's `creatures.ron`: its species, and what it sets of the world's rules.
@@ -674,11 +676,12 @@ pub struct CreaturePackage {
     pub defence: Option<SetDefenceTraining>,
     pub condition: Option<condition::SetConditionRules>,
     pub climbing: Option<SetClimbing>,
+    pub genetics: Option<SetGenetics>,
 }
 
 /// What packages set for every creature in the world: how many there are, how their
-/// blows train Defence, how kept animals' condition is reckoned, and how high a hop up a
-/// step goes. Each is single-valued data a later package replaces field by field
+/// blows train Defence, how kept animals' condition is reckoned, how high a hop up a step
+/// goes, and how often a birth mutates. Each is single-valued data a later package replaces field by field
 /// ([`crate::content::Settable`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rules {
@@ -686,6 +689,7 @@ pub struct Rules {
     pub defence: DefenceTraining,
     pub condition: condition::ConditionRules,
     pub climbing: Climbing,
+    pub genetics: Genetics,
 }
 
 /// How many creatures the world holds. A package's `creatures.ron` may set any of them
@@ -828,6 +832,42 @@ crate::content::settable! {
     SetClimbing for Climbing { step_rise: f32 }
 }
 
+/// How often a gene mutates at a birth (docs/breeding.md, "Mutation"): `mutation` per gene,
+/// before aether, which raises it up to five times where it is strongest. A package's
+/// `creatures.ron` may set it (`genetics`); a later package's replaces an earlier one's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Genetics {
+    /// The chance per gene, from 0 (young are only ever their parents' genes) to 0.2, so
+    /// five times it at the strongest aether is still a chance.
+    pub mutation: f32,
+}
+
+impl Default for Genetics {
+    fn default() -> Self {
+        Self { mutation: crate::genes::MUTATION }
+    }
+}
+
+crate::content::settable! {
+    /// What one package sets of genetics.
+    SetGenetics for Genetics { mutation: f32 }
+}
+
+impl Genetics {
+    /// Whether the chance is one: from 0 to 0.2.
+    pub fn check(&self) -> Result<(), RegistryError> {
+        if !(self.mutation.is_finite() && (0.0..=0.2).contains(&self.mutation)) {
+            return Err(RegistryError(format!("genetics: `mutation` ({}) must be from 0 to 0.2, a chance per gene that five times over is still one", self.mutation)));
+        }
+        Ok(())
+    }
+
+    /// The chance a gene mutates at a birth where the aether is `aether` (0 to 1).
+    pub fn mutation_at(&self, aether: f32) -> f32 {
+        self.mutation * (1.0 + 4.0 * aether.clamp(0.0, 1.0))
+    }
+}
+
 impl Climbing {
     /// Whether a hop at this rise gets up a block and clears no fence two high.
     pub fn check(&self) -> Result<(), RegistryError> {
@@ -939,7 +979,7 @@ impl CreatureRegistry {
                 *name = format!("{namespace}:{name}");
             }
         };
-        let (limits, defence, condition, climbing) = (file.limits, file.defence, file.condition, file.climbing);
+        let (limits, defence, condition, climbing, genetics) = (file.limits, file.defence, file.condition, file.climbing, file.genetics);
         let defs = file
             .creatures
             .into_iter()
@@ -966,7 +1006,7 @@ impl CreatureRegistry {
                 def
             })
             .collect();
-        Ok(CreaturePackage { defs, limits, defence, condition, climbing })
+        Ok(CreaturePackage { defs, limits, defence, condition, climbing, genetics })
     }
 
     /// Resolves species against the blocks (items) and skills.
@@ -975,6 +1015,7 @@ impl CreatureRegistry {
         rules.defence.check()?;
         rules.condition.check()?;
         rules.climbing.check()?;
+        rules.genetics.check()?;
         let mut registry = Self { rules, ..Self::default() };
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
@@ -1101,6 +1142,11 @@ impl CreatureRegistry {
     /// How kept animals' condition is reckoned.
     pub fn condition(&self) -> &condition::ConditionRules {
         &self.rules.condition
+    }
+
+    /// How often a birth mutates.
+    pub fn genetics(&self) -> &Genetics {
+        &self.rules.genetics
     }
 
     pub fn id(&self, name: &str) -> Option<CreatureId> {
@@ -1390,6 +1436,24 @@ mod tests {
             let blocks = BlockRegistry::new(vec![]).unwrap();
             assert!(CreatureRegistry::new(Vec::new(), Rules { limits: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
         }
+    }
+
+    /// A package sets how often a birth mutates; the shipped default is `genes::MUTATION`,
+    /// aether raises it up to five times, and a chance past 0.2 (or none at all) is refused.
+    #[test]
+    fn genetics_loads_from_the_file_and_is_checked() {
+        let source = RABBIT.replacen("(creatures:", "(genetics: (mutation: 0.0), creatures:", 1);
+        let set = CreatureRegistry::read("base", &source).unwrap().genetics.expect("set");
+        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().genetics, None);
+        let (rules, changed) = Genetics::default().with(&set);
+        assert_eq!((rules.mutation, changed), (0.0, vec!["mutation"]));
+        assert_eq!(Genetics::default().mutation, crate::genes::MUTATION);
+        assert_eq!((Genetics::default().mutation_at(0.0), Genetics::default().mutation_at(1.0)), (crate::genes::MUTATION, 5.0 * crate::genes::MUTATION));
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        for mutation in [-0.1, 0.21, f32::NAN] {
+            assert!(CreatureRegistry::new(Vec::new(), Rules { genetics: Genetics { mutation }, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{mutation} loaded");
+        }
+        assert!(CreatureRegistry::new(Vec::new(), Rules { genetics: Genetics { mutation: 0.0 }, ..Default::default() }, &blocks, &SkillRegistry::default()).is_ok());
     }
 
     #[test]

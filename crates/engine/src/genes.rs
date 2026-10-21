@@ -429,6 +429,23 @@ mod tests {
         assert!((70..130).contains(&whites), "{whites} white of 400");
     }
 
+    /// A birth mutates at the chance it is given, the world's default among them: of
+    /// twenty thousand young of two pure agouti, the father's allele turns into one of the
+    /// other two at two thirds of `MUTATION` (a mutation draws any of the three), and never
+    /// at a chance of nothing.
+    #[test]
+    fn young_mutate_at_the_chance_given() {
+        let defs = defs();
+        let pure = Genome(vec![Gene::Pair(0, 0), Gene::Number(1.0)]);
+        let mutated = |chance: f32| (0..20_000).filter(|&seed| inherit(&defs, &pure, &pure, seed, chance).0[0] != Gene::Pair(0, 0)).count();
+        assert_eq!(mutated(0.0), 0);
+        // 20000 * 0.005 * 2/3, about 67.
+        let at_default = mutated(MUTATION);
+        assert!((35..110).contains(&at_default), "{at_default} of 20000 mutated at {MUTATION}");
+        let at_more = mutated(0.05);
+        assert!((550..790).contains(&at_more), "{at_more} of 20000 mutated at 0.05");
+    }
+
     #[test]
     fn breeds_are_known_by_their_genes() {
         let defs = defs();

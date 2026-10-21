@@ -102,7 +102,7 @@ impl Server {
             if level >= ODDS {
                 let at = creature.body.position;
                 let aether = self.overworld.site(at.x.floor() as i32, at.z.floor() as i32).aether;
-                let chance = genes::MUTATION * (1.0 + 4.0 * aether.clamp(0.0, 1.0)) * 100.0;
+                let chance = self.content.creatures.genetics().mutation_at(aether) * 100.0;
                 lines.push(Words::key("inspect.odds").with("chance", Words::text(format!("{chance:.1}"))));
             }
             let next = [SHOWS, CARRIES, NUMBERS, ODDS].into_iter().find(|&l| l > level);
