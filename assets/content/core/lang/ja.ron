@@ -1337,6 +1337,7 @@
     "creature.doing.stand_to_look": "立って観察中",
     "creature.doing.graze": "食事中",
     "creature.doing.flee": "逃走中",
+    "creature.doing.fire": "火を恐れて後ずさり中",
     "creature.doing.freeze": "硬直中",
     "creature.doing.blink": "瞬間移動中",
     "creature.doing.herd": "群れに合流中",

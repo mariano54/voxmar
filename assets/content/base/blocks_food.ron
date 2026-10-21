@@ -14,11 +14,12 @@
                 (style: Flame, rate: 30.0, at: (0.5, 0.3, 0.5), spread: 0.1, size: 2.0, height: 0.6, color: Some((250, 168, 28))),
             ],
         ),
-        // A campfire: logs and embers that cook one thing at a time and keep the cold off.
+        // A campfire: logs and embers that cook one thing at a time and keep the cold off,
+        // and the wild back 8 blocks at night (`ward`).
         // A `furnishing`: a village's gives nothing, one a player placed gives itself back.
         (
             name: "campfire", render: Plant, solid: false, sound: Wood, textures: All("campfire"),
-            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "hob", "furnishing"],
+            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "hob", "furnishing"], ward: 8.0,
             // Flames licking a block and more above the logs, a deep yellow core among them,
             // smoke thick over the fire and thinning as it rises a few blocks, embers
             // floating up as high, and now and then a crackle of sparks (`particles`:

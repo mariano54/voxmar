@@ -234,6 +234,48 @@ impl Warn {
     }
 }
 
+/// How a wild creature takes fire (docs/creature-ai.md, "Fire"). A player holding a fire at
+/// it (anything tagged `fire`: a torch) within `give` blocks, in its sight, it backs away
+/// from, facing them, until they are `give` off, its warning let lapse; unless it was
+/// provoked, or is one of the bold (`fear` is the share of its kind that give ground, each
+/// individual by its own roll; the rest stand theirs).
+/// At night, if `ward`, it keeps out of a lit fire's ward (`BlockDef::ward`,
+/// `MultiblockDef::ward`: a campfire, a lit hearth or kiln), and goes for no one inside one
+/// unprovoked. Kept animals and those on an errand (villagers, guards) pay fire no heed.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fire {
+    pub fear: f32,
+    pub give: f32,
+    #[serde(default = "yes")]
+    pub ward: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// What a held item is tagged to be a fire to a creature (`Fire`): a torch, as the
+/// `Holding("fire")` of status effects.
+pub const HELD_FIRE: &str = "fire";
+
+impl Fire {
+    /// Whether the individual of hash `seed` (`brain::Mind::seed`) is one of the share
+    /// (`fear`) of its kind that give ground before a torch; the rest stand theirs.
+    pub fn gives_ground(&self, seed: u64) -> bool {
+        unit_from(mix(seed, 0xf12e)) < self.fear
+    }
+
+    /// Afraid enough that some of its kind give ground, far enough to be backed from, near
+    /// enough that a torch is held at it, not waved from across a field.
+    pub fn check(&self) -> Result<(), String> {
+        if !(0.0..=1.0).contains(&self.fear) || !(2.0..=8.0).contains(&self.give) {
+            return Err(format!("`fire` needs fear 0 to 1 and give 2 to 8 blocks, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 fn reach() -> f32 {
     1.0
 }
@@ -565,6 +607,10 @@ pub struct CreatureDef {
     /// only defends itself lets them be.
     #[serde(default)]
     pub warn: Option<Warn>,
+    /// It is afraid of fire (`Fire`): it gives ground from a torch held at it, and keeps out
+    /// of a lit fire's ward at night. Unset, fire is nothing to it.
+    #[serde(default)]
+    pub fire: Option<Fire>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -1043,6 +1089,12 @@ impl CreatureRegistry {
                 }
                 let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
                 warn.check(behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Hunt { .. }))).map_err(error)?;
+            }
+            if let Some(fire) = def.fire {
+                if def.boss || def.supernatural {
+                    return Err(error("is a boss or supernatural, and fire keeps neither back (`fire`)".into()));
+                }
+                fire.check().map_err(error)?;
             }
             def.death.check().map_err(error)?;
             if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {

@@ -42,7 +42,7 @@ pub fn module(behaviour: Behaviour) -> Arc<dyn Module> {
 /// Every creature has these, whatever its data says: going home when it strays, going to
 /// a mate when both are ready to breed, and warning players off if its kind does (`warn`).
 pub fn always() -> Vec<Arc<dyn Module>> {
-    vec![Arc::new(ReturnHome), Arc::new(Court), Arc::new(Roam), Arc::new(Warn)]
+    vec![Arc::new(ReturnHome), Arc::new(Court), Arc::new(Roam), Arc::new(Warn), Arc::new(Fire)]
 }
 
 /// Now and then a curious, lively individual sets off alone across its range, so groups
@@ -635,7 +635,7 @@ impl Module for Warn {
             (None, Some(radius)) => {
                 let radius = radius * (0.6 + 0.4 * ctx.lively) + slack;
                 ctx.at.players.iter().find(|p| {
-                    !p.creative && !p.friend && !p.tolerated && !p.tempting && p.in_sight
+                    !p.creative && !p.friend && !p.tolerated && !p.tempting && !p.warded && p.in_sight
                         && ctx.distance(p.position) < radius.min(ctx.sight + slack)
                         && p.combat_level as u16 <= def.level as u16 * 2 + 1
                 })?
@@ -648,7 +648,10 @@ impl Module for Warn {
     fn act(&self, ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, _: bool) -> Decision {
         let (Some(p), Some(warn)) = (target, ctx.creature.def.warn) else { return Decision::default() };
         let seconds = mind.warning.map_or(0.0, |w| w.seconds + ctx.at.dt);
-        if seconds >= warn.seconds || ctx.distance(p.position) <= warn.near {
+        // A torch held at one that gives ground before it (`Fire`) keeps it warning from
+        // beyond its reach for as long as it is held: its time runs out, but it does not come.
+        let held_off = p.fire && ctx.creature.def.fire.is_some_and(|f| f.gives_ground(ctx.mind.seed));
+        if (seconds >= warn.seconds && !held_off) || ctx.distance(p.position) <= warn.near {
             // `think` decides afresh, its hunt or defence taking it up.
             mind.provoked(p.id);
             return Decision::default();
@@ -661,14 +664,75 @@ impl Module for Warn {
 /// The player a hunter of `radius` (its `Hunt`) goes for now, unprovoked, reckoned `slack`
 /// blocks further: the nearest in reach of its hunt by its liveliness, hunger and
 /// aggression, and in its sight. RuneScape's rules leave be a player who has settled long
-/// in one place, or one of more than twice the creature's level; a boss always fights.
+/// in one place, or one of more than twice the creature's level; a boss always fights. One
+/// in a lit fire's ward at night (`Seen::warded`) it leaves be (`Fire`).
 fn hunted<'a>(ctx: &'a Ctx, radius: f32, slack: f32) -> Option<&'a Seen> {
     let def = &ctx.creature.def;
     let radius = radius * (0.6 + 0.4 * ctx.lively) * (0.7 + 0.6 * ctx.mind.hunger) * (0.7 + 0.6 * ctx.mind.personality.aggression) + slack;
     ctx.at.players.iter().find(|p| {
-        !p.creative && !p.friend && ctx.distance(p.position) < radius.min(ctx.sight + slack)
+        !p.creative && !p.friend && !p.warded && ctx.distance(p.position) < radius.min(ctx.sight + slack)
             && (def.boss || (!p.tolerated && p.combat_level as u16 <= def.level as u16 * 2 + 1))
     })
+}
+
+/// Fire keeps it back (`creature::Fire`): it backs away from a player holding a fire at it,
+/// facing them, until they are its `give` off, and walks out of a lit fire's ward at
+/// night. Not once provoked (it fights), nor kept or on an errand (tame animals, villagers
+/// and guards pay fire no heed); of its kind only its `fear`'s share give ground before a
+/// torch (by each one's own roll), the bold rest stand theirs, though none in a ward's
+/// light.
+#[derive(Debug)]
+struct Fire;
+
+/// Blocks further off a fire's bearer must be to end its giving ground, so it does not
+/// step back and forth at the edge.
+pub const FIRE_EXIT: f32 = 1.0;
+
+impl Fire {
+    /// The player holding a fire at it, near enough to give ground from.
+    fn bearer<'a>(ctx: &'a Ctx, fire: crate::creature::Fire) -> Option<&'a Seen> {
+        if !fire.gives_ground(ctx.mind.seed) {
+            return None;
+        }
+        let slack = if ctx.mind.doing.is_some_and(|i| ctx.creature.modules[i].0.name() == "fire") { FIRE_EXIT } else { 0.0 };
+        ctx.at.players.iter().find(|p| p.fire && p.in_sight && !p.creative && !p.friend && ctx.distance(p.position) < fire.give + slack)
+    }
+}
+
+impl Module for Fire {
+    fn name(&self) -> &'static str {
+        "fire"
+    }
+
+    fn band(&self) -> Band {
+        Band::Danger
+    }
+
+    fn want(&self, ctx: &Ctx) -> Option<Want> {
+        let fire = ctx.creature.def.fire?;
+        if ctx.at.kept || ctx.at.errand.is_some() || (ctx.attacker().is_some() && ctx.mind.anger > 0.0) {
+            return None;
+        }
+        if let Some(p) = Self::bearer(ctx, fire) {
+            return Want::at(4.0, *p);
+        }
+        let ward = ctx.at.ward.filter(|_| fire.ward)?;
+        (flat(ctx.at.position, ward.at) < ward.radius).then(|| Want::new(4.0)).flatten()
+    }
+
+    fn act(&self, ctx: &Ctx, _: &mut Mind, target: Option<Seen>, _: bool) -> Decision {
+        let at = ctx.at;
+        let def = &ctx.creature.def;
+        let away = |from: Vec3| (at.position - from).with_y(0.0).normalize_or(Vec3::X);
+        if let (Some(p), Some(fire)) = (target, def.fire) {
+            // Facing the flame, a step or so past where it would be let be.
+            let back = (fire.give + FIRE_EXIT - ctx.distance(p.position)).max(1.0);
+            let pose = if def.warn.is_some() { Pose::Warning } else { Pose::Alert };
+            return Decision { goal: Some(at.position + away(p.position) * back), face: Some(p.position), speed: walk(ctx), pose, ..Default::default() };
+        }
+        let Some(ward) = at.ward else { return Decision::default() };
+        Decision { goal: Some(ward.at + away(ward.at) * (ward.radius + 2.0)), speed: walk(ctx), pose: Pose::Alert, ..Default::default() }
+    }
 }
 
 /// Fights back when hurt (neutral creatures): the boar that charges, the goose that bites.
