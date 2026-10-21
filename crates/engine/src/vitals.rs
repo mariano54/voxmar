@@ -71,6 +71,21 @@ pub fn still_seated(feet: glam::Vec3, seat: glam::IVec3) -> bool {
 /// Felt temperature (°C) below which a fire nearby counts as warming you.
 pub const CHILLY: f32 = 6.0;
 
+/// Heat (°C) from fires and glowing blocks near above which they warm a player at all.
+pub const WARMING: f32 = 0.5;
+
+/// Whether the heat near warms a player in `air` (°C, after the wet's chill): only in the
+/// cold, below `CHILLY`, and only with some heat. Effects ask it (`Condition::Warmed`).
+pub fn warmed(heat: f32, air: f32) -> bool {
+    heat > WARMING && air < CHILLY
+}
+
+/// How warm a player feels (°C) before effects: the air, after the wet's chill, and the
+/// heat near.
+pub fn felt_air(air: f32, heat: f32) -> f32 {
+    air + heat
+}
+
 /// How fast things happen under some effects.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rates {

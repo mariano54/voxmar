@@ -442,7 +442,7 @@ names cooked fish alone:
 |---|---|---|---|
 | Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
 | Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, 2 bread |
-| Cold Water Trout | Still Water Perch | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked | Fishing 120, 4 bread |
+| Cold Water Trout | Still Water Perch, A Hearty Stew | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked (Cooking 15) | Fishing 120, 4 bread |
 | Three Waters | Salt and Sardines, Still Water Perch | A fourth kind past minnow, sardine and perch: a trout or a cod | Fishing 150, 4 bread |
 | Fish on the Table | Salt and Sardines | A lit hearth, eight fish cooked and six eaten | Cooking 120, 4 bread |
 

@@ -969,25 +969,30 @@ impl EffectRegistry {
         let has = |tag: &str| means.items.iter().any(|&(id, _)| blocks.def(id).has_tag(tag));
         let near: Vec<(String, i32)> = self.near_asks.iter().filter(|(tag, _)| has(tag)).cloned().collect();
         // One thing at a time in hand, one charm worn: each set of the tags effects ask, once.
-        let asked = |of: &[String], id: BlockId| of.iter().filter(|tag| blocks.def(id).has_tag(tag)).cloned().collect::<Vec<String>>();
         let mut helds: Vec<Vec<String>> = vec![Vec::new()];
         let mut worns: Vec<Vec<String>> = vec![Vec::new()];
         for &(id, _) in means.items {
-            let held = asked(&self.held_tags, id);
+            let held = self.held_by(blocks.def(id));
             if !helds.contains(&held) {
                 helds.push(held);
             }
-            let worn = asked(&self.worn_tags, id);
-            if blocks.def(id).has_tag("charm") && !worns.contains(&worn) {
+            let worn = self.worn_by(id, blocks.def(id));
+            if !worns.contains(&worn) {
                 worns.push(worn);
             }
         }
         let counts = self.home_tags.iter().map(|tag| (tag.clone(), means.items.iter().filter(|&&(id, _)| blocks.def(id).has_tag(tag)).map(|&(_, n)| n).sum())).collect();
         let survey = HomeSurvey { counts, walls: if means.home { Walls::of_built_room(means.items, blocks) } else { Walls::default() } };
         let weather = Weather::NONE;
-        let cold = crate::vitals::CHILLY - 1.0;
-        let airs: &[(f32, bool)] = if has("fire") { &[(15.0, false), (cold, false), (cold, true)] } else { &[(15.0, false), (cold, false)] };
-        for &(felt, warmed) in airs {
+        // Mild air, or cold, and in the cold a fire's least warming heat (with a `fire`).
+        use crate::vitals::{felt_air, warmed, CHILLY, WARMING};
+        let cold = CHILLY - 1.0;
+        let mut airs = vec![(15.0, 0.0), (cold, 0.0)];
+        if has("fire") {
+            airs.push((cold, WARMING.next_up()));
+        }
+        for (air, heat) in airs {
+            let (felt, warmed) = (felt_air(air, heat), warmed(heat, air));
             for bits in 0..16u8 {
                 let bit = |n: u8| bits & (1 << n) != 0;
                 let (outdoors, night, seated, at_home) = (bit(0), bit(1), bit(2), bit(3));
@@ -1080,6 +1085,20 @@ impl EffectRegistry {
     /// them around each player.
     pub fn near_asks(&self) -> &[(String, i32)] {
         &self.near_asks
+    }
+
+    /// What effects ask (`Holding`) of `item` in hand: those of its tags they ask after.
+    pub fn held_by(&self, item: &crate::block::BlockDef) -> Vec<String> {
+        self.held_tags.iter().filter(|tag| item.has_tag(tag)).cloned().collect()
+    }
+
+    /// What effects ask (`Wearing`) of what is worn: only the charm slot's (`charm`), so one
+    /// charm's effect at a time, whatever else a pack tags. Nothing for what is no charm.
+    pub fn worn_by(&self, id: BlockId, item: &crate::block::BlockDef) -> Vec<String> {
+        if crate::inventory::worn_slot(id) != Some(crate::combat::Slot::Charm.index()) {
+            return Vec::new();
+        }
+        self.worn_tags.iter().filter(|tag| item.has_tag(tag)).cloned().collect()
     }
 
     /// The tags effects ask of the item in hand with `Holding`.

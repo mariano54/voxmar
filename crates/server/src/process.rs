@@ -167,22 +167,16 @@ impl Survival {
         let (tick, day, night) = (server.tick, server.day, server.night());
         let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
         let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
-        let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
+        let warmed = vitals::warmed(heat, cold_air);
         let home = server.home_survey(id);
         let home_stores = server.home_store_tally(id);
         // What effects ask of the item in hand (`Holding`) and of the blocks near
         // (`Near`).
-        let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
-            let def = server.content.blocks.def(item);
-            effects.held_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
-        });
+        let held: Vec<String> = player.held().map_or_else(Vec::new, |item| effects.held_by(server.content.blocks.def(item)));
         // And of the charm worn (`Wearing`): only the charm slot's, so one charm's effect
         // at a time, whatever else a pack tags.
         let charm = player.inventory.worn[voxmar_engine::combat::Slot::Charm.index()];
-        let worn: Vec<String> = charm.map_or_else(Vec::new, |s| {
-            let def = server.content.blocks.def(s.item);
-            effects.worn_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
-        });
+        let worn: Vec<String> = charm.map_or_else(Vec::new, |s| effects.worn_by(s.item, server.content.blocks.def(s.item)));
         let near: Vec<(String, i32)> = effects.near_asks().iter().filter(|(tag, reach)| server.tagged_within(feet, tag, *reach)).cloned().collect();
         let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
         // Mending (a prayer) brings health back faster.
@@ -217,11 +211,11 @@ impl Survival {
         // Warmth from what was eaten and the weather counts before the bands of warmth
         // are judged: soaked through, a mild day feels chilly.
         let biome = server.overworld.biome_at(feet.x, feet.z);
-        let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), night };
+        let mut situation = Situation { felt: vitals::felt_air(cold_air, heat), warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), night };
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
         let first = effects.active(&situation, &player.timed_effects);
-        situation.felt = effects.modifiers(&first).felt(cold_air + heat, server.survival.comfort_top);
+        situation.felt = effects.modifiers(&first).felt(vitals::felt_air(cold_air, heat), server.survival.comfort_top);
         let active = effects.active(&situation, &player.timed_effects);
         let modifiers = effects.modifiers(&active);
         // Quests ask whether an effect was ever felt (`Felt`), not how often.

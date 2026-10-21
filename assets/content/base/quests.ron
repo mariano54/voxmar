@@ -40,7 +40,7 @@
             capstone: true,
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
-            after: ["a_pot_on_the_fire", "roots_in_the_embers", "game_for_the_pot", "seed_mix", "a_proper_breakfast"],
+            after: ["a_pot_on_the_fire", "roots_in_the_embers", "a_side_of_beef", "seed_mix", "a_proper_breakfast"],
             rewards: [Xp("cooking", 300.0), Item("honey", 2)],
         ),
         // Fuel: logs to char or coal from a seam, two ways to the Crucible Kiln's charge.
@@ -243,10 +243,10 @@
             rewards: [Xp("cooking", 120.0)],
         ),
         (
-            name: "game_for_the_pot", age: "farm", branch: "cooking", title: "Game for the Pot",
-            why: "Big game feeds you better than rabbits, and cooking it teaches the pot more. Roast three mutton from a mouflon or sheep (Cooking 5), or three pork from a wild boar (Cooking 8), on a campfire.",
-            tasks: [[Cook("cooked_mutton", 3)], [Cook("cooked_pork", 3)]],
-            after: ["bigger_game", "camp_cook"],
+            name: "a_side_of_beef", age: "farm", branch: "cooking", title: "A Side of Beef",
+            why: "Aurochs beef is the richest meat the plains give, and it wants a practised cook. Cook whatever your hunting brings until you reach Cooking 12, then roast two beef from an aurochs (Bigger Game) at the campfire or the stove.",
+            tasks: [[Level("cooking", 12), Cook("cooked_beef", 2)]],
+            after: ["a_haunch_for_the_pot", "camp_cook"],
             rewards: [Xp("cooking", 200.0)],
         ),
         (
@@ -429,9 +429,9 @@
         ),
         (
             name: "cold_water_trout", age: "farm", branch: "fishing", title: "Cold Water Trout",
-            why: "Where you fish matters as much as how well. Trout bite from Fishing 15, and only in cold fresh water: mountain streams, conifer lakes, cool and frozen rivers. Go up into the cold, land two and cook them.",
+            why: "Where you fish matters as much as how well. Trout bite from Fishing 15, and only in cold fresh water: mountain streams, conifer lakes, cool and frozen rivers. Go up into the cold, land two and cook them: a trout wants Cooking 15, a step past the stew.",
             tasks: [[Catch("raw_trout", 2), Cook("cooked_trout", 2)]],
-            after: ["still_water_perch"],
+            after: ["still_water_perch", "a_hearty_stew"],
             side: true,
             rewards: [Xp("fishing", 120.0), Item("bread", 4)],
         ),
