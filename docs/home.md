@@ -809,7 +809,8 @@ on the ladder's steps (effects.ron, `store_room`, 1 to 6, checked at launch; ste
 each other, so one counts), so a mod's step or room can give it too. A guest opening a
 friend's store does not grow it. A store only grows, never shrinks: one filled while the
 home was Homely keeps what it holds if the home slips, and a save keeps its size
-(`Factory::insert_state` keeps a bin larger than its machine's). Broken and set down
+(the store keeps the slots it grew to, `MachineState::grown`, saved with it; a store
+saved fuller than its own or grown slots, as when a package gives it fewer, still spills). Broken and set down
 again, it starts at its own size. It needs no protocol change: a store's slots go as a
 list, and the screen shows as many as come. Tests: server `stores.rs`, engine `effect.rs`.
 The gate's Home step gives Homely before opening its barrel ("home: store room").

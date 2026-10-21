@@ -38,6 +38,7 @@ impl Server {
                 && state.bin.len() < want
             {
                 state.bin.resize(want, None);
+                state.grown = want;
             }
         }
         let Some(player) = self.players.get_mut(&agent) else { return };

@@ -97,6 +97,18 @@ pub struct MachineState {
     /// Whether its standing structure was counted for quests already (a multiblock's core).
     #[serde(default)]
     pub counted: bool,
+    /// The slots a home grew it to as a store (`Machine::grown_bin`), 0 for none: it keeps
+    /// them, and only they, past its own.
+    #[serde(default)]
+    pub grown: usize,
+}
+
+impl MachineState {
+    /// How many stacks it has room for as a bin of `machine`: its own slots, or what a home
+    /// grew it to, up to a store screen's.
+    pub fn bin_room(&self, machine: &crate::machine::Machine) -> usize {
+        machine.bin_slots().max(self.grown.min(crate::inventory::STORE_SLOTS))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -200,8 +212,8 @@ impl Factory {
         let (inputs, outputs) = machine.slots();
         state.inputs.resize(inputs, None);
         state.outputs.resize(outputs, None);
-        // A store a home grew (`Machine::grown_bin`) keeps its size; nothing in it is lost.
-        state.bin.resize(machine.bin_slots().max(state.bin.len().min(crate::inventory::STORE_SLOTS)), None);
+        // A store a home grew (`Machine::grown_bin`) keeps its size.
+        state.bin.resize(state.bin_room(machine), None);
         let chute = match machine.role {
             Role::Chute { rate } => Some(rate),
             _ => None,
