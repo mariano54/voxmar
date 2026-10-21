@@ -1467,3 +1467,25 @@ fn big_town_sound_cost() {
     let cap = crate::sfx::Recordings::load(&voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap().files).map(|r| r.mix.voices.get(&crate::mix::Category::Ambience).copied()).ok().flatten();
     println!("big town: mixer {mean:.1} us mean, p99 {p99:.1}, worst {worst:.1} a frame; {:.1} one-shots a minute; at most {most} at once (Ambience cap {cap:?})", started as f32 / (seconds / 60.0));
 }
+
+/// A smouldering structure sounds as it smoulders from lighting to the end: each stage its
+/// core shows (a clamp's flue catching, steady, dying down) is heard in the group its
+/// `burning` block is, so the smoulder never cuts out as the flue changes.
+#[test]
+fn every_stage_of_a_smoulder_is_heard_as_it_burns() {
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let group = ambience.block_groups(blocks);
+    let mut smoulders = 0;
+    for structure in content.multiblocks.iter() {
+        let Some(smoulder) = &structure.smoulder else { continue };
+        smoulders += 1;
+        let burning = group[smoulder.burning.0 as usize];
+        assert!(burning.is_some(), "{}'s {} is heard in no group", structure.name, blocks.def(smoulder.burning).name);
+        for &(from, stage) in &smoulder.stages {
+            assert_eq!(group[stage.0 as usize], burning, "{}'s {} from {from} of the burn", structure.name, blocks.def(stage).name);
+        }
+    }
+    assert!(smoulders > 0, "the base game has a clamp");
+}
