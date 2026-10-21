@@ -57,8 +57,9 @@ pub use voxmar_engine::weather::Weather;
 // 59: a firing finished while the player was away (ServerMessage::Fired).
 pub const PROTOCOL_VERSION: u32 = 59;
 
-/// Lines of news a client shows at once (its toasts), and so the most news the server keeps
-/// waiting for a player away: all of it is seen as they come back on.
+/// Lines of news a client shows at once (its toasts). The server keeps one fewer waiting for
+/// a player away, so all of it is seen as they come back on with a line still free for
+/// anything else said then.
 pub const NEWS_LINES: usize = 6;
 
 /// A creature's `tell` while it rears into a new phase of its fight.

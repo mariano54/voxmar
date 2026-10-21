@@ -54,8 +54,10 @@ pub struct Waiting {
 }
 
 /// How much news waits for one player away: the newest, so a long absence brings back what
-/// is true now rather than every firing since, and no more than their screen shows at once.
-const NEWS_WAITING: usize = voxmar_protocol::NEWS_LINES;
+/// is true now rather than every firing since, and fewer than their screen shows at once, so
+/// a line stays free for whatever else they are told as they come on.
+const NEWS_WAITING: usize = voxmar_protocol::NEWS_LINES - 1;
+const _: () = assert!(NEWS_WAITING > 0 && NEWS_WAITING < voxmar_protocol::NEWS_LINES);
 
 /// How a smoulder ended.
 #[derive(Clone, Copy, Debug, PartialEq)]
