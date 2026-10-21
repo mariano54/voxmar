@@ -2027,7 +2027,7 @@ fn track(
     unpins: Query<(&Unpin, &Interaction), Changed<Interaction>>,
     viewer: Res<super::recipes::RecipeViewer>,
     mut drawn: Local<Option<(Vec<String>, u32, String, String, usize, Vec<BlockId>, Vec<bool>)>>,
-    (mut way_cache, mut chosen): (Local<WayCache>, Local<Option<(ChosenFor, Vec<(String, (Goal, Entry))>, Vec<BlockId>)>>),
+    (mut way_cache, mut chosen): (Local<WayCache>, Local<Option<(ChosenFor, Vec<(String, (Goal, Option<Entry>))>, Vec<BlockId>)>>),
     (world, time, mut near): (Res<crate::world::ClientWorld>, Res<Time>, Local<(f32, Vec<bool>)>),
 ) {
     let content = &launch.content;
@@ -2051,16 +2051,19 @@ fn track(
     let book = viewer.book();
     let chose_for = (settings.pinned_quests.clone(), player.quests_rev, way_cache.1);
     if chosen.as_ref().is_none_or(|(was, ..)| *was != chose_for) {
-        let mut shown_ways: Vec<(String, (Goal, Entry))> = Vec::new();
+        let mut shown_ways: Vec<(String, (Goal, Option<Entry>))> = Vec::new();
         if let Some(book) = book {
             let under_way = settings.pinned_quests.iter().filter_map(|name| content.quests.get(name)).filter(|quest| !state(&player, &quest.name).is_some_and(|s| s.done));
             for quest in under_way.take(look_ways(content)) {
-                // The first goal still to meet that has a way: one to look up, or a creature to
-                // fight, leaves the way to the next.
+                // The first goal still to meet that has a way, or a creature to find (none for
+                // a goal to look up, which leaves its lines to the next).
                 let mut unmet = best_task(quest, state(&player, &quest.name)).into_iter().filter(|(_, progress)| progress.0 < progress.1);
                 let first = unmet.find_map(|(goal, _)| {
                     let ways = way_cache.0.entry(format!("{}/{goal:?}", quest.name)).or_insert_with(|| goal_ways(content, book, package(quest), goal));
-                    Some((goal.clone(), ways.first()?.clone()))
+                    match ways.first() {
+                        Some(way) => Some((goal.clone(), Some(way.clone()))),
+                        None => creature_of(content, package(quest), goal).map(|_| (goal.clone(), None)),
+                    }
                 });
                 if let Some(shown) = first {
                     shown_ways.push((quest.name.clone(), shown));
@@ -2070,7 +2073,7 @@ fn track(
         // The kinds of thing carried that choose how those ways read (a family of recipes is
         // shown from what is carried, and what is still to get comes first): carrying anything
         // else draws nothing again.
-        let mut matters: Vec<BlockId> = book.map(|book| shown_ways.iter().flat_map(|(_, (_, way))| way_items(content, book, way)).collect()).unwrap_or_default();
+        let mut matters: Vec<BlockId> = book.map(|book| shown_ways.iter().filter_map(|(_, (_, way))| way.as_ref()).flat_map(|way| way_items(content, book, way)).collect()).unwrap_or_default();
         matters.sort();
         matters.dedup();
         *chosen = Some((chose_for, shown_ways, matters));
@@ -2088,7 +2091,7 @@ fn track(
     if near.0 <= 0.0 || near.1.len() != shown_ways.len() {
         near.0 = 0.5;
         let eye = player.eye();
-        near.1 = shown_ways.iter().map(|(_, (_, way))| station_of(way).is_none_or(|tag| !voxmar_engine::craft::tags_near(&[tag], &content.blocks, eye, |pos| world.block(pos)).is_empty())).collect();
+        near.1 = shown_ways.iter().map(|(_, (_, way))| way.as_ref().and_then(station_of).is_none_or(|tag| !voxmar_engine::craft::tags_near(&[tag], &content.blocks, eye, |pos| world.block(pos)).is_empty())).collect();
     }
     // The book too, by its number: one built again for other content draws the ways again.
     let wanted = (settings.pinned_quests.clone(), player.quests_rev, locale.code().to_owned(), book_key.clone(), way_cache.1, held.clone(), near.1.clone());
@@ -2145,7 +2148,11 @@ fn track(
                     card.spawn((lines, TrackerGoal)).with_children(|lines| {
                         lines.spawn((shadowed(font, goal_line(&locale, content, quest, goal, progress, met), BODY, if met { GOLD } else { TEXT }), TrackerLine));
                         if let Some((((_, way), station_near), book)) = how {
-                            for line in tracker_way(&locale, &launch, book, package(quest), way, &held, station_near) {
+                            let words = match way {
+                                Some(way) => tracker_way(&locale, &launch, book, package(quest), way, &held, station_near),
+                                None => creature_lines(&locale, content, package(quest), goal),
+                            };
+                            for line in words {
                                 lines.spawn((shadowed(font, line, BODY, SOFT), TrackerHow));
                             }
                         }
@@ -2158,6 +2165,40 @@ fn track(
             });
         }
     });
+}
+
+/// The one creature a goal to fight, tame, trap or lure names (none for `any`).
+fn creature_of<'a>(content: &'a Content, package: &str, goal: &Goal) -> Option<&'a voxmar_engine::creature::Creature> {
+    let (Goal::Kill(name, _) | Goal::Tame(name, _) | Goal::Trapped(name, _) | Goal::Lured(name, _)) = goal else { return None };
+    qualified(package, name).iter().find_map(|name| content.creatures.find(name)).map(|id| content.creatures.get(id))
+}
+
+/// The tracker's lines under a goal to fight, tame, trap or lure a creature: where to look
+/// for it (where it lives, as the journal says; a monster in the dark; a boss in its lair),
+/// and, to tame or lure it, what to hold out to it.
+pub(crate) fn creature_lines(locale: &Locale, content: &Content, package: &str, goal: &Goal) -> Vec<String> {
+    let Some(creature) = creature_of(content, package, goal) else { return Vec::new() };
+    let def = &creature.def;
+    let look = match super::journal::creature_home(locale, def) {
+        _ if def.boss => locale.get("journal.hint.bosses").to_owned(),
+        Some(home) => locale.format("journal.hint.lives_in", &[("biome", &home)]),
+        None if def.kind == voxmar_engine::creature::Kind::Monster => locale.get("journal.hint.monsters").to_owned(),
+        None => locale.get("journal.hint.animals").to_owned(),
+    };
+    let foods = |items: &[BlockId]| -> Vec<String> {
+        let blocks = &content.blocks;
+        items.iter().filter(|&&item| !blocks.def(item).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY)).take(3).map(|&item| locale.block(blocks.def(item))).collect()
+    };
+    let hold = match goal {
+        Goal::Tame(..) => foods(&creature.tame_food),
+        Goal::Lured(..) => foods(&creature.favourite),
+        _ => Vec::new(),
+    };
+    let mut lines = vec![look];
+    if !hold.is_empty() {
+        lines.push(locale.format("quest.tracker.hold", &[("list", &hold.join(locale.get("multiblock.fuel_or")))]));
+    }
+    lines
 }
 
 /// How many pinned quests, from the top, show a way under their next goal.
@@ -2810,6 +2851,39 @@ pub(crate) mod tests {
     /// A tracked goal says under it how to meet it, in the recipe book's words: the rock's
     /// tool, what a thing is made from, and how to get first what goes in that is not
     /// carried; a goal to look up says nothing, for that is its lesson.
+    /// Under a goal to fight, tame or lure a creature, the tracker says where it lives (a
+    /// boss: in its lair), and to tame or lure it, what to hold out: for each shipped one.
+    #[test]
+    fn the_tracker_says_where_a_creature_lives_and_what_tames_it() {
+        let content = content();
+        let locale = Locale::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), "en");
+        let mut seen = 0;
+        for quest in content.quests.iter() {
+            for goal in quest.tasks.iter().flatten() {
+                let Some(creature) = creature_of(&content, package(quest), goal) else { continue };
+                seen += 1;
+                let lines = creature_lines(&locale, &content, package(quest), goal);
+                let def = &creature.def;
+                let look = if def.boss { locale.get("journal.hint.bosses").to_owned() } else { lines[0].clone() };
+                assert_eq!(lines[0], look, "{}: {goal:?}", quest.name);
+                if !def.boss && !def.habitat.biomes.is_empty() {
+                    assert!(lines[0].starts_with("Lives in "), "{}: {goal:?} reads {lines:?}", quest.name);
+                }
+                let hold = matches!(goal, Goal::Tame(..) | Goal::Lured(..));
+                assert_eq!(lines.len(), 1 + hold as usize, "{}: {goal:?} reads {lines:?}", quest.name);
+                if let Goal::Tame(..) = goal {
+                    let food = locale.block(content.blocks.def(creature.tame_food[0]));
+                    assert!(lines[1].starts_with("Hold out: ") && lines[1].contains(&food), "{}: {goal:?} reads {lines:?}", quest.name);
+                }
+            }
+        }
+        assert!(seen >= 10, "only {seen} creature goals");
+        let rabbit = creature_lines(&locale, &content, "base", &Goal::Tame("rabbit".into(), 1));
+        assert_eq!(rabbit.len(), 2, "{rabbit:?}");
+        assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("any".into(), 1)), Vec::<String>::new());
+        assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("rootmother".into(), 1)), vec![locale.get("journal.hint.bosses").to_owned()]);
+    }
+
     #[test]
     fn the_tracker_says_how_to_meet_a_goal() {
         let content = content();
