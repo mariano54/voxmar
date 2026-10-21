@@ -4,8 +4,9 @@
 // modifiers: `heal`, `speed`, `mining` and `xp` multiply (1 changes nothing, 0 stops
 // healing by itself), `fishing` (casts landing) and `meal_heal` and `meal_time` (how much a
 // meal heals and how long its good effects last) multiply too, `warmth` adds degrees to how
-// warm you feel, `max_health` adds health points, `hurt_every` hurts a point every so many
-// seconds.
+// warm you feel and `home_warmth` (a home's steps and rooms) the same but only up to
+// survival.ron's `comfort_top`, never past it, `max_health` adds health points, `hurt_every`
+// hurts a point every so many seconds.
 //
 // `when` is what brings it on, checked every second: how warm you feel, a fire nearby, and the weather where you stand (rain, snow, hail, dust and storms only out in
 // it, under open sky; wind anywhere). An effect without one comes only from what you do:

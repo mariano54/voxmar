@@ -324,6 +324,16 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
     }
 }
 
+/// A home's warmth tops out at `comfort_top` (`survival.ron`), which must be below the
+/// coolest a debuff comes on at as a player feels warmer (Hot's `FeltAbove`): a cosy home
+/// never makes its owner hot.
+fn comfort_below_hot(content: &Content, comfort_top: f32) -> Result<(), String> {
+    match content.effects.too_warm_at() {
+        Some(hot) if comfort_top >= hot => Err(format!("survival.ron's comfort_top ({comfort_top} °C) must be below {hot} °C, where a debuff comes on as a player feels warmer")),
+        _ => Ok(()),
+    }
+}
+
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
 /// How each block (by id) shelters as a wall of a home's room, as `Server::room_walls`
@@ -352,6 +362,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     let mut notes = Vec::new();
     let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
     heal_most_below_food(&content, survival.heal_most)?;
+    comfort_below_hot(&content, survival.comfort_top)?;
     survival.check_shelters(&content.blocks)?;
     std::sync::Arc::make_mut(&mut content.notes).extend(notes);
     for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
