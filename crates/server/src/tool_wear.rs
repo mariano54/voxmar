@@ -63,6 +63,20 @@ impl Server {
         if worn != Worn::Fine {
             player.connection.send(ServerMessage::ToolWore { item, broke: worn == Worn::Broke });
         }
+        // Nearly worn out, it says how it is mended, as its tooltip does: what with, and at
+        // what, the first time that matters being before it breaks.
+        if worn == Worn::Warned
+            && let Some(&by) = tools.mends(item).first()
+        {
+            use voxmar_engine::lang::Words;
+            let by = match tools.mend_by_tag(item) {
+                Some(tag) => Words::key(&format!("item.mend.tag.{tag}")),
+                None => Words::Block(blocks.def(by).name.clone()),
+            };
+            let how = Words::key("item.mend").with("item", by).with("station", Words::key(&format!("item.mend.near.{}", tools.mend_near(item))));
+            let text = Words::key("tool.nearly_worn").with("item", Words::Block(blocks.def(item).name.clone())).with("how", how);
+            player.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text });
+        }
         let (feet, owner) = (player.position.floor().as_ivec3(), crate::items::owner_of(&player.name));
         let lifetime = (self.content.value.death.grave * voxmar_protocol::TICKS_PER_SECOND as f32) as u32;
         for (i, stack) in left.into_iter().enumerate() {
@@ -213,6 +227,43 @@ mod tests {
         let left = server.content.tools.head(pick).map(|head| ItemStack::new(head, 1));
         assert_eq!(server.players[&1].inventory.slots[0], left, "broken, nothing but a head it names is left in the hand");
         assert_eq!(told(&client), (0, 1));
+    }
+
+    /// Nearly worn out, a tool says in words how it is mended, by what and where, as its
+    /// tooltip does: the player learns it the first time it matters, before it breaks.
+    #[test]
+    fn a_tool_nearly_worn_says_how_it_is_mended() {
+        use voxmar_engine::lang::Words;
+        let said = |client: &voxmar_protocol::ClientConnection| {
+            let mut said = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let ServerMessage::Chat { text: Words::Key(key, args), .. } = message {
+                    said.push((key, args));
+                }
+            }
+            said
+        };
+        for (tool, by, near) in [("base:flint_pickaxe", "base:flint", "chopping_block"), ("base:copper_pickaxe", "base:copper_ingot", "grindstone")] {
+            let (mut server, client) = holding(tool, 0);
+            let item = server.content.blocks.expect(tool);
+            let uses = server.content.tools.uses(item);
+            assert_eq!(server.content.tools.mend_near(item), near, "{tool}");
+            let warn_at = (uses as f32 * server.content.tools.wear().warn).ceil() as u16;
+            server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - warn_at - 2;
+            let stone = put(&mut server, "base:stone");
+            server.wear_on_block(1, stone, false, server.tool_in_hand(1));
+            assert!(said(&client).is_empty(), "{tool}: not yet");
+            server.wear_on_block(1, stone, false, server.tool_in_hand(1));
+            let said = said(&client);
+            let [(key, args)] = &said[..] else { panic!("{tool}: told {said:?}") };
+            assert_eq!(key, "tool.nearly_worn");
+            let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+            assert_eq!(arg("item"), Some(Words::Block(tool.into())));
+            let Some(Words::Key(how, how_args)) = arg("how") else { panic!("{tool}: no how in {args:?}") };
+            assert_eq!(how, "item.mend");
+            let named = |name: &str| how_args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+            assert_eq!((named("item"), named("station")), (Some(Words::Block(by.into())), Some(Words::key(&format!("item.mend.near.{near}")))), "{tool}");
+        }
     }
 
     /// Mining saves a pickaxe's wear by the level, `level` times `save_per_level` a use
