@@ -324,6 +324,13 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
     }
 }
 
+/// How far above a block the server looks for anything solid over it (survival.ron's
+/// `roof_scan`; leaves count): whether rain falls on it, for the client to hear the rain on
+/// a fire as the server judges it.
+pub fn roof_scan(content: &Content) -> i32 {
+    rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content").roof_scan
+}
+
 /// A home's warmth tops out at `comfort_top` (`survival.ron`), which must be below the
 /// coolest a debuff comes on at as a player feels warmer (Hot's `FeltAbove`): a cosy home
 /// never makes its owner hot.
