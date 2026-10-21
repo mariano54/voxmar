@@ -529,12 +529,12 @@ pack into the stores, so a home stays useful without sorting by hand.
   friend's stores.
 - **What the player hears and reads.** A lid lifted (the `base:open_store` sound, softer). The
   chat says how many stacks went in (`store.put_away`). It says when nothing matched
-  (`store.put_away.none`), and when the player is not at home (`store.put_away.away`).
-  All three are in en and ja. There is no protocol change: the action rides
+  (`store.put_away.none`), when the stores that hold it have no room (`store.put_away.full`), and when the player is not at home (`store.put_away.away`).
+  All four are in en and ja. There is no protocol change: the action rides
   `ActionTarget::None`, and the inventory and any open store are resent as usual.
 - **Tests.** `put_away` tests in server/src/stores.rs (matched stacks move, the hotbar
-  stays, what went in is tallied for `Stocked`, a full store keeps the rest in the pack,
-  away from home nothing moves). In the
+  stays, what went in is tallied for `Stocked`, a full store keeps the rest in the pack and
+  says so, away from home nothing moves). In the
   gate's Home step, after Lay, check "home: put away": planks carried in the pack go into
   the barrel when H is pressed.
 

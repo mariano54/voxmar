@@ -144,6 +144,8 @@ impl Server {
         let mut pack = player.inventory.clone();
         let mut moved = 0u32;
         let mut stocked: Vec<(String, String, u32)> = Vec::new();
+        // A stack some store holds and takes, whether or not it had room.
+        let mut matched = false;
         for slot in HOTBAR_SLOTS..SLOTS {
             let Some(mut stack) = pack.slots[slot] else { continue };
             let most = max_stack(stack.item);
@@ -153,6 +155,7 @@ impl Server {
                 if !holds || !machines.get(block).is_some_and(|m| m.bin_takes(stack.item)) {
                     continue;
                 }
+                matched = true;
                 let blocks = &self.content.blocks;
                 let (kind, item) = (format!("stocked:{}", blocks.def(block).name), blocks.def(stack.item).name.clone());
                 let before = stack.count;
@@ -190,7 +193,7 @@ impl Server {
             }
         }
         if moved == 0 {
-            return self.tell_store(agent, Words::key("store.put_away.none"));
+            return self.tell_store(agent, Words::key(if matched { "store.put_away.full" } else { "store.put_away.none" }));
         }
         let player = self.players.get_mut(&agent).expect("got above");
         player.inventory = pack;
@@ -522,6 +525,18 @@ mod tests {
         let planks = id(&server, "base:oak_planks");
         assert_eq!(slot(&server, 12), Some((planks, 16)), "four fit");
         assert!(held(&server).contains(&(planks, 64)));
+        // With the store full, the player is told it has no room, not that nothing matched.
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        act(&mut server, "base:put_away", ActionTarget::None);
+        assert_eq!(slot(&server, 12), Some((planks, 16)), "nothing more fits");
+        let mut told = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            if let voxmar_protocol::ServerMessage::Chat { text: Words::Key(key, _), .. } = message {
+                told.push(key);
+            }
+        }
+        assert_eq!(told, ["store.put_away.full"]);
     }
 
     /// Away from home, nothing moves.

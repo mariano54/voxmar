@@ -90,6 +90,7 @@
     "station.loaded_faster": "{words} Where it stands makes it quicker.",
     "store.put_away": "Stacks put away in your home's stores: {count}.",
     "store.put_away.none": "Nothing in your pack goes with what your home's stores hold. The hotbar stays as it is.",
+    "store.put_away.full": "Your home's stores that hold these things are full. They stay in your pack.",
     "store.put_away.away": "Stand in your home to put things away in its stores.",
     "station.loaded_from_stores": "{words} {count} of them came from your home's stores.",
     "station.working": "Still at work on {item}: about {minutes} min left.",
