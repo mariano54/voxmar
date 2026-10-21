@@ -120,10 +120,14 @@
     walkers: ["aurochs", "wild_horse", "camel", "bison"],
     // How long each burns: the last entry naming an item says, else the last tag taking it,
     // so a tag never shortens an item's own entry and a later package can change any of them.
+    // `heat` is how hot (1 unless given): what a station's or machine's `heat` asks of its
+    // fuel. Raw wood burns low and smoky; split firewood hotter, and longer than the log it
+    // came from (two to a log); charcoal and coal hottest, what a kiln wants.
     fuels: [
         (item: "tag:fuel", seconds: 2.0),
         (item: "tag:planks", seconds: 4.0),
         (item: "tag:log", seconds: 15.0),
-        (item: "coal_ore|charcoal|coke", seconds: 80.0),
+        (item: "firewood|charred_wood", seconds: 20.0, heat: 2),
+        (item: "coal_ore|charcoal|coke", seconds: 80.0, heat: 3),
     ],
 )

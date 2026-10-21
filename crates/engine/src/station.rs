@@ -361,30 +361,44 @@ mod tests {
         assert_eq!((rot.takes, rot.gives, rot.output), (4, 1, blocks.expect("base:compost")));
         let (compost, bone) = (stations.fertiliser(blocks.expect("base:compost")).unwrap(), stations.fertiliser(blocks.expect("base:bone")).unwrap());
         assert!(compost.reach > bone.reach);
-        let clamp = blocks.expect("base:earth_clamp");
-        let (clamp, _) = stations.of(clamp).expect("the clamp is a station");
-        let (_, fire) = clamp.work(blocks.expect("base:clay")).expect("clay fires in a clamp");
-        let (_, char) = clamp.work(blocks.expect("base:oak_log")).expect("logs char in a clamp");
-        assert_eq!((fire.output, char.output), (blocks.expect("base:fired_clay"), blocks.expect("base:charcoal")));
-        assert_eq!(fire.counts.as_deref(), Some("cooked"), "quests count clamp-fired clay as fired");
     }
 
-    /// A station never pays more experience for an output than making it by hand from the
-    /// same input at a fire does (the plan: machine routes never pay more than hand).
-    #[test]
-    fn a_station_pays_no_more_than_the_hand_route() {
-        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("content loads");
-        let mut checked = 0;
-        for station in &content.stations.stations {
+    /// Each station work that pays more experience for an output than making it by hand from
+    /// the same input at a fire does, as words, and how many had a hand route to weigh.
+    fn overpaid(content: &crate::content::Content, stations: &Stations) -> (Vec<String>, usize) {
+        let (mut over, mut checked) = (Vec::new(), 0);
+        for station in &stations.stations {
             for work in &station.works {
                 for (input, recipe) in content.cooking.iter().filter(|(input, r)| r.output == work.output && work.accepts.contains(input)) {
                     checked += 1;
                     let hand = recipe.def.xp * work.takes as f32 / work.gives as f32;
-                    assert!(work.xp <= hand, "{} from {}: {} at a station, {hand} by hand", content.blocks.def(work.output).name, content.blocks.def(input).name, work.xp);
+                    if work.xp > hand {
+                        over.push(format!("{} from {}: {} at a station, {hand} by hand", content.blocks.def(work.output).name, content.blocks.def(input).name, work.xp));
+                    }
                 }
             }
         }
-        assert!(checked > 0, "some station work has a hand route to weigh it against");
+        (over, checked)
+    }
+
+    /// A station never pays more experience for an output than making it by hand from the
+    /// same input at a fire does (the plan: machine routes never pay more than hand). No
+    /// shipped station has a hand route since the earth clamp went, so a station that would
+    /// fire clay is weighed too: at the pit kiln's pay it passes, over it it is caught.
+    #[test]
+    fn a_station_pays_no_more_than_the_hand_route() {
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("content loads");
+        let (over, _) = overpaid(&content, &content.stations);
+        assert!(over.is_empty(), "{over:?}");
+        let kiln = content.cooking.iter().find(|(input, r)| *input == content.blocks.expect("base:clay") && r.output == content.blocks.expect("base:fired_clay")).map(|(_, r)| r.def.xp).expect("clay fires by hand");
+        let firing = |xp: f32| {
+            let source = format!(r#"(stations: [(empty: "compost_heap", working: "compost_heap_full", ready: "compost_heap_ready", holds: 16, works: [(input: "clay", output: "fired_clay", minutes: 1.0, skill: "core:crafting", xp: {xp:?})])])"#);
+            let stations = Stations::new(vec![Stations::read("base", &source).unwrap()], &content.blocks, &content.skills).unwrap();
+            overpaid(&content, &stations)
+        };
+        assert_eq!(firing(kiln), (Vec::new(), 1), "the hand's pay, weighed");
+        let (over, checked) = firing(kiln + 1.0);
+        assert_eq!((over.len(), checked), (1, 1), "more than the hand's pay is caught: {over:?}");
     }
 
     /// The pot tells grain from vegetables by a `!` tag: wheat simmers to porridge, corn

@@ -328,12 +328,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (tools/perf/play_frames, its `ahead:` lines).
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
-    let mut playing = workers.min(workers::PLAYING);
+    let mut given_workers = None;
     if let Ok(given) = std::env::var("VOXMAR_WORKERS")
         && !given.is_empty()
     {
         match given.parse::<usize>() {
-            Ok(n) if (1..=threads).contains(&n) => (workers, playing) = (n, n),
+            Ok(n) if (1..=threads).contains(&n) => (workers, given_workers) = (n, Some(n)),
             // Before logging starts, so on stderr, where tools/perf/play_frames shows it beside
             // the numbers, which are then the default's.
             _ => eprintln!("VOXMAR_WORKERS={given} is not from 1 to {threads}; {workers} workers"),
@@ -350,6 +350,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
+    // While playing, as many streaming jobs at once as the content says (`streaming.ron`).
+    let playing = given_workers.unwrap_or(workers::Streaming::load(&content.files)?.playing.min(workers));
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let quest_look = hud::quest_look::QuestLook::load(&content.files)?;
@@ -377,6 +379,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
+    recorded.check_wear()?;
     recorded.covers(&content.actions)?;
     let creature_bank = creature_sounds::Bank::load(&content.files, &content.creatures)?;
     creature_bank.check_files(&assets)?;

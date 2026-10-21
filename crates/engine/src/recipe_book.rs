@@ -66,6 +66,13 @@ pub enum Method {
     Trade { event: usize, wants: Option<(crate::wander::Want, u8)>, chance: f32 },
     /// Given for finishing the quest `quest`.
     Reward { quest: String },
+    /// Left when `from` burns out, set down or in hand (a torch's stub), or, `relit`, what
+    /// `from` is lit again into (a lamp filled with fat), using up an item tagged `fuel`
+    /// if lighting it does.
+    Burn { from: BlockId, relit: bool, fuel: Option<String> },
+    /// Left where `from` was charred in the structure `structure` (a clamp's firewood), lit
+    /// and left to smoulder; `early` if it was opened before its time.
+    Smoulder { structure: String, from: BlockId, early: bool },
     /// Found in the world (its generator lays it) and broken loose as itself, with `tool`
     /// (the least that does) if it needs one, from `level` in `skill`.
     Found { tool: Option<BlockId>, skill: Option<crate::skill::SkillId>, level: u8 },
@@ -110,6 +117,16 @@ pub struct RecipeBook {
     uses: FxHashMap<BlockId, Vec<usize>>,
     /// What the world lays, as each is held ([`listed_as`]).
     laid: std::collections::HashSet<BlockId>,
+    /// The creative-only blocks a way breaks that the world never lays (a zinc ore sample
+    /// no vein sets down): ways no player meets.
+    unlaid: std::collections::HashSet<BlockId>,
+}
+
+/// The item a way that takes any of `accepts` shows going in: the first a player can come
+/// by, not one only the creative catalogue has (a hollow root no one can break loose).
+fn shown_input(blocks: &crate::block::BlockRegistry, accepts: &[BlockId]) -> Option<BlockId> {
+    let items = accepts.iter().map(|&b| blocks.item_of(b));
+    items.clone().find(|&item| !blocks.def(item).has_tag(CREATIVE_ONLY)).or_else(|| items.clone().next())
 }
 
 /// The block `id` is held as: itself, or for one of its placed forms (another look, a
@@ -187,7 +204,7 @@ impl RecipeBook {
         // takes its kind.
         for (id, process) in content.machines.processes() {
             let machines: Vec<BlockId> = content.machines.iter().filter(|m| m.processes.contains(&id)).map(|m| m.block).collect();
-            let inputs: Vec<(BlockId, u8)> = process.inputs.iter().filter_map(|(accepts, n)| Some((blocks.item_of(*accepts.first()?), *n))).collect();
+            let inputs: Vec<(BlockId, u8)> = process.inputs.iter().filter_map(|(accepts, n)| Some((shown_input(blocks, accepts)?, *n))).collect();
             let made = process.outputs.iter().map(|&(item, n)| (item, n, 1.0)).chain(process.byproducts.iter().copied());
             for (item, n, chance) in made {
                 let method = Method::Process { machines: machines.clone(), inputs: inputs.clone(), tier: process.tier, chance };
@@ -198,8 +215,8 @@ impl RecipeBook {
         // Home stations: each work, left in the station's empty block.
         for station in &content.stations.stations {
             for work in &station.works {
-                let Some(&input) = work.accepts.first() else { continue };
-                let method = Method::Work { station: station.empty, input: blocks.item_of(input), takes: work.takes, skill: work.skill, level: work.level };
+                let Some(input) = shown_input(blocks, &work.accepts) else { continue };
+                let method = Method::Work { station: station.empty, input, takes: work.takes, skill: work.skill, level: work.level };
                 let uses = work.accepts.iter().copied().chain(method.stations(blocks)).collect();
                 book.add(blocks, Entry { method, output: work.output, count: (work.gives, work.gives) }, uses);
             }
@@ -340,6 +357,46 @@ impl RecipeBook {
                 }
             }
         }
+        // Fire: what a light set down leaves burnt out and what one is lit again into, each
+        // as breaking it gives it, from what breaking the light gives (a guttering torch is
+        // picked up as a torch); and what an item burning in hand leaves. What breaks to
+        // nothing is no way to anything.
+        let held = |b: BlockId| Some(blocks.info(b).drops).filter(|d| !d.is_air());
+        let mut fire = Vec::new();
+        for b in blocks.ids() {
+            if let Some((_, to)) = content.flames.burns_out(blocks, b) {
+                fire.push((held(b), held(to), false, None));
+            }
+            if let Some(to) = content.flames.relit(blocks, b) {
+                fire.push((held(b), held(to), true, content.flames.relit_with(b)));
+            }
+            if let Some(to) = content.tools.burnt(b) {
+                fire.push((Some(b), held(to), false, None));
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (from, output, relit, fuel) in fire {
+            if let (Some(from), Some(output)) = (from, output)
+                && from != output
+                && seen.insert((from, output, relit))
+            {
+                // The fuel it uses up is among what it takes, so fat looked up shows the lamp.
+                let takes = std::iter::once(from).chain(fuel.into_iter().flat_map(|tag| blocks.tagged(tag))).collect();
+                book.add(blocks, Entry { method: Method::Burn { from, relit, fuel: fuel.map(str::to_owned) }, output, count: (1, 1) }, takes);
+            }
+        }
+        // A smouldering structure: what each of its wood cells, charred through or opened
+        // early, breaks to, as many as the heap drops.
+        for structure in content.multiblocks.iter() {
+            let Some(smoulder) = &structure.smoulder else { continue };
+            let Some(&from) = smoulder.wood.first().and_then(|&at| structure.takes(at).first()) else { continue };
+            for (left, early) in [(smoulder.done, false), (smoulder.early, true)] {
+                if let Some(output) = held(left) {
+                    let n = blocks.info(left).drop_count;
+                    book.add(blocks, Entry { method: Method::Smoulder { structure: structure.name.clone(), from, early }, output, count: (n, n) }, vec![from]);
+                }
+            }
+        }
         book
     }
 
@@ -370,6 +427,12 @@ impl RecipeBook {
         self.laid.contains(&listed_as(blocks, block))
     }
 
+    /// Whether a player can meet `entry`: not by breaking a creative-only block the world
+    /// never lays (as [`found`](Self::found) was told).
+    pub fn met(&self, entry: &Entry) -> bool {
+        !matches!(entry.method, Method::Break { block, .. } if self.unlaid.contains(&block))
+    }
+
     /// Adds what the world lays (`placed`, from its generator's data) that breaking gives
     /// back as itself: found, not made. Items that are never placed (seeds) are left out,
     /// and so are furnishings: one the world placed (a village's bed) gives nothing broken.
@@ -379,6 +442,15 @@ impl RecipeBook {
         placed.sort();
         placed.dedup();
         self.laid.extend(placed.iter().map(|&b| listed_as(blocks, b)));
+        let laid = &self.laid;
+        self.unlaid = self
+            .entries
+            .iter()
+            .filter_map(|e| match e.method {
+                Method::Break { block, .. } if blocks.def(block).has_tag(CREATIVE_ONLY) && !laid.contains(&listed_as(blocks, block)) => Some(block),
+                _ => None,
+            })
+            .collect();
         // A crop the world lays ripe (a wild cabbage) is foraged as it stands.
         for (_, crop) in content.crops.iter().filter(|(_, crop)| placed.contains(&crop.ripe())) {
             for (item, loot) in &crop.forage {
@@ -651,6 +723,23 @@ mod tests {
         // A quest's reward.
         let torch_quests: Vec<&str> = book.making(id("base:torch")).iter().filter_map(|e| if let Method::Reward { quest } = &e.method { Some(quest.as_str()) } else { None }).collect();
         assert!(content.quests.iter().filter(|q| q.rewards.contains(&crate::quest::Reward::Item("base:torch".into(), 4))).all(|q| torch_quests.contains(&q.name.as_str())) && !torch_quests.is_empty());
+        // Fire: a torch burnt out leaves its stub, a firebrand burnt in hand a charred stick,
+        // and an empty lamp filled is a lit one; a guttering torch, picked up as a torch, is
+        // no way to itself.
+        let burnt = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Burn { from, relit, .. } = m { Some((from, relit)) } else { None }).collect::<Vec<_>>();
+        assert_eq!(burnt("base:torch_stub"), [(id("base:torch"), false)]);
+        assert_eq!(burnt("base:charred_stick"), [(id("base:firebrand"), false)]);
+        assert_eq!(burnt("base:clay_oil_lamp"), [(id("base:clay_oil_lamp_empty"), true)]);
+        assert!(burnt("base:torch_guttering").is_empty());
+        // A clamp's firewood, charred through, is charcoal; opened early, charred wood.
+        let charred = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Smoulder { structure, from, early } = m { Some((structure, from, early)) } else { None }).collect::<Vec<_>>();
+        assert_eq!(charred("base:charcoal"), [("base:charcoal_clamp".to_owned(), id("base:firewood"), false)]);
+        assert_eq!(charred("base:charred_wood"), [("base:charcoal_clamp".to_owned(), id("base:firewood"), true)]);
+        // As many as a heap breaks to: four charcoal, two charred wood.
+        let heap = |item: &str| book.making(id(item)).iter().find(|e| matches!(e.method, Method::Smoulder { .. })).map(|e| e.count);
+        assert_eq!((heap("base:charcoal"), heap("base:charred_wood")), (Some((4, 4)), Some((2, 2))));
+        let fat = content.blocks.tagged("fat").next().expect("something is fat");
+        assert!(book.using(fat).iter().any(|e| matches!(&e.method, Method::Burn { relit: true, fuel: Some(tag), .. } if tag == "fat") && e.output == id("base:clay_oil_lamp")));
         // Food left too long: the cooking entries it burns in make it.
         let burnt = book.making(id("base:burnt_food"));
         assert!(!burnt.is_empty() && burnt.iter().all(|e| matches!(e.method, Method::Cook { burnt: Some(b), .. } if b == id("base:burnt_food"))));

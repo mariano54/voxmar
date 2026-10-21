@@ -47,13 +47,13 @@ pub use voxmar_engine::weather::Weather;
 // on.
 // 50: kept as a gap.
 // 51: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
-// 52 and 53 are kept for the light ladder and the farm days piece.
 // 54: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
 // and Players told as they change (seen, gone), names once (players who left named once more
 // with no name, to be forgotten), only those near enough.
-// 55 is kept for the light ladder.
+// 55 is unused.
 // 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
-pub const PROTOCOL_VERSION: u32 = 56;
+// 57: tools wear (ItemStack::wear) and ServerMessage::ToolWore.
+pub const PROTOCOL_VERSION: u32 = 57;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -244,6 +244,9 @@ pub enum ServerMessage {
     /// Blocks smouldering, about to catch fire (`fire.ron`), in order: sent whenever that
     /// changes, to everyone.
     Smoulders { at: Vec<IVec3> },
+    /// What the player holds wore down past its warning (`tool::Wear::warn`), or with
+    /// `broke` wore out and broke: the hand hears it, and a break shows a puff of chips.
+    ToolWore { item: BlockId, broke: bool },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

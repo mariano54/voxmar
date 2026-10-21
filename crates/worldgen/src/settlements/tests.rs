@@ -602,7 +602,7 @@ fn house_catalogue() {
             let (w, d) = centre.extent();
             let spec = Spec {
                 kind: Kind::Centrepiece, w, d, wall: 3, storeys: 1, roof: Roof::Gable, pitch: 1, ridge_x: false, extras: Vec::new(), door: 0, shed: 0,
-                wing: None, stilts: 0, regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: Some(centre), seed: k as u64, row: None,
+                wing: None, stilts: 0, regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: Some(centre), seed: k as u64, row: None, byre: 0,
             };
             let frame = super::canvas::Frame::fit(IVec2::ZERO, IVec2::new(w - 1, d - 1), super::canvas::Facing::South, IVec2::ZERO, 0);
             let named = |part: &str| c.parts.iter().find(|(p, _)| p == part).and_then(|(_, n)| registry.id(&super::def::fill(n, "oak", "oak")));
@@ -648,7 +648,7 @@ fn house_catalogue() {
                     form: h.form,
                     inside: h.inside.clone(),
                     centre: None,
-                    seed: k as u64 + 1, row: None,
+                    seed: k as u64 + 1, row: None, byre: 0,
                 };
                 let (low, high) = spec.envelope();
                 let frame = super::canvas::Frame::fit(low, high, facing, IVec2::ZERO, 0);
@@ -722,7 +722,7 @@ fn house_catalogue() {
                     form: h.form,
                     inside: h.inside.clone(),
                     centre: None,
-                    seed: k as u64 + 1, row: None,
+                    seed: k as u64 + 1, row: None, byre: 0,
                 };
                 let (low, high) = spec.envelope();
                 let extent = super::canvas::Frame::extent(low, high, facing);
@@ -934,7 +934,7 @@ fn plans_keep_to_their_squares_and_rules() {
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
 fn settlements_are_unchanged() {
-    const EXPECTED: u64 = 3173990972393086985;
+    const EXPECTED: u64 = 7202010120500935643;
     let world = shared_world(1);
     let mut text = String::new();
     for cz in -3..3 {
@@ -1150,7 +1150,7 @@ fn chimneys_stand_inside_and_just_clear_the_roof() {
                     form: h.form,
                     inside: h.inside.clone(),
                     centre: None,
-                    seed: (n * 31 + k) as u64, row: None,
+                    seed: (n * 31 + k) as u64, row: None, byre: 0,
                 };
                 let (low, high) = spec.envelope();
                 let frame = super::canvas::Frame::fit(low, high, super::canvas::Facing::North, low, 0);
@@ -1303,7 +1303,7 @@ fn stair_candidates_keep_original_first_valid_paths() {
     let mut spec = Spec {
         kind: Kind::House, w: 5, d: 5, wall: 3, storeys: 3, roof: Roof::Gable, pitch: 1, ridge_x: false,
         extras: Vec::new(), door: 2, shed: 0, wing: None, stilts: 0, regular: true, window_chance: 0.5,
-        form: Form::Box, inside: Vec::new(), centre: None, seed: 1, row: None,
+        form: Form::Box, inside: Vec::new(), centre: None, seed: 1, row: None, byre: 0,
     };
     let back = vec![(3, 3), (2, 3), (1, 3), (1, 2)];
     let front = vec![(1, 1), (2, 1), (3, 1), (3, 2)];
@@ -1334,7 +1334,7 @@ fn every_storey_has_a_stair_up() {
                     let mut spec = Spec {
                         kind, w, d, wall: h.walls.0 as i32, storeys: h.storeys.1 as i32, roof: Roof::Gable, pitch: 1, ridge_x: w > d,
                         extras: if chimney { vec![Extra::Chimney] } else { Vec::new() }, door: w / 2, shed: 0, wing: None, stilts: 0,
-                        regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 1, row: None,
+                        regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 1, row: None, byre: 0,
                     };
                     let envelope = spec.envelope();
                     house::make_room_for_stairs(&mut spec);
@@ -1364,7 +1364,7 @@ fn every_storey_has_a_stair_up() {
     for (w, d) in [(4, 4), (3, 6), (5, 5)] {
         let mut spec = Spec {
             kind: Kind::House, w, d, wall: 5, storeys: 3, roof: Roof::Gable, pitch: 1, ridge_x: false, extras: vec![Extra::Chimney], door: w / 2, shed: 0,
-            wing: None, stilts: 0, regular: true, window_chance: 0.5, form: Form::Box, inside: Vec::new(), centre: None, seed: 1, row: None,
+            wing: None, stilts: 0, regular: true, window_chance: 0.5, form: Form::Box, inside: Vec::new(), centre: None, seed: 1, row: None, byre: 0,
         };
         house::make_room_for_stairs(&mut spec);
         let up = house::stairs(&spec, spec.door.clamp(1, w - 2), spec.chimney().map(|c| c.0));
@@ -1427,7 +1427,10 @@ fn every_settlement_is_joined_to_the_trails() {
 fn no_snow_falls_indoors() {
     use super::house::Kind;
     let registry = base_registry();
-    let snowy = |b: BlockId| registry.def(b).name.contains("snow");
+    // Snow round it, not the snowdrop flowers that grow in the dooryard; in its rooms,
+    // neither.
+    let snowy = |b: BlockId| registry.def(b).name.contains("snow") && !registry.def(b).has_tag("flower");
+    let snow_or_flower = |b: BlockId| registry.def(b).name.contains("snow") || registry.def(b).has_tag("flower");
     let boxy = ["cottage", "long_house", "town_house", "farm_house", "hall", "tower_house", "wing_house"];
     let (mut failures, mut looked) = (Vec::new(), 0);
     'seeds: for seed in [1u64, 42, 7, 3, 11] {
@@ -1451,9 +1454,20 @@ fn no_snow_falls_indoors() {
                     for z in b.min.y + 1..b.max.y {
                         for x in b.min.x + 1..b.max.x {
                             for y in b.floor + 1..=b.floor + 2 {
-                                if snowy(area.block(IVec3::new(x, y, z))) {
+                                let block = area.block(IVec3::new(x, y, z));
+                                if snowy(block) {
                                     failures.push(format!("seed {seed} {}: snow in the {} at {x} {y} {z}", plan.name.0, b.what));
                                 }
+                            }
+                        }
+                    }
+                    // Nor flowers in its rooms or its byre (its box may hold a porch or the
+                    // yard by a wing).
+                    for c in b.room.iter().chain(&b.byre) {
+                        for y in b.floor + 1..=b.floor + 2 {
+                            let block = area.block(IVec3::new(c.x, y, c.y));
+                            if snow_or_flower(block) {
+                                failures.push(format!("seed {seed} {}: {} in the {}'s room at {} {y} {}", plan.name.0, registry.def(block).name, b.what, c.x, c.y));
                             }
                         }
                     }
@@ -1479,7 +1493,7 @@ fn room_columns_exclude_exterior_walls_and_courtyards() {
         kind: Kind::House, w: 13, d: 13, wall: 3, storeys: 1, roof: Roof::Gable,
         pitch: 1, ridge_x: false, extras: vec![Extra::Porch], door: 6, shed: 3,
         wing: None, stilts: 2, regular: true, window_chance: 0.0, form: Form::Box,
-        inside: Vec::new(), centre: None, seed: 3, row: None,
+        inside: Vec::new(), centre: None, seed: 3, row: None, byre: 0,
     };
     for facing in [Facing::North, Facing::South, Facing::West, Facing::East] {
         let frame = Frame { origin: IVec3::new(100, 132, 200), facing };
@@ -1548,7 +1562,7 @@ fn every_storey_can_be_walked_to() {
                 let mut spec = Spec {
                     kind, w, d, wall, storeys: h.storeys.1 as i32, roof: Roof::Gable, pitch: 1, ridge_x: w > d,
                     extras: if chimney { vec![Extra::Chimney] } else { Vec::new() }, door: w / 2, shed: 0, wing: None, stilts: 0,
-                    regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 3, row: None,
+                    regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed: 3, row: None, byre: 0,
                 };
                 house::make_room_for_stairs(&mut spec);
                 let (low, high) = spec.envelope();
@@ -3391,6 +3405,21 @@ fn roof_pieces_and_fire_are_load_checked() {
     assert!(refused(&|d| { let i = timber(d); d.styles[i].row = row(0.5, (3, 5), vec![("city", 2)]) }), "no size is a city");
     assert!(refused(&|d| { let i = timber(d); d.styles[i].row = row(0.5, (3, 5), vec![("town", 4)]) }));
     assert!(refused(&|d| { let i = timber(d); d.styles[i].row = row(0.5, (3, 5), vec![("town", 0)]) }));
+    assert!(refused(&|d| { let i = timber(d); d.styles[i].row = row(0.5, (3, 5), vec![("town", 2), ("town", 3)]) }), "a size named twice");
+    // Byres: a share for a chance, 3 or more rows low to high, a home of four walls with
+    // nothing inside, deep enough for its rows and the home's.
+    use super::def::ByreDef;
+    let long = |d: &mut super::SettlementsDef| d.houses.iter().position(|h| h.name == "long_house").unwrap();
+    let byre = |chance: f32, rows: (u32, u32)| Some(ByreDef { chance, rows });
+    assert!(base.houses.iter().any(|h| h.byre.is_some()));
+    assert!(!refused(&|d| { let i = long(d); d.houses[i].byre = byre(1.0, (3, 7)) }));
+    assert!(refused(&|d| { let i = long(d); d.houses[i].byre = byre(1.5, (3, 4)) }));
+    assert!(refused(&|d| { let i = long(d); d.houses[i].byre = byre(f32::NAN, (3, 4)) }));
+    assert!(refused(&|d| { let i = long(d); d.houses[i].byre = byre(0.5, (2, 4)) }), "too few rows for hay, a stall and a trough");
+    assert!(refused(&|d| { let i = long(d); d.houses[i].byre = byre(0.5, (4, 3)) }));
+    assert!(refused(&|d| { let i = long(d); d.houses[i].byre = byre(0.5, (8, 8)) }), "deeper than the house");
+    assert!(refused(&|d| { let i = long(d); d.houses[i].byre = byre(0.5, (3, 4)); d.houses[i].form = super::def::Form::Round }));
+    assert!(refused(&|d| { let i = long(d); d.houses[i].byre = byre(0.5, (3, 4)); d.houses[i].work = Some("barn".into()) }));
 }
 
 /// Trails come into a walled place through its gates: none runs over a column of its wall.
@@ -3486,7 +3515,7 @@ fn row_houses_stand_wall_to_wall_under_one_roof() {
     // Seeds 42 and 7 near spawn are counted; more seeds, and the gate's walled town on
     // 0x5eed (Wenworth), are judged too, every join there under one roof.
     let wenworth = IVec2::new(-9680, 6416);
-    let mut judged = 0;
+    let (mut judged, mut at_wenworth) = (0, 0);
     for (seed, counted, also) in [(42u64, true, None), (7, true, None), (0x5eed, false, Some(wenworth)), (3, false, None), (11, false, None)] {
         let world = crate::shared_full_world(seed);
         let spawn = world.spawn_point();
@@ -3516,6 +3545,7 @@ fn row_houses_stand_wall_to_wall_under_one_roof() {
                 // The house built on to its right: its room starts past two walls.
                 let Some(b) = homes.iter().find(|b| b.facing == a.facing && b.floor == a.floor && b.room.iter().any(|&p| side.contains(&(p - along * 3)))) else { continue };
                 judged += 1;
+                at_wenworth += usize::from(also == Some(plan.centre));
                 if counted {
                     joins += 1;
                     if !in_row.contains(&b.min) {
@@ -3545,7 +3575,9 @@ fn row_houses_stand_wall_to_wall_under_one_roof() {
             }
         }
     }
-    eprintln!("{places} places, {rows} rows, {joins} joins; {judged} joins judged in all");
+    eprintln!("{places} places, {rows} rows, {joins} joins; {judged} joins judged in all, {at_wenworth} at Wenworth");
+    // As many as the gate reads there (its "settlement rows" wants two within its reach).
+    assert!(at_wenworth >= 2, "only {at_wenworth} joins at Wenworth on 0x5eed");
     assert!(joins >= 12, "only {joins} houses built on to in {places} places");
     assert!(wrong.is_empty(), "row houses not wall to wall under one roof: {wrong:?}");
 }
@@ -3647,7 +3679,7 @@ fn jettied_houses_keep_their_floors_and_their_sign() {
     for seed in 0..12u64 {
         let spec = Spec {
             kind: Kind::House, w, d, wall, storeys, roof: Roof::Gable, pitch: 1, ridge_x: true, door: w / 2, shed: 0, wing: None, stilts: 0,
-            extras: vec![Extra::SignBoard], regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: None, seed, row: None,
+            extras: vec![Extra::SignBoard], regular: true, window_chance: 0.0, form: Form::Box, inside: Vec::new(), centre: None, seed, row: None, byre: 0,
         };
         let (low, high) = spec.envelope();
         let frame = super::canvas::Frame::fit(low, high, super::canvas::Facing::North, low, 0);
@@ -3671,4 +3703,150 @@ fn jettied_houses_keep_their_floors_and_their_sign() {
         assert!(set(sign, 3, -1).is_some_and(|b| b != beam), "seed {seed}: the sign board by the door was laid over by a beam");
     }
     assert!(drawn > 0, "no house of the twelve was jettied");
+}
+
+/// Long houses and farm houses with a byre in full content: behind the home's room, never
+/// in it, an earth floor, a wall across from the room with one doorway, a door out the
+/// back, and hay.
+#[test]
+fn byres_stand_behind_their_homes() {
+    use voxmar_engine::coords::ColumnPos;
+    let registry = crate::full_content().0.blocks.clone();
+    let solid = |b: BlockId| registry.info(b).solid;
+    let (mut places, mut byres, mut wrong) = (0, 0, Vec::new());
+    for seed in [42u64, 7, 3, 1, 11] {
+        let world = crate::shared_full_world(seed);
+        let spawn = world.spawn_point();
+        for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
+            let Some(plan) = slot.0.as_ref() else { continue };
+            places += 1;
+            let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
+            let mut at = |p: IVec3| -> BlockId {
+                let pos = ColumnPos::of_block(p);
+                let column = columns.entry(pos).or_insert_with(|| world.generate(pos));
+                let o = pos.origin();
+                column.block(IVec3::new(p.x - o.x, p.y, p.z - o.z))
+            };
+            for b in plan.buildings.iter().filter(|b| !b.byre.is_empty()) {
+                byres += 1;
+                let mut fail = |why: String| {
+                    if wrong.len() < 6 {
+                        wrong.push(format!("{}'s {} at {}: {why}", plan.name.0, b.what, b.min));
+                    }
+                };
+                let back = b.facing.turn(0, 1);
+                let at3 = |p: IVec2, y: i32| IVec3::new(p.x, y, p.y);
+                if b.byre.iter().any(|p| b.room.contains(p)) {
+                    fail("its byre is in its room".into());
+                }
+                // Earth, but for the trough let into it.
+                let floors: Vec<String> = b.byre.iter().map(|&p| registry.def(at(at3(p, b.floor))).name.clone()).collect();
+                let (earth, trough) = (floors.iter().filter(|n| n.contains("dirt")).count(), floors.iter().filter(|n| n.contains("water")).count());
+                if earth + 1 != b.byre.len() || trough != 1 {
+                    fail(format!("{earth} of {} byre columns floored in earth, {trough} troughs", b.byre.len()));
+                }
+                let open = |at: &mut dyn FnMut(IVec3) -> BlockId, p: IVec2| !solid(at(at3(p, b.floor + 1))) && !solid(at(at3(p, b.floor + 2)));
+                let front = b.byre.iter().map(|p| p.dot(back)).min().unwrap();
+                let last = b.byre.iter().map(|p| p.dot(back)).max().unwrap();
+                let across: Vec<IVec2> = b.byre.iter().filter(|p| p.dot(back) == front).map(|&p| p - back).collect();
+                let doorways = across.iter().filter(|&&p| open(&mut at, p)).count();
+                if doorways != 1 || across.iter().any(|&p| !open(&mut at, p) && !solid(at(at3(p, b.floor + 1)))) {
+                    fail(format!("{doorways} doorways in the wall across"));
+                }
+                let out = b.byre.iter().filter(|p| p.dot(back) == last).filter(|&&p| open(&mut at, p + back)).count();
+                if out == 0 {
+                    fail("no door out the back".into());
+                }
+                if !b.byre.iter().any(|&p| registry.def(at(at3(p, b.floor + 1))).name.contains("hay")) {
+                    fail("no hay".into());
+                }
+                if b.beds.is_empty() {
+                    fail("no bed in front of its byre".into());
+                }
+                // A home of one storey: a row house raised to two keeps no byre under it.
+                if b.beds.iter().any(|bed| bed.y > b.floor + 1) {
+                    fail("a bed upstairs, over its byre".into());
+                }
+            }
+        }
+    }
+    eprintln!("{places} places, {byres} byres");
+    assert!(byres >= 10, "only {byres} byres in {places} places");
+    // The gate's "settlement byres" finds a place with a byre within 4000 of its walled
+    // town on 0x5eed (Wenworth).
+    let byred = crate::shared_full_world(0x5eed).nearest_settlement(IVec2::new(-9680, 6416), 4000, |s| s.buildings.iter().any(|b| !b.byre.is_empty()));
+    eprintln!("nearest byre to Wenworth: {:?}", byred.as_ref().map(|s| (s.name.0.clone(), s.centre)));
+    assert!(byred.is_some(), "no place with a byre within 4000 of Wenworth on 0x5eed");
+    assert!(wrong.is_empty(), "byres: {wrong:?}");
+}
+
+/// Every flame within a fire's reach of Wenworth's roofs (0x5eed's walled town, as the
+/// gate's roof step judges it) is one its plan sets: at a height of its own, or over the
+/// ground of its column (a lamp's torch on its post), which the plan's own list of where
+/// things go leaves out.
+#[test]
+fn every_flame_by_a_roof_is_planned() {
+    use voxmar_engine::coords::ColumnPos;
+    let world = crate::shared_full_world(0x5eed);
+    let centre = IVec2::new(-9680, 6416);
+    let reach_of_town = 56;
+    let within = |p: IVec3, r: i32| (p.xz() - centre).abs().max_element() <= r;
+    let reach = world.settlement_fire_reach() + 1;
+    let roofs: Vec<IVec3> = world.settlement_roofs(centre).into_iter().map(|r| r.0).filter(|&p| within(p, reach_of_town)).collect();
+    assert!(roofs.len() >= 20, "only {} roof pieces at Wenworth", roofs.len());
+    let flame = |b: BlockId| world.settlement_flame(b);
+    let planned: rustc_hash::FxHashSet<IVec3> = world.settlement_planned(centre, &flame).into_iter().map(|r| r.0).collect();
+    let on_ground: rustc_hash::FxHashMap<IVec3, BlockId> = world.settlement_planned_on_ground(centre, &flame).into_iter().collect();
+    let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
+    let mut at = |p: IVec3| -> BlockId {
+        let pos = ColumnPos::of_block(p);
+        let column = columns.entry(pos).or_insert_with(|| world.generate(pos));
+        let o = pos.origin();
+        column.block(IVec3::new(p.x - o.x, p.y, p.z - o.z))
+    };
+    let mut looked = rustc_hash::FxHashSet::default();
+    let (mut unplanned, mut over_ground) = (Vec::new(), 0);
+    // And every flame there, those over the ground too, kept from what catches.
+    let mut lit: Vec<IVec3> = planned.iter().copied().filter(|&p| within(p, reach_of_town)).collect();
+    for r in &roofs {
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let p = *r + IVec3::new(x, y, z);
+                    if !looked.insert(p) || planned.contains(&p) {
+                        continue;
+                    }
+                    let b = at(p);
+                    if !flame(b) {
+                        continue;
+                    }
+                    if on_ground.get(&p) == Some(&b) {
+                        over_ground += 1;
+                        lit.push(p);
+                    } else {
+                        unplanned.push(p);
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{} roof pieces, {over_ground} flames over the ground beside them", roofs.len());
+    assert!(over_ground > 0, "no flame set over the ground (a lamp's torch) by Wenworth's roofs, so this test no longer looks at one");
+    assert!(unplanned.is_empty(), "flames the plan never set by Wenworth's roofs: {:?}", &unplanned[..unplanned.len().min(6)]);
+    let mut blocks: rustc_hash::FxHashMap<IVec3, BlockId> = Default::default();
+    for f in &lit {
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let p = *f + IVec3::new(x, y, z);
+                    let b = at(p);
+                    if !b.is_air() {
+                        blocks.insert(p, b);
+                    }
+                }
+            }
+        }
+    }
+    let reached = world.flames_reaching(&blocks);
+    assert!(reached.is_empty(), "flames by Wenworth's roofs reach what catches: {:?}", &reached[..reached.len().min(4)]);
 }

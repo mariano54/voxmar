@@ -6,9 +6,20 @@
 //! budget, the least recently used are dropped. A dropped value is computed again,
 //! identically, when next needed, because everything cached here is a pure function of
 //! its key.
+//!
+//! The exception to computing once, in a cache made with `Cache::copying` (and in a
+//! `Shared` value inside a cached one): an urgent thread (the server's tick, see
+//! `parallel::urgent`) asking for a value another thread is making makes its own copy rather
+//! than wait, and the first of the two made is the one kept, so the tick asking again (as
+//! it does, cell by cell) has it at once. The maker is usually a streaming worker at a
+//! background priority, which on a busy machine the scheduler serves last, so waiting on it
+//! held the tick (and the world's creatures) for as long as the build took at that priority.
+//! Only caches whose `make` does nothing but compute take it: one whose `make` also takes
+//! something out of shared state (settlement plans take their early spawns) would see that
+//! done twice.
 
 use std::hash::Hash;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock};
 
 use rustc_hash::FxHashMap;
 
@@ -25,7 +36,8 @@ impl<T: Weigh + ?Sized> Weigh for Arc<T> {
 }
 
 /// A generated column holds about this much (106 KiB measured over 576 columns round a
-/// spawn), counted for each as its chunks are not walked.
+/// spawn), counted for each as its chunks are not walked: a budget of 128 MiB keeps about
+/// 1170 columns.
 impl Weigh for voxmar_engine::world::Column {
     fn bytes(&self) -> usize {
         112 << 10
@@ -40,11 +52,13 @@ impl<T> Weigh for [T] {
 
 pub struct Cache<K, V> {
     budget: usize,
+    /// Whether an urgent thread makes its own value rather than wait on another's.
+    copying: bool,
     inner: Mutex<Inner<K, V>>,
 }
 
 struct Slot<V> {
-    cell: Arc<OnceLock<V>>,
+    cell: Arc<Shared<V>>,
     used: u64,
     /// Bytes of the value, once made.
     bytes: usize,
@@ -56,13 +70,167 @@ struct Inner<K, V> {
     slots: FxHashMap<K, Slot<V>>,
 }
 
+/// A value made once, by the first thread to ask, which others asking meanwhile wait for;
+/// but an urgent thread asking while it is made makes its own copy, and whichever is done
+/// first is kept (see the module's doc). For values that `make` only computes.
+pub struct Shared<V> {
+    /// Set once, by the first to finish making it; never made inside, so setting it never
+    /// waits on a make.
+    value: OnceLock<V>,
+    /// Whether a thread is making it (not counting urgent copies): looked at and claimed
+    /// under one lock, so no urgent thread finds it being made and still waits.
+    making: Mutex<bool>,
+    /// Told when it is made, or its maker gave up (panicked).
+    made: Condvar,
+}
+
+impl<V> Default for Shared<V> {
+    fn default() -> Self {
+        Self { value: OnceLock::new(), making: Mutex::new(false), made: Condvar::new() }
+    }
+}
+
+impl<V> Shared<V> {
+    pub fn get(&self) -> Option<&V> {
+        self.value.get()
+    }
+
+    /// The value, made by `make` unless it is made, or being made by another thread (then
+    /// waited for, or by an urgent thread made too, see the module's doc).
+    pub fn get_or_make(&self, make: impl FnOnce() -> V) -> &V {
+        self.make_or_wait(make, true, Hold::Inner).0
+    }
+
+    fn lock(&self) -> MutexGuard<'_, bool> {
+        self.making.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// The value, and whether this call's make is the one kept. With `copying`, an urgent
+    /// thread finding it being made makes its own rather than wait.
+    fn make_or_wait(&self, make: impl FnOnce() -> V, copying: bool, _kind: Hold) -> (&V, bool) {
+        loop {
+            if let Some(value) = self.value.get() {
+                return (value, false);
+            }
+            let mut making = self.lock();
+            if self.value.get().is_some() {
+                continue;
+            }
+            let maker = !*making;
+            if !maker && !(copying && crate::parallel::urgent()) {
+                #[cfg(test)]
+                if crate::parallel::urgent() {
+                    urgent_waits();
+                }
+                // Made by then, or its maker gave up and this thread may take it on.
+                drop(self.made.wait(making));
+                continue;
+            }
+            *making = true;
+            drop(making);
+            // A maker that panics leaves nothing made and unmarks it, for a waiter to make.
+            struct GiveUp<'a, V>(&'a Shared<V>);
+            impl<V> Drop for GiveUp<'_, V> {
+                fn drop(&mut self) {
+                    let mut making = self.0.lock();
+                    *making = false;
+                    self.0.made.notify_all();
+                }
+            }
+            let give_up = maker.then(|| GiveUp(self));
+            let value = make();
+            #[cfg(test)]
+            if maker {
+                hold(_kind);
+            }
+            let kept = self.value.set(value).is_ok();
+            // Unmarks it (a maker's), and tells the waiters, under the lock, so none that has
+            // just found it unmade misses the news.
+            drop(give_up);
+            if !maker {
+                let _making = self.lock();
+                self.made.notify_all();
+            }
+            return (self.value.get().expect("set above"), kept);
+        }
+    }
+}
+
+/// Which makes a test holds (`hold_on`): those of a cache's values, or of `Shared` values
+/// inside them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) enum Hold {
+    Cached,
+    Inner,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    static HOLDING: std::cell::RefCell<Option<(Hold, std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+static URGENT_WAITS: Mutex<Option<std::sync::mpsc::Sender<Wait>>> = Mutex::new(None);
+
+/// What a test watching for urgent waits hears (`on_urgent_wait`).
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Wait {
+    /// An urgent thread is about to wait on another's make.
+    Urgent,
+    /// What the test itself sends when the thread it watches has its answer.
+    Answered,
+}
+
+/// Has every urgent thread about to wait on another thread's make say so on `waited`, until
+/// given `None`: a test of a path on which every cache copies fails the moment one does.
+#[cfg(test)]
+pub(crate) fn on_urgent_wait(waited: Option<std::sync::mpsc::Sender<Wait>>) {
+    *URGENT_WAITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = waited;
+}
+
+#[cfg(test)]
+fn urgent_waits() {
+    if let Some(waited) = &*URGENT_WAITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) {
+        let _ = waited.send(Wait::Urgent);
+    }
+}
+
+/// Has the calling thread's next make of a `kind` of value, once made and before anyone
+/// else sees it, say so on `held` and wait for `release` (or a while): the value, and every
+/// value whose making waits on it, is then being made for as long as a test wants.
+#[cfg(test)]
+pub(crate) fn hold_on(kind: Hold, held: std::sync::mpsc::Sender<()>, release: std::sync::mpsc::Receiver<()>) {
+    HOLDING.with(|holding| *holding.borrow_mut() = Some((kind, held, release)));
+}
+
+#[cfg(test)]
+fn hold(kind: Hold) {
+    let Some((_, held, release)) = HOLDING.with(|holding| {
+        let mut holding = holding.borrow_mut();
+        if holding.as_ref().is_some_and(|(k, _, _)| *k == kind) { holding.take() } else { None }
+    }) else {
+        return;
+    };
+    let _ = held.send(());
+    let _ = release.recv_timeout(std::time::Duration::from_secs(600));
+}
+
 /// Bookkeeping per entry besides the value itself.
 const OVERHEAD: usize = 64;
 
 impl<K: Copy + Eq + Hash, V: Clone + Weigh> Cache<K, V> {
     /// A cache holding up to about `budget` bytes.
     pub fn new(budget: usize) -> Self {
-        Self { budget, inner: Mutex::new(Inner { clock: 0, bytes: 0, slots: FxHashMap::default() }) }
+        Self { budget, copying: false, inner: Mutex::new(Inner { clock: 0, bytes: 0, slots: FxHashMap::default() }) }
+    }
+
+    /// A cache holding up to about `budget` bytes, of which an urgent thread makes its own
+    /// copy of a value being made rather than wait (see the module's doc): for values whose
+    /// `make` only computes.
+    pub fn copying(budget: usize) -> Self {
+        Self { copying: true, ..Self::new(budget) }
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner<K, V>> {
@@ -88,18 +256,16 @@ impl<K: Copy + Eq + Hash, V: Clone + Weigh> Cache<K, V> {
             let mut inner = self.lock();
             inner.clock += 1;
             let clock = inner.clock;
-            let slot = inner.slots.entry(key).or_insert_with(|| Slot { cell: Arc::new(OnceLock::new()), used: clock, bytes: 0 });
+            let slot = inner.slots.entry(key).or_insert_with(|| Slot { cell: Arc::default(), used: clock, bytes: 0 });
             slot.used = clock;
             slot.cell.clone()
         };
-        let mut made = false;
-        let value = cell
-            .get_or_init(|| {
-                made = true;
-                make()
-            })
-            .clone();
-        if made {
+        if let Some(value) = cell.value.get() {
+            return value.clone();
+        }
+        let (value, kept) = cell.make_or_wait(make, self.copying, Hold::Cached);
+        let value = value.clone();
+        if kept {
             let mut inner = self.lock();
             let bytes = value.bytes() + OVERHEAD;
             if let Some(slot) = inner.slots.get_mut(&key)
@@ -171,6 +337,53 @@ mod tests {
         assert!(cache.inner.lock().unwrap().bytes <= 800);
         assert_eq!(cache.get(0, || { made += 1; 0 }), 0);
         assert_eq!(made, 7);
+    }
+
+    /// The server's tick (an urgent thread), asking a copying cache for a value a background
+    /// worker is still making, makes its own, which, done first, is the one kept: here the
+    /// maker holds off until the urgent thread has its answer.
+    #[test]
+    fn an_urgent_thread_makes_its_own_rather_than_wait() {
+        let cache: Cache<u32, Arc<u8>> = Cache::copying(1 << 20);
+        let (started_tx, started) = std::sync::mpsc::channel();
+        let (answered_tx, answered) = std::sync::mpsc::channel::<()>();
+        std::thread::scope(|scope| {
+            let cache = &cache;
+            let maker = scope.spawn(move || {
+                cache.get(1, || {
+                    started_tx.send(()).unwrap();
+                    // Released once the urgent thread has its own value, or after a while if
+                    // it waited after all (and then the assertion below fails).
+                    let _ = answered.recv_timeout(std::time::Duration::from_secs(5));
+                    Arc::new(1)
+                })
+            });
+            started.recv().unwrap();
+            let urgent = scope.spawn(move || {
+                crate::parallel::mark_urgent();
+                let value = cache.get(1, || Arc::new(2));
+                answered_tx.send(()).unwrap();
+                value
+            });
+            assert_eq!(*urgent.join().unwrap(), 2, "made its own");
+            assert_eq!(*maker.join().unwrap(), 2, "the first made is everyone's");
+        });
+        assert_eq!(*cache.get(1, || Arc::new(3)), 2, "and the one kept");
+        assert_eq!(cache.inner.lock().unwrap().bytes, 1 + OVERHEAD, "counted once");
+    }
+
+    /// A maker that panics leaves the value unmade and unmarked: the next thread to ask makes
+    /// it.
+    #[test]
+    fn a_maker_that_panics_leaves_it_unmarked() {
+        let shared: Shared<u8> = Shared::default();
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = shared.get_or_make(|| panic!("no value"));
+        }));
+        assert!(panicked.is_err());
+        assert!(shared.get().is_none());
+        assert!(!*shared.lock());
+        assert_eq!(*shared.get_or_make(|| 7), 7);
     }
 
     #[test]
