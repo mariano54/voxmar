@@ -168,11 +168,14 @@ pub enum Synth {
     /// A quern turned: the upper stone grinding round on the lower, grain crunching
     /// between.
     Quern,
+    /// A well-kept hearth's bed of embers: a soft, warm glow of breath under the flames,
+    /// coals ticking and chinking as they settle.
+    Embers,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 58] = [
+    pub const ALL: [Synth; 59] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -231,6 +234,7 @@ impl Synth {
         Synth::Kiln,
         Synth::Bellows,
         Synth::Quern,
+        Synth::Embers,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -261,6 +265,7 @@ impl Synth {
                 | Synth::Hum
                 | Synth::Flue
                 | Synth::Kiln
+                | Synth::Embers
         )
     }
 
@@ -356,6 +361,7 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Hum => hum(noise, len),
         Synth::Flue => flue(noise, len),
         Synth::Kiln => kiln(noise, len),
+        Synth::Embers => embers(noise, len),
         Synth::Waterfall => waterfall(noise, len),
         Synth::Fire => fire(noise, len),
         Synth::ThatchPatter => thatch_patter(noise, len),
@@ -1032,6 +1038,32 @@ fn fire(noise: &mut Noise, len: usize) -> Vec<f32> {
         let gain = between(noise, 0.25, 0.45);
         crack(&mut out, noise, t, (0.004, 0.009), (700.0, 1400.0), gain);
         t += gap(noise, 0.45);
+    }
+    out
+}
+
+/// A bed of embers glowing: a low, slow breath of warm air (the coals drawing), a faint
+/// soft hiss, and the coals ticking and chinking as they settle, glassy and small, now
+/// one alone and now a few together. Softer than the flames, under them.
+fn embers(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let breath = Drift::new(noise, 0.15);
+    let mut glow = Svf::new(120.0, 0.7);
+    let mut hiss = Svf::new(2400.0, 0.5);
+    let mut out: Vec<f32> = (0..len)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let b = breath.unit(t);
+            glow.low(noise.next()) * (0.35 + 0.25 * b) + hiss.band(noise.next()) * 0.015 * (0.3 + 0.7 * b)
+        })
+        .collect();
+    let mut t = between(noise, 0.1, 0.8);
+    while t < len as f32 / SR {
+        for _ in 0..1 + (noise.unit().powi(2) * 3.0) as usize {
+            let (pitch, gain) = (between(noise, 2200.0, 3600.0), between(noise, 0.05, 0.16));
+            ring(&mut out, t, pitch, &[(1.0, 1.0, 0.008), (2.6, 0.3, 0.004)], gain);
+            t += between(noise, 0.03, 0.12);
+        }
+        t += gap(noise, 0.9);
     }
     out
 }

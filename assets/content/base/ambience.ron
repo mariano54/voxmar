@@ -46,7 +46,12 @@
 // within 192), settlement_edge (blocks outside the nearest settlement's bounds, the ground
 // its buildings stand on and six blocks round, 0 within, 10000 with none), settlement_people
 // (how many live there: its size), sheltered (how much a roof overhead muffles the open
-// rain), the groups below, and the roof patters.
+// rain), home (how far up `home`'s ladder the player stands), the groups below, and the
+// roof patters.
+//
+// home: the home ladder's effects (effects.ron), lowest first: the `home` axis is 0 away
+//   from home, 1 holding the first, 2 the second, and so on, by the highest held. Each
+//   must be an effect, or the game does not start; a later package's list replaces it.
 //
 // shelter: how indoors is told and heard. `walls`: blocks from the eye a wall may be and
 //   count; `roof`: blocks above it a roof may be for the `roof` axis; `muffle`: Hz an outdoor
@@ -59,6 +64,9 @@
     // the rain drums on the roof, and the hearth crackles clear (fire layers never duck by
     // shelter).
     shelter: (walls: 6, roof: 8, muffle: 700, thunder: 0.5),
+    // The home ladder: a camp, a lit hearth, roofed and walled (Snug), then the Farm age's
+    // homes, each cosier than the last.
+    home: ["camp", "hearthside", "snug", "homely", "cosy", "heart_of_the_home"],
     groups: [
         // Walls that let the wind through, as the home judges a room's walls (`shelter`:
         // a `shelter:draughty` block such as wattle or hide, or earth, gravel, sand and any
@@ -294,6 +302,13 @@
         (
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},
+        ),
+        // The player's own lit hearth, as their home grows round it: a bed of embers glowing
+        // under the flames, the coals ticking as they settle. Faint by a bare hearthstone,
+        // fuller with each step up the ladder, full in the Heart of the Home.
+        (
+            name: "embers", sound: Embers, volume: 0.22, fade: 4,
+            when: {"fire": (min: 0.6, fade: 0.55), "home": (min: 6, fade: 4.5)},
         ),
         // A kiln firing: a deep roar shut in the brick, the draught howling in its flue.
         (

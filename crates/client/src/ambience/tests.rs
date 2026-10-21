@@ -115,6 +115,7 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "waterfall", &["river", "water"], &[("water", 0.6), ("falls", 0.9), ("flowing", 1.0), ("rock", 0.4)]),
         scene(ambience, "campfire_night", &["grassland", "temperate", "open"], &[("grass", 1.0), ("fire", 1.0), ("sun", -0.7), ("temperature", 18.0)]),
         scene(ambience, "by_the_hearth", &["forest", "temperate"], &[("fire", 1.0), ("air", 0.5), ("sky", 0.0), ("reverb", 0.1), ("shelter", 1.0), ("roof", 1.0)]),
+        scene(ambience, "heart_of_the_home", &["forest", "temperate"], &[&INDOORS[..], &[("fire", 1.0), ("home", 6.0), ("sun", -0.5)]].concat()),
         scene(ambience, "storm_outside", &forest_tags, &[&forest[..], STORM].concat()),
         scene(ambience, "storm_by_the_hearth", &forest_tags, &[&forest[..], STORM, INDOORS, &[("fire", 1.0)]].concat()),
         scene(ambience, "quiet_peak", &["mountain"], &[("rock", 0.8), ("relief", 60.0), ("height", 150.0), ("wind", 4.0), ("temperature", 2.0)]),
@@ -182,7 +183,10 @@ fn each_place_has_its_own_sound() {
             "lava_cave" => (&["lava", "lava_pop", "cave", "far_drip"], &["stream", "lake", "waterfall", "fire", "fire_snap"]),
             // A fire is heard by the fire, crackling and snapping, under the night outdoors.
             "campfire_night" => (&["fire", "fire_snap", "crickets"], &["lava", "lava_pop", "warbler"]),
-            "by_the_hearth" => (&["fire", "fire_snap"], &["lava", "breeze", "rain_on_roof"]),
+            // Someone else's hearth, or one away from home: the fire, no embers of a home.
+            "by_the_hearth" => (&["fire", "fire_snap"], &["lava", "breeze", "rain_on_roof", "embers"]),
+            // The player's own hearth at the top of the ladder: its embers glow under it.
+            "heart_of_the_home" => (&["fire", "embers", "fire_snap"], &["lava", "breeze", "storm_wind"]),
             "storm_outside" => (&["downpour", "storm_wind"], &["rain_on_roof", "fire"]),
             // Indoors in a storm: the rain on the roof and the hearth, the storm a murmur.
             "storm_by_the_hearth" => (&["rain_on_roof", "fire", "fire_snap"], &["downpour", "storm_wind", "dripping_trees", "leaves", "breeze"]),
@@ -1284,4 +1288,36 @@ fn the_beds_wait_for_their_recordings() {
     app.world_mut().run_system_once(super::receive_clips).unwrap();
     let ambient = app.world().resource::<super::Ambient>();
     assert!(ambient.clips.is_some() && ambient.loading.is_none());
+}
+
+/// The home ladder names effects.ron's homes, lowest first, and a player stands as high on
+/// it as the highest step they hold; a step naming no effect, or one twice, fails the load.
+#[test]
+fn the_home_ladder_follows_the_players_home() {
+    use voxmar_engine::effect::ActiveEffect;
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let effects = &content.effects;
+    assert_eq!(ambience.check_home(effects), Ok(()));
+    let holding = |names: &[&str]| names.iter().map(|name| ActiveEffect { effect: effects.find(name).unwrap(), seconds_left: None }).collect::<Vec<_>>();
+    assert_eq!(ambience.home_step(effects, &[]), 0.0);
+    assert_eq!(ambience.home_step(effects, &holding(&["mired"])), 0.0, "not a home");
+    assert_eq!(ambience.home_step(effects, &holding(&["camp"])), 1.0);
+    assert_eq!(ambience.home_step(effects, &holding(&["hearthside", "workbench"])), 2.0);
+    assert_eq!(ambience.home_step(effects, &holding(&["camp", "heart_of_the_home"])), 6.0, "the highest held");
+    // The embers grow with each step: none at a camp, faint by a bare hearth, full at the top.
+    let embers = ambience.beds.iter().find(|b| b.name == "base:embers").unwrap();
+    let level = |step: f32| {
+        let mut env = Environment::new(ambience.axes());
+        env.set_group(ambience.groups.iter().position(|g| g.name == "fire").unwrap(), 1.0);
+        env.set(Fixed::Home, step);
+        embers.when.weight(&env)
+    };
+    assert_eq!(level(1.0), 0.0);
+    assert!(level(2.0) > 0.0 && level(2.0) < level(4.0) && level(4.0) < level(6.0), "{} {} {}", level(2.0), level(4.0), level(6.0));
+    assert_eq!(level(6.0), 1.0);
+    for bad in [r#"(home: ["camp", "palace"])"#, r#"(home: ["camp", "camp"])"#] {
+        let mistyped = Ambience::load(&[ContentFile { package: "base".into(), name: FILE.into(), source: bad.into() }]).unwrap();
+        assert!(mistyped.check_home(effects).is_err(), "{bad}");
+    }
 }

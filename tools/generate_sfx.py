@@ -167,7 +167,7 @@ def light(rng):
     return out
 
 
-def catch(rng):
+def thatch_catch(rng):
     """Thatch or wattle catching fire (fire.ron): a soft, low whoomph of flame taking hold,
     swelling quickly and settling, with the first dry crackles running through it. Softer
     than a strike: a warning heard across a room, not a bang."""
@@ -1270,7 +1270,7 @@ SOUNDS = {
     "eat": (eat, 3),
     "craft": (craft, 3),
     "light": (light, 2),
-    "fire_catch": (catch, 2),
+    "fire_catch": (thatch_catch, 2),
     "store_open": (store_open, 2),
     "door": (door, 2),
     "cook": (cook, 2),
