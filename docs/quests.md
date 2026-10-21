@@ -504,7 +504,7 @@ item a Nomad or Farm quest asks for that nothing reaches. Run it with
 
 | Quest | Gap | Fix |
 | --- | --- | --- |
-| A Place to Pray | Nothing gave stone (stone breaks to cobblestone), so stone bricks, and the altar, could not be made; the text gave the wrong shape | Cobblestone fires to stone in the pit kiln (`cooking.ron`, Construction 1, never cracks). The quest comes after A Pit Kiln and says the chain: cobblestone fired to stone, four stone to four bricks, seven bricks to the altar in its real shape |
+| A Place to Pray | Nothing gave stone (stone breaks to cobblestone), so stone bricks, and the altar, could not be made; the text gave the wrong shape | Cobblestone fires to stone in the pit kiln, loaded and left as clay is (`stations.ron`, Construction 1). The quest comes after A Pit Kiln and says the chain: cobblestone fired to stone, four stone to four bricks, seven bricks to the altar in its real shape |
 | A Pit Kiln | Said five cobblestones; the recipe takes four | Four, and where each goes |
 | Workshop and Stove | Said six cobblestones for the stove (it takes five); no recipe for the quern, spindle or loom | Five, and each workshop piece's recipe and level |
 | Ducks on the Pond | "Hold its favourite food" named no food | Wheat seeds or wheat; rivers and wetlands |
