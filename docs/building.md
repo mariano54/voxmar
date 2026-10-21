@@ -116,8 +116,8 @@ ladder is (`climbable`, a draughty face to the room below), so a ladder under it
 back the same way, climbs on up through it and out onto the loft floor
 (`a_ladder_climbs_through_an_open_hatch_into_a_loft_and_a_shut_one_stops_it`; the gate's
 Pieces step judges one shut and one open).
-The home's load check (`Rules::check_shelters`) holds every solid building or roof block
-but furniture to exactly one grade.
+The home's load check (`Rules::check_shelters`) holds every solid building or roof block,
+and every solid shaped piece, but furniture to exactly one grade.
 
 Chimney pieces (`chimney_piece`: the stone and brick flues, the hood, the pot) carry a
 hearth's smoke up through a roof: stacked straight over the hearth's chimney (or over any

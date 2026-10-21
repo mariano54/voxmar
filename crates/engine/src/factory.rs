@@ -998,7 +998,7 @@ mod tests {
             "ore", "dust", "log", "wheel", "shaft", "mill", "boiler", "pipe", "engine", "dynamo", "lv_cable", "mv_cable", "crusher",
             "battery", "mv_battery", "transformer", "furnace", "ingot", "washer", "chute", "conveyor", "hopper", "chest", "kiln",
         ];
-        let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
+        let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into(), "fuel".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
         let machines = MachineRegistry::read(
             "t",
             r#"(machines: [
