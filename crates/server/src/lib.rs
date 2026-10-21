@@ -1509,7 +1509,7 @@ impl Server {
 
     /// Whether a live creature's body is in `cell`.
     pub(crate) fn creature_in(&self, cell: IVec3) -> bool {
-        self.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+        self.creatures.live.values().any(|c| c.health > 0 && c.body.takes(cell))
     }
 
     /// Whether putting `block` at `cell` would shut a player inside it: a solid block where

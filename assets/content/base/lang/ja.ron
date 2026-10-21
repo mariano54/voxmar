@@ -154,7 +154,7 @@
     "effect.base.door_shut": "戸締まり",
     "effect.base.door_shut.description": "夜に戸を閉めた。ここでは回復が1割速く、1°暖かい。",
     "effect.base.evening_in": "夜の団らん",
-    "effect.base.evening_in.description": "日が暮れて、灯った炉のそばにいる。ここでは回復が2割速く、2°暖かい。",
+    "effect.base.evening_in.description": "日が暮れて、家の火のそばにいる。ここでは回復が2割速く、2°暖かい。",
     "effect.base.kitchen_garden": "家庭菜園",
     "effect.base.kitchen_garden.description": "戸口で育つ青物。ここでは食事の回復が1割増える。",
     "effect.base.banked_fire": "種火",

@@ -8855,33 +8855,67 @@ impl Fresh {
         self.propose("base:use_table", ActionTarget::Block { block: table, face: Face::PosY });
     }
 
-    /// Sets down what is in hand on top of `ground`, which must be in reach.
+    /// Sets down what is in hand on top of `ground`, which must be in reach: a piece of a
+    /// structure, which goes there or nowhere.
     fn place(&mut self, item: &str, ground: IVec3) -> IVec3 {
+        self.place_on(item, &[ground])
+    }
+
+    /// Sets down what is in hand on top of `ground`, or, a creature in the way or the server
+    /// refusing it, beside it: a thing that stands alone (a table, a fire, a chest). Where
+    /// it went.
+    fn place_near(&mut self, item: &str, ground: IVec3) -> IVec3 {
+        self.place_on(item, &[ground, ground + IVec3::X, ground - IVec3::X, ground + IVec3::Z, ground - IVec3::Z])
+    }
+
+    /// Whether a creature the client is shown takes up any of `cell`, by the server's own
+    /// rule (`motion::takes_cell`).
+    fn creature_on(c: &Client, cell: IVec3) -> bool {
+        c.creatures.values().any(|v| {
+            let size = c.content.creatures.get(v.species).def.body.size;
+            voxmar_engine::creature::motion::takes_cell(v.position, (size.0 * v.scale, size.1 * v.scale), cell)
+        })
+    }
+
+    /// Sets down what is in hand on the first of `grounds` it goes onto, trying the next on a
+    /// creature in the way or a refusal; the last waits for the creature to go, and must take.
+    fn place_on(&mut self, item: &str, grounds: &[IVec3]) -> IVec3 {
         self.hold(item);
-        let cell = ground + IVec3::Y;
-        // A creature standing there keeps a block out (`Unobstructed`): set it down once the
-        // creature has wandered off the cell, as the server shows it.
-        let on_it = |c: &Client| c.creatures.values().any(|v| (v.position.xz() - (cell.as_vec3() + 0.5).xz()).abs().max_element() < 1.0 && (v.position.y - cell.y as f32).abs() < 2.0);
-        if on_it(&self.c) {
-            let off = self.waited(5.0, |c| !on_it(c));
-            assert!(off, "placing {item} on {ground}: a creature stood on the cell for 5 server seconds");
+        for (i, &ground) in grounds.iter().enumerate() {
+            let last = i + 1 == grounds.len();
+            let cell = ground + IVec3::Y;
+            let open = |c: &Client| c.world.block(cell) == Some(BlockId::AIR) && c.world.block(ground).is_some_and(|b| c.content.blocks.def(b).solid);
+            if !last && (!open(&self.c) || Self::creature_on(&self.c, cell)) {
+                continue;
+            }
+            // A creature standing there keeps a block out (`Unobstructed`): set it down once
+            // it has wandered off the cell, as the server shows it.
+            if Self::creature_on(&self.c, cell) {
+                let off = self.waited(5.0, |c| !Self::creature_on(c, cell));
+                assert!(off, "placing {item} on {ground}: a creature stood on the cell for 5 server seconds");
+            }
+            let refused = self.c.refused.len();
+            self.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
+            let set = |c: &Client| c.world.block(cell).is_some_and(|b| b != BlockId::AIR);
+            let placed = self.waited(5.0, |c| set(c) || c.refused.len() > refused);
+            if !set(&self.c) && !last && self.c.refused.len() > refused {
+                continue;
+            }
+            assert!(
+                placed && set(&self.c),
+                "placing {item} on {ground}: not done within 5 server seconds (now {:.1} s into the run), from {:.2} ({:.2} from the eye to the cell), ground {:?} and cell {:?} as the client sees them, holding slot {} ({:?}), refused since: {:?}",
+                self.secs(),
+                self.at,
+                (self.at + Vec3::Y * voxmar_engine::physics::player::EYE_HEIGHT).distance(cell.as_vec3() + 0.5),
+                self.c.world.block(ground).map(|b| self.c.content.blocks.def(b).name.clone()),
+                self.c.world.block(cell).map(|b| self.c.content.blocks.def(b).name.clone()),
+                self.held,
+                self.c.inventory.get(self.held as usize).map(|s| self.c.content.blocks.def(s.item).name.clone()),
+                &self.c.refused[refused.min(self.c.refused.len())..]
+            );
+            return cell;
         }
-        self.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
-        let refused = self.c.refused.len();
-        let placed = self.waited(5.0, |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
-        assert!(
-            placed,
-            "placing {item} on {ground}: not done within 5 server seconds (now {:.1} s into the run), from {:.2} ({:.2} from the eye to the cell), ground {:?} and cell {:?} as the client sees them, holding slot {} ({:?}), refused since: {:?}",
-            self.secs(),
-            self.at,
-            (self.at + Vec3::Y * voxmar_engine::physics::player::EYE_HEIGHT).distance(cell.as_vec3() + 0.5),
-            self.c.world.block(ground).map(|b| self.c.content.blocks.def(b).name.clone()),
-            self.c.world.block(cell).map(|b| self.c.content.blocks.def(b).name.clone()),
-            self.held,
-            self.c.inventory.get(self.held as usize).map(|s| self.c.content.blocks.def(s.item).name.clone()),
-            &self.c.refused[refused.min(self.c.refused.len())..]
-        );
-        cell
+        unreachable!("no ground to place {item} on")
     }
 
     /// Cooks one `food` at `station` (two seconds); whether it came out as `cooked`, not burnt.
@@ -9262,7 +9296,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.craft(&[(0, "base:oak_planks", 1), (1, "base:oak_planks", 1), (3, "base:oak_planks", 1), (4, "base:oak_planks", 1)], "base:crafting_table", 1);
     f.mark("crafting_table");
     f.walk_toward(Fresh::middle(table), 3.0);
-    f.place("base:crafting_table", table - up);
+    let table = f.place_near("base:crafting_table", table - up);
     f.craft(&[(0, "base:oak_planks", 3), (3, "base:oak_planks", 3)], stick, 12);
     f.at_table(table);
 
@@ -9292,7 +9326,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.gather("base:flint_pickaxe", vec![f.rel(3, 0, 1)], sand, 1);
     f.craft(&[(0, sand, 1), (1, cobble, 1), (3, stick, 1), (4, stick, 1)], "base:grindstone", 1);
     f.walk_toward(Fresh::middle(table), 3.0);
-    f.place("base:grindstone", f.rel(7, -1, -1));
+    f.place_near("base:grindstone", f.rel(7, -1, -1));
     f.gather("base:flint_pickaxe", rel(f, (18..=20).flat_map(|x| (-10..=-8).map(move |z| v(x, 0, z))).collect()), granite, 7);
     f.at_table(table);
     f.craft(&[(0, granite, 7)], head, 7);
@@ -9305,7 +9339,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // of what it cooks, so more are hunted if the meat runs out first.
     let fire = f.rel(6, 0, 2);
     f.craft(&[(0, log, 1), (1, log, 1), (3, cobble, 1), (4, cobble, 1)], "base:campfire", 1);
-    f.place("base:campfire", fire - up);
+    let fire = f.place_near("base:campfire", fire - up);
     let meats = [("base:raw_small_game", "base:cooked_small_game")];
     let raw = |c: &Client| meats.iter().map(|(raw, _)| holding(c, raw) + loose(c, raw)).sum::<u32>();
     f.hunt(|_| "", |c| raw(c) >= 3);
@@ -9433,7 +9467,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.craft(&[(0, cobble, 1), (2, cobble, 1), (3, cobble, 1), (4, "base:campfire", 1), (5, cobble, 1)], "base:pit_kiln", 1);
     let kiln = f.rel(2, 0, 1);
     f.walk_toward(Fresh::middle(kiln), 3.0);
-    f.place("base:pit_kiln", kiln - up);
+    let kiln = f.place_near("base:pit_kiln", kiln - up);
     f.mark("pit_kiln");
     f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 16);
     f.walk_toward(Fresh::middle(kiln), 3.0);
@@ -9622,7 +9656,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.craft(&[(0, "base:flint", 1), (3, log, 1)], "base:chopping_block", 1);
     let block = f.rel(30, 0, -4);
     f.walk_toward(Fresh::middle(block - IVec3::X), 0.3);
-    f.place("base:chopping_block", block - IVec3::Y);
+    let block = f.place_near("base:chopping_block", block - IVec3::Y);
     // A log held to it, the stone axe carried: two firewood a log.
     while f.have("base:firewood") < 9 {
         f.cook(block, log, "base:firewood");
@@ -9687,7 +9721,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.at_table(site.table);
     f.craft(&[(0, planks, 1), (1, planks, 1), (2, planks, 1), (3, planks, 1), (5, planks, 1), (6, planks, 1), (7, planks, 1), (8, planks, 1)], "base:chest", 1);
     f.walk_toward(Fresh::middle(f.rel(4, 0, 3)), 0.3);
-    let chest = f.place("base:chest", f.rel(2, -1, 3));
+    let chest = f.place_near("base:chest", f.rel(2, -1, 3));
     f.propose("base:open_store", ActionTarget::Block { block: chest, face: Face::PosY });
     f.wait(5.0, "the chest opening", |c| c.inventory.store.is_some());
     let clay_id = f.c.content.blocks.expect(clay);
