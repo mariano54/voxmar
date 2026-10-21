@@ -13,7 +13,7 @@
 use rustc_hash::FxHashMap;
 use serde::Deserialize;
 
-use crate::block::{BlockId, BlockRegistry, RegistryError};
+use crate::block::{BlockId, BlockRegistry, RegistryError, WARD_LEAST, WARD_MOST};
 use crate::glam::IVec3;
 
 #[derive(Clone, Debug, Deserialize)]
@@ -29,6 +29,10 @@ pub struct MultiblockDef {
     /// Lit, it becomes the player's home, where they wake after dying.
     #[serde(default)]
     pub home: bool,
+    /// Lit, how many blocks round its core its fire keeps the wild back at night (as a
+    /// campfire's `BlockDef::ward`). 0 for none, else 2 to 24.
+    #[serde(default)]
+    pub ward: f32,
     /// Alternative fuel stacks consumed to light it. Empty means it needs no fuel.
     #[serde(default)]
     pub fuels: Vec<(String, u8)>,
@@ -63,6 +67,11 @@ pub struct SmoulderDef {
     /// What its core is while it smoulders (taken by the core's key too), and once done.
     pub burning: String,
     pub spent: String,
+    /// What its core shows instead from a share of the burn on (0 lit, 1 done), so the
+    /// fire is seen catching and dying down: `[(0.0, "flue_catching"), (0.85, "flue_dying")]`,
+    /// `burning` between. Each is taken by the core's key too.
+    #[serde(default)]
+    pub stages: Vec<(f32, String)>,
 }
 
 /// A smoulder with its blocks resolved.
@@ -76,6 +85,21 @@ pub struct Smoulder {
     pub spoiled: BlockId,
     pub burning: BlockId,
     pub spent: BlockId,
+    /// From which share of the burn its core shows which block, in order; `burning` until
+    /// the first and where none is given.
+    pub stages: Vec<(f32, BlockId)>,
+}
+
+impl Smoulder {
+    /// What its core shows `share` of the way through its burn.
+    pub fn burning_at(&self, share: f32) -> BlockId {
+        self.stages.iter().rev().find(|&&(from, _)| share >= from).map_or(self.burning, |&(_, block)| block)
+    }
+
+    /// Whether its core holding `block` is it smouldering, at any stage.
+    pub fn is_burning(&self, block: BlockId) -> bool {
+        block == self.burning || self.stages.iter().any(|&(_, b)| b == block)
+    }
 }
 
 #[derive(Deserialize, Default)]
@@ -101,6 +125,7 @@ pub struct Multiblock {
     pub title: String,
     pub hint: String,
     pub home: bool,
+    pub ward: f32,
     pub fuels: Vec<(BlockId, u8)>,
     pub heat: u8,
     pub lit_by: Option<String>,
@@ -286,6 +311,12 @@ impl MultiblockRegistry {
                 }
                 Ok((item, *count))
             }).collect::<Result<Vec<_>, RegistryError>>()?;
+            if def.ward != 0.0 && !(WARD_LEAST..=WARD_MOST).contains(&def.ward) {
+                return Err(bad(format!("it wards {} blocks round it: 0 for none, else {WARD_LEAST} to {WARD_MOST}", def.ward)));
+            }
+            if def.ward != 0.0 && def.smoulder.is_some() {
+                return Err(bad("it smoulders, and what smoulders is never lit, so its `ward` would keep nothing back".into()));
+            }
             if let Some(tag) = &def.lit_by
                 && !blocks.ids().any(|b| blocks.def(b).has_tag(tag))
             {
@@ -318,10 +349,25 @@ impl MultiblockRegistry {
                     if wood.is_empty() || s.wood == def.core {
                         return Err(bad(format!("no cell `{}` to char, besides the core", s.wood)));
                     }
-                    Some(Smoulder { hours: s.hours, wood, done, early, spoiled, burning, spent })
+                    let mut stages = Vec::new();
+                    for (from, name) in &s.stages {
+                        if !(0.0..1.0).contains(from) || stages.last().is_some_and(|&(last, _)| *from <= last) {
+                            return Err(bad(format!("its stages start at shares of the burn from 0 up to below 1, each later than the last (`{name}` at {from})")));
+                        }
+                        let stage = block(name)?;
+                        if core_takes.binary_search(&stage).is_err() {
+                            return Err(bad(format!("its core's key does not take `{name}`, a stage of its burn, so it would not stand lit")));
+                        }
+                        // What knows it burning by a tag (its sound, fire) knows each stage.
+                        if let Some(tag) = blocks.def(burning).tags.iter().find(|&tag| !blocks.def(stage).has_tag(tag)) {
+                            return Err(bad(format!("its stage `{name}` lacks `{tag}`, which `{}` has while it smoulders", s.burning)));
+                        }
+                        stages.push((*from, stage));
+                    }
+                    Some(Smoulder { hours: s.hours, wood, done, early, spoiled, burning, spent, stages })
                 }
             };
-            multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, fuels, heat: def.heat, lit_by: def.lit_by, smoulder, core: core_takes, cells });
+            multiblocks.push(Multiblock { name: def.name, title: def.title, hint: def.hint, home: def.home, ward: def.ward, fuels, heat: def.heat, lit_by: def.lit_by, smoulder, core: core_takes, cells });
         }
         Ok(Self { multiblocks })
     }
@@ -382,6 +428,26 @@ mod tests {
         assert!(load("fuel", crate::inventory::MAX_STACK + 1).is_err());
     }
 
+    /// A lit fire's ward (`ward`), a multiblock's or a block's, is none or 2 to 24 blocks.
+    #[test]
+    fn wards_out_of_range_are_refused() {
+        let core = BlockDef { name: "t:core".into(), tags: vec!["multiblock_core".into()], ..Default::default() };
+        let blocks = BlockRegistry::new(vec![core.clone()]).unwrap();
+        let load = |ward: f32| {
+            let source = format!("(multiblocks: [(name: \"hearth\", ward: {ward:?}, layers: [[\"C\"]], key: {{'C': \"core\"}}, core: 'C')])");
+            MultiblockRegistry::new(vec![MultiblockRegistry::read("t", &source).unwrap()], &blocks).map(|m| m.multiblocks[0].ward).map_err(|e| e.to_string())
+        };
+        let fire = |ward: f32| BlockRegistry::new(vec![BlockDef { name: "t:fire".into(), ward, ..Default::default() }]).map(|_| ()).map_err(|e| e.to_string());
+        for ward in [0.0, 2.0, 16.0, 24.0] {
+            assert_eq!(load(ward), Ok(ward));
+            assert_eq!(fire(ward), Ok(()));
+        }
+        for ward in [-1.0, 1.0, 25.0] {
+            assert!(load(ward).is_err_and(|e| e.contains("2 to 24")), "{ward}");
+            assert!(fire(ward).is_err_and(|e| e.contains("2 to 24")), "{ward}");
+        }
+    }
+
     /// A smouldering structure is lit by a tagged item in hand, chars cells it names into
     /// blocks that exist, keeps standing while its core burns, and finds its cells however
     /// it is turned; load refuses one that does not hold together.
@@ -396,6 +462,8 @@ mod tests {
             def("flue", &["multiblock_core"]),
             def("coal", &[]),
             def("torch", &["fire"]),
+            def("embers", &["multiblock_core"]),
+            def("loud_flue", &["multiblock_core", "clamp_burning"]),
         ])
         .unwrap();
         let load = |lit_by: &str, smoulder: &str, core_key: &str| {
@@ -422,6 +490,21 @@ mod tests {
         };
         let turn = clamp.turn(core, at).expect("stands turned");
         assert_eq!(core + turned(smoulder.wood[0], turn), core - IVec3::Y);
+        // Its flue catching while young and dying down near the end, `burning` between.
+        let staged = good.replace("spent: \"air\")", "spent: \"air\", stages: [(0.0, \"kindling\"), (0.8, \"embers\")])");
+        assert!(load("Some(\"fire\")", &staged, "kindling|flue").is_err(), "a stage the core's key does not take");
+        let registry = load("Some(\"fire\")", &staged, "kindling|flue|embers").unwrap();
+        let staged = registry.get("t:clamp").unwrap().smoulder.as_ref().unwrap();
+        let id = |name: &str| blocks.id(name).unwrap();
+        assert_eq!([0.0, 0.5, 0.8, 0.99].map(|share| staged.burning_at(share)), [id("t:kindling"), id("t:kindling"), id("t:embers"), id("t:embers")]);
+        assert!(["t:kindling", "t:flue", "t:embers"].iter().all(|b| staged.is_burning(id(b))) && !staged.is_burning(id("t:coal")));
+        assert_eq!(smoulder.burning_at(0.5), id("t:flue"), "no stages: burning throughout");
+        for stages in ["[(0.5, \"embers\"), (0.2, \"kindling\")]", "[(1.0, \"embers\")]", "[(0.2, \"nothing\")]"] {
+            let bad = good.replace("spent: \"air\")", &format!("spent: \"air\", stages: {stages})"));
+            assert!(load("Some(\"fire\")", &bad, "kindling|flue|embers").is_err(), "{stages} loaded");
+        }
+        let loud = good.replace("\"flue\"", "\"loud_flue\"").replace("spent: \"air\")", "spent: \"air\", stages: [(0.0, \"kindling\")])");
+        assert!(load("Some(\"fire\")", &loud, "kindling|loud_flue|embers").is_err_and(|e| e.0.contains("lacks `clamp_burning`")), "a stage without a tag of `burning`");
         for (lit_by, smoulder, core_key) in [
             ("None", good, "kindling|flue"),
             ("Some(\"nothing_has_it\")", good, "kindling|flue"),
@@ -432,6 +515,9 @@ mod tests {
         ] {
             assert!(load(lit_by, smoulder, core_key).is_err(), "{lit_by} {smoulder} {core_key} loaded");
         }
+        // Nor a `ward`: what smoulders is never lit, and would ward nothing.
+        let warded = load("Some(\"fire\"), ward: 8.0", good, "kindling|flue");
+        assert!(warded.as_ref().is_err_and(|e| e.to_string().contains("smoulders")), "{:?}", warded.map(|_| ()));
     }
 
     /// A clamp that is not the same turned about is lit from a cell of it, never from one

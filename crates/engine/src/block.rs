@@ -183,6 +183,10 @@ impl Textures {
     }
 }
 
+/// The least and most a fire's ward reaches (`BlockDef::ward`, `MultiblockDef::ward`).
+pub const WARD_LEAST: f32 = 2.0;
+pub const WARD_MOST: f32 = 24.0;
+
 /// A block definition as authored in content files.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -257,6 +261,9 @@ pub struct BlockDef {
     /// Particles it gives off while near the player: a campfire's smoke, embers and sparks,
     /// a torch's flame. Only the client draws them.
     pub particles: Vec<Emission>,
+    /// How many blocks round it its firelight keeps the wild back at night: creatures afraid
+    /// of fire (`creature::Fire`) do not come in. 0 for none, else 2 to 24.
+    pub ward: f32,
     /// Whether it comes in four facings: the block itself faces north (-z), and blocks
     /// `<name>_east`, `<name>_south` and `<name>_west` are made from it, turned (their
     /// particles too), each dropping the block itself. A wall torch faces out from its
@@ -283,10 +290,22 @@ pub struct BlockDef {
     /// The block placed in the cell above along with it, by name, in the same facing, and
     /// broken with it: a door's top half, which rests on it (`support: Below`).
     pub upper: Option<String>,
+    /// The block placed beside it along with it, by name, in the same facing: in the cell to
+    /// the right of whoever sets it, facing it (`Facing::beside`). The two are broken and
+    /// turned (`swaps`) together: a double gate's second leaf. Only a block that comes in
+    /// facings has one.
+    pub beside: Option<String>,
     /// What coats it in place (`with`, a block held, one used up) and what it is then
     /// (`into`): clay on a wattle panel daubs it. It takes the level of the recipe that makes
     /// `into` and teaches its experience a piece (server `coat.rs`).
     pub coat: Option<Coat>,
+    /// Where what it holds stands on it, as a shelf shows the things put on its boards: a
+    /// spot for each of its store's first slots, in order, each the bottom middle of the
+    /// item, from the cell's lower corner in blocks for the block facing north (turned with
+    /// it). Only a store (`Bin` in machines.ron) with a slot for each spot shows (a load
+    /// check, content.rs); the server tells players what stands where
+    /// (`ServerMessage::Shown`), and the client draws it still.
+    pub shows: Vec<[f32; 3]>,
 }
 
 /// A coating (see [`BlockDef::coat`]): the block held to coat it, and the block it becomes.
@@ -323,6 +342,17 @@ impl Facing {
             Facing::East => IVec3::X,
             Facing::South => IVec3::Z,
             Facing::West => IVec3::NEG_X,
+        }
+    }
+
+    /// The cell beside a block facing this way, to the right of whoever set it standing
+    /// before it and facing it (see [`BlockDef::beside`]).
+    pub const fn beside(self) -> IVec3 {
+        match self {
+            Facing::North => IVec3::NEG_X,
+            Facing::East => IVec3::NEG_Z,
+            Facing::South => IVec3::X,
+            Facing::West => IVec3::Z,
         }
     }
 
@@ -573,6 +603,7 @@ impl Default for BlockDef {
             plant_height: 1.0,
             host: None,
             particles: Vec::new(),
+            ward: 0.0,
             facing: false,
             faces: None,
             flips: false,
@@ -581,7 +612,9 @@ impl Default for BlockDef {
             shape: None,
             swaps: None,
             upper: None,
+            beside: None,
             coat: None,
+            shows: Vec::new(),
         }
     }
 }
@@ -615,6 +648,7 @@ impl BlockDef {
         self.wall.iter_mut().for_each(fill);
         self.swaps.iter_mut().for_each(fill);
         self.upper.iter_mut().for_each(fill);
+        self.beside.iter_mut().for_each(fill);
         if let Some(coat) = &mut self.coat {
             fill(&mut coat.with);
             fill(&mut coat.into);
@@ -642,6 +676,7 @@ impl BlockDef {
         self.wall.iter_mut().for_each(qualify);
         self.swaps.iter_mut().for_each(qualify);
         self.upper.iter_mut().for_each(qualify);
+        self.beside.iter_mut().for_each(qualify);
         self.shape.iter_mut().for_each(qualify);
         if let Some(coat) = &mut self.coat {
             qualify(&mut coat.with);
@@ -877,6 +912,9 @@ pub struct BlockInfo {
     /// The block placed above with it, facing north (see [`BlockDef::upper`] and
     /// [`BlockRegistry::upper`]).
     pub upper: Option<BlockId>,
+    /// The block placed beside it with it, facing north (see [`BlockDef::beside`] and
+    /// [`BlockRegistry::beside`]).
+    pub beside: Option<BlockId>,
     /// Its shape, made ready for its facing (see [`BlockRegistry::shape`]), for a block
     /// drawn as one.
     pub shape: Option<u16>,
@@ -913,6 +951,7 @@ pub struct BlockRegistry {
     shape_layers: Vec<Vec<u16>>,
     /// What each shape stops movement with: its boxes' unturned bounds, by shape.
     shape_collision: Vec<Vec<crate::physics::Aabb>>,
+    shape_hull: Vec<Vec<crate::physics::Aabb>>,
     /// By block, whether it is only a form another takes when placed (`placement_form`).
     placement_forms: Vec<bool>,
     /// Every block's looks: itself and its variants (shared by the variants).
@@ -1079,6 +1118,7 @@ impl BlockRegistry {
                         ..base.clone()
                     };
                     turned.particles.iter_mut().for_each(|emission| emission.at = facing.turn(emission.at));
+                    turned.shows.iter_mut().for_each(|spot| *spot = facing.turn(*spot));
                     defs.push(turned);
                 }
                 if !base.variants.is_empty() {
@@ -1111,6 +1151,12 @@ impl BlockRegistry {
         for (i, def) in defs.iter().enumerate() {
             if by_name.insert(def.name.clone(), BlockId(i as u16)).is_some() {
                 return Err(RegistryError(format!("duplicate block `{}`", def.name)));
+            }
+            if !def.shows.is_empty() && (def.flips || def.flipped) {
+                return Err(RegistryError(format!("block `{}` shows what it holds, so it cannot come upside down", def.name)));
+            }
+            if let Some(spot) = def.shows.iter().find(|spot| spot.iter().any(|v| !(0.0..=1.0).contains(v))) {
+                return Err(RegistryError(format!("block `{}` shows a thing at {spot:?}, outside its cell (0 to 1 each way)", def.name)));
             }
             for emission in &def.particles {
                 if emission.range.is_some_and(|range| !(1.0..=MAX_EMISSION_RANGE).contains(&range)) {
@@ -1221,6 +1267,9 @@ impl BlockRegistry {
                     .ok_or_else(|| RegistryError(format!("`{}` drops unknown block `{name}`", def.name)))?,
                 None => by_name[&def.name],
             };
+            if def.ward != 0.0 && !(WARD_LEAST..=WARD_MOST).contains(&def.ward) {
+                return Err(RegistryError(format!("`{}` wards {} blocks round it: 0 for none, else {WARD_LEAST} to {WARD_MOST}", def.name, def.ward)));
+            }
             let occludes = def.render == RenderKind::Opaque || shape.is_some_and(|s| shapes[s as usize].is_full_cube());
             info.push(BlockInfo {
                 render: def.render,
@@ -1281,6 +1330,20 @@ impl BlockRegistry {
                     }
                     None => None,
                 },
+                beside: match &def.beside {
+                    Some(name) => {
+                        let by = *by_name.get(name).ok_or_else(|| RegistryError(format!("`{}` has unknown block beside it `{name}`", def.name)))?;
+                        // It needs a facing to know which cell is beside it.
+                        if !def.facing || !defs[by.0 as usize].facing {
+                            return Err(RegistryError(format!("`{}` has block `{name}` beside it, but a block set beside another needs facings, both of them", def.name)));
+                        }
+                        if defs[by.0 as usize].upper.is_some() || defs[by.0 as usize].beside.is_some() || def.upper.is_some() {
+                            return Err(RegistryError(format!("`{}` has block `{name}` beside it: a pair set side by side has no upper half nor a third block", def.name)));
+                        }
+                        Some(by)
+                    }
+                    None => None,
+                },
                 shape,
                 climbable: def.has_tag(CLIMBABLE_TAG),
             });
@@ -1311,9 +1374,25 @@ impl BlockRegistry {
         }
         // An upper half is only ever placed with its lower; a form swapped to that drops
         // another block (an open door, dropping the door) is only ever swapped to.
+        // A pair set side by side turns into a pair (an open double gate's leaves), each leaf
+        // into the other's partner's form.
+        for (i, block) in info.iter().enumerate() {
+            let Some(by) = block.beside else { continue };
+            let together = match (block.swaps, info[by.0 as usize].swaps) {
+                (None, None) => true,
+                (Some(to), Some(other)) => info[to.0 as usize].beside == Some(other),
+                _ => false,
+            };
+            if !together {
+                return Err(RegistryError(format!(
+                    "`{}` and `{}` beside it must turn (`swaps`) together into a block and the block beside that",
+                    defs[i].name, defs[by.0 as usize].name
+                )));
+            }
+        }
         let forms: Vec<BlockId> = info
             .iter()
-            .flat_map(|block| block.upper.into_iter().chain(block.swaps.filter(|&to| info[to.0 as usize].drops != to)))
+            .flat_map(|block| block.upper.into_iter().chain(block.beside).chain(block.swaps.filter(|&to| info[to.0 as usize].drops != to)))
             .collect();
         for form in forms {
             placement_forms[form.0 as usize] = true;
@@ -1384,6 +1463,7 @@ impl BlockRegistry {
             }
         }
         let shape_collision = shapes.iter().map(|s| s.bounds.iter().map(|&(min, max)| crate::physics::Aabb { min, max }).collect()).collect();
+        let shape_hull = shapes.iter().map(|s| s.hull.iter().map(|&(min, max)| crate::physics::Aabb { min, max }).collect()).collect();
         // A coating names blocks that are, held as an item, and turns it into another.
         for def in &defs {
             let Some(coat) = &def.coat else { continue };
@@ -1396,7 +1476,7 @@ impl BlockRegistry {
                 return Err(RegistryError(format!("`{}` coats into `{}`, which is itself or coats again", def.name, coat.into)));
             }
         }
-        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, shape_collision, placement_forms, looks, fluids, renamed: FxHashMap::default() })
+        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, shape_collision, shape_hull, placement_forms, looks, fluids, renamed: FxHashMap::default() })
     }
 
     /// A block's looks for a generator to choose from: the block itself first, then its
@@ -1575,6 +1655,20 @@ impl BlockRegistry {
         Some(self.info(block).facing.map_or(up, |facing| self.facing(up, facing)))
     }
 
+    /// The block placed beside `block` with it (see [`BlockDef::beside`]), in its facing, and
+    /// the cell it goes in from `block`'s.
+    pub fn beside(&self, block: BlockId) -> Option<(IVec3, BlockId)> {
+        let by = self.info(block).beside?;
+        let facing = self.info(block).facing?;
+        Some((facing.beside(), self.facing(by, facing)))
+    }
+
+    /// The blocks placed with `block` (its upper half, the block beside it), each with the
+    /// cell it goes in from `block`'s.
+    pub fn placed_with(&self, block: BlockId) -> impl Iterator<Item = (IVec3, BlockId)> + '_ {
+        self.upper(block).map(|up| (IVec3::Y, up)).into_iter().chain(self.beside(block))
+    }
+
     /// Like [`Self::id`] but for names the engine or generator cannot work without.
     pub fn expect(&self, name: &str) -> BlockId {
         self.id(name).unwrap_or_else(|| panic!("content is missing required block `{name}`"))
@@ -1607,6 +1701,17 @@ impl BlockRegistry {
         match (info.solid, info.shape) {
             (false, _) => &[],
             (true, Some(s)) => &self.shape_collision[s as usize],
+            (true, None) => &crate::physics::CUBE,
+        }
+    }
+
+    /// What a creature's blow meets of a solid block drawn as boxes at a player standing in
+    /// its cell (`Shape::hull`): the span of each run of it, gaps and all; else the whole cell.
+    pub fn hull(&self, id: BlockId) -> &[crate::physics::Aabb] {
+        let info = self.info(id);
+        match (info.solid, info.shape) {
+            (false, _) => &[],
+            (true, Some(s)) => &self.shape_hull[s as usize],
             (true, None) => &crate::physics::CUBE,
         }
     }
@@ -1698,6 +1803,20 @@ mod tests {
         assert!(BlockRegistry::from_ron("base", &block("(range: Some(500.0))")).is_err());
         assert!(BlockRegistry::from_ron("base", &block("(over: Some((\"\", 3)))")).is_err());
         assert!(BlockRegistry::from_ron("base", &block("(over: Some((\"hearth\", 0)))")).is_err());
+    }
+
+    /// What a shelf shows stands where its spots say, turned with it; a spot outside its
+    /// cell does not load, nor a shelf that comes upside down.
+    #[test]
+    fn a_shelfs_spots_turn_with_it_and_stay_in_its_cell() {
+        let shelf = |rest: &str| format!("(blocks: [(name: \"shelf\", textures: All(\"shelf\"), {rest})])");
+        let registry = BlockRegistry::from_ron("base", &shelf("facing: true, shows: [(0.25, 0.5, 0.75)]")).unwrap();
+        let spots = |name: &str| registry.def(registry.expect(name)).shows.clone();
+        assert_eq!(spots("base:shelf"), [[0.25, 0.5, 0.75]]);
+        assert_eq!(spots("base:shelf_south"), [[0.75, 0.5, 0.25]]);
+        assert_eq!(spots("base:shelf_east"), [Facing::East.turn([0.25, 0.5, 0.75])]);
+        assert!(BlockRegistry::from_ron("base", &shelf("shows: [(0.5, 1.5, 0.5)]")).is_err());
+        assert!(BlockRegistry::from_ron("base", &shelf("flips: true, shows: [(0.5, 0.5, 0.5)]")).is_err());
     }
 
     #[test]
@@ -1949,6 +2068,30 @@ mod tests {
         assert_eq!(load(r#"(name: "ladder", render: Model, shape: "slab", tags: ["climbable"])"#), Ok(()));
         let loose = load(r#"(name: "ladder", render: Model, shape: "slab", solid: false, tags: ["climbable"])"#).unwrap_err();
         assert!(loose.contains("`base:ladder` is climbable"), "{loose}");
+    }
+
+    /// A pair set side by side (`beside`) needs facings on both, no upper half or third
+    /// block, and `swaps` that turn the pair into a pair; a double gate's four forms load.
+    #[test]
+    fn a_pair_set_side_by_side_that_would_come_apart_is_refused() {
+        let load = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).map(|_| ()).map_err(|e| e.0)
+        };
+        let gate = r#"(name: "gate", facing: true, beside: "leaf", swaps: "gate_open"), (name: "gate_open", facing: true, solid: false, beside: "leaf_open", swaps: "gate"),
+            (name: "leaf", facing: true, swaps: "leaf_open", drops: "core:air"), (name: "leaf_open", facing: true, solid: false, swaps: "leaf", drops: "core:air")"#;
+        assert_eq!(load(gate), Ok(()));
+        let unknown = load(r#"(name: "gate", facing: true, beside: "leaf")"#).unwrap_err();
+        assert!(unknown.contains("unknown block beside it `base:leaf`"), "{unknown}");
+        let unfaced = load(r#"(name: "gate", beside: "leaf"), (name: "leaf", facing: true)"#).unwrap_err();
+        assert!(unfaced.contains("needs facings"), "{unfaced}");
+        let three = load(r#"(name: "gate", facing: true, beside: "leaf"), (name: "leaf", facing: true, beside: "gate")"#).unwrap_err();
+        assert!(three.contains("no upper half nor a third block"), "{three}");
+        // The first leaf turns, the second does not; or the second turns into the wrong leaf.
+        let alone = load(r#"(name: "gate", facing: true, beside: "leaf", swaps: "gate_open"), (name: "gate_open", facing: true, beside: "leaf", swaps: "gate"), (name: "leaf", facing: true)"#).unwrap_err();
+        assert!(alone.contains("must turn (`swaps`) together"), "{alone}");
+        let crossed = load(&gate.replace(r#"swaps: "leaf_open", drops"#, r#"swaps: "gate", drops"#)).unwrap_err();
+        assert!(crossed.contains("must turn (`swaps`) together"), "{crossed}");
     }
 
     #[test]

@@ -321,6 +321,9 @@ pub enum Effect {
     /// Open the target store beside the actor's inventory, its slots theirs to move items
     /// in and out of until the screen closes (`inventory::STORE`).
     OpenStore,
+    /// Put the actor's pack away into their home's stores: each stack off the hotbar whose
+    /// item a store there already holds goes into that store, as far as it fits.
+    PutAway,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -575,13 +578,32 @@ pub fn swapping(ctx: &impl ActionContext, pos: IVec3) -> Vec<(IVec3, BlockId)> {
     {
         changes.push((pos - IVec3::Y, to));
     }
+    if let Some(other) = pair(ctx, pos)
+        && let Some(to) = ctx.block(other).and_then(|b| blocks.swapped(b))
+    {
+        changes.push((other, to));
+    }
     changes
+}
+
+/// The cell of the other of a pair set side by side (see [`crate::block::BlockDef::beside`])
+/// with the block at `pos`: the block beside it, or the one it is beside.
+pub fn pair(ctx: &impl ActionContext, pos: IVec3) -> Option<IVec3> {
+    let blocks = ctx.blocks();
+    let here = ctx.block(pos)?;
+    if let Some((by, partner)) = blocks.beside(here) {
+        return (ctx.block(pos + by) == Some(partner)).then_some(pos + by);
+    }
+    Facing::ALL.into_iter().map(|f| pos - f.beside()).find(|&at| {
+        ctx.block(at).and_then(|b| blocks.beside(b)).is_some_and(|(by, partner)| at + by == pos && partner == here)
+    })
 }
 
 /// The blocks resting on `pos` that go when it is cleared: the plants standing on it (a
 /// flower, both halves of tall grass, a stalk of sugar cane), the column hanging from it
 /// (vines, roots, a stalactite), what is fixed to its sides (wall torches), and the lower
-/// half of a block whose upper half it is (a door).
+/// half of a block whose upper half it is (a door), and the other of a pair set side by side
+/// (a double gate's leaves).
 pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Vec<IVec3> {
     let column = |step: i32, support: Support| {
         (1..).map(move |d| pos + IVec3::Y * (d * step)).take_while(move |&p| ctx.block(p).is_some_and(|b| ctx.info(b).support == support))
@@ -590,7 +612,7 @@ pub fn supported_by(ctx: &impl ActionContext, pos: IVec3) -> Vec<IVec3> {
         ctx.block(p).is_some_and(|b| ctx.info(b).support == Support::Wall && ctx.info(b).facing.is_some_and(|f| p - f.normal() == pos))
     });
     let lower = ctx.block(pos).zip(ctx.block(pos - IVec3::Y)).filter(|&(here, below)| ctx.blocks().upper(below) == Some(here)).map(|_| pos - IVec3::Y);
-    column(1, Support::Below).chain(column(-1, Support::Above)).chain(walls).chain(lower).collect()
+    column(1, Support::Below).chain(column(-1, Support::Above)).chain(walls).chain(lower).chain(pair(ctx, pos)).collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -830,16 +852,22 @@ impl ActionDef {
             Requirement::Replaceable => {
                 let (block, face) = block_target()?;
                 let cell = placement_cell(ctx, block, face);
-                // A block with an upper half needs the cell above free too.
-                let upper = ctx.actor_held().is_some_and(|b| ctx.info(b).upper.is_some());
-                ctx.block(cell).is_some_and(|b| ctx.info(b).replaceable) && (!upper || ctx.block(cell + IVec3::Y).is_some_and(|b| ctx.info(b).replaceable))
+                // A block placed with others (an upper half, a second leaf beside it) needs
+                // their cells free too.
+                let free = |at: IVec3| ctx.block(at).is_some_and(|b| ctx.info(b).replaceable);
+                let placed = ctx.actor_held().map(|held| placed_block(ctx, held, block, face));
+                free(cell) && placed.is_none_or(|placed| ctx.blocks().placed_with(placed).all(|(by, _)| free(cell + by)))
             }
             Requirement::Unobstructed => {
                 let (block, face) = block_target()?;
                 let solid = ctx.actor_held().is_some_and(|b| ctx.info(b).solid);
                 let cell = placement_cell(ctx, block, face);
-                let upper = ctx.actor_held().and_then(|b| ctx.info(b).upper).is_some_and(|up| ctx.info(up).solid);
-                (!solid || !ctx.occupied(cell)) && (!upper || !ctx.occupied(cell + IVec3::Y))
+                let placed = ctx.actor_held().map(|held| placed_block(ctx, held, block, face));
+                // A player or a creature standing there keeps a solid block out, and out of
+                // every cell a block placed with it fills (a door's top, a double gate's leaf).
+                let taken = |p: IVec3| ctx.occupied(p) || ctx.creature_in(p);
+                let with_clear = placed.is_none_or(|placed| ctx.blocks().placed_with(placed).all(|(by, b)| !ctx.info(b).solid || !taken(cell + by)));
+                (!solid || !taken(cell)) && with_clear
             }
             Requirement::Supported => {
                 let (block, face) = block_target()?;

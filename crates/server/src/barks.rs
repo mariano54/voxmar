@@ -3,7 +3,7 @@
 //! what; each client plays it as that creature's voice gives it (`creature_sounds.ron`).
 
 use voxmar_engine::creature::Bark;
-use voxmar_protocol::ServerMessage;
+use voxmar_protocol::{ServerMessage, TICKS_PER_SECOND};
 
 use crate::Server;
 
@@ -11,14 +11,28 @@ use crate::Server;
 pub const BARK_COMMAND_REACH: f32 = 32.0;
 
 impl Server {
-    /// Creature `id` makes `bark`, heard by every player who sees it now. The one hook for
-    /// what settlements' people say without words: whatever makes them react calls it.
+    /// Creature `id` makes `bark`, heard by every player within its `barking` range who
+    /// sees it now, each no more than once in `barking.every` (per bark, per player). The
+    /// one hook for what settlements' people say without words: whatever makes them react
+    /// calls it.
     pub(crate) fn bark(&mut self, id: u32, bark: Bark) {
-        if !self.creatures.live.contains_key(&id) {
-            return;
-        }
-        for player in self.players.values().filter(|p| p.joined && self.creatures.sees(p.id, id)) {
-            player.connection.send(ServerMessage::Bark { creature: id, bark });
+        self.bark_to(id, bark, false);
+    }
+
+    /// As [`Server::bark`]; `asked` (an admin's command) heeds neither range nor wait,
+    /// heard by every player who sees them.
+    fn bark_to(&mut self, id: u32, bark: Bark, asked: bool) {
+        let Some(c) = self.creatures.live.get(&id) else { return };
+        let barking = self.content.creatures.get(c.species).def.barking;
+        let (at, tick, every) = (c.body.position, self.tick, (barking.every * TICKS_PER_SECOND as f32) as u64);
+        let heard = &mut self.villagers.barked;
+        heard.retain(|_, until| *until > tick);
+        for player in self.players.values().filter(|p| p.joined && (asked || p.position.distance(at) <= barking.range(bark)) && self.creatures.sees(p.id, id)) {
+            let until = heard.entry((id, player.id, bark)).or_insert(0);
+            if asked || *until <= tick {
+                *until = tick + every;
+                player.connection.send(ServerMessage::Bark { creature: id, bark });
+            }
         }
     }
 
@@ -35,7 +49,7 @@ impl Server {
             .min_by(|a, b| a.1.body.position.distance(at).total_cmp(&b.1.body.position.distance(at)))
             .map(|(&id, _)| id);
         if let Some(id) = nearest {
-            self.bark(id, bark);
+            self.bark_to(id, bark, true);
         }
         Some(nearest.is_some() as usize)
     }

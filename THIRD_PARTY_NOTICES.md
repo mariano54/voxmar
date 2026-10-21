@@ -435,8 +435,8 @@ Kenney anyway. Licence checked in the pack's License.txt on 5 October 2026. Unch
 
 ## FluidR3 GM sound font (the quest and level fanfares, the home and settlement motifs)
 
-The quest-finished, level-up and tenth-level fanfares (`assets/content/base/sounds/quest_done_1.ogg`,
-`level_up_1.ogg`, `level_milestone_1.ogg`) are our own tunes, written as notes in
+The quest-finished, level-up, tenth-level and capstone fanfares (`assets/content/base/sounds/quest_done_1.ogg`,
+`level_up_1.ogg`, `level_milestone_1.ogg`, `capstone_done_1.ogg`) are our own tunes, written as notes in
 `tools/generate_jingles.py` and played offline by FluidSynth from the FluidR3 General MIDI
 sound font, Copyright (c) 2000-2002, 2008 Frank Wen and (c) 2008 Toby Smithe, released under
 the MIT licence (the font's README and COPYING; checked in the Ubuntu fluid-soundfont-gm

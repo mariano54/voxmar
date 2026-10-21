@@ -13,18 +13,20 @@ use crate::menu::Screen;
 use crate::player::UiState;
 use crate::session::Launch;
 use crate::ui::skin::PX;
-use crate::ui::widgets::{ACCENT, BODY, ERROR, SHADOW, UiFont, shadowed};
+use crate::ui::widgets::{ACCENT, BODY, ERROR, GOLD, SHADOW, UiFont, shadowed};
 use crate::ui::widgets::space;
 
 /// Seconds a line stays, the last of them fading out as it rises.
 const LINE_SECONDS: f32 = 2.5;
+/// How long news of something finished elsewhere stays: long enough to notice mid-task.
+const NEWS_SECONDS: f32 = 7.0;
 const FADE: f32 = 0.6;
 /// Gains in the same skill this close together add up into one line.
 const MERGE: f32 = 1.2;
 /// How far a line rises over its life, in HUD pixels.
 const RISE: f32 = 10.0;
-/// Lines shown at once at most.
-const LINES: usize = 6;
+/// Lines shown at once at most: one more than the news the server keeps for a player away.
+const LINES: usize = voxmar_protocol::NEWS_LINES;
 /// How long a refusal's reason shows under the crosshair, and how far below its middle
 /// (of the screen's height): close enough to read without looking away from the block.
 const WHY_SECONDS: f32 = 2.5;
@@ -52,6 +54,18 @@ struct Line {
 enum LineKind {
     /// Experience gained, in tenths.
     Gain { skill: SkillId, tenths: u32 },
+    /// Something the player set going finished elsewhere (`ServerMessage::Fired`).
+    News { text: String },
+}
+
+impl LineKind {
+    /// How long the line shows.
+    fn life(&self) -> f32 {
+        match self {
+            LineKind::Gain { .. } => LINE_SECONDS,
+            LineKind::News { .. } => NEWS_SECONDS,
+        }
+    }
 }
 
 /// What the skill HUD has to show.
@@ -64,13 +78,15 @@ pub struct SkillToasts {
     why: Option<(String, f32)>,
     /// The clock of the last `show`, so a refusal is showing only while it would be drawn.
     now: f32,
+    /// When news came that the interface has not yet sounded.
+    fired: Vec<f32>,
 }
 
 impl SkillToasts {
     /// `tenths` of experience earned in `skill` at `now` seconds.
     pub fn gained(&mut self, skill: SkillId, tenths: u32, now: f32) {
         if let Some(line) = self.lines.iter_mut().rev().find(|l| now - l.at < MERGE && matches!(l.kind, LineKind::Gain { skill: s, .. } if s == skill)) {
-            let LineKind::Gain { tenths: total, .. } = &mut line.kind;
+            let LineKind::Gain { tenths: total, .. } = &mut line.kind else { unreachable!("found as a gain") };
             *total += tenths;
             line.at = now;
             return;
@@ -85,6 +101,28 @@ impl SkillToasts {
         if let Some(LineKind::Gain { tenths: total, .. }) = self.lines.iter_mut().rev().find(|l| matches!(l.kind, LineKind::Gain { skill: s, .. } if s == skill)).map(|l| &mut l.kind) {
             *total = tenths;
         }
+    }
+
+    /// News at `now` of something the player set going, finished elsewhere.
+    pub fn news(&mut self, text: String, now: f32) {
+        self.fired.push(now);
+        self.push(Line { kind: LineKind::News { text }, at: now });
+    }
+
+    /// The news lines showing, newest last.
+    #[cfg(test)]
+    pub fn news_showing(&self) -> impl Iterator<Item = &str> {
+        self.lines.iter().filter(|l| self.now - l.at < l.kind.life()).filter_map(|l| if let LineKind::News { text } = &l.kind { Some(text.as_str()) } else { None })
+    }
+
+    /// Whether news came since last asked (`take_fired`).
+    pub fn has_fired(&self) -> bool {
+        !self.fired.is_empty()
+    }
+
+    /// When news came since last asked, to hear it by (`ui::sound`).
+    pub fn take_fired(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.fired)
     }
 
     /// `skill` reached `level`.
@@ -119,10 +157,15 @@ impl SkillToasts {
         self.why = Some((why, now));
     }
 
+    /// A line, and room for it: a line already gone goes first, then the oldest gain, and
+    /// news only when there is nothing else, so news kept for a player away shows its life.
     fn push(&mut self, line: Line) {
+        let now = self.now.max(line.at);
         self.lines.push(line);
         if self.lines.len() > LINES {
-            self.lines.remove(0);
+            let gone = self.lines.iter().position(|l| now - l.at >= l.kind.life());
+            let gain = || self.lines.iter().position(|l| matches!(l.kind, LineKind::Gain { .. }));
+            self.lines.remove(gone.or_else(gain).unwrap_or(0));
         }
     }
 }
@@ -204,7 +247,7 @@ fn show(
     let now = time.elapsed_secs();
     let skills = &launch.content.skills;
     toasts.now = now;
-    toasts.lines.retain(|line| now - line.at < LINE_SECONDS);
+    toasts.lines.retain(|line| now - line.at < line.kind.life());
     if let Ok((mut text, mut color, mut shadow, mut visibility)) = why_line.single_mut() {
         // Why a click in the world did nothing: not over a screen, which hides the world.
         let covered = ui.inventory_open || ui.character_open || ui.journal_open || ui.quests_open || ui.menu_open || ui.recipes_open || player.dead;
@@ -233,15 +276,16 @@ fn show(
             LineKind::Gain { skill, tenths } => {
                 (locale.format("skills.gained", &[("xp", &xp_text(*tenths)), ("skill", &locale.skill(skills.get(*skill)))]), ACCENT)
             }
+            LineKind::News { text } => (text.clone(), GOLD),
         };
         if text.0 != words {
             text.0 = words;
         }
-        let since = now - line.at;
-        let alpha = fade(since, LINE_SECONDS);
+        let (since, life) = (now - line.at, line.kind.life());
+        let alpha = fade(since, life);
         color.set_if_neq(TextColor(base.with_alpha(alpha)));
         shadow.color = SHADOW.with_alpha(SHADOW.alpha() * alpha);
-        node.top = Val::Px(-RISE * PX * (since / LINE_SECONDS));
+        node.top = Val::Px(-RISE * PX * (since / life));
         visibility.set_if_neq(Visibility::Inherited);
     }
 }
@@ -249,6 +293,40 @@ fn show(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// News of a firing finished elsewhere stays longer than a gain, and is heard once.
+    #[test]
+    fn news_outlasts_gains_and_is_heard_once() {
+        let mut toasts = SkillToasts::default();
+        toasts.gained(SkillId(0), 10, 1.0);
+        toasts.news("Your Charcoal Clamp is done".into(), 1.0);
+        assert_eq!(toasts.take_fired().len(), 1);
+        assert!(toasts.take_fired().is_empty(), "heard once");
+        toasts.now = 1.0 + LINE_SECONDS + 0.1;
+        toasts.lines.retain(|line| toasts.now - line.at < line.kind.life());
+        assert_eq!((toasts.lines.len(), toasts.news_showing().collect::<Vec<_>>()), (1, vec!["Your Charcoal Clamp is done"]), "the gain gone, the news still there");
+        toasts.now = 1.0 + NEWS_SECONDS + 0.1;
+        assert_eq!(toasts.news_showing().count(), 0);
+    }
+
+    /// Gains coming on top of a full screen of news push out other gains, never the news,
+    /// and news pushes out news only when nothing else is left.
+    #[test]
+    fn gains_make_room_among_themselves_not_from_news() {
+        let mut toasts = SkillToasts::default();
+        for i in 0..LINES - 1 {
+            toasts.news(format!("news {i}"), 1.0);
+        }
+        for skill in 0..3 {
+            toasts.gained(SkillId(skill), 10, 1.5);
+        }
+        toasts.now = 1.6;
+        assert_eq!(toasts.news_showing().count(), LINES - 1, "all the news kept");
+        assert_eq!(toasts.lines.len(), LINES);
+        toasts.news("news 5".into(), 1.7);
+        toasts.news("news 6".into(), 1.7);
+        assert_eq!(toasts.news_showing().collect::<Vec<_>>(), ["news 1", "news 2", "news 3", "news 4", "news 5", "news 6"], "news alone: the oldest goes");
+    }
 
     #[test]
     fn gains_close_together_add_up() {

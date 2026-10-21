@@ -52,7 +52,7 @@ impl Plugin for InventoryPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(
                 Update,
-                ((toggle, fit_grid, fit_store, click, find_near, craft, number_keys, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
+                ((toggle, fit_grid, fit_store, click, find_near, craft, number_keys, put_away, preview).chain().in_set(InventorySystems).after(super::screens::ScreenSystems), (follow_pointer, tooltip, tap, hover_item, show_worn_glyphs).after(InventorySystems))
                     .run_if(in_state(Screen::InGame)),
             )
             .add_systems(OnExit(Screen::InGame), |mut gesture: ResMut<Gesture>, mut tips: Query<&mut Visibility, With<Tooltip>>| {
@@ -851,6 +851,18 @@ fn number_keys(
     send(&net, &actions, inventory, action);
 }
 
+/// The put away key (H): at home, the server puts each stack off the hotbar into the home's
+/// store already holding its item (`base:put_away`). Walking about or with the inventory
+/// open; not while typing in the chat or with a menu up.
+fn put_away(ui: Res<UiState>, keys: Res<ButtonInput<KeyCode>>, settings: Res<Settings>, net: Res<Net>, actions: Res<Actions>, player: Res<LocalPlayer>) {
+    if !keys.just_pressed(settings.put_away_key.0) || ui.console_open || ui.menu_open || player.dead || !(ui.cursor_locked || ui.inventory_open) {
+        return;
+    }
+    if let Some(action) = actions.named("base:put_away") {
+        net.propose_from(&player, action, ActionTarget::None);
+    }
+}
+
 /// What the screen shows: the inventory, with a drag over several slots already spread.
 fn preview(player: Res<LocalPlayer>, gesture: Res<Gesture>, mut shown: ResMut<ShownInventory>) {
     let mut inventory = player.inventory.clone();
@@ -1305,10 +1317,10 @@ fn tooltip(
     ),
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
-    // Where a pinned tip may not go: over the words of the screen under it (its own aside),
-    // on the view the interface is laid out on.
+    // Where a tip would rather not go: over the words of the screen under it (its own
+    // aside), on the view the interface is laid out on.
     let pinned = forced.as_ref().map(|f| f.0);
-    let words: Vec<Rect> = if pinned.is_some() {
+    let words: Vec<Rect> = if ui.inventory_open || ui.recipes_open || ui.quests_open || pinned.is_some() {
         texts
             .iter()
             .filter(|(text, node, _, visible)| visible.get() && node.size().min_element() > 0.0 && parents.get(*text).ok().is_none_or(|p| p.parent() != entity))
@@ -1403,9 +1415,10 @@ fn tooltip(
     place_tip(&mut node, computed, window.single().ok(), scale.0, pinned, &places, &words, view);
 }
 
-/// Puts the tooltip up and to the right of the pointer, kept on screen; without a pointer,
-/// beside the slot a screenshot names, at the nearest place there that covers none of
-/// `words` (the screen's texts under it) within the `view`. The pointer is in the window's
+/// Puts the tooltip up and to the right of the pointer, kept on screen, or as near there as
+/// it covers none of `words` (the screen's texts under it, the catalogue's search line by
+/// the hotbar) within a tip's size; without a pointer, beside the slot a screenshot names,
+/// at the nearest place that covers none of them within the `view`. The pointer is in the window's
 /// points, the interface laid out at its own scale.
 #[allow(clippy::too_many_arguments)]
 fn place_tip(
@@ -1423,25 +1436,48 @@ fn place_tip(
         && let Some(at) = window.cursor_position()
     {
         let (at, width) = (at / scale, window.width() / scale);
-        node.left = Val::Px((at.x + 6.0 * PX).min(width - size.x - 2.0 * PX));
-        node.top = Val::Px((at.y - size.y - 2.0 * PX).max(2.0 * PX));
+        // The slot under the pointer, if it is one: what the tip names, kept in sight.
+        let hovered = places.iter().map(|(_, cell, place)| Rect::from_center_size(place.translation * cell.inverse_scale_factor(), cell.size() * cell.inverse_scale_factor())).find(|r| r.contains(at));
+        let spot = pointer_spot(at, size, width, view, words, hovered);
+        node.left = Val::Px(spot.x);
+        node.top = Val::Px(spot.y);
     } else if let Some(slot) = forced
         && let Some((_, cell, place)) = places.iter().find(|(s, ..)| s.0 == slot)
     {
         let at = (place.translation + cell.size() / 2.0) * cell.inverse_scale_factor();
         let first = Vec2::new(at.x + 2.0 * PX, (at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
-        let spot = view.and_then(|view| clear_spot(first, size, view, words)).unwrap_or(first);
+        let spot = view.and_then(|view| clear_spot(first, size, view, words, None)).unwrap_or(first);
         node.left = Val::Px(spot.x);
         node.top = Val::Px(spot.y);
     }
 }
 
+/// Where a tip of `size` goes for the pointer at `at` in a window `width` across: up and to
+/// the right of it, or the nearest place within a tip's size of that which covers none of
+/// `words`, the pointer or the `hovered` slot; else where it first would. Near the pointer
+/// or not at all: a tip far from what it names is worse than one over a word.
+fn pointer_spot(at: Vec2, size: Vec2, width: f32, view: Option<Vec2>, words: &[Rect], hovered: Option<Rect>) -> Vec2 {
+    let first = Vec2::new((at.x + 6.0 * PX).min(width - size.x - 2.0 * PX), (at.y - size.y - 2.0 * PX).max(2.0 * PX));
+    // The pointer's arrow reaches down and to the right of its point.
+    let pointer = Rect::from_corners(at - 2.0 * PX, at + 10.0 * PX);
+    let avoid: Vec<Rect> = words.iter().copied().chain([pointer]).chain(hovered).collect();
+    view.and_then(|view| clear_spot(first, size, view, &avoid, Some(size.max_element()))).unwrap_or(first)
+}
+
 /// The top left nearest `first` where a tip of `size` lies wholly within the `view` and
-/// over none of `words`, on a grid of `TIP_STEP`; none where nowhere is clear.
-fn clear_spot(first: Vec2, size: Vec2, view: Vec2, words: &[Rect]) -> Option<Vec2> {
-    let (low, high) = (Vec2::splat(2.0 * PX), view - size - 2.0 * PX);
+/// over none of `words`, on a grid of `TIP_STEP`, and no further from `first` than
+/// `within` if given (only that far is looked over); none where nowhere is clear.
+fn clear_spot(first: Vec2, size: Vec2, view: Vec2, words: &[Rect], within: Option<f32>) -> Option<Vec2> {
+    let (mut low, mut high) = (Vec2::splat(2.0 * PX), view - size - 2.0 * PX);
     if high.cmplt(low).any() {
         return None;
+    }
+    let near = |at: Vec2| within.is_none_or(|r| at.distance(first) <= r);
+    if let Some(r) = within {
+        (low, high) = ((first - r).max(low), (first + r).min(high));
+        if high.cmplt(low).any() {
+            return Some(first.clamp(Vec2::splat(2.0 * PX), view - size - 2.0 * PX)).filter(|&at| near(at) && words.iter().all(|w| Rect::from_corners(at, at + size).intersect(*w).is_empty()));
+        }
     }
     let clear = |at: Vec2| {
         let tip = Rect::from_corners(at, at + size);
@@ -1454,7 +1490,7 @@ fn clear_spot(first: Vec2, size: Vec2, view: Vec2, words: &[Rect]) -> Option<Vec
     (0..=steps.x)
         .flat_map(|i| (0..=steps.y).map(move |j| low + Vec2::new(i as f32, j as f32) * TIP_STEP))
         .chain(std::iter::once(first.clamp(low, high)))
-        .filter(|&at| clear(at))
+        .filter(|&at| near(at) && clear(at))
         .min_by(|a, b| a.distance_squared(first).total_cmp(&b.distance_squared(first)))
 }
 
@@ -1475,15 +1511,41 @@ mod tests {
     fn a_pinned_tip_lies_over_no_words() {
         let (view, size) = (Vec2::new(1706.0, 960.0), Vec2::new(360.0, 300.0));
         let first = Vec2::new(1017.0, 300.0);
-        assert_eq!(clear_spot(first, size, view, &[]), Some(first));
+        assert_eq!(clear_spot(first, size, view, &[], None), Some(first));
         let words = [Rect::new(1300.0, 40.0, 1600.0, 60.0), Rect::new(600.0, 200.0, 1000.0, 700.0), Rect::new(1100.0, 400.0, 1200.0, 420.0)];
-        let spot = clear_spot(first, size, view, &words).expect("somewhere clear");
+        let spot = clear_spot(first, size, view, &words, None).expect("somewhere clear");
         let tip = Rect::from_corners(spot, spot + size);
         assert!(words.iter().all(|w| tip.intersect(*w).is_empty()), "{tip:?} covers a word");
         assert!(tip.min.cmpge(Vec2::splat(2.0 * PX)).all() && tip.max.cmple(view - 2.0 * PX).all(), "{tip:?} off the view");
         assert!(spot.distance(first) < 200.0, "{spot} is not near {first}");
-        assert_eq!(clear_spot(first, size, view, &[Rect::new(0.0, 0.0, 1706.0, 960.0)]), None);
-        assert_eq!(clear_spot(first, Vec2::new(2000.0, 10.0), view, &[]), None, "wider than the view");
+        assert_eq!(clear_spot(first, size, view, &[Rect::new(0.0, 0.0, 1706.0, 960.0)], None), None);
+        assert_eq!(clear_spot(first, Vec2::new(2000.0, 10.0), view, &[], None), None, "wider than the view");
+    }
+
+    /// The pointer's tip sits up and to the right of it when nothing is there; over a slot's
+    /// corner or a word (the catalogue's search line), at the nearest place within a tip's size that
+    /// covers no word, nor the pointer, nor the slot it is over; with nowhere that near
+    /// clear, where it first would be. Only that near is looked over.
+    #[test]
+    fn the_pointers_tip_moves_off_words_but_stays_near() {
+        let (view, size, width) = (Vec2::new(1706.0, 960.0), Vec2::new(300.0, 120.0), 1706.0);
+        let at = Vec2::new(800.0, 700.0);
+        let first = Vec2::new(at.x + 6.0 * PX, at.y - size.y - 2.0 * PX);
+        let hovered = Rect::from_center_size(at, Vec2::splat(36.0));
+        assert_eq!(pointer_spot(at, size, width, Some(view), &[], None), first);
+        // Up and to the right still covers the slot's corner: it moves off it, near.
+        let spot = pointer_spot(at, size, width, Some(view), &[], Some(hovered));
+        assert!(Rect::from_corners(spot, spot + size).intersect(hovered).is_empty() && spot.distance(first) <= size.max_element(), "{spot}");
+        let search = Rect::new(780.0, 560.0, 1400.0, 590.0);
+        let spot = pointer_spot(at, size, width, Some(view), &[search], Some(hovered));
+        let tip = Rect::from_corners(spot, spot + size);
+        assert!(tip.intersect(search).is_empty() && tip.intersect(hovered).is_empty() && !tip.contains(at), "{tip:?} over the search line, the slot or the pointer");
+        assert!(spot.distance(first) <= size.max_element(), "{spot} too far from {first}");
+        // Words all round: it stays where it first would.
+        assert_eq!(pointer_spot(at, size, width, Some(view), &[Rect::new(0.0, 0.0, 1706.0, 960.0)], Some(hovered)), first);
+        // Only near the pointer is looked over: a clear place far off is not taken.
+        let far = [Rect::new(400.0, 300.0, 1400.0, 960.0)];
+        assert_eq!(pointer_spot(at, size, width, Some(view), &far, None), first);
     }
 
     #[test]

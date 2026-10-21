@@ -204,8 +204,17 @@ impl Server {
         // structure's reach of the change is kept without looking its structure up.
         let reach = structures.reach();
         let before = self.lit.len();
-        self.lit.retain(|&core, fire| fire.until > tick && ((changed - core).abs().max_element() > reach || structures.get(&fire.structure)
-            .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p)))));
+        // A fire whose fuel has run out goes from here as from anywhere; it is told gone cold
+        // (`tell_fires_out`) for it all the same.
+        let cold = &mut self.fires_out;
+        self.lit.retain(|&core, fire| {
+            let keep = fire.until > tick && ((changed - core).abs().max_element() > reach || structures.get(&fire.structure)
+                .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p))));
+            if !keep && fire.until <= tick {
+                cold.push(fire.clone());
+            }
+            keep
+        });
         if self.lit.len() != before {
             self.send_fires();
         }
@@ -333,13 +342,21 @@ mod tests {
         server.light(1, core);
         assert!(!server.lit.contains_key(&core), "a loose core was lit");
         assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 24, "a loose core consumed fuel");
-        let brick = server.content.blocks.expect("base:kiln_bricks");
-        for x in -1..=1 { for z in -1..=1 {
-            server.set_block(core + IVec3::new(x, 0, z), brick);
-        }}
-        for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
-        server.set_block(core, server.content.blocks.expect("base:crucible"));
-        server.light(1, core);
+        // Plain kiln bricks make the crucible but crack in its kiln: a ring of them is no
+        // kiln, and takes no fuel. Bricks tempered with straw are.
+        for name in ["base:kiln_bricks", "base:tempered_kiln_bricks"] {
+            let brick = server.content.blocks.expect(name);
+            for x in -1..=1 { for z in -1..=1 {
+                server.set_block(core + IVec3::new(x, 0, z), brick);
+            }}
+            for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
+            server.set_block(core, server.content.blocks.expect("base:crucible"));
+            server.light(1, core);
+            if name == "base:kiln_bricks" {
+                assert!(!server.lit.contains_key(&core), "a ring of plain kiln bricks was lit");
+                assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 24, "a ring of plain kiln bricks consumed fuel");
+            }
+        }
         let until = server.lit[&core].until;
         assert_eq!(until - server.tick, (24.0 * server.content.machines.burn_seconds(coal).unwrap() * TICKS_PER_SECOND as f32) as u64);
         server.players.get_mut(&1).unwrap().position = core.as_vec3() + Vec3::new(0.5, 0.0, 3.5);
@@ -527,7 +544,7 @@ mod tests {
         let column = ColumnPos::of_block(server.spawn.floor().as_ivec3());
         let core = column.origin() + IVec3::new(31, server.spawn.y as i32 + 4, 8);
         server.load_area(core - IVec3::splat(2), core + IVec3::splat(2));
-        let (brick, crucible, coal) = (server.content.blocks.expect("base:kiln_bricks"), server.content.blocks.expect("base:crucible"), server.content.blocks.expect("base:coal_ore"));
+        let (brick, crucible, coal) = (server.content.blocks.expect("base:tempered_kiln_bricks"), server.content.blocks.expect("base:crucible"), server.content.blocks.expect("base:coal_ore"));
         for x in -1..=1 { for z in -1..=1 {
             server.set_block(core + IVec3::new(x, 0, z), brick);
         }}
@@ -575,8 +592,9 @@ mod tests {
         assert!(matches!(told.as_slice(), [Words::Key(key, _)] if key == "multiblock.cold"), "told {told:?}");
     }
 
-    /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks; a
-    /// hearthstone with no ring round it does not, and says what it lacks.
+    /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks, and the
+    /// hearth lights a firebrand or a torch's stub as any fire does; a hearthstone with no
+    /// ring round it does not, and says what it lacks.
     #[test]
     fn the_hearth_and_the_stove_cook_as_a_campfire_does() {
         let mut server = crate::test_server();
@@ -614,6 +632,13 @@ mod tests {
         assert_eq!(cook(&mut server, core), Some(cooked), "the standing hearth cooked nothing");
         assert_eq!(cook(&mut server, stove), Some(cooked), "the stove cooked nothing");
         assert_eq!(server.players[&1].tallies["cooked_at:campfire:base:cooked_small_game"], 2, "counted as campfire cooking, for First Night");
+        // A stick held in it catches, and a torch's stub lights again, as at any fire.
+        for (held, lit) in [("base:stick", "base:firebrand"), ("base:torch_stub", "base:torch")] {
+            server.players.get_mut(&1).unwrap().inventory.slots.iter_mut().for_each(|slot| *slot = None);
+            server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(block(&server, held), 1));
+            server.cook(1, core);
+            assert_eq!(server.players[&1].inventory.get(0).map(|s| s.item), Some(block(&server, lit)), "{held} at the hearth");
+        }
         // The stove is a fire: it warms, and holds a pot.
         let def = server.content.blocks.def(block(&server, "base:cottage_stove"));
         assert!(def.has_tag("hob") && def.has_tag("heat"));
@@ -628,7 +653,7 @@ mod tests {
         player(&mut server);
         let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
         let blocks = server.content.blocks.clone();
-        let brick = blocks.expect("base:kiln_bricks");
+        let brick = blocks.expect("base:tempered_kiln_bricks");
         for x in -1..=1 { for z in -1..=1 { server.set_block(core + IVec3::new(x, 0, z), brick); }}
         for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
         server.set_block(core, blocks.expect("base:crucible"));
@@ -669,35 +694,5 @@ mod tests {
         server.cook(1, fire);
         assert_eq!(server.players[&1].inventory.get(0).unwrap().item, burnt);
         assert!(!server.players[&1].tallies.keys().any(|key| key.starts_with("cooked")), "a burnt output counted");
-    }
-
-    /// A full pack fires its clay as long as the fired clay has room: a crack gives back
-    /// the clay into the stack it came from.
-    #[test]
-    fn a_full_pack_fires_clay_whether_it_cracks_or_not() {
-        let mut server = crate::test_server();
-        player(&mut server);
-        let kiln = server.spawn.floor().as_ivec3() + IVec3::Y * 4;
-        server.set_block(kiln, server.content.blocks.expect("base:pit_kiln"));
-        let (clay, fired, stone) = (server.content.blocks.expect("base:clay"), server.content.blocks.expect("base:fired_clay"), server.content.blocks.expect("base:cobblestone"));
-        let recipe = server.content.cooking.for_item(clay, &server.content.blocks.def(server.content.blocks.expect("base:pit_kiln")).tags).unwrap();
-        let burn = recipe.burn_chance(1);
-        assert!(burn > 0.0 && recipe.burnt == Some(clay), "clay cracks back to clay at level 1");
-        for cracks in [true, false] {
-            let key = server.players[&1].draw_key;
-            let cooks = (0..1000).find(|&n| (crate::save::numbered_draws(key, Draw::Cook.salt(), n)[0] < burn) == cracks).unwrap();
-            server.players.get_mut(&1).unwrap().draws.cooks = cooks;
-            let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
-            for slot in inventory.slots.iter_mut() {
-                *slot = Some(ItemStack::new(stone, 64));
-            }
-            inventory.slots[0] = Some(ItemStack::new(clay, 64));
-            inventory.slots[1] = Some(ItemStack::new(fired, 10));
-            server.players.get_mut(&1).unwrap().selected = 0;
-            server.cook(1, kiln);
-            let inventory = &server.players[&1].inventory;
-            let (clay_left, fired_now) = (inventory.get(0).unwrap().count, inventory.get(1).unwrap().count);
-            assert_eq!((clay_left, fired_now), if cracks { (64, 10) } else { (63, 11) }, "cracks: {cracks}");
-        }
     }
 }

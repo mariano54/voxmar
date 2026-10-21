@@ -14,11 +14,12 @@
                 (style: Flame, rate: 30.0, at: (0.5, 0.3, 0.5), spread: 0.1, size: 2.0, height: 0.6, color: Some((250, 168, 28))),
             ],
         ),
-        // A campfire: logs and embers that cook one thing at a time and keep the cold off.
+        // A campfire: logs and embers that cook one thing at a time and keep the cold off,
+        // and the wild back 8 blocks at night (`ward`).
         // A `furnishing`: a village's gives nothing, one a player placed gives itself back.
         (
             name: "campfire", render: Plant, solid: false, sound: Wood, textures: All("campfire"),
-            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "firelighter", "hob", "furnishing"],
+            light: 13, hardness: 0.6, color: (230, 120, 40), tags: ["campfire", "station", "heat", "fire", "firelighter", "hob", "furnishing"], ward: 8.0,
             // Flames licking a block and more above the logs, a deep yellow core among them,
             // smoke thick over the fire and thinning as it rises a few blocks, embers
             // floating up as high, and now and then a crackle of sparks (`particles`:
@@ -33,11 +34,13 @@
             ],
         ),
         // A torch: a stick with a burning tip, to light the night. Its flame flickers, and
-        // the odd ember and wisp of smoke rise from it.
+        // the odd ember and wisp of smoke rise from it. Carried in hand it lights the way
+        // (`held_light:N`, a little less than set down) and burns nothing down: the steady
+        // light after the firebrand, which burns out in the hand.
         (
             name: "torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
             light: 14, hardness: 0.0, color: (250, 180, 60), wall: "wall_torch",
-            tags: ["light", "fire", "firelighter", "kindles", "burns_days:1", "burns_out_to:torch_stub", "rain_douses", "gutters_to:torch_guttering", "tended"],
+            tags: ["light", "fire", "firelighter", "kindles", "held_light:12", "burns_days:1", "burns_out_to:torch_stub", "rain_douses", "gutters_to:torch_guttering", "tended"],
             particles: [
                 (style: Flame, rate: 26.0, at: (0.5, 0.78, 0.5), spread: 0.04, size: 1.6, height: 0.35, color: Some((240, 128, 20))),
                 (style: Ember, rate: 0.5, at: (0.5, 0.75, 0.5), spread: 0.04, size: 0.7, height: 2.0, color: Some((226, 84, 16))),

@@ -18,4 +18,12 @@
         // The tracker names the key that opens the quest book at the quest.
         book_key: true,
     ),
+    // What the quests' experience rewards are worth: every `Xp` a quest file writes is paid,
+    // shown in the book and tracker, and counted by the walks times `xp`, and a capstone's
+    // (the last quest of its path) times `capstone_xp` again. Doubled so a quest feels worth
+    // its effort (Mariano, Oct 21); capstones half as much again for closing a path.
+    pays: (
+        xp: 2.0,
+        capstone_xp: 1.5,
+    ),
 )

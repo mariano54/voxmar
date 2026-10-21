@@ -257,7 +257,7 @@
             "mbmmbmwwmm",
             "mmmmmmmmmm",
         ])]),
-        // By the Fire: a stool drawn up to a small fire.
+        // Fireside: a stool drawn up to a small fire.
         "ui/effect/fireside": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'r': "#c22a1a", 'o': "#f07818", 'y': "#ffd04a", 'w': "#a06a3a", 'd': "#6a4222"}, rows: [
             "......r...",
             ".....ror..",
@@ -269,6 +269,19 @@
             "d..d.dkd..",
             "d..d.kdk..",
             "d..d......",
+        ])]),
+        // Reading Nook: a four-paned window, daylight through it, an open book on its sill.
+        "ui/effect/reading_nook": (size: (10, 10), layers: [Grid(legend: {'w': "#6a4222", 'g': "#bfe0f0", 'k': "#1a1410", 'c': "#f0e8d0", 'l': "#8a8070"}, rows: [
+            "wwwwwwwwww",
+            "wggggwgggw",
+            "wggggwgggw",
+            "wwwwwwwwww",
+            "wggggwgggw",
+            "wggggwgggw",
+            "wwwwwwwwww",
+            "..kkkkkk..",
+            "..kclkcl..",
+            "wwwwwwwwww",
         ])]),
         // At the Table: a bowl on a table, a stool drawn up.
         "ui/effect/at_table": (size: (10, 10), layers: [Grid(legend: {'b': "#8a5a2a", 'c': "#e8d8b0", 's': "#d0a060", 'w': "#a06a3a", 'd': "#6a4222"}, rows: [

@@ -408,7 +408,11 @@ never past the 16384 quads a vertex can number: 12 bits in word 1 and 2 in word 
 worked out by sampling every 16th, never read from a flag: only a shape covering all six
 hides its neighbours' faces and stops light as a cube does, so a slab's top or a stair's
 side never hides a face, and slabs and stairs neither darken what they touch nor stop
-torchlight.
+torchlight. A shape may also name a `hull`: spans (`from`, `to`, checked as boxes are, and
+no more of them than its boxes may number) that a creature's blow meets at a player
+standing in the block's cell, gaps and all; without one the hull is the span of all its
+boxes. A railing's corner names one span for each of its two runs, so a player in its
+open part is no more hidden than by the railing alone.
 
 The renderer keeps every shape's quads in one storage buffer (`shape_quads`, binding 17 of
 the terrain bind group: each quad's corners, texture coordinates, normal and the cube face

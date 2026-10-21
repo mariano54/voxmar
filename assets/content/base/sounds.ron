@@ -23,6 +23,9 @@
     level_up: ["sounds/level_up_1.ogg"],
     // A milestone level (every tenth, as celebrations.ron says): the grander one, instead.
     level_milestone: ["sounds/level_milestone_1.ogg"],
+    // A path's last quest finished (its capstone, `capstone: true`): a horn call answered by
+    // the trumpet, closing on a slow, warm amen. None listed, it rings as a quest.
+    capstone_done: ["sounds/capstone_done_1.ogg"],
     // Our own (tools/generate_sfx.py), made at the loudness the game expects of them.
     // An item picked up off the ground: a soft pop, when the player's Minecraft sounds are
     // off.
@@ -103,6 +106,20 @@
             place: ["sounds/materials/terracotta_place_1.ogg", "sounds/materials/terracotta_place_2.ogg", "sounds/materials/terracotta_place_3.ogg"],
             break: ["sounds/materials/terracotta_break_1.ogg", "sounds/materials/terracotta_break_2.ogg", "sounds/materials/terracotta_break_3.ogg"],
         ),
+        // On rockers (a rocking chair, a cradle): set down, it rocks to rest with a creak and
+        // a tap each way. Steps and breaks are timber's.
+        (
+            name: "rocking_chair", tags: ["rocking_chair"],
+            step: ["sounds/materials/timber_step_1.ogg", "sounds/materials/timber_step_2.ogg", "sounds/materials/timber_step_3.ogg", "sounds/materials/timber_step_4.ogg"],
+            place: ["sounds/materials/rocker_place_1.ogg", "sounds/materials/rocker_place_2.ogg", "sounds/materials/rocker_place_3.ogg"],
+            break: ["sounds/materials/timber_break_1.ogg", "sounds/materials/timber_break_2.ogg", "sounds/materials/timber_break_3.ogg"],
+        ),
+        (
+            name: "cradle", tags: ["cradle"],
+            step: ["sounds/materials/timber_step_1.ogg", "sounds/materials/timber_step_2.ogg", "sounds/materials/timber_step_3.ogg", "sounds/materials/timber_step_4.ogg"],
+            place: ["sounds/materials/rocker_place_1.ogg", "sounds/materials/rocker_place_2.ogg", "sounds/materials/rocker_place_3.ogg"],
+            break: ["sounds/materials/timber_break_1.ogg", "sounds/materials/timber_break_2.ogg", "sounds/materials/timber_break_3.ogg"],
+        ),
     ],
     // A tool in hand nearly worn out (tools.ron's `wear.warn`): a dry creak and a tick as the
     // head shifts. Worn out: the haft snaps and its pieces fall.
@@ -156,6 +173,9 @@
                 (name: "stir", with: ["cooking_pot"], sounds: ["sounds/work/stir_1.ogg", "sounds/work/stir_2.ogg"], volume: 0.7),
                 // Greens forked onto the heap: a wet flump and a damp rustle.
                 (name: "heap", with: ["compost_heap"], sounds: ["sounds/work/heap_1.ogg", "sounds/work/heap_2.ogg"], volume: 0.7),
+                // Clay or cobble loaded into a pit kiln: a knock into the embers and a breath of
+                // flame.
+                (name: "fire_in_kiln", with: ["pit_kiln"], sounds: ["sounds/work/kiln_load_1.ogg", "sounds/work/kiln_load_2.ogg"], volume: 0.9),
             ],
         ),
         // Taking a catch from a sprung trap (traps.ron): a pouch drawn open and shut.
@@ -186,6 +206,8 @@
                 (name: "basket", with: ["tag:basket"], sounds: ["sounds/store_basket_1.ogg", "sounds/store_basket_2.ogg"], volume: 0.7),
             ],
         ),
+        // Putting the pack away at home: the same lid, softer.
+        "base:put_away": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.6),
         // The latch, then a slow creak on the hinges; quieter than the rest at its loudest, so
         // played louder.
         "base:open": (
@@ -214,15 +236,22 @@
                 (tags: ["burnt"], sounds: ["sounds/burnt_1.ogg", "sounds/burnt_2.ogg"], volume: 0.8),
                 (tags: ["cooked"], sounds: ["sounds/cooked_1.ogg", "sounds/cooked_2.ogg"], volume: 0.7),
                 // What the Farm age's hand stations give, as it comes off them: flour gathered
-                // up in a dusty sift, twine wound off with a snap, cloth folded off the loom.
+                // up in a dusty sift, twine wound off with a snap, cloth folded off the loom (a
+                // bolt: cloth made up into a rug or a banner is not the loom's).
                 (tags: ["flour"], sounds: ["sounds/work/flour_1.ogg", "sounds/work/flour_2.ogg"], volume: 0.9),
                 (tags: ["twine"], sounds: ["sounds/work/twine_1.ogg", "sounds/work/twine_2.ogg"], volume: 1.2),
-                (tags: ["cloth"], sounds: ["sounds/work/cloth_1.ogg", "sounds/work/cloth_2.ogg"], volume: 0.6),
+                (tags: ["bolt"], sounds: ["sounds/work/cloth_1.ogg", "sounds/work/cloth_2.ogg"], volume: 0.6),
+                // What the fire and the kilns give back: a loaf knocked hollow, fired clay
+                // ringing sound, an ingot clinking from the mould with a hiss, charcoal raked
+                // out in brittle clinks. (Clay cracked in the fire comes back as plain clay,
+                // and kilned stone as stone: told by no tag that dug clay or rock lacks, so
+                // they keep the cook's own sound.)
+                (tags: ["baked"], sounds: ["sounds/baked_1.ogg", "sounds/baked_2.ogg"], volume: 0.8),
+                (tags: ["fired_clay"], sounds: ["sounds/work/fired_1.ogg", "sounds/work/fired_2.ogg"], volume: 0.8),
+                (tags: ["ingot"], sounds: ["sounds/work/ingot_1.ogg", "sounds/work/ingot_2.ogg"], volume: 0.8),
+                (tags: ["charcoal"], sounds: ["sounds/work/charcoal_1.ogg", "sounds/work/charcoal_2.ogg"], volume: 0.8),
             ],
             ways: [
-                // Clay or cobble set into a pit kiln: a knock into the embers and a breath of
-                // flame.
-                (name: "fire_in_kiln", with: ["tag:pit_kiln"], sounds: ["sounds/work/kiln_load_1.ogg", "sounds/work/kiln_load_2.ogg"], volume: 0.9),
                 // Ore tipped into the hot crucible: a rattle on clay and a deep hiss.
                 (name: "smelt", with: ["tag:crucible"], sounds: ["sounds/work/smelt_1.ogg", "sounds/work/smelt_2.ogg"], volume: 0.9),
                 // The Farm age's hand stations, through their work: a quern's
@@ -243,7 +272,13 @@
         "base:sit": (
             sounds: ["sounds/sleep_1.ogg"], volume: 0.6,
             // A stool, chair, bench or settle: a knock of its legs and a creak.
-            ways: [(name: "wooden_seat", with: ["tag:wood"], sounds: ["sounds/seat_wood_1.ogg", "sounds/seat_wood_2.ogg"], volume: 0.6)],
+            ways: [
+                // A cushioned seat (a window seat): the rustle, as a cushion.
+                (name: "cushioned_seat", with: ["tag:cushioned"], sounds: ["sounds/sleep_1.ogg"], volume: 0.6),
+                // A rocking chair: the seat taking the weight, then a rock or two on its runners.
+                (name: "rocking_chair", with: ["tag:rocking_chair"], sounds: ["sounds/rocking_chair_1.ogg", "sounds/rocking_chair_2.ogg"], volume: 0.6),
+                (name: "wooden_seat", with: ["tag:wood"], sounds: ["sounds/seat_wood_1.ogg", "sounds/seat_wood_2.ogg"], volume: 0.6),
+            ],
         ),
         // A line whipped out over the water (the plop is the water's own).
         // A line cast, and what it lands: a fish breaking the water and flapping on the bank.
@@ -344,6 +379,11 @@
         "quest_claim": (jingle: true),
         "level_up": (jingle: true),
         "level_milestone": (jingle: true),
+        "capstone_done": (jingle: true),
+        // A firing the player set going finished while they were away (a clamp charred
+        // through, a kiln gone cold): the last embers, an earthen settle and fired ware
+        // ringing once as it cools.
+        "fired": (sounds: ["sounds/fired_1.ogg", "sounds/fired_2.ogg"], volume: 0.45),
     },
     // The mix (crates/client/src/mix.rs). A later package's bands and caps replace those it
     // names; its ducking replaces the whole.

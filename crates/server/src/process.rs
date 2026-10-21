@@ -35,6 +35,7 @@ pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
         Box::new(crate::wear::Footsteps::default()),
         Box::new(crate::farm::Growth),
         Box::new(crate::smoulder::Smoulders),
+        Box::new(crate::stores::Shelves),
         Box::new(crate::machines::Machines),
         Box::new(crate::apiary::Bees::default()),
         Box::new(crate::stations::Stations),
@@ -167,22 +168,20 @@ impl Survival {
         let (tick, day, night) = (server.tick, server.day, server.night());
         let weather = server.weather.local(&mut server.temperature, at, tick, day).weather;
         let cold_air = air - if wet { server.survival.water_chill } else { 0.0 };
-        let warmed = heat > 0.5 && cold_air < vitals::CHILLY;
-        let home = server.home_survey(id);
+        let warmed = vitals::warmed(heat, cold_air);
+        // At home, or else a guest at another player's lit hearth (guests.rs).
+        let own = server.home_survey(id);
+        let guest = own.is_none();
+        let home = own.or_else(|| server.guest_survey(id));
+        let guest = guest && home.is_some();
         let home_stores = server.home_store_tally(id);
         // What effects ask of the item in hand (`Holding`) and of the blocks near
         // (`Near`).
-        let held: Vec<String> = player.held().map_or_else(Vec::new, |item| {
-            let def = server.content.blocks.def(item);
-            effects.held_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
-        });
+        let held: Vec<String> = player.held().map_or_else(Vec::new, |item| effects.held_by(server.content.blocks.def(item)));
         // And of the charm worn (`Wearing`): only the charm slot's, so one charm's effect
         // at a time, whatever else a pack tags.
         let charm = player.inventory.worn[voxmar_engine::combat::Slot::Charm.index()];
-        let worn: Vec<String> = charm.map_or_else(Vec::new, |s| {
-            let def = server.content.blocks.def(s.item);
-            effects.worn_tags().iter().filter(|tag| def.has_tag(tag)).cloned().collect()
-        });
+        let worn: Vec<String> = charm.map_or_else(Vec::new, |s| effects.worn_by(Some(voxmar_engine::combat::Slot::Charm.index()), server.content.blocks.def(s.item)));
         let near: Vec<(String, i32)> = effects.near_asks().iter().filter(|(tag, reach)| server.tagged_within(feet, tag, *reach)).cloned().collect();
         let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
         // Mending (a prayer) brings health back faster.
@@ -197,8 +196,8 @@ impl Survival {
         let player = server.players.get_mut(&id).unwrap();
         // What their home meets now, and where it stands, to tell on their return what
         // lights burnt out while they were away cost; not before that is told
-        // (`flames::check_home_return`).
-        if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked) {
+        // (`flames::check_home_return`). Their own home only: a guest's stays as it was.
+        if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked && !guest) {
             (player.home_steps, player.home_anchor) = (effects.home_steps(home), anchor);
         }
         let creative = player.allow_flight;
@@ -217,15 +216,18 @@ impl Survival {
         // Warmth from what was eaten and the weather counts before the bands of warmth
         // are judged: soaked through, a mild day feels chilly.
         let biome = server.overworld.biome_at(feet.x, feet.z);
-        let mut situation = Situation { felt: cold_air + heat, warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), night };
+        let mut situation = Situation { felt: vitals::felt_air(cold_air, heat), warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), night };
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
         let first = effects.active(&situation, &player.timed_effects);
-        situation.felt = effects.modifiers(&first).felt(cold_air + heat, server.survival.comfort_top);
+        situation.felt = effects.modifiers(&first).felt(vitals::felt_air(cold_air, heat), server.survival.comfort_top);
         let active = effects.active(&situation, &player.timed_effects);
         let modifiers = effects.modifiers(&active);
+        // A guest's own: what they would have away from the home they are a guest in. Only
+        // these are counted for their quests and announced.
+        let own_effects = guest.then(|| effects.active(&Situation { home: None, ..situation }, &player.timed_effects));
         // Quests ask whether an effect was ever felt (`Felt`), not how often.
-        for a in &active {
+        for a in own_effects.as_ref().unwrap_or(&active) {
             player.tallies.entry(format!("felt:{}", effects.get(a.effect).name)).or_insert(1);
         }
         player.modifiers = modifiers;
@@ -280,12 +282,12 @@ impl Survival {
         player.vitals.seated = seated;
         player.vitals.home_stores = home_stores;
         // What kept animals laid into the home's stores is told once the keeper is home.
-        if home.is_some() && !player.nested.is_empty() {
+        if home.is_some() && !guest && !player.nested.is_empty() {
             let items = std::mem::take(&mut player.nested).into_iter().map(|(item, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(item))).collect();
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::key("home.nested").with("items", Words::List(items)) });
         }
-        // The steps of a ladder say so when first reached.
-        let gained: Vec<EffectId> = player.vitals.effects.iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
+        // The steps of a ladder say so when first reached, at the player's own home.
+        let gained: Vec<EffectId> = own_effects.as_ref().unwrap_or(&player.vitals.effects).iter().map(|a| a.effect).filter(|&e| effects.get(e).announce && !player.announced.contains(&e)).collect();
         player.announced.extend(&gained);
         for effect in gained {
             let def = effects.get(effect);
@@ -339,7 +341,7 @@ impl Server {
     }
 
     /// Whether `at` lies in the home box around `anchor`.
-    fn in_home_box(&self, anchor: IVec3, at: Vec3) -> bool {
+    pub(crate) fn in_home_box(&self, anchor: IVec3, at: Vec3) -> bool {
         let rules = &self.survival;
         let feet = at.floor().as_ivec3();
         let near = (feet - anchor).abs();
@@ -401,57 +403,17 @@ impl Server {
     /// wall behind it, though never stepped down into: a hearthstone set in its ring is floor. Bounded by the home box, so a home in
     /// the open costs no more than the box.
     pub(crate) fn room_walls(&self, anchor: IVec3) -> voxmar_engine::effect::Walls {
-        use voxmar_engine::effect::{Shelter, Walls};
+        use voxmar_engine::effect::{RoomCell, Shelter, Walls};
         let (rules, blocks) = (&self.survival, &self.content.blocks);
-        let (reach, up, down) = (rules.home_reach, rules.home_up, rules.home_down);
-        let inside = |p: IVec3| {
-            let d = p - anchor;
-            d.x.abs() <= reach && d.z.abs() <= reach && d.y <= up && d.y >= -down
-        };
-        // What stands at a cell: open (`None`), or a wall of a shelter. Furniture is looked
-        // past, as open, whatever it is made of.
-        // Furniture is a furniture tag with no shelter tag: a shelter tag always wins.
-        let furniture = |tags: &[String]| rules.furniture(tags);
-        let furnished = |p: IVec3| self.block(p).is_some_and(|b| furniture(&blocks.def(b).tags));
-        let wall = |p: IVec3| -> Option<Option<Shelter>> {
+        // What stands at a cell: open, or a wall of a shelter. Furniture (a furniture tag
+        // with no shelter tag: a shelter tag always wins) is looked past, as open, whatever
+        // it is made of.
+        Walls::of_room(anchor, rules.home_reach, rules.home_up, rules.home_down, |p| {
             let block = self.block(p)?;
-            let tags = &blocks.def(block).tags;
-            Shelter::of_wall(tags, blocks.info(block).solid, furniture(tags)).map(Some)
-        };
-        // A solid block or furniture is never stepped down into: under the room it is floor,
-        // a hearthstone, a barrel or a well set in it as much as the stone round them.
-        let solid = |p: IVec3| self.block(p).is_some_and(|b| blocks.info(b).solid);
-        let mut walls = Walls::default();
-        // A hearth's home is its hearthstone, solid: the room is the first open cell over it.
-        let Some(anchor) = (0..=up).map(|dy| anchor + IVec3::Y * dy).take_while(|&p| self.block(p).is_some()).find(|&p| wall(p).is_none() && !solid(p)) else {
-            return walls;
-        };
-        let mut seen = rustc_hash::FxHashSet::default();
-        let mut queue = vec![anchor];
-        seen.insert(anchor);
-        while let Some(cell) = queue.pop() {
-            for side in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y] {
-                let next = cell + side;
-                let face = side != IVec3::NEG_Y;
-                if !inside(next) || self.block(next).is_none() {
-                    if face {
-                        walls.add(None);
-                    }
-                    continue;
-                }
-                match wall(next) {
-                    Some(shelter) if face => walls.add(shelter),
-                    Some(_) => {}
-                    None if !face && (solid(next) || furnished(next)) => {}
-                    None => {
-                        if seen.insert(next) {
-                            queue.push(next);
-                        }
-                    }
-                }
-            }
-        }
-        walls
+            let (tags, solid) = (&blocks.def(block).tags, blocks.info(block).solid);
+            let furniture = rules.furniture(tags);
+            Some(RoomCell { wall: Shelter::of_wall(tags, solid, furniture), solid, furniture })
+        })
     }
 
     /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in

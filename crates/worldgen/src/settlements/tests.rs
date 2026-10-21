@@ -1620,7 +1620,8 @@ fn a_settlement_stands_near_spawn() {
     // 0x5eed: the world a new game makes unless told otherwise.
     let seeds: Vec<u64> = (0..20).chain([42, 99, 0x5eed]).collect();
     // Seeds no other test reads: their worlds are let go with each, not held for the run.
-    const ONLY_HERE: [u64; 4] = [10, 15, 17, 18];
+    // (18 is the snowy villages test's too.)
+    const ONLY_HERE: [u64; 3] = [10, 15, 17];
     // Each world on its own core, its outcome kept in seed order.
     let outcomes: Vec<(u64, Option<Result<(), String>>)> = seeds.par_iter().map(|&seed| {
         let world = if ONLY_HERE.contains(&seed) { std::sync::Arc::new(base_world(seed)) } else { shared_world(seed) };
@@ -1689,8 +1690,17 @@ fn people_numbers_that_would_not_play_are_refused() {
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 7] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 16] = [
+        ("a talk as long as the wait to talk again", |p| p.react.chat_for = p.react.chat_every),
+        ("a talk from farther than a greeting", |p| p.react.chat = p.react.greet + 1.0),
+        ("a talk for no time", |p| p.react.chat_for = 0.0),
         ("newcomer in a fifth of a day", |p| p.newcomer = 0.2),
+        ("a greeting from below nothing", |p| p.react.greet = -1.0),
+        ("a greeting held as long as the wait to greet again", |p| p.react.greet_for = p.react.greet_every),
+        ("fear from below nothing", |p| p.react.fear = -1.0),
+        ("afraid for no time", |p| p.react.afraid = 0.0),
+        ("rain heavier than any", |p| p.react.rain = 1.5),
+        ("bed as a shelter from the rain", |p| p.react.shelter.push(super::people::Place::Sleep)),
         ("no newcomers a day", |p| p.newcomers_per_day = 0.0),
         ("a job chance of 1.5", |p| p.jobs[0].chance = 1.5),
         ("a folk weight below nothing", |p| p.folk[0].weight = -1.0),
@@ -1714,8 +1724,9 @@ fn people_name_villagers_and_works_there_are() {
     let world = crate::content::WorldContent::load(&content).unwrap();
     let (people, works) = (&world.settlements.people, world.settlements.works());
     assert!(people.check_against(&content.creatures, &works).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 5] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 6] = [
         ("an animal for a folk", |p| p.folk[0].species = "base:rabbit".into()),
+        ("rain kept off no such work", |p| p.react.outdoor.push("quarry".into())),
         ("no such guard", |p| p.guards[0].species = "base:gaurd".into()),
         ("a job at no such work", |p| p.jobs[0].at = "bakehouse".into()),
         ("folk working at no such work", |p| p.folk.iter_mut().find(|f| f.work.is_some()).expect("a folk works").work = Some("mine".into())),
@@ -1823,7 +1834,9 @@ fn snowy_villages_keep_their_built_stone() {
     // worlds; the others are the search it falls back to when content moves the snow.
     const SNOWY: [u64; 2] = [18, 1];
     'seeds: for seed in SNOWY.into_iter().chain((1u64..=60).filter(|seed| !SNOWY.contains(seed))) {
-        let world = Overworld::with_content(seed, registry.clone(), &content);
+        // The base content's world (`content` is the base's): the known seeds' as the other
+        // tests read it, the fallback's let go with each seed, not held for the run.
+        let world = if SNOWY.contains(&seed) { shared_world(seed) } else { std::sync::Arc::new(base_world(seed)) };
         let spawn = world.spawn_point();
         for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 4000) {
             // Snowy where snow lies on the ground about its middle.

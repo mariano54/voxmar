@@ -43,7 +43,11 @@ paying Farming, Mining and Fishing experience and two bread.
 (Hens in a Row, Fresh Eggs), cook (Camp Cook, level 5), a flock (A Woolly Flock). The main line
 is clay work: Clay Banks, A Pit Kiln, Fire the Clay (twelve fired clay), The Potter, Brick by
 Brick (nineteen kiln bricks, about 40 fired clay: four make two), and Red Metal for the copper the crucible
-needs. The Crucible then The Crucible Kiln: **lighting it ends Farm**. Everything else
+needs. The Crucible then The Crucible Kiln, whose ring is tempered kiln bricks: four fired
+clay and a straw, and straw comes of grain: a tuft of wild wheat picked gives one, a ripe
+field's plant one or two. Twelve bricks take six tufts, so the first kiln waits on no
+field's twelve minutes of growing (that wait left the line nothing new for ten minutes).
+**Lighting it ends Farm**. Everything else
 (husbandry, hunting, mail, home furnishings, ores, exploring) is optional breadth with its
 own rewards, so a player can always see two or three things worth doing.
 
@@ -459,6 +463,31 @@ the window from 360 s brings 7 new things (kiln bricks, charcoal, copper ore, in
 pickaxe, the crucible and its station); the longest wait with nothing new is about 150 s
 (firing clay); the longest single-action stretch is 39 to 40 s (17 firings in a row).
 
+### The kiln stretch filled (Oct 21)
+
+On main the window from 360 s held only 4 or 5 new things (the chest, kiln bricks,
+charcoal, the crucible and its station) and failed about one run in three, when the walk
+outlasted 540 s. The bot now does what the book has open
+between firings and while the clamp chars, all of it quests a player meets there:
+Earthenware (bowls and a jar) and A Table for Two (two stools and a table, set by the
+hearth), Straw for the Kiln and the tempered bricks; and once the bricks are shaped, the
+far side of The Kiln Ring, Shelves and Cupboards (a shelf and a cupboard) and A Place to
+Pray (cobblestone fired to stone in the free pit kiln, cut into stone bricks, an altar). The
+pit kiln fires a dozen clay at a time while the bot digs the next load. Six runs: the lit
+Crucible Kiln at 473 to 545 s; the window from 360 s brings 14 to 16 new things; the longest
+single-action stretch is 39 s (49 gravel dug in a row for the clamp's flint).
+
+### Nomad pacing (Oct 21)
+
+The Nomad walk now runs the same pacing check as the Farm walk, by the same floors. Two runs:
+the lit Homestead Hearth at 167 to 190 s; the first three minutes bring 37 to 43 new things
+(the floor is 5); the longest single-action stretch is 34 s (50 gravel dug for the flint
+tools; the floor is 60); the longest wait with nothing new is 29 s (the same digging) or 34 s
+(the hunt for the bag's hides, ended by the first raw hide). Luring the first rabbit with a
+wild carrot, as A Tempting Bite teaches, was tried for that hunt and made it longer (four
+runs, 37 to 83 s against 34 to 58 s), since a rabbit takes its time to come, so the walk
+still runs the animals down.
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
@@ -473,9 +502,10 @@ comes from a command: no /give, /skill, /xp, /clear, no /tp of the player, no fi
 inventory. Times are server seconds (20 ticks per second, counted from the server's own tick
 counter, never wall clock), measured from the first action. The test runs in real time
 because mining and cooking are timed by message arrival, so it takes 3 to 4 minutes of wall
-time. It asserts only the budget table at the top of the test (generous ceilings, so a
-regression such as a recipe that suddenly needs ten times the work fails it) and prints one
-summary block to stderr (`--nocapture`).
+time. It asserts the budget table at the top of the test (generous ceilings, so a
+regression such as a recipe that suddenly needs ten times the work fails it) and the Farm
+walk's pacing floors (`PACING_NEW`, `PACING_STRETCH`, below), and prints one summary block
+and the pacing report to stderr (`--nocapture`).
 
 Medians of three runs each. "Before" is the first measurement (four runs, with the old
 starting kit and before the balance defaults below); "Kit" is after the balance defaults,

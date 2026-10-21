@@ -502,13 +502,14 @@ pub(crate) struct Recordings {
     /// Jumping or falling into water.
     splash: Vec<String>,
     /// The jingles of events (`ui::sound`): a quest finished, a quest's rewards claimed, a
-    /// skill's level reached, and a milestone level reached (which levels are is
-    /// `celebrations.ron`'s). A later package that lists any for an event replaces the
+    /// skill's level reached, a milestone level reached (which levels are is
+    /// `celebrations.ron`'s), and a path's capstone finished (none: a quest's). A later package that lists any for an event replaces the
     /// earlier ones: a jingle is one tune, not a pool to add to.
     pub(crate) quest_done: Vec<String>,
     pub(crate) quest_claim: Vec<String>,
     pub(crate) level_up: Vec<String>,
     pub(crate) level_milestone: Vec<String>,
+    pub(crate) capstone_done: Vec<String>,
     /// An item picked up off the ground, played when the player's Minecraft sounds are not.
     /// A later package that lists any replaces these.
     pickup: Vec<String>,
@@ -588,7 +589,7 @@ pub(crate) struct InterfaceSound {
     pub(crate) tap: Option<Tap>,
     pub(crate) sounds: Vec<String>,
     /// Played by its event's jingle (`quest_done`, `quest_claim`, `level_up`,
-    /// `level_milestone`).
+    /// `level_milestone`, `capstone_done`).
     pub(crate) jingle: bool,
     pub(crate) silent: bool,
     #[serde(default = "full")]
@@ -752,6 +753,7 @@ impl Recordings {
             replace(&mut all.quest_claim, def.quest_claim);
             replace(&mut all.level_up, def.level_up);
             replace(&mut all.level_milestone, def.level_milestone);
+            replace(&mut all.capstone_done, def.capstone_done);
             replace(&mut all.pickup, def.pickup);
             replace(&mut all.tool_worn, def.tool_worn);
             replace(&mut all.tool_break, def.tool_break);
@@ -910,7 +912,7 @@ impl Recordings {
     /// Every list of clips in the file, with what it is the sound of. Each struct is taken
     /// apart field by field, never with `..`, so a list added to one cannot be left out.
     fn clip_lists(&self) -> Vec<(String, &[String])> {
-        let Recordings { thunder, swim, splash, quest_done, quest_claim, level_up, level_milestone, pickup, tool_worn, tool_break, actions, interface, materials, fire, mix: _ } = self;
+        let Recordings { thunder, swim, splash, quest_done, quest_claim, level_up, level_milestone, capstone_done, pickup, tool_worn, tool_break, actions, interface, materials, fire, mix: _ } = self;
         let ThunderRecordings { near, middle, far } = thunder;
         let FireSounds { catch, volume: _ } = fire;
         let mut lists: Vec<(String, &[String])> = vec![
@@ -918,6 +920,7 @@ impl Recordings {
             ("swim".into(), swim), ("splash".into(), splash), ("pickup".into(), pickup),
             ("quest_done".into(), quest_done), ("quest_claim".into(), quest_claim),
             ("level_up".into(), level_up), ("level_milestone".into(), level_milestone),
+            ("capstone_done".into(), capstone_done),
             ("tool_worn".into(), tool_worn), ("tool_break".into(), tool_break),
             ("fire".into(), catch),
         ];
@@ -1861,7 +1864,7 @@ mod tests {
         }
         // The jingles: each there, as loud as one another at their loudest (within 3 dB, so
         // none jumps out), fading out rather than stopping, and over within five seconds.
-        for list in [&recorded.quest_done, &recorded.quest_claim, &recorded.level_up, &recorded.level_milestone] {
+        for list in [&recorded.quest_done, &recorded.quest_claim, &recorded.level_up, &recorded.level_milestone, &recorded.capstone_done] {
             assert!(!list.is_empty());
             for path in list {
                 let [left, right] = crate::ambience::tests::decode(path);
@@ -1950,7 +1953,7 @@ mod tests {
         }
         assert_eq!(way("base:light", &["hearthstone"]), Some("kindle_hearth".into()));
         assert_eq!(way("base:light", &["crucible", "charcoal"]), Some("kindle_kiln".into()));
-        assert_eq!(way("base:cook", &["pit_kiln", "clay"]), Some("fire_in_kiln".into()));
+        assert_eq!(way("base:use_station", &["pit_kiln"]), Some("fire_in_kiln".into()));
         assert_eq!(way("base:cook", &["crucible", "copper_ore"]), Some("smelt".into()));
         assert_eq!(way("base:cook", &["campfire", "raw_beef"]), None);
         // The Farm age's hand stations are heard at their work, never as food on a fire,
@@ -1960,8 +1963,19 @@ mod tests {
         assert_eq!(way("base:cook", &["loom_frame", "wool"]), Some("weave".into()));
         assert_eq!(way("base:cook", &["old_quern_stones", "wheat"]), None, "a village's quern works nothing");
         let gives = |item: &str| recorded.actions["base:cook"].brings.iter().find(|b| b.tags.iter().all(|t| blocks.def(id(item)).has_tag(t))).map(|b| b.tags.join("+"));
-        for (item, heard) in [("flour", "flour"), ("twine", "twine"), ("red_cloth", "cloth"), ("cooked_beef", "cooked"), ("burnt_food", "burnt")] {
+        for (item, heard) in [("flour", "flour"), ("twine", "twine"), ("red_cloth", "bolt"), ("cooked_beef", "cooked"), ("burnt_food", "burnt"), ("bread", "baked"),
+            ("fired_clay", "fired_clay"), ("copper_ingot", "ingot"), ("bronze_ingot", "ingot"), ("charcoal", "charcoal")] {
             assert_eq!(gives(item).as_deref(), Some(heard), "{item}");
+        }
+        // Cloth made into a rug, a banner, a cushion or bunting is not woven at the loom:
+        // picked up after a cook, it is not heard as the loom's cloth.
+        for item in ["red_rug", "red_banner", "red_cushion", "red_bunting", "red_awning"] {
+            assert_eq!(gives(item), None, "{item}");
+        }
+        // Clay cracked in the fire and stone from the kiln are told by no tag that dug clay or
+        // rock lacks: they keep the cook's own sound, never a fired one.
+        for item in ["clay", "stone", "granite", "basalt", "loose_stone"] {
+            assert_eq!(gives(item), None, "{item}");
         }
         // An animal tended with shears or a pail is silent on the click, and heard by the
         // wool or milk the server gives; fed, as ever. A swarm is heard by the skep of bees
@@ -1998,7 +2012,9 @@ mod tests {
             ("base:sleep", "oak_bed", Some("bed_frame")),
             ("base:sit", "birch_stool", Some("wooden_seat")),
             ("base:sit", "oak_settle", Some("wooden_seat")),
+            ("base:sit", "birch_rocking_chair", Some("rocking_chair")),
             ("base:sit", "red_cushion", None),
+            ("base:sit", "oak_window_seat", Some("cushioned_seat")),
         ] {
             assert_eq!(way(action, &[block]), heard.map(str::to_owned), "{action} at {block}");
         }
@@ -2044,6 +2060,7 @@ mod tests {
             r#"(quest_claim: ["q.ogg"])"#,
             r#"(level_up: ["l.ogg"])"#,
             r#"(level_milestone: ["l.ogg"])"#,
+            r#"(capstone_done: ["c.ogg"])"#,
             r#"(tool_worn: ["t.ogg"])"#,
             r#"(tool_break: ["t.ogg"])"#,
             r#"(fire: (catch: ["c.ogg"]))"#,
@@ -2167,6 +2184,8 @@ mod tests {
             ("base:half_timber", "timber"),
             ("base:chimney_stack", "stone_brick"),
             ("base:chimney_pot", "terracotta"),
+            ("base:birch_rocking_chair", "rocking_chair"),
+            ("base:oak_cradle", "cradle"),
         ] {
             let found = recorded.material_of(blocks, blocks.id(block).unwrap()).map(|m| recorded.materials[m].name.as_str());
             assert_eq!(found, Some(material), "{block}");
@@ -2249,7 +2268,7 @@ mod tests {
         // and the flour, twine and cloth of the Farm age's hand stations.
         let brings = |name: &str| recorded.actions[name].brings.iter().map(|b| b.tags.join("+")).collect::<Vec<_>>();
         assert_eq!(brings("base:fish"), ["fish+raw"]);
-        assert_eq!(brings("base:cook"), ["burnt", "cooked", "flour", "twine", "cloth"]);
+        assert_eq!(brings("base:cook"), ["burnt", "cooked", "flour", "twine", "bolt", "baked", "fired_clay", "ingot", "charcoal"]);
         // Every tag a result is told by is one some item has.
         for brought in recorded.actions.values().flat_map(|sound| &sound.brings) {
             for tag in &brought.tags {

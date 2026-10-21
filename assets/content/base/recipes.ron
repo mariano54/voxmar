@@ -34,6 +34,9 @@
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "clay_pot", count: 2, level: 2, xp: 12.0),
         (pattern: [["fired_clay"], ["fired_clay"]], output: "vial", count: 3, level: 4, xp: 8.0),
         (ingredients: ["fired_clay", "fired_clay", "fired_clay", "fired_clay"], output: "kiln_bricks", count: 2, level: 5, xp: 12.0),
+        // Straw in the clay keeps a brick whole in the Crucible Kiln's heat: the field's
+        // straw is what the kiln is built of. The same two for four as plain bricks.
+        (ingredients: ["fired_clay", "fired_clay", "fired_clay", "fired_clay", "straw"], output: "tempered_kiln_bricks", count: 2, level: 5, xp: 14.0),
         (pattern: [["kiln_bricks", "", "kiln_bricks"], ["kiln_bricks", "clay_pot", "kiln_bricks"], ["kiln_bricks", "kiln_bricks", "kiln_bricks"]], output: "crucible", age: "farm", skill: "core:engineering", level: 10, xp: 40.0),
         // A sleeping bag three ways: wool and hide, pelts, or feathers and hide, which takes a
         // raw hide off the first night's hunt as well as a cured one.
@@ -82,8 +85,11 @@
         (pattern: [["iron_ingot"], ["stick"], ["stick"]], output: "iron_shovel", skill: "core:engineering", level: 15, xp: 32),
         (pattern: [["iron_ingot", "iron_ingot"], ["", "stick"], ["", "stick"]], output: "iron_hoe", skill: "core:engineering", level: 15, xp: 32),
         (pattern: [["iron_ingot"], ["stick"]], output: "iron_knife", skill: "core:engineering", level: 15, xp: 32),
-        // Twine from three stalks of wheat; a rod from sticks and twine, at a table.
+        // Twine from three stalks of wheat or three of straw; a rod from sticks and twine,
+        // at a table. Nine straw bind into a hay bale (broken, it comes apart into the nine).
         (ingredients: ["wheat", "wheat", "wheat"], output: "twine", count: 2, xp: 2.0),
+        (ingredients: ["straw", "straw", "straw"], output: "twine", count: 2, xp: 2.0),
+        (pattern: [["straw", "straw", "straw"], ["straw", "straw", "straw"], ["straw", "straw", "straw"]], output: "hay_bale", xp: 2.0),
         (pattern: [["", "", "stick"], ["", "stick", "twine"], ["stick", "", "twine"]], output: "fishing_rod", xp: 6.0),
         (pattern: [["", "", "iron_ingot"], ["", "stick", "twine"], ["stick", "", "twine"]], output: "fine_rod", level: 20, xp: 40.0),
         // Pouches from a hide and twine (Crafting 3): seeds stood up, herbs laid flat.
@@ -115,6 +121,9 @@
         // Coal or charcoal on a stick makes four torches, in the hand's grid: light for the
         // first night.
         (pattern: [["coal_ore|charcoal"], ["stick"]], output: "torch", count: 4, skill: "core:engineering", xp: 2.0),
+        // A firebrand burnt out in the hand leaves its charred end, enough to tip one torch
+        // before there is coal: the light that burns out leads to one that lasts.
+        (pattern: [["charred_stick"], ["stick"]], output: "torch", skill: "core:engineering", xp: 1.0),
         // Two stones crossed make shears, for wool; two planks a pail, for milk.
         (pattern: [["cobblestone", ""], ["", "cobblestone"]], output: "shears", skill: "core:engineering", xp: 10.0),
         (pattern: [["{name}_planks", ""], ["", "{name}_planks"]], output: "pail", skill: "core:engineering", xp: 10.0),

@@ -27,7 +27,7 @@
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
-use crate::block::RegistryError;
+use crate::block::{BlockId, RegistryError};
 use crate::weather::Weather;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -126,11 +126,14 @@ pub struct Modifiers {
     /// (`tools.ron`'s rules): 0.05 is one more time in twenty. It adds to what the tool's
     /// `yield` and the skill level give.
     pub finds: f32,
+    /// How many times its own slots a store in the player's home holds, opened by them
+    /// (`Machine::grown_bin`): 2 is twice. Stores only grow, never shrink.
+    pub store_room: f32,
 }
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hurt_every: None, warmth: 0.0, home_warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, home_warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0, store_room: 1.0 }
     }
 }
 
@@ -163,6 +166,7 @@ impl Modifiers {
             meal_heal: sum.meal_heal * m.meal_heal,
             meal_time: sum.meal_time * m.meal_time,
             finds: sum.finds + m.finds,
+            store_room: sum.store_room * m.store_room,
         })
     }
 }
@@ -414,6 +418,17 @@ pub struct Situation<'a> {
     pub night: bool,
 }
 
+/// What a player is sure to have to bring an effect on with (`EffectRegistry::can_feel`):
+/// what they have, each with how many, whether they have a home, the quests they have done
+/// (full names), and where the content wears each item.
+pub struct Means<'a> {
+    pub items: &'a [(BlockId, u32)],
+    pub home: bool,
+    pub done: &'a [String],
+    /// Where each item is worn (`Content::worn_slots`).
+    pub worn: &'a [Option<u8>],
+}
+
 /// How many blocks with each tag lie around a home: the tags are those effects ask of it
 /// (`EffectRegistry::home_tags`). And the walls about the room it stands in, when effects
 /// ask after them (`EffectRegistry::home_walls`).
@@ -475,6 +490,15 @@ impl Shelter {
     }
 }
 
+/// What stands at a cell to a room check (`Walls::of_room`): a wall of its shelter
+/// (`Shelter::of_wall`), else open; and whether it is solid, or furniture.
+#[derive(Clone, Copy, Debug)]
+pub struct RoomCell {
+    pub wall: Option<Shelter>,
+    pub solid: bool,
+    pub furniture: bool,
+}
+
 /// The faces about a home's room: its walls and roof as a scan from the home out over the
 /// open cells within its reach meets them, each one a face (its floor is not counted). A
 /// face that leads out of the reach is an opening, of no shelter.
@@ -498,6 +522,83 @@ impl Walls {
     /// The share of the faces this good a shelter or better: none for no room at all.
     pub fn share(&self, shelter: Shelter) -> f32 {
         if self.faces == 0 { 0.0 } else { self.at_least[shelter as usize] as f32 / self.faces as f32 }
+    }
+
+    /// The faces about the room at `anchor`, as the server judges a home's (its room
+    /// check): from the first open cell at or over `anchor`, open cells within `reach`
+    /// across, `up` and `down` of it are walked; each wall met is a face of its shelter,
+    /// and a cell out of reach or not there (`cell` gives `None`) is an opening. A solid
+    /// block or furniture under the room is floor, never stepped down into; the floor is
+    /// not counted.
+    pub fn of_room(anchor: glam::IVec3, reach: i32, up: i32, down: i32, cell: impl Fn(glam::IVec3) -> Option<RoomCell>) -> Self {
+        use glam::IVec3;
+        let inside = |p: IVec3| {
+            let d = p - anchor;
+            d.x.abs() <= reach && d.z.abs() <= reach && d.y <= up && d.y >= -down
+        };
+        let mut walls = Walls::default();
+        // A hearth's home is its hearthstone, solid: the room is the first open cell over it.
+        let Some(anchor) = (0..=up).map(|dy| anchor + IVec3::Y * dy).map_while(|p| cell(p).map(|c| (p, c))).find(|(_, c)| c.wall.is_none() && !c.solid).map(|(p, _)| p) else {
+            return walls;
+        };
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut queue = vec![anchor];
+        seen.insert(anchor);
+        while let Some(at) = queue.pop() {
+            for side in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y] {
+                let next = at + side;
+                let face = side != IVec3::NEG_Y;
+                let Some(c) = cell(next).filter(|_| inside(next)) else {
+                    if face {
+                        walls.add(None);
+                    }
+                    continue;
+                };
+                match c.wall {
+                    Some(shelter) if face => walls.add(Some(shelter)),
+                    Some(_) => {}
+                    None if !face && (c.solid || c.furniture) => {}
+                    None => {
+                        if seen.insert(next) {
+                            queue.push(next);
+                        }
+                    }
+                }
+            }
+        }
+        walls
+    }
+
+    /// The room check (`of_room`) on the least room a home can have, two cells tall on a
+    /// solid floor, walled and roofed in the best walls among `items` (a solid block with a
+    /// shelter tag), each as far as it goes, the rest of its nine faces left open.
+    pub fn of_built_room(items: &[(BlockId, u32)], blocks: &crate::block::BlockRegistry) -> Self {
+        use glam::IVec3;
+        let mut walls: Vec<(Shelter, u32)> = items
+            .iter()
+            .filter(|&&(id, _)| blocks.info(id).solid)
+            .filter_map(|&(id, n)| Shelter::of(&blocks.def(id).tags).map(|shelter| (shelter, n)))
+            .collect();
+        walls.sort_by(|a, b| b.0.cmp(&a.0));
+        let mut faces: Vec<IVec3> = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].iter().flat_map(|&side| [side, side + IVec3::Y]).collect();
+        faces.push(IVec3::Y * 2);
+        let mut laid: Vec<(IVec3, Shelter)> = Vec::new();
+        let mut walls = walls.into_iter().flat_map(|(shelter, n)| std::iter::repeat_n(shelter, n as usize));
+        for face in faces {
+            match walls.next() {
+                Some(shelter) => laid.push((face, shelter)),
+                None => break,
+            }
+        }
+        Walls::of_room(IVec3::ZERO, 2, 2, 1, |p| {
+            if p.y < 0 {
+                return Some(RoomCell { wall: None, solid: true, furniture: false });
+            }
+            if p.x == 0 && p.z == 0 && p.y <= 1 {
+                return Some(RoomCell { wall: None, solid: false, furniture: false });
+            }
+            laid.iter().find(|(at, _)| *at == p).map(|&(_, shelter)| RoomCell { wall: Some(shelter), solid: true, furniture: false })
+        })
     }
 
     /// A room walled all about in `shelter`, `faces` of it.
@@ -736,6 +837,9 @@ impl EffectRegistry {
         }
         let (mut near, mut held, mut worn) = (Vec::new(), Vec::new(), Vec::new());
         for def in &defs {
+            if !(def.modifiers.store_room.is_finite() && (1.0..=6.0).contains(&def.modifiers.store_room)) {
+                return Err(RegistryError(format!("effect `{}` gives store_room {}: it takes 1 to 6", def.name, def.modifiers.store_room)));
+            }
             if !(def.modifiers.home_warmth.is_finite() && def.modifiers.home_warmth >= 0.0) {
                 return Err(RegistryError(format!("effect `{}` adds {} home warmth: a home only warms, 0 or more", def.name, def.modifiers.home_warmth)));
             }
@@ -855,6 +959,70 @@ impl EffectRegistry {
         given
     }
 
+    /// Whether `effect` can be had with only `means`, by the rules the server gives effects
+    /// by: a food of `means` (one that fills) eaten (`given_by`), else its `when` met as
+    /// each tick judges it (`linger`, then `active`, so a replaced one is not had). That is
+    /// at some hour, in or out, sat (with a `seat`) or standing, in mild air or cold (and
+    /// then warmed, with a `fire`, as the server warms only below `vitals::CHILLY`), with
+    /// one thing of `means` in hand or none and one charm worn or none, all of it set within
+    /// every reach, and at home (with one) or away. The home counts what `means` has of each
+    /// tag, every one of it set about it, and its room is the server's room check
+    /// (`Walls::of_room`) on a room of two cells walled and roofed in the best of `means`'
+    /// walls, an opening where it runs short. The weather is calm: a feeling that needs
+    /// weather or a biome is none a player can count on.
+    pub fn can_feel(&self, effect: EffectId, means: &Means, blocks: &crate::block::BlockRegistry) -> bool {
+        let tags = |id: BlockId| &blocks.def(id).tags;
+        if means.items.iter().any(|&(id, _)| blocks.info(id).food > 0 && self.given_by(tags(id)).iter().any(|&(e, _)| e == effect)) {
+            return true;
+        }
+        let has = |tag: &str| means.items.iter().any(|&(id, _)| blocks.def(id).has_tag(tag));
+        let near: Vec<(String, i32)> = self.near_asks.iter().filter(|(tag, _)| has(tag)).cloned().collect();
+        // One thing at a time in hand, one charm worn: each set of the tags effects ask, once.
+        let mut helds: Vec<Vec<String>> = vec![Vec::new()];
+        let mut worns: Vec<Vec<String>> = vec![Vec::new()];
+        for &(id, _) in means.items {
+            let held = self.held_by(blocks.def(id));
+            if !helds.contains(&held) {
+                helds.push(held);
+            }
+            let worn = self.worn_by(means.worn.get(id.0 as usize).copied().flatten().map(usize::from), blocks.def(id));
+            if !worns.contains(&worn) {
+                worns.push(worn);
+            }
+        }
+        let counts = self.home_tags.iter().map(|tag| (tag.clone(), means.items.iter().filter(|&&(id, _)| blocks.def(id).has_tag(tag)).map(|&(_, n)| n).sum())).collect();
+        let survey = HomeSurvey { counts, walls: if means.home { Walls::of_built_room(means.items, blocks) } else { Walls::default() } };
+        let weather = Weather::NONE;
+        // Mild air, or cold, and in the cold a fire's least warming heat (with a `fire`).
+        use crate::vitals::{felt_air, warmed, CHILLY, WARMING};
+        let cold = CHILLY - 1.0;
+        let mut airs = vec![(15.0, 0.0), (cold, 0.0)];
+        if has("fire") {
+            airs.push((cold, WARMING.next_up()));
+        }
+        for (air, heat) in airs {
+            let (felt, warmed) = (felt_air(air, heat), warmed(heat, air));
+            for bits in 0..16u8 {
+                let bit = |n: u8| bits & (1 << n) != 0;
+                let (outdoors, night, seated, at_home) = (bit(0), bit(1), bit(2), bit(3));
+                if (seated && !has(crate::action::SEAT_TAG)) || (at_home && !means.home) {
+                    continue;
+                }
+                for held in &helds {
+                    for worn in &worns {
+                        let situation = Situation { felt, warmed, outdoors, weather: &weather, biome: "", biome_tags: &[], home: at_home.then_some(&survey), done: means.done, held, near: &near, worn, seated, night };
+                        let mut timed = Vec::new();
+                        self.linger(&situation, &mut timed);
+                        if self.active(&situation, &timed).iter().any(|a| a.effect == effect) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Whether effect `winner` hides `loser` while it lasts.
     pub fn hides(&self, winner: EffectId, loser: EffectId) -> bool {
         self.replaces[winner.0 as usize].contains(&loser)
@@ -926,6 +1094,21 @@ impl EffectRegistry {
     /// them around each player.
     pub fn near_asks(&self) -> &[(String, i32)] {
         &self.near_asks
+    }
+
+    /// What effects ask (`Holding`) of `item` in hand: those of its tags they ask after.
+    pub fn held_by(&self, item: &crate::block::BlockDef) -> Vec<String> {
+        self.held_tags.iter().filter(|tag| item.has_tag(tag)).cloned().collect()
+    }
+
+    /// What effects ask (`Wearing`) of `item` worn in `slot` (a `combat::Slot` index): only
+    /// the charm slot's, so one charm's effect at a time, whatever else a pack tags. Nothing
+    /// for what is worn elsewhere, or not at all.
+    pub fn worn_by(&self, slot: Option<usize>, item: &crate::block::BlockDef) -> Vec<String> {
+        if slot != Some(crate::combat::Slot::Charm.index()) {
+            return Vec::new();
+        }
+        self.worn_tags.iter().filter(|tag| item.has_tag(tag)).cloned().collect()
     }
 
     /// The tags effects ask of the item in hand with `Holding`.
@@ -1236,6 +1419,19 @@ mod tests {
         assert_eq!(quest.quests(), ["core:dry_kit"], "a quest in `ends` is qualified by the package too");
         let bad = r#"(effects: [(name: "x", kind: Debuff, title: "X", description: "", when: Some(Rain(0.3)), ends: Some(Warmed))])"#;
         assert!(EffectRegistry::new(vec![EffectRegistry::read("core", bad).unwrap()]).is_err(), "only what lingers ends");
+    }
+
+    /// A step's store_room grows stores 1 to 6 times; less (a shrinking store) or more is
+    /// refused at launch, and steps together multiply.
+    #[test]
+    fn store_room_is_one_to_six() {
+        let read = |room: &str| EffectRegistry::new(vec![EffectRegistry::read("core", &format!(r#"(effects: [(name: "roomy", kind: Buff, title: "Roomy", description: "", modifiers: (store_room: {room}))])"#)).unwrap()]);
+        assert!(read("2.0").is_ok());
+        for bad in ["0.5", "6.5", "inf"] {
+            assert!(read(bad).is_err_and(|e| e.0.contains("store_room")), "store_room {bad}");
+        }
+        let two = Modifiers { store_room: 2.0, ..Modifiers::default() };
+        assert_eq!(Modifiers::combine([&two, &two]).store_room, 4.0);
     }
 
     #[test]

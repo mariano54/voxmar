@@ -40,12 +40,18 @@ impl Plugin for RecipesPlugin {
         app.init_resource::<RecipeViewer>()
             .init_resource::<HoveredItem>()
             .add_systems(PostStartup, spawn)
-            .add_systems(Update, (look_up, click, report, draw, cycle).chain().run_if(in_state(Screen::InGame)))
-            .add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
-                viewer.leave_game();
-                ui.recipes_open = false;
-            });
+            .add_systems(Update, (look_up, click, report, draw, cycle).chain().run_if(in_state(Screen::InGame)));
+        forget_on_leaving(app);
     }
+}
+
+/// Leaving a game forgets it, its recipe book with it: the book is built for each game as
+/// it starts, so nothing reads a world's content with another's.
+fn forget_on_leaving(app: &mut App) {
+    app.add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
+        viewer.leave_game();
+        ui.recipes_open = false;
+    });
 }
 
 /// A look-up to open once in game, by item name (`--recipes NAME`, `--uses NAME`, for
@@ -226,9 +232,8 @@ fn look_up(
     start: Option<Res<StartLookup>>,
     mut commands: Commands,
 ) {
-    // Built again for a world played with other content (other packages, other ways), and
-    // what was being looked up there forgotten.
-    if viewer.book.is_none() || launch.is_changed() {
+    // Built as each game starts: leaving one drops its book (`forget_on_leaving`).
+    if viewer.book.is_none() {
         // Its world data parsed as the content loaded (`load_content` refuses it otherwise).
         viewer.build(voxmar_server::recipe_book(&launch.content).expect("the world data of loaded content parses"));
         viewer.trail.clear();
@@ -346,8 +351,33 @@ fn report(mut viewer: ResMut<RecipeViewer>, net: Res<crate::net::Net>) {
     }
 }
 
+/// The block a player cooks at for a station tag: one they set down (placeable, its own
+/// item, not creative only), a `station` first, as the campfire is for `fire`; else the
+/// first block tagged at all. Not the first tagged: for `fire` that is an ember scale, a drop
+/// that only glows.
+fn station_block(content: &voxmar_engine::content::Content, tag: &str) -> Option<voxmar_engine::block::BlockId> {
+    let blocks = &content.blocks;
+    let set_down = |&b: &voxmar_engine::block::BlockId| blocks.info(b).placeable && blocks.item_of(b) == b && !blocks.def(b).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY);
+    blocks
+        .tagged(tag)
+        .filter(set_down)
+        .find(|&b| blocks.def(b).has_tag("station"))
+        .or_else(|| blocks.tagged(tag).find(set_down))
+        .or_else(|| blocks.tagged(tag).next())
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// A fire recipe's card names the campfire a player cooks at, not the first block
+    /// tagged `fire` (an ember scale), and a tag no block carries names none.
+    #[test]
+    fn a_cooking_card_names_the_station_a_player_sets_down() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let name = |tag: &str| super::station_block(&content, tag).map(|b| content.blocks.def(b).name.clone());
+        assert_eq!(name("fire").as_deref(), Some("base:campfire"));
+        assert_eq!(name("no_such_station"), None);
+    }
     use super::*;
 
     #[test]
@@ -382,6 +412,22 @@ mod tests {
         assert_eq!(viewer.book_number(), 0);
         viewer.build(RecipeBook::default());
         assert!(![0, first].contains(&viewer.book_number()), "a new book took an old number");
+    }
+
+    /// Leaving a game, by the screen changing, drops its book, so the next game builds its own.
+    #[test]
+    fn the_book_goes_with_the_game_left() {
+        let mut app = App::new();
+        app.add_plugins(bevy::state::app::StatesPlugin).insert_state(Screen::InGame).insert_resource(UiState { recipes_open: true, ..default() }).init_resource::<RecipeViewer>();
+        forget_on_leaving(&mut app);
+        app.world_mut().resource_mut::<RecipeViewer>().build(RecipeBook::default());
+        app.update();
+        assert_ne!(app.world().resource::<RecipeViewer>().book_number(), 0, "in game, the book stays");
+        app.world_mut().resource_mut::<NextState<Screen>>().set(Screen::Title);
+        app.update();
+        let viewer = app.world().resource::<RecipeViewer>();
+        assert!(viewer.book().is_none() && viewer.book_number() == 0, "the book outlived its game");
+        assert!(!app.world().resource::<UiState>().recipes_open);
     }
 
     /// A family of recipes cycling and the quests asking for it, drawn by the viewer: a
@@ -616,7 +662,7 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
             for &(item, n) in with {
                 plus(card, font, images, Some(item), count(n));
             }
-            if let Some(fire) = content.blocks.tagged(station).next() {
+            if let Some(fire) = station_block(content, station) {
                 plus(card, font, images, Some(fire), None);
             }
         }
@@ -736,7 +782,7 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
         }
         Method::Catch { skill, level: at } => [(locale.get("recipes.catch").to_owned(), MUTED)].into_iter().chain(level(*skill, *at)).collect(),
         Method::Cook { station, skill, level, burnt, .. } => {
-            let station = content.blocks.tagged(station).next().map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
+            let station = station_block(content, station).map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
             let mut lines = vec![(locale.format("recipes.cook", &[("station", &station)]), MUTED)];
             lines.push((locale.get("recipes.cook.use").to_owned(), SOFT));
             let skill = skill.map(|id| locale.skill(content.skills.get(id)));

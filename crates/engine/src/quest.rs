@@ -205,6 +205,10 @@ pub struct QuestFile {
     /// changes what it gives, field by field.
     #[serde(default)]
     pub tracker: Option<TrackerPatch>,
+    /// What the quests' experience rewards are worth (`core/quests.ron`); a later package
+    /// changes it field by field.
+    #[serde(default)]
+    pub pays: Option<PaysPatch>,
     /// Where it was read from, `package/file`, for the load checks to name.
     #[serde(skip)]
     pub source: String,
@@ -229,6 +233,43 @@ pub struct TrackerPatch {
     pub ways: Option<usize>,
     #[serde(default)]
     pub book_key: Option<bool>,
+}
+
+/// What a package changes of what quests pay.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaysPatch {
+    #[serde(default)]
+    pub xp: Option<f32>,
+    #[serde(default)]
+    pub capstone_xp: Option<f32>,
+}
+
+/// What the quests' experience rewards are worth: each `Xp` a quest file writes is paid,
+/// shown and counted times `xp`, and a capstone's times `capstone_xp` again, so a whole
+/// book's rewards move with one setting. Applied as the quests load, so everything that
+/// reads a quest's rewards (the server paying them, the book and tracker showing them,
+/// the walks counting them) reads the same number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pays {
+    pub xp: f32,
+    pub capstone_xp: f32,
+}
+
+impl Default for Pays {
+    fn default() -> Self {
+        Self { xp: 1.0, capstone_xp: 1.0 }
+    }
+}
+
+impl Pays {
+    /// The most either scale may be: more would make a book's numbers meaningless.
+    pub const MOST: f32 = 10.0;
+
+    /// What one experience written in `quest`'s rewards is worth.
+    pub fn of(&self, quest: &QuestDef) -> f32 {
+        if quest.capstone { self.xp * self.capstone_xp } else { self.xp }
+    }
 }
 
 /// How the interface follows pinned quests on screen.
@@ -260,6 +301,7 @@ impl Default for Tracker {
 pub struct QuestRegistry {
     quests: Vec<QuestDef>,
     tracker: Tracker,
+    pays: Pays,
     start_pins: Vec<String>,
     /// Each quest's `Placed` goals, by the quest's name and what it wants set down (a name,
     /// `any` or `tag:`), gathered once the content is named (`resolve`).
@@ -467,6 +509,14 @@ impl QuestRegistry {
             return Err(RegistryError(format!("{tracker_from}: the tracker needs a pin or more, a stay of 0 s or more and a backing from 0 to 1, not {tracker:?}")));
         }
         let (tracker_from, pins_from) = (tracker_from.to_owned(), pins_from.to_owned());
+        let mut pays = Pays::default();
+        for (patch, source) in files.iter().filter_map(|f| Some((f.pays.as_ref()?, f.source.as_str()))) {
+            pays.xp = patch.xp.unwrap_or(pays.xp);
+            pays.capstone_xp = patch.capstone_xp.unwrap_or(pays.capstone_xp);
+            if ![pays.xp, pays.capstone_xp].iter().all(|x| x.is_finite() && *x > 0.0 && *x <= Pays::MOST) {
+                return Err(RegistryError(format!("{source}: quests pay experience times more than 0 and at most {}, not {pays:?}", Pays::MOST)));
+            }
+        }
         // Each quest with the file it was written in.
         let written: Vec<(QuestDef, String)> = files.into_iter().flat_map(|f| f.quests.into_iter().map(move |q| (q, f.source.clone()))).collect();
         // One book or several files, a quest is written once: a second of a name, in the
@@ -556,7 +606,16 @@ impl QuestRegistry {
         if let Some(name) = start_pins.iter().find(|name| !quests.iter().any(|q| &q.name == *name)) {
             return Err(RegistryError(format!("{pins_from}: the start pin `{name}` is not a quest")));
         }
-        Ok(Self { quests, tracker, start_pins, placing: Vec::new() })
+        let mut quests = quests;
+        for quest in &mut quests {
+            let worth = pays.of(quest);
+            for reward in &mut quest.rewards {
+                if let Reward::Xp(_, xp) = reward {
+                    *xp *= worth;
+                }
+            }
+        }
+        Ok(Self { quests, tracker, pays, start_pins, placing: Vec::new() })
     }
 
     /// The quests a new player's book starts with pinned.
@@ -821,6 +880,11 @@ impl QuestRegistry {
     /// How the interface follows pinned quests.
     pub fn tracker(&self) -> Tracker {
         self.tracker
+    }
+
+    /// What the quests' experience rewards are worth, as already applied to them.
+    pub fn pays(&self) -> Pays {
+        self.pays
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &QuestDef> {
@@ -1309,6 +1373,31 @@ mod tests {
         assert!(QuestRegistry::new(vec![none]).is_err());
         let clear = QuestRegistry::read("core", "(tracker: (backing_alpha: 1.5))").unwrap();
         assert!(QuestRegistry::new(vec![clear]).is_err());
+    }
+
+    /// The quests' experience is paid times `pays.xp`, a capstone's times `capstone_xp`
+    /// again, item rewards untouched; a later package changes it field by field, and a
+    /// scale of nothing or past `Pays::MOST` is refused, naming its file.
+    #[test]
+    fn quests_pay_experience_times_the_scale_and_capstones_more() {
+        let quests = r#"quests: [
+            (name: "plain", age: "nomad", branch: "main", title: "Plain", why: "", tasks: [[Home]], rewards: [Xp("cooking", 10.0), Item("torch", 4)]),
+            (name: "top", age: "nomad", branch: "main", title: "Top", why: "", tasks: [[Home]], after: ["plain"], capstone: true, rewards: [Xp("cooking", 10.0)]),
+        ]"#;
+        let paid = |files: &[(&str, &str)]| QuestRegistry::new(files.iter().map(|(ns, s)| QuestRegistry::read(ns, s).unwrap()).collect());
+        let xp = |q: &QuestRegistry, name: &str| q.get(name).unwrap().rewards.iter().find_map(|r| if let Reward::Xp(_, xp) = r { Some(*xp) } else { None }).unwrap();
+        let book = format!("({quests})");
+        let once = paid(&[("t", &book)]).unwrap();
+        assert_eq!((xp(&once, "t:plain"), xp(&once, "t:top"), once.pays()), (10.0, 10.0, Pays::default()));
+        let scaled = paid(&[("core", "(pays: (xp: 2.0, capstone_xp: 1.5))"), ("t", &book)]).unwrap();
+        assert_eq!((xp(&scaled, "t:plain"), xp(&scaled, "t:top")), (20.0, 30.0));
+        assert!(scaled.get("t:plain").unwrap().rewards.iter().any(|r| matches!(r, Reward::Item(name, 4) if name.ends_with("torch"))), "items are paid as written");
+        let patched = paid(&[("core", "(pays: (xp: 2.0, capstone_xp: 1.5))"), ("mod", "(pays: (xp: 3.0))"), ("t", &book)]).unwrap();
+        assert_eq!(patched.pays(), Pays { xp: 3.0, capstone_xp: 1.5 });
+        for wrong in ["(pays: (xp: 0.0))", "(pays: (capstone_xp: -1.0))", "(pays: (xp: 11.0))"] {
+            let refused = paid(&[("mod", wrong), ("t", &book)]).err().expect(wrong);
+            assert!(refused.0.contains("mod"), "{}", refused.0);
+        }
     }
 
     /// Content to check quests against: blocks (a log tagged, fish, a kiln's pieces), core

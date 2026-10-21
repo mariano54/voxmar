@@ -481,6 +481,11 @@ pub(crate) fn receive(
                 debug!("refused: {why}");
                 toasts.refused(why, time.elapsed_secs())
             }
+            ServerMessage::Fired { words } => {
+                let words = locale.render(&words, &world.registry);
+                debug!("fired: {words}");
+                toasts.news(words, time.elapsed_secs())
+            }
             ServerMessage::Weather { weather: report, effects, nearby, quick } => {
                 weather.receive(report, effects, nearby, quick, time.elapsed_secs())
             }
@@ -518,6 +523,7 @@ pub(crate) fn receive(
             }
             ServerMessage::Bark { creature, bark } => creatures.bark(creature, bark),
             ServerMessage::Smoulders { at } => world.smoulders = at.into_iter().collect(),
+            ServerMessage::Shown { column, at } => world.show_in(column, at),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
             ServerMessage::Station { block, load, fire } => stations.tell(block, load, fire, time.elapsed_secs_f64()),
         }

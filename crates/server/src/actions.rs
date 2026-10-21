@@ -322,8 +322,12 @@ impl Server {
     /// Tells the player why, for a refusal their client could not foresee: it sees no other
     /// player's or creature's body, so it lets clay to a panel someone leans on through.
     fn unforeseen(&self, agent: PlayerId, why: Rejection) {
-        if why == Rejection::Unmet(Requirement::CoatClear) {
-            self.refuse(agent, Words::key("refusal.someone_there"));
+        // Someone in the way, whom the client may not see: a player or creature in the cell
+        // a block is placed into, a door swung shut on, or a panel daubed.
+        if let Rejection::Unmet(need @ (Requirement::CoatClear | Requirement::Swaps | Requirement::Unobstructed)) = why
+            && let Some(say) = self.content.refusals.says(need)
+        {
+            self.refuse(agent, Words::key(say));
         }
     }
 
@@ -424,9 +428,11 @@ impl Server {
                     self.set_block(cell, placed);
                     // A light picked up burning burns on from where it was.
                     self.set_down_burnt(cell, item, wear);
-                    // Its upper half goes in above with it (a door's top).
-                    if let Some(upper) = self.content.blocks.upper(placed) {
-                        self.set_block(cell + IVec3::Y, upper);
+                    // What goes in with it: its upper half above (a door's top), the block
+                    // beside it (a double gate's second leaf).
+                    let with: Vec<(IVec3, BlockId)> = self.content.blocks.placed_with(placed).collect();
+                    for (by, block) in with {
+                        self.set_block(cell + by, block);
                     }
                     if self.marks_placed(item, placed) {
                         self.placed.insert(cell);
@@ -515,6 +521,7 @@ impl Server {
                 (Effect::Light, ActionTarget::Block { block, .. }) => self.light(agent, block),
                 (Effect::UseMachine, ActionTarget::Block { block, .. }) => self.use_machine(agent, block),
                 (Effect::OpenStore, ActionTarget::Block { block, .. }) => self.open_store(agent, block),
+                (Effect::PutAway, _) => self.put_away(agent),
                 (Effect::PickLock, ActionTarget::Block { block, .. }) => self.pick_lock(agent, block),
                 (Effect::TendBees, ActionTarget::Block { block, .. }) => self.tend_bees(agent, block),
                 (Effect::Pray, ActionTarget::Block { .. }) => self.pray_at_altar(agent),
@@ -581,7 +588,8 @@ impl Server {
             return;
         }
         let effects = self.content.effects.clone();
-        let home = self.home_survey(agent);
+        // At home, or a guest at a friend's lit hearth: their home's comfort is the rest's.
+        let home = self.home_survey(agent).or_else(|| self.guest_survey(agent));
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
