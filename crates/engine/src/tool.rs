@@ -15,7 +15,7 @@
 //! block `Wear::mend_near` names (or its own `mend_near:TAG`): back by `Wear::mend` of its
 //! uses, never for free.
 //!
-//! What burns as it is carried (a firebrand) says `burns:N`: it lasts N seconds, counted in
+//! What burns as it is held in hand (a firebrand) says `burns:N`: it lasts N seconds, counted in
 //! its stack's wear as a tool's uses are, and leaves `burns_to:ITEM` if it names one. A
 //! thing either wears or burns. `held_light:N` lights what is around the hand holding it.
 
@@ -190,7 +190,7 @@ pub struct Tool {
     pub reap: u8,
     /// Uses it lasts (`uses:N`); 0 if it never wears.
     pub uses: u16,
-    /// Seconds it burns, carried, before it is spent (`burns:N`); 0 if it never burns.
+    /// Seconds it burns, held, before it is spent (`burns:N`); 0 if it never burns.
     pub burns: u16,
     /// How much light it gives held (`held_light:N`, 1 to 15); 0 for none.
     pub held_light: u8,
@@ -399,7 +399,7 @@ impl ToolRegistry {
         &self.wear
     }
 
-    /// Seconds `item` burns while carried; 0 if it never burns.
+    /// Seconds `item` burns while held; 0 if it never burns.
     pub fn burns(&self, item: BlockId) -> u16 {
         self.tools.get(item.0 as usize).map_or(0, |tool| tool.burns)
     }
@@ -775,7 +775,7 @@ mod tests {
         assert!(error.contains("iron_pickaxe") && error.contains("no piece of"), "{error}");
     }
 
-    /// What burns carried (`burns:N`) lasts that many seconds, counted as wear, leaves what
+    /// What burns held (`burns:N`) lasts that many seconds, counted as wear, leaves what
     /// `burns_to:` names and may light the hand (`held_light:N`); load refuses a thing that
     /// both wears and burns, burns to nothing that exists, lights past full light or lights
     /// brighter in hand than set down. A torch lights the hand and burns nothing down.

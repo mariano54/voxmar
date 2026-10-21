@@ -119,7 +119,7 @@
         (template: "drop", name: "stick", tags: ["stick", "wood", "fuel"], all: (color: (130, 95, 55))),
         // A firebrand: a stick held in any fire (cooking.ron) until it catches, the first light
         // before coal. It lights the way around the hand that holds it (`held_light:N`) and
-        // scares what fears fire, but burns while carried (`burns:N` seconds, counted like a
+        // scares what fears fire, but burns while held (`burns:N` seconds, counted like a
         // tool's wear) and leaves a charred stick (`burns_to:`). It `kindles`: lights a torch's
         // stub again (flame.rs).
         (template: "drop", name: "firebrand", tags: ["fire", "firelighter", "kindles", "burns:90", "burns_to:charred_stick", "held_light:8"], all: (color: (240, 140, 40))),

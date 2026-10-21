@@ -120,27 +120,23 @@ impl crate::process::Process for Burning {
 }
 
 impl Server {
-    /// Burns everything every living player carries that burns by `seconds`.
+    /// Burns what every living player holds in hand, if it burns, by `seconds`. Only the
+    /// hand burns: what is carried elsewhere keeps until it is held.
     pub(crate) fn burn_carried(&mut self, seconds: u16) {
         let tools = self.content.tools.clone();
         for player in self.players.values_mut().filter(|p| p.joined && p.health.alive()) {
-            let inventory = &mut player.inventory;
-            let mut burnt = false;
-            for slot in inventory.slots.iter_mut().chain(std::iter::once(&mut inventory.cursor)).chain(inventory.craft.iter_mut()) {
-                let Some(stack) = slot.as_mut() else { continue };
-                let lasts = tools.burns(stack.item);
-                if lasts == 0 {
-                    continue;
-                }
-                burnt = true;
-                stack.wear = stack.wear.saturating_add(seconds);
-                if stack.wear >= lasts {
-                    *slot = tools.burnt(stack.item).map(|left| ItemStack::new(left, 1));
-                }
+            let selected = player.selected;
+            let Some(slot) = player.inventory.slots.get_mut(selected) else { continue };
+            let Some(stack) = slot.as_mut() else { continue };
+            let lasts = tools.burns(stack.item);
+            if lasts == 0 {
+                continue;
             }
-            if burnt {
-                player.changed(voxmar_engine::traits::INVENTORY);
+            stack.wear = stack.wear.saturating_add(seconds);
+            if stack.wear >= lasts {
+                *slot = tools.burnt(stack.item).map(|left| ItemStack::new(left, 1));
             }
+            player.changed(voxmar_engine::traits::INVENTORY);
         }
     }
 }
@@ -522,8 +518,9 @@ mod tests {
         assert_eq!((inventory.slots[0], inventory.slots[5]), (None, Some(ItemStack::new(stone, 4))));
     }
 
-    /// A firebrand burns a second at a time wherever it is carried, held or not, and burnt
-    /// out leaves a charred stick; the once-a-second pass burns it by the server's clock.
+    /// A firebrand burns a second at a time in hand, and burnt out leaves a charred stick;
+    /// one carried elsewhere keeps until it is held. The once-a-second pass burns it by the
+    /// server's clock.
     #[test]
     fn a_firebrand_burns_out_to_a_charred_stick() {
         let (mut server, _client) = holding("base:firebrand", 0);
@@ -531,16 +528,19 @@ mod tests {
         let lasts = server.content.tools.burns(brand);
         server.players.get_mut(&1).unwrap().inventory.slots[20] = Some(ItemStack::new(brand, 1));
         server.burn_carried(lasts - 1);
-        for slot in [0, 20] {
-            assert_eq!(server.players[&1].inventory.slots[slot], Some(ItemStack { wear: lasts - 1, ..ItemStack::new(brand, 1) }), "slot {slot}");
-        }
+        assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack { wear: lasts - 1, ..ItemStack::new(brand, 1) }), "in hand");
+        assert_eq!(server.players[&1].inventory.slots[20], Some(ItemStack::new(brand, 1)), "carried, not held: it keeps");
         let mut pass = super::Burning::default();
         for _ in 0..(voxmar_protocol::TICKS_PER_SECOND as u64 / voxmar_engine::schedule::Tier::Low.period()) {
             crate::process::Process::run(&mut pass, &mut server);
         }
-        for slot in [0, 20] {
-            assert_eq!(server.players[&1].inventory.slots[slot], Some(ItemStack::new(charred, 1)), "slot {slot} burnt out");
-        }
+        assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(charred, 1)), "burnt out in hand");
+        assert_eq!(server.players[&1].inventory.slots[20], Some(ItemStack::new(brand, 1)), "still keeping");
+        // Taken in hand, it burns from there.
+        server.players.get_mut(&1).unwrap().selected = 20;
+        server.burn_carried(lasts);
+        assert_eq!(server.players[&1].inventory.slots[20], Some(ItemStack::new(charred, 1)), "burnt out once held");
+        server.players.get_mut(&1).unwrap().selected = 0;
         server.burn_carried(lasts);
         assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(charred, 1)), "a charred stick burns no more");
     }
