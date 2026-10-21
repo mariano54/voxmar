@@ -134,6 +134,8 @@
         (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "feed_trough", skill: "core:construction", level: 4, xp: 8.0),
         // Two herbs tied up with twine, to hang and dry: a home's herb nook.
         (pattern: [["twine", "twine"], ["tag:herb", "tag:herb"]], output: "hanging_herbs", count: 2, skill: "core:crafting", level: 4, xp: 3.0),
+        // Four twine knotted into a net on a stick to hang it from: the fisher's, for a home.
+        (ingredients: ["twine", "twine", "twine", "twine", "stick"], output: "fishing_net", skill: "core:crafting", level: 3, xp: 3.0),
         (pattern: [["copper_ingot"], ["torch"], ["copper_ingot"]], output: "copper_hanging_lantern", skill: "core:engineering", level: 5, xp: 12.0),
         (pattern: [["iron_ingot"], ["torch"], ["iron_ingot"]], output: "iron_hanging_lantern", skill: "core:engineering", level: 15, xp: 24.0),
         (pattern: [["", "{name}", ""], ["{name}", "torch", "{name}"], ["", "{name}", ""]], output: "{name}_lantern", skill: "core:construction", level: 9, xp: 6.0),

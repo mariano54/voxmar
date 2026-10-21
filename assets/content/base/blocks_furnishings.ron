@@ -219,10 +219,12 @@
             name: "bell", render: Plant, solid: false, support: Above, sound: Stone, textures: All("bell"),
             drops: "core:air", hardness: 1.5, color: (190, 140, 60), tags: ["creative_only", "bell", "metal", "building"],
         ),
-        // A fishing net hung to dry, with cork floats.
+        // A fishing net hung to dry, with cork floats: a fisher's cottage hangs one, and a
+        // player knots one of twine to hang at home (given back whole where a player hung it,
+        // nothing where a village did: `furnishing`).
         (
             name: "fishing_net", render: Plant, solid: false, support: Above, sound: Grass, textures: All("fishing_net"),
-            drops: "core:air", hardness: 0.2, color: (170, 150, 110), tags: ["creative_only", "net", "decor", "building"],
+            hardness: 0.2, color: (170, 150, 110), tags: ["net", "decor", "furnishing", "building"],
         ),
         // Bunches of herbs hung upside down to dry: two make a home's herb nook (`drying`).
         (
