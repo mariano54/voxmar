@@ -749,20 +749,28 @@ pub(super) mod tests {
             assert_eq!((decision.goal, decision.pose), (Some(at[0].position), Pose::Idle), "and goes for them");
         }
 
-        // One decision away (out of sight) keeps the warning's clock.
+        // One it does not see it goes for unwarned, as it always did, though a farther one
+        // stands in sight; kept, it warns as it hunts, its owner aside.
+        let hidden = [Seen { in_sight: false, ..at[0] }, Seen { id: 2, position: Vec3::new(8.0, 0.0, 0.0), ..at[0] }];
         let mut mind = Mind::new(&wolf.def.temperament, 2);
-        let hidden = [Seen { in_sight: false, ..at[0] }];
-        for _ in 0..3 {
-            let _ = think(&wolf, &mut mind, &situation(&at));
+        let decision = think(&wolf, &mut mind, &situation(&hidden));
+        assert_eq!((doing(&wolf, &mind), decision.goal), ("hunt", Some(hidden[0].position)), "the nearest, unseen, hunted unwarned");
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let _ = think(&wolf, &mut mind, &Situation { kept: true, ..situation(&at) });
+        assert_eq!(doing(&wolf, &mind), "warn", "kept, it hunts as before, with its warning");
+
+        // Hunting near and far (a mod's kind), it warns as far as its widest hunt.
+        let pack = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (near: 3.0, seconds: 1.0, stance: (nod: 0.4)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 8.0)), (do: Hunt(radius: 16.0))])])"
+        ));
+        let far = [player(Vec3::new(12.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&pack.def.temperament, 2);
+        for _ in 0..5 {
+            let _ = think(&pack, &mut mind, &situation(&far));
+            assert_eq!(doing(&pack, &mind), "warn", "past its near hunt, within its far one");
         }
-        let _ = think(&wolf, &mut mind, &situation(&hidden));
-        assert!(mind.warning.is_some(), "a moment out of sight starts nothing over");
-        for _ in 0..2 {
-            let _ = think(&wolf, &mut mind, &situation(&at));
-            assert_eq!(doing(&wolf, &mind), "warn");
-        }
-        let _ = think(&wolf, &mut mind, &situation(&at));
-        assert_eq!(doing(&wolf, &mind), "hunt", "its second ran out, the moment away not counted");
+        let decision = think(&pack, &mut mind, &situation(&far));
+        assert_eq!((mind.attacker(), doing(&pack, &mind), decision.goal), (Some(1), "hunt", Some(far[0].position)), "it stayed: the far hunt takes them");
 
         // Backed off out of its reach, they are let be; come back, the warning starts again.
         let mut mind = Mind::new(&wolf.def.temperament, 2);
@@ -814,6 +822,19 @@ pub(super) mod tests {
         }
         let _ = think(&badger, &mut mind, &situation(&at));
         assert_eq!((doing(&badger, &mind), mind.attacker()), ("defend", Some(1)));
+
+        // One decision away (out of sight) keeps the warning's clock.
+        let mut mind = Mind::new(&badger.def.temperament, 3);
+        let hidden = [Seen { in_sight: false, ..at[0] }];
+        for _ in 0..2 {
+            let _ = think(&badger, &mut mind, &situation(&at));
+        }
+        let _ = think(&badger, &mut mind, &situation(&hidden));
+        assert!(mind.warning.is_some(), "a moment out of sight starts nothing over");
+        let _ = think(&badger, &mut mind, &situation(&at));
+        assert_eq!(doing(&badger, &mind), "warn");
+        let _ = think(&badger, &mut mind, &situation(&at));
+        assert_eq!(doing(&badger, &mind), "defend", "its seconds ran out, the moment away not counted");
 
         // A step past the edge, still warned; well past it, let be.
         let mut mind = Mind::new(&badger.def.temperament, 3);

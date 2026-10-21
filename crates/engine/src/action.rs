@@ -92,6 +92,9 @@ pub enum Requirement {
     Cookable,
     /// The actor's Cooking level is at least what the held item's recipe there needs.
     CookingLevel,
+    /// The actor carries the tool the held item's recipe there asks for, if any (an axe to
+    /// split a log on a chopping block).
+    CookingTool,
     /// The actor holds something it can eat.
     HoldingFood,
     /// The actor has health to heal.
@@ -116,6 +119,10 @@ pub enum Requirement {
     /// The target is coated in place by what the actor holds (`coat` on its block), aimed
     /// at one of its sides: clay on a wattle panel or an earth wall.
     Coats,
+    /// What the target is coated into, if solid, would shut nobody in: no player and no
+    /// creature stands in its cell (a thin wattle panel turned a whole daub block), as
+    /// placing a block and shutting a door refuse.
+    CoatClear,
     /// The target is the core of a multiblock (tagged `multiblock_core`): a hearthstone,
     /// a crucible; for a machine's core, the actor holds no block to place against it.
     MultiblockCore,
@@ -147,11 +154,14 @@ pub enum Requirement {
     /// The target turns into another block when used (`swaps`: a door), and nobody stands
     /// where it would shut.
     Swaps,
+    /// The target is a light gone out that is lit again (`relights_to:`, a torch's stub),
+    /// and the actor holds something that `kindles` (`flame`).
+    Relights,
 }
 
 impl Requirement {
     /// Every requirement, in [`Requirement::index`] order (`refusal` says why each failed).
-    pub const ALL: [Requirement; 39] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Coats];
+    pub const ALL: [Requirement; 42] = [Requirement::Alive, Requirement::Dead, Requirement::InReach, Requirement::Breakable, Requirement::HoldingBlock, Requirement::Replaceable, Requirement::Unobstructed, Requirement::Supported, Requirement::HoldingSeed, Requirement::Plantable, Requirement::SkillLevel, Requirement::Ripe, Requirement::CreatureInReach, Requirement::CreatureInTouch, Requirement::CreatureAccepts, Requirement::CreatureIsMine, Requirement::Cookable, Requirement::CookingLevel, Requirement::HoldingFood, Requirement::Hurt, Requirement::ToolGood, Requirement::BlockLevel, Requirement::CropLevel, Requirement::Tillable, Requirement::CraftingTable, Requirement::Bed, Requirement::MultiblockCore, Requirement::Machine, Requirement::Altar, Requirement::Fishable, Requirement::Locked, Requirement::Bees, Requirement::Station, Requirement::Fertilisable, Requirement::Store, Requirement::Swaps, Requirement::SprungTrap, Requirement::Seat, Requirement::Coats, Requirement::CookingTool, Requirement::CoatClear, Requirement::Relights];
 
     /// Where it stands in [`Requirement::ALL`]. A new requirement must be added to both:
     /// this match does not compile without it.
@@ -196,6 +206,9 @@ impl Requirement {
             Requirement::SprungTrap => 36,
             Requirement::Seat => 37,
             Requirement::Coats => 38,
+            Requirement::CookingTool => 39,
+            Requirement::CoatClear => 40,
+            Requirement::Relights => 41,
         }
     }
 
@@ -262,11 +275,17 @@ pub enum Effect {
     LayRecipe,
     /// Till the target soil into farmland.
     Till,
+    /// Wear what the actor holds by a use on the target (`tool::Wear`): a block broken,
+    /// more if the tool is not made for it, or soil tilled. Skill saves a use now and then;
+    /// worn out, it breaks to nothing (or a head a pack names).
+    WearHeld,
     /// Coat the target in place with what is held (see `Requirement::Coats`).
     Coat,
     /// Turn the target into what it swaps for, its upper or lower half with it: open or
     /// shut a door (see [`swapping`]).
     Swap,
+    /// Light the target again: a stub into its torch (`flame`), burning anew.
+    Relight,
     /// Work at the target crafting table: its three-by-three grid, until the actor walks away.
     UseTable,
     /// Empty the pouch in hand into the actor's inventory.
@@ -393,6 +412,11 @@ pub trait ActionContext {
     fn actor_eye(&self) -> Vec3;
     fn actor_alive(&self) -> bool;
     fn actor_held(&self) -> Option<BlockId>;
+    /// Everything the actor carries in its slots, the hand's among them (a tool a recipe
+    /// asks for, `Requirement::CookingTool`).
+    fn actor_carried(&self) -> Vec<BlockId> {
+        Vec::new()
+    }
     /// What the actor's pouches carry (see [`crate::inventory::Inventory::pouched`]).
     fn actor_pouched(&self) -> Vec<BlockId> {
         Vec::new()
@@ -422,6 +446,10 @@ pub trait ActionContext {
     fn tools(&self) -> Option<&crate::tool::ToolRegistry> {
         None
     }
+    /// What burns out and is lit again, where the context knows.
+    fn flames(&self) -> Option<&crate::flame::Flames> {
+        None
+    }
     /// Whether any agent's body overlaps the cell.
     fn occupied(&self, cell: IVec3) -> bool;
     /// Whether a creature's body overlaps the cell; false where the context knows none.
@@ -434,6 +462,10 @@ pub trait ActionContext {
     }
     /// The machines, where the context knows them.
     fn machines(&self) -> Option<&crate::machine::MachineRegistry> {
+        None
+    }
+    /// The multiblocks, where the context knows them.
+    fn multiblocks(&self) -> Option<&crate::multiblock::MultiblockRegistry> {
         None
     }
     /// What bees give, where the context knows.
@@ -638,6 +670,12 @@ impl ActionDef {
                     (_, None) => true,
                 }
             }
+            Requirement::CookingTool => {
+                let (block, _) = block_target()?;
+                let station = ctx.block(block).map(|b| ctx.blocks().def(b).tags.as_slice()).unwrap_or(&[]);
+                let recipe = ctx.actor_held().zip(ctx.cooking()).and_then(|(item, cooking)| cooking.for_item(item, station));
+                recipe.is_none_or(|recipe| recipe.has_tool(ctx.blocks(), ctx.actor_carried()))
+            }
             Requirement::ToolGood => {
                 let (block, _) = block_target()?;
                 match (ctx.block(block), ctx.tools()) {
@@ -655,6 +693,10 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 let rule = ctx.block(block).zip(ctx.tools()).and_then(|(b, tools)| tools.rule(b));
                 rule.is_none_or(|rule| rule.skill.is_none_or(|skill| ctx.actor_level(skill) >= rule.level))
+            }
+            Requirement::Relights => {
+                let (block, _) = block_target()?;
+                ctx.flames().is_some_and(|flames| ctx.block(block).zip(ctx.actor_held()).is_some_and(|(b, item)| flames.lights(ctx.blocks(), b, item)))
             }
             Requirement::Swaps => {
                 let (block, _) = block_target()?;
@@ -690,6 +732,11 @@ impl ActionDef {
                 let side = !matches!(face, Face::PosY | Face::NegY);
                 let coating = ctx.block(block).and_then(|b| ctx.blocks().coating(b));
                 side && coating.is_some_and(|(with, _)| ctx.actor_held() == Some(with))
+            }
+            Requirement::CoatClear => {
+                let (block, _) = block_target()?;
+                let into = ctx.block(block).and_then(|b| ctx.blocks().coating(b)).map(|(_, into)| into);
+                into.is_none_or(|into| !ctx.info(into).solid || !(ctx.occupied(block) || ctx.creature_in(block)))
             }
             Requirement::Seat => {
                 let (block, _) = block_target()?;
@@ -727,7 +774,14 @@ impl ActionDef {
             }
             Requirement::MultiblockCore => {
                 let (block, _) = block_target()?;
-                let Some(core) = ctx.block(block).filter(|&b| ctx.blocks().def(b).has_tag("multiblock_core")) else { return Ok(false) };
+                // Any cell of a standing clamp, with what lights it in hand, is as its core:
+                // the firelighter lights it, never laid on its earth.
+                let smoulders = || {
+                    let (_, structure) = ctx.multiblocks()?.smoulder_round(block, |p| ctx.block(p))?;
+                    let lit_by = structure.lit_by.as_deref()?;
+                    Some(ctx.actor_held().is_some_and(|item| ctx.blocks().def(item).has_tag(lit_by)))
+                };
+                let Some(core) = ctx.block(block).filter(|&b| ctx.blocks().def(b).has_tag("multiblock_core")) else { return Ok(smoulders() == Some(true)) };
                 // A machine's core with a block in hand that it does not take (use_machine
                 // takes what it does) has that block built against it, as any machine does.
                 let machine = ctx.machines().is_some_and(|machines| machines.get(core).is_some());
@@ -740,7 +794,7 @@ impl ActionDef {
                 match ctx.actor_held() {
                     None => true,
                     Some(item) => {
-                        let fuel = machine.burns() && machines.burn_seconds(item).is_some();
+                        let fuel = machine.burns() && machines.burns_in(machine, item).is_some();
                         let input = machine.is_processor() && machines.takes(machine, item);
                         // A bin takes anything but machines: a chute in hand is laid against it.
                         let bin = machine.bin_takes(item) && !ctx.blocks().def(item).has_tag(&machines.rules.machine_tag);
@@ -1079,6 +1133,66 @@ mod tests {
         assert_eq!(lights("base:bloomery", None), Ok(()));
         assert_eq!(lights("base:bloomery", Some("base:iron_pickaxe")), Ok(()));
         assert_eq!(lights("base:crucible", Some("base:kiln_bricks")), Ok(()));
+    }
+
+    /// A clamp's earth, clicked from the floor beside it with what lights it in hand, is
+    /// lit as its flue is, so the firelighter is never laid on it; with earth or nothing in
+    /// hand it is not (earth is built on it), nor once a piece of it is gone.
+    #[test]
+    fn a_firelighter_lights_a_clamp_from_its_earth() {
+        struct Clamp<'a> {
+            content: &'a crate::content::Content,
+            cells: std::collections::HashMap<IVec3, BlockId>,
+            held: Option<BlockId>,
+        }
+        impl ActionContext for Clamp<'_> {
+            fn block(&self, pos: IVec3) -> Option<BlockId> {
+                Some(self.cells.get(&pos).copied().unwrap_or(BlockId::AIR))
+            }
+            fn info(&self, block: BlockId) -> &BlockInfo {
+                self.content.blocks.info(block)
+            }
+            fn blocks(&self) -> &BlockRegistry {
+                &self.content.blocks
+            }
+            fn crops(&self) -> &CropRegistry {
+                &self.content.crops
+            }
+            fn actor_level(&self, _: SkillId) -> u8 {
+                1
+            }
+            fn actor_eye(&self) -> Vec3 {
+                Vec3::new(0.5, 1.62, -3.5)
+            }
+            fn actor_alive(&self) -> bool {
+                true
+            }
+            fn actor_held(&self) -> Option<BlockId> {
+                self.held
+            }
+            fn occupied(&self, _: IVec3) -> bool {
+                false
+            }
+            fn multiblocks(&self) -> Option<&crate::multiblock::MultiblockRegistry> {
+                Some(self.content.multiblocks.as_ref())
+            }
+        }
+        let content = crate::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let clamp = content.multiblocks.iter().find(|m| m.smoulder.is_some()).expect("a clamp");
+        let cells: std::collections::HashMap<IVec3, BlockId> = clamp.example().into_iter().collect();
+        let light = content.actions.get(content.actions.id("base:light").unwrap()).unwrap();
+        let side = ActionTarget::Block { block: IVec3::NEG_Z, face: Face::NegZ };
+        let lights = |cells: &std::collections::HashMap<IVec3, BlockId>, held: Option<&str>| light.validate(&Clamp { content: &content, cells: cells.clone(), held: held.map(|n| content.blocks.expect(n)) }, side);
+        for firelighter in content.blocks.tagged(clamp.lit_by.as_deref().expect("lit by something")) {
+            let name = content.blocks.def(firelighter).name.as_str();
+            assert_eq!(lights(&cells, Some(name)), Ok(()), "lit from its earth with {name}");
+        }
+        let earth = cells[&IVec3::NEG_Z];
+        assert_eq!(lights(&cells, Some(content.blocks.def(earth).name.as_str())), Err(Rejection::Unmet(Requirement::MultiblockCore)));
+        assert_eq!(lights(&cells, None), Err(Rejection::Unmet(Requirement::MultiblockCore)));
+        let mut opened = cells.clone();
+        opened.insert(IVec3::Z, BlockId::AIR);
+        assert_eq!(lights(&opened, Some("base:torch")), Err(Rejection::Unmet(Requirement::MultiblockCore)), "not standing");
     }
 
     #[test]

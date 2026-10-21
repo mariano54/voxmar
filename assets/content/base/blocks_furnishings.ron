@@ -45,7 +45,7 @@
             (name: "{name}_wardrobe", render: Model, shape: "wardrobe", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "cupboard", "storage", "decor", "wood"]),
             (name: "{name}_desk", render: Model, shape: "desk", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
             (name: "{name}_counter", render: Model, shape: "counter", sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
-            (name: "{name}_barrel_rack", render: Model, shape: "barrel_rack", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
+            (name: "{name}_barrel_rack", render: Model, shape: "barrel_rack", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood", "barrel"]),
             (name: "{name}_crate_stack", render: Model, shape: "crate_stack", sound: Wood, textures: All("furniture_crate"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
             // A window seat: a panelled box under a cushion, built in under a window to sit
             // at (`seat`) with things kept in it (`storage`).
@@ -94,9 +94,9 @@
         "crockery": [
             (name: "{name}_plate", render: Model, shape: "plate", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
             (name: "{name}_bowl", render: Model, shape: "bowl", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
-            (name: "{name}_jar", render: Model, shape: "jar", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor"]),
+            (name: "{name}_jar", render: Model, shape: "jar", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor", "jar"]),
             (name: "{name}_jug", render: Model, shape: "jug", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
-            (name: "{name}_basket", render: Model, shape: "basket", solid: false, sound: Grass, textures: All("basket_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor"]),
+            (name: "{name}_basket", render: Model, shape: "basket", solid: false, sound: Grass, textures: All("basket_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor", "basket"]),
         ],
         // A hanging lantern of one metal (`{name}`: iron or copper), its drawing tinted the
         // metal's colour; it breaks to an ingot.
@@ -182,11 +182,30 @@
             drops: "core:air", hardness: 0.0, color: (110, 140, 70), tags: ["hanging", "drying", "decor"],
         ),
 
-        // Singles. A candle (tallow until bees make wax), and the fire a hearth has.
+        // Singles. A candle (tallow until bees make wax), and the fire a hearth has. A candle
+        // set down burns three game days to its end, a stub of wax never lit again (flame.rs);
+        // picked up, it keeps what it has burnt.
         (
             name: "candle", render: Model, shape: "candle", solid: false, light: 8, sound: Wood, textures: All("candle_grey"), tint: Fixed(240, 228, 196),
-            hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor", "furnishing"],
+            hardness: 0.0, color: (240, 228, 196), tags: ["candle", "light", "decor", "furnishing", "burns_days:3", "burns_out_to:candle_end", "tended"],
             particles: [(style: Flame, rate: 8.0, at: (0.5, 0.45, 0.5), spread: 0.01, size: 0.7, height: 0.2, color: Some((240, 150, 40)))],
+        ),
+        (
+            name: "candle_end", render: Model, shape: "candle_end", solid: false, sound: Wood, textures: All("candle_grey"), tint: Fixed(240, 228, 196),
+            drops: "core:air", hardness: 0.0, color: (240, 228, 196), tags: ["creative_only", "decor"],
+        ),
+        // A clay oil lamp: a brighter light than a candle, burning five game days on a fill of
+        // fat. Burnt dry it keeps its clay; right clicked with fat (`relight_with:fat`) it is
+        // filled and lit again, the fat used up. Made empty; picked up lit, it keeps what fat it
+        // has left (flame.rs), and set down again burns on.
+        (
+            name: "clay_oil_lamp", render: Model, shape: "oil_lamp", solid: false, light: 10, sound: Stone, textures: All("crockery_grey"), tint: Fixed(176, 100, 62),
+            hardness: 0.1, color: (176, 100, 62), tags: ["lamp", "light", "decor", "furnishing", "burns_days:5", "burns_out_to:clay_oil_lamp_empty", "tended"],
+            particles: [(style: Flame, rate: 8.0, at: (0.5, 0.26, 0.84), spread: 0.01, size: 0.8, height: 0.2, color: Some((240, 150, 40)))],
+        ),
+        (
+            name: "clay_oil_lamp_empty", render: Model, shape: "oil_lamp", solid: false, sound: Stone, textures: All("crockery_grey"), tint: Fixed(176, 100, 62),
+            hardness: 0.1, color: (176, 100, 62), tags: ["lamp", "decor", "relights_to:clay_oil_lamp", "relight_with:fat"],
         ),
         (
             name: "brazier", render: Model, shape: "brazier", light: 14, sound: Stone, textures: All("brazier_iron"),
@@ -212,19 +231,34 @@
                 (style: Smoke, rate: 3.0, at: (0.75, 1.05, 0.75), spread: 0.06, size: 0.9, height: 3.0, color: Some((112, 112, 112))),
             ],
         ),
-        // Stand-ins for the Farm age's machines, which will have the plain names: a loom, a
-        // spinning wheel and a quern for a weaver's or a miller's room.
+        // The Farm age's hand stations (cooking.ron): a loom weaves cloth, a spindle spins
+        // twine and a quern grinds flour, held to and worked two seconds a go. Broken, each
+        // drops itself where a player set it down (`furnishing`); one the world set (an older
+        // world's village) gives nothing. Villages set the old_ twins below instead, which look
+        // the same but work nothing (no station tag) and give nothing.
         (
             name: "loom_frame", render: Model, shape: "loom_frame", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
-            drops: "oak_planks", drop_count: 2, hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "furnishing"],
+            hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "loom", "furnishing"],
         ),
         (
             name: "spindle_stand", render: Model, shape: "spindle_stand", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
-            drops: "oak_planks", drop_count: 1, hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "furnishing"],
+            hardness: 1.5, color: (160, 120, 70), tags: ["workshop", "decor", "wood", "spindle", "furnishing"],
         ),
         (
             name: "quern_stones", render: Model, shape: "quern_stones", facing: true, sound: Stone, textures: All("cobblestone"),
-            drops: "core:air", hardness: 2.0, color: (110, 110, 110), tags: ["workshop", "decor", "stone"],
+            hardness: 2.0, color: (110, 110, 110), tags: ["workshop", "decor", "stone", "quern", "furnishing"],
+        ),
+        (
+            name: "old_loom_frame", render: Model, shape: "loom_frame", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
+            drops: "core:air", hardness: 1.5, color: (160, 120, 70), tags: ["creative_only", "decor", "wood"],
+        ),
+        (
+            name: "old_spindle_stand", render: Model, shape: "spindle_stand", facing: true, sound: Wood, textures: All("furniture_wood"), tint: Fixed(205, 150, 86),
+            drops: "core:air", hardness: 1.5, color: (160, 120, 70), tags: ["creative_only", "decor", "wood"],
+        ),
+        (
+            name: "old_quern_stones", render: Model, shape: "quern_stones", facing: true, sound: Stone, textures: All("cobblestone"),
+            drops: "core:air", hardness: 2.0, color: (110, 110, 110), tags: ["creative_only", "decor", "stone"],
         ),
         // Prayer flags in the Cloud monks' five colours, drawn in colour (not a dye).
         (

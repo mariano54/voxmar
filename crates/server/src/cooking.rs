@@ -4,6 +4,7 @@
 //! as item, so early food quests cannot be completed by smelting or charcoal.
 
 use voxmar_engine::glam::IVec3;
+use voxmar_engine::inventory::ItemStack;
 use voxmar_engine::traits;
 use voxmar_engine::lang::Words;
 use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
@@ -35,6 +36,16 @@ impl Server {
         let selected = player.selected;
         let Some(item) = player.held() else { return };
         let Some(recipe) = cooking.for_item(item, &tags) else { return };
+        // A tool it asks for is carried (`CookingTool` refused the click without it): not
+        // taken.
+        let blocks = &self.content.blocks;
+        if let Some(tag) = recipe.def.tool.as_deref()
+            && !player.inventory.slots.iter().flatten().any(|s| blocks.def(s.item).has_tag(tag))
+        {
+            let named = blocks.tagged(tag).next().map(|item| Words::Block(blocks.def(item).name.clone())).unwrap_or_else(|| Words::Text(tag.to_owned()));
+            self.refuse(agent, Words::key("cooking.needs_tool").with("tool", named));
+            return;
+        }
         let level = recipe.skill.map_or(1, |skill| skills.level(player.skills.xp(skill)));
         // Everything one go takes, from the held stack first, or nothing is cooked: a
         // crucible's bronze wants three copper ingots and a tin ore.
@@ -57,7 +68,18 @@ impl Server {
         let burnt = roll < recipe.burn_chance(level);
         let result = if burnt { recipe.burnt.map(|b| (b, 1)) } else { Some((recipe.output, recipe.def.count)) };
         if let Some((made, n)) = result {
-            player.inventory.add(made, n);
+            // The last one held comes back cooked into the emptied hand (a lit firebrand
+            // is held up at once), unless it tops up a stack already carried; the rest go
+            // where they fit.
+            let most = voxmar_engine::inventory::max_stack(made);
+            let tops_up = player.inventory.slots.iter().flatten().any(|s| s.item == made && s.wear == 0 && s.count < most);
+            if player.inventory.get(selected).is_none() && !tops_up {
+                let here = n.min(most);
+                player.inventory.slots[selected] = Some(ItemStack::new(made, here));
+                player.inventory.add(made, n - here);
+            } else {
+                player.inventory.add(made, n);
+            }
         }
         player.changed(traits::INVENTORY);
         if let (false, Some(skill)) = (burnt, recipe.skill) {

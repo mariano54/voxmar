@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn picked_up_items_fly_off_then_go() {
         let mut drops = Drops::default();
-        let view = ItemView { id: 3, stack: ItemStack { item: voxmar_engine::block::BlockId(1), count: 2 }, position: Vec3::ONE, velocity: Vec3::ZERO };
+        let view = ItemView { id: 3, stack: ItemStack::new(voxmar_engine::block::BlockId(1), 2), position: Vec3::ONE, velocity: Vec3::ZERO };
         drops.receive(vec![view], vec![], 0.0);
         drops.receive(vec![], vec![ItemGone { id: 3, collector: Some(7) }], 1.0);
         let item = &drops.items[&3];
@@ -373,7 +373,7 @@ mod tests {
     #[test]
     fn a_lying_item_is_looked_at_within_range_and_aim() {
         let mut drops = Drops::default();
-        let stack = ItemStack { item: voxmar_engine::block::BlockId(1), count: 5 };
+        let stack = ItemStack::new(voxmar_engine::block::BlockId(1), 5);
         drops.receive(vec![ItemView { id: 1, stack, position: Vec3::new(0.0, 0.0, -4.0), velocity: Vec3::ZERO }], vec![], 0.0);
         let eye = Vec3::new(0.0, SIZE / 2.0, 0.0);
         let (seen, distance) = drops.looked_at(eye, Vec3::NEG_Z, 6.0, 0.6).unwrap();

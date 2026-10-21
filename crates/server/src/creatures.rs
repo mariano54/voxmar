@@ -69,7 +69,7 @@ const NEAR: f32 = 64.0;
 /// Wild creatures further than this from every player go.
 const DESPAWN: f32 = 128.0;
 /// Players are told about creatures within this many blocks.
-const SEEN_WITHIN: f32 = 96.0;
+pub(crate) const SEEN_WITHIN: f32 = 96.0;
 /// How far kin hear an alarm, and are counted as kin by herding.
 const KIN_RANGE: f32 = 14.0;
 /// The width of a `Neighbours` cell, in blocks: the widest search (kin) and a block more for
@@ -687,10 +687,9 @@ impl Server {
     /// past its edge, has a way through the air (`blow_open`) to each `strikes` says it
     /// would strike at (in its reach and strike band), and its charge a way along the
     /// ground (`charge_open`) to each `charges` says only its charge fits: to no other is
-    /// it close to striking. Whether it sees each (`in_sight`) is judged only if it `sights`
-    /// (a kind that warns).
-    #[allow(clippy::too_many_arguments)]
-    fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, charges: impl Fn(Vec3) -> bool, range: f32, tempts: &[BlockId], owner: Option<&str>, sights: bool) -> Vec<Seen> {
+    /// it close to striking. Each is taken as in its sight (`in_sight`): the caller judges
+    /// that for a kind that warns.
+    fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, charges: impl Fn(Vec3) -> bool, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
         let at = body.position;
         let mut seen: Vec<Seen> = self
             .players
@@ -709,7 +708,7 @@ impl Server {
                 } else {
                     !charges(p.position) || self.charge_open(body, p.position)
                 },
-                in_sight: !sights || self.in_sight(body, p.position),
+                in_sight: true,
             })
             .collect();
         seen.sort_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)));
@@ -767,7 +766,11 @@ impl Server {
                 let (phase, scale) = (creature.phase, creature.scale);
                 let strikes = |to: Vec3| strikes_from(species, phase, scale, position, to);
                 let charges = |to: Vec3| charges_from(species, phase, scale, position, to);
-                let players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, charges, range, &species.favourite, creature.owner.as_deref(), species.def.warn.is_some());
+                let mut players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, charges, range, &species.favourite, creature.owner.as_deref());
+                // Whether it sees each matters only to its warning (`Warn`).
+                if species.def.warn.is_some() {
+                    players.iter_mut().for_each(|p| p.in_sight = self.in_sight(&creature.body, p.position));
+                }
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
                 // What it grazes, else, kept and hungry, a trough of its food by home.
@@ -1468,7 +1471,7 @@ impl Server {
         let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
         for (i, (item, count)) in found.into_iter().enumerate() {
             let body = dropped::popped(cell, self.meta.next_pop(cell, i as u32 + id));
-            self.creatures.falling_loot.push((due, ItemStack { item, count }, body));
+            self.creatures.falling_loot.push((due, ItemStack::new(item, count), body));
         }
         if let (Some(player), Some(skill), true) = (creature.hurt_by, species.xp_skill, xp) {
             let tenths = (species.def.xp.kill * 10.0) as u32;
@@ -1902,9 +1905,14 @@ impl Server {
         (0..24).flat_map(|d| [y + d, y - d - 1]).map(|cy| IVec3::new(x, cy, z)).find(|&cell| stands(cell))
     }
 
-    /// Whether a block giving light lies within `LIT_REACH` of `cell`.
-    fn lit_near(&self, cell: IVec3) -> bool {
+    /// Whether a block giving light, or a player holding a light (a firebrand), lies within
+    /// `LIT_REACH` of `cell`.
+    pub(crate) fn lit_near(&self, cell: IVec3) -> bool {
         let r = LIT_REACH;
+        let held = self.players.values().filter(|p| p.joined && p.health.alive() && p.held().is_some_and(|item| self.content.tools.held_light(item) > 0));
+        if held.into_iter().any(|p| (p.position.floor().as_ivec3() - cell).abs().max_element() <= r) {
+            return true;
+        }
         (-r..=r).any(|dy| (-r..=r).any(|dz| (-r..=r).any(|dx| self.block(cell + IVec3::new(dx, dy, dz)).is_some_and(|b| self.content.blocks.info(b).emission > 0))))
     }
 
@@ -3952,10 +3960,10 @@ mod lure_tests {
             server.note_lured();
         };
         // A stick in hand tempts nothing.
-        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack { item: server.content.blocks.expect("base:stick"), count: 1 });
+        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack::new(server.content.blocks.expect("base:stick"), 1));
         second(&mut server);
         assert_eq!(lured(&server), 0, "a stick lured a rabbit");
-        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack { item: server.content.blocks.expect("base:wild_carrot"), count: 1 });
+        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack::new(server.content.blocks.expect("base:wild_carrot"), 1));
         second(&mut server);
         assert_eq!(lured(&server), 1, "only the wild rabbit in reach is lured");
         assert!(server.creatures.live[&near].lured && !server.creatures.live[&far].lured);
@@ -5763,8 +5771,8 @@ mod fight_tests {
         }
     }
 
-    /// A badger warns only one it sees: behind a wall three high it lets a player be, with
-    /// the wall gone it warns them.
+    /// A badger warns only one it sees: behind a wall three high and thirteen long it lets
+    /// a player be, with the wall gone it warns them.
     #[test]
     fn a_badger_warns_only_one_it_sees() {
         for walled in [true, false] {
@@ -5773,7 +5781,7 @@ mod fight_tests {
             let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
             let _player = join(&mut server, stand);
             if walled {
-                set(&mut server, "base:stone", (-3..=3).flat_map(|z| (0..3).map(move |y| c + IVec3::new(-1, y, z))));
+                set(&mut server, "base:stone", (-6..=6).flat_map(|z| (0..3).map(move |y| c + IVec3::new(-1, y, z))));
             }
             // Within its radius at its least lively (a badger is about by night), outside its
             // `near`.
@@ -6000,7 +6008,7 @@ mod review_tests {
             }
         }
         let player = join(&mut server, c.as_vec3() + Vec3::new(-5.5, 0.0, 0.5));
-        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack { item: server.content.blocks.expect("base:wild_carrot"), count: 1 });
+        server.players.get_mut(&player).unwrap().inventory.slots[0] = Some(ItemStack::new(server.content.blocks.expect("base:wild_carrot"), 1));
         let id = put(&mut server, "base:rabbit", c.as_vec3() + Vec3::new(-8.5, 0.0, 0.5), Vec3::X);
         server.tick = 1000;
         let mut waded = false;
