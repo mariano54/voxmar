@@ -248,7 +248,8 @@ fn shelf_things(player: Res<LocalPlayer>, world: Res<ClientWorld>, pieces: Optio
             shelved.push(ItemModel { center, phase: 0.0, offset: Vec3::ZERO, size, shape, layers, tinted, tint, light, held: None, posed: Some(Vec3::Y * yaw) });
         }
     }
-    models.0.splice(0..0, shelved);
+    shelved.append(&mut models.0);
+    models.0 = shelved;
 }
 
 /// How far a thing on a shelf facing `facing` is turned about the vertical, in radians: a
