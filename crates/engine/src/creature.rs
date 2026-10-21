@@ -234,6 +234,75 @@ impl Warn {
     }
 }
 
+/// How a wild creature takes fire (docs/creature-ai.md, "Fire"). A player holding a fire at
+/// it (anything tagged `fire`: a torch) within `give` blocks, one it has noticed, it backs away
+/// from, facing them, until they are `give` off, its warning let lapse; unless it was
+/// provoked, or is one of the bold (`fear` is the share of its kind that give ground, each
+/// individual by its own roll; the rest stand theirs).
+/// At night, if `ward`, it keeps out of a lit fire's ward (`BlockDef::ward`,
+/// `MultiblockDef::ward`: a campfire, a lit hearth or kiln), and goes for no one inside one
+/// unprovoked. Kept animals and those on an errand (villagers, guards) pay fire no heed.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fire {
+    pub fear: f32,
+    pub give: f32,
+    #[serde(default = "yes")]
+    pub ward: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// What a held item is tagged to be a fire to a creature (`Fire`): a torch, as the
+/// `Holding("fire")` of status effects.
+pub const HELD_FIRE: &str = "fire";
+
+impl Fire {
+    /// Whether the individual of hash `seed` (`brain::Mind::seed`) is one of the share
+    /// (`fear`) of its kind that give ground before a torch; the rest stand theirs.
+    pub fn gives_ground(&self, seed: u64) -> bool {
+        unit_from(mix(seed, 0xf12e)) < self.fear
+    }
+
+    /// Afraid enough that some of its kind give ground, far enough to be backed from, near
+    /// enough that a torch is held at it, not waved from across a field.
+    pub fn check(&self) -> Result<(), String> {
+        if !(0.0..=1.0).contains(&self.fear) || !(2.0..=8.0).contains(&self.give) {
+            return Err(format!("`fire` needs fear 0 to 1 and give 2 to 8 blocks, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
+/// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
+/// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
+/// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
+/// second. Hurt, it limps: it runs `hurt` slower at the last of its health, in proportion
+/// above (0 for none, up to 0.9), so each blow a hunter lands brings the catch nearer. A
+/// kept animal or one on an errand runs as ever.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Tires {
+    pub after: f32,
+    pub pace: f32,
+    pub rest: f32,
+    #[serde(default)]
+    pub hurt: f32,
+}
+
+impl Tires {
+    /// A real sprint first, a real slowing after, and a rest long enough to be caught in
+    /// but not so long that it is caught standing.
+    pub fn check(&self) -> Result<(), String> {
+        if !(1.0..=20.0).contains(&self.after) || !(0.2..=0.9).contains(&self.pace) || !(1.0..=30.0).contains(&self.rest) || !(0.0..=0.9).contains(&self.hurt) {
+            return Err(format!("`tires` needs after 1 to 20 seconds, pace 0.2 to 0.9, rest 1 to 30 seconds and hurt 0 to 0.9, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 fn reach() -> f32 {
     1.0
 }
@@ -384,19 +453,57 @@ impl Default for Temperament {
     }
 }
 
-/// How far it notices things, in blocks.
+/// How far it notices things, in blocks, and where it looks.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Senses {
     pub sight: f32,
     pub hearing: f32,
+    /// How far either way of where it faces it sees, in degrees (a half angle): 180 sees
+    /// all round; a deer's eyes on the sides of its head see most of the way round, a
+    /// wolf's to the front. A player out of it, or behind something that hides them, it
+    /// notices only close by (`close`) or once they hurt it.
+    pub field: f32,
+    /// How near, in blocks, it notices a player wherever it looks: it hears and smells them.
+    pub close: f32,
+    /// Seconds it stands and looks at a player it has just noticed before it acts on
+    /// them (runs, chases, comes to look): a double take, the moment a player has to back
+    /// off. Not for one who hurts it.
+    pub react: f32,
+    /// Seconds it keeps a player it noticed in mind once it no longer senses them
+    /// (`brain::Mind::noticed`): turned away from one it has seen, it does not forget them.
+    pub keep: f32,
 }
 
 impl Default for Senses {
     fn default() -> Self {
-        Self { sight: 16.0, hearing: 12.0 }
+        Self { sight: 16.0, hearing: 12.0, field: 180.0, close: 3.0, react: 0.0, keep: 10.0 }
     }
 }
+
+impl Senses {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.field > 0.0 && self.field <= 180.0) {
+            return Err(format!("`senses.field` is a half angle above 0 and up to 180 degrees, not {}", self.field));
+        }
+        if !(self.close.is_finite() && (0.0..=self.sight.max(0.0)).contains(&self.close)) {
+            return Err(format!("`senses.close` is from 0 to its sight ({}), not {}", self.sight, self.close));
+        }
+        if !(self.react.is_finite() && (0.0..=MOST_REACT).contains(&self.react)) {
+            return Err(format!("`senses.react` is from 0 to {MOST_REACT} seconds, not {}", self.react));
+        }
+        if !(self.keep > 0.0 && self.keep <= MOST_KEEP) {
+            return Err(format!("`senses.keep` is above 0 and up to {MOST_KEEP} seconds, not {}", self.keep));
+        }
+        Ok(())
+    }
+}
+
+/// The longest double take a creature's data may give it (`Senses::react`).
+pub const MOST_REACT: f32 = 2.0;
+
+/// The longest a creature's data may have it keep a player in mind (`Senses::keep`).
+pub const MOST_KEEP: f32 = 60.0;
 
 /// How it moves, in blocks per second and degrees per second.
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -424,6 +531,13 @@ pub struct Movement {
 /// What a species walks up without a hop unless it says (`Movement::step`): a player's
 /// step, nine sixteenths of a block.
 pub const STEP: f32 = 0.5625;
+
+impl Movement {
+    /// How high it hops up what is in its way, if it jumps at all: the world's step rise.
+    pub fn hop(&self) -> Option<f32> {
+        (self.jump > 0.0).then_some(self.step_rise)
+    }
+}
 
 impl Default for Movement {
     fn default() -> Self {
@@ -565,6 +679,14 @@ pub struct CreatureDef {
     /// only defends itself lets them be.
     #[serde(default)]
     pub warn: Option<Warn>,
+    /// It is afraid of fire (`Fire`): it gives ground from a torch held at it, and keeps out
+    /// of a lit fire's ward at night. Unset, fire is nothing to it.
+    #[serde(default)]
+    pub fire: Option<Fire>,
+    /// It tires as it flees (`Tires`): after a sprint it runs slower for a while, so a
+    /// hunter on foot can run it down. Unset, it runs flat out as long as it flees.
+    #[serde(default)]
+    pub tires: Option<Tires>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -1044,7 +1166,17 @@ impl CreatureRegistry {
                 let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
                 warn.check(behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Hunt { .. }))).map_err(error)?;
             }
+            if let Some(fire) = def.fire {
+                if def.boss || def.supernatural {
+                    return Err(error("is a boss or supernatural, and fire keeps neither back (`fire`)".into()));
+                }
+                fire.check().map_err(error)?;
+            }
+            if let Some(tires) = def.tires {
+                tires.check().map_err(error)?;
+            }
             def.death.check().map_err(error)?;
+            def.senses.check().map_err(error)?;
             if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
                 return Err(error(format!("`flees_below` is a share of its health, 0 to 1, not {:?}", def.flees_below)));
             }
