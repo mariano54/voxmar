@@ -18336,7 +18336,9 @@ fn kiln_tidy(world: &mut World, gate: &mut Gate, now: f32) {
     let registry = &world.resource::<ClientWorld>().registry;
     let ours = [registry.id("base:clay"), registry.id("base:fired_clay")];
     let lying = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, pos)| ours.contains(&Some(stack.item)) && pos.distance(at) < 4.0).count();
-    if lying > 0 && gate.server_in_phase() <= 5.0 {
+    // A drop goes out at the server's next tick, after the air it fell from: none lying is
+    // trusted only two ticks on.
+    if (lying > 0 || gate.server_in_phase() < 0.1) && gate.server_in_phase() <= 5.0 {
         return;
     }
     if lying > 0 {
@@ -18833,6 +18835,10 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.advance(now);
             } else if select(world, "base:wheat") {
                 gate.tap(world, true, now);
+            } else if gate.server_in_phase() > DRY_WAIT {
+                let held = holding(world, "base:wheat");
+                gate.check("cooking pot", Err(format!("the wheat never came to hand in {DRY_WAIT} server seconds, so the pot was never clicked (pot standing {stood}, wheat carried and first slot {held:?})")));
+                gate.advance(now);
             }
         }
         7 => {
