@@ -125,7 +125,8 @@ blocks (it hears and smells them), when they hold its food within its hearing, o
 hurt it; a player it has noticed it keeps in mind for `keep` seconds out of sight (default 10, at most 60), so
 turning away does not drop a chase. Just noticing someone, it takes a double take of `react`
 seconds, facing them, alert, before it runs, hunts or comes to look: the moment a player has to
-back off, or to creep closer behind it. A blow skips the double take.
+back off, or to creep closer behind it. A blow skips the double take. What it then does starts
+afresh after the look, so prey that looks and then runs still raises the alarm to its kin.
 
 ## Aggression
 

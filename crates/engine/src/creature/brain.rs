@@ -301,6 +301,9 @@ pub struct Mind {
     /// out of sight (`Senses::keep`) and the seconds since it first noticed them (its double take,
     /// `Senses::react`).
     pub noticed: Vec<(u32, f32, f32)>,
+    /// Whether its last decision was a double take: what it chose then is still fresh when
+    /// it first acts (a flight still raises the alarm to its kin).
+    pub looking: bool,
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
     /// near, how far it likes to stray).
     pub seed: u64,
@@ -327,6 +330,7 @@ impl Mind {
             startled_at: None,
             held_off: None,
             noticed: Vec::new(),
+            looking: false,
         }
     }
 
@@ -592,7 +596,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         }
     };
     let (index, _, want) = chosen;
-    let fresh = mind.doing != Some(index);
+    let fresh = mind.doing != Some(index) || mind.looking;
     if fresh {
         mind.doing = Some(index);
         mind.since = 0.0;
@@ -609,6 +613,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     if !warns {
         lapse_warning(mind, dt);
     }
+    mind.looking = taking.is_some();
     if let Some(p) = taking {
         return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
     }
@@ -746,6 +751,21 @@ pub(super) mod tests {
         let decision = think(&wolf, &mut mind, &situation(&close));
         assert_eq!((decision.pose, doing(&wolf, &mind)), (Pose::Alert, "hunt"), "a look at the one beside it");
         assert!(mind.warning.is_some_and(|w| (w.lapse - 0.2).abs() < 1e-4), "the look held the warning: {:?}", mind.warning);
+    }
+
+    /// Prey with a double take looks, then flees, and its first decision to flee still
+    /// raises the alarm to its kin, as one with no double take does at once.
+    #[test]
+    fn prey_that_looks_first_still_raises_the_alarm_when_it_runs() {
+        let deer = species(&format!(
+            "(creatures: [(name: \"deer\", health: 4, {BODY}, senses: (react: 0.4), temperament: (fear: 0.9), behaviours: [(do: Wander(radius: 6.0)), (do: Flee(radius: 10.0))])])"
+        ));
+        let near = [player(Vec3::new(5.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        let mut decisions = (0..6).map(|_| think(&deer, &mut mind, &situation(&near)));
+        assert!(decisions.next().is_some_and(|d| d.goal.is_none() && d.face == Some(near[0].position)), "no look first");
+        let first_flight = decisions.find(|d| d.goal.is_some()).expect("it never fled");
+        assert!(first_flight.alarm, "its first flight raised no alarm: {first_flight:?}");
     }
 
     #[test]
