@@ -875,9 +875,14 @@ pub(super) mod tests {
         let pack = species(&format!(
             "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (near: 3.0, seconds: 1.0, stance: (nod: 0.4)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 8.0)), (do: Hunt(radius: 16.0))])])"
         ));
+        let far = [player(Vec3::new(12.0, 0.0, 0.0))];
         let mut mind = Mind::new(&pack.def.temperament, 2);
-        let _ = think(&pack, &mut mind, &situation(&[player(Vec3::new(12.0, 0.0, 0.0))]));
-        assert_eq!(doing(&pack, &mind), "warn", "past its near hunt, within its far one");
+        for _ in 0..5 {
+            let _ = think(&pack, &mut mind, &situation(&far));
+            assert_eq!(doing(&pack, &mind), "warn", "past its near hunt, within its far one");
+        }
+        let decision = think(&pack, &mut mind, &situation(&far));
+        assert_eq!((mind.attacker(), doing(&pack, &mind), decision.goal), (Some(1), "hunt", Some(far[0].position)), "it stayed: the far hunt takes them");
 
         // Backed off out of its reach, they are let be; come back, the warning starts again.
         let mut mind = Mind::new(&wolf.def.temperament, 2);

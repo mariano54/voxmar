@@ -29,9 +29,12 @@ pub(crate) fn core_processes() -> Vec<Box<dyn Process>> {
     vec![
         Box::new(Falling),
         Box::new(Survival),
+        Box::new(crate::tool_wear::Burning::default()),
+        Box::new(crate::flames::Flames),
         Box::new(Weather::default()),
         Box::new(crate::wear::Footsteps::default()),
         Box::new(crate::farm::Growth),
+        Box::new(crate::smoulder::Smoulders),
         Box::new(crate::machines::Machines),
         Box::new(crate::apiary::Bees::default()),
         Box::new(crate::stations::Stations),
@@ -190,7 +193,14 @@ impl Survival {
                 && server.block(seat).is_some_and(|b| server.content.blocks.def(b).has_tag(voxmar_engine::action::SEAT_TAG))
         });
 
+        let anchor = server.at_home(id);
         let player = server.players.get_mut(&id).unwrap();
+        // What their home meets now, and where it stands, to tell on their return what
+        // lights burnt out while they were away cost; not before that is told
+        // (`flames::check_home_return`).
+        if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked) {
+            (player.home_steps, player.home_anchor) = (effects.home_steps(home), anchor);
+        }
         let creative = player.allow_flight;
         let before = (player.vitals.clone(), player.health);
         // A minute of other things brings back what eating the same food over and over
@@ -211,7 +221,7 @@ impl Survival {
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
         let first = effects.active(&situation, &player.timed_effects);
-        situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
+        situation.felt = effects.modifiers(&first).felt(cold_air + heat, server.survival.comfort_top);
         let active = effects.active(&situation, &player.timed_effects);
         let modifiers = effects.modifiers(&active);
         // Quests ask whether an effect was ever felt (`Felt`), not how often.

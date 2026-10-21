@@ -53,7 +53,7 @@
             capstone: true,
             why: "A stone tool works twice as fast as a flint one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one stone head over two sticks), hoe and knife.",
             tasks: [[Have("stone_pickaxe", 1), Have("stone_axe", 1), Have("stone_shovel", 1), Have("stone_hoe", 1), Have("stone_knife", 1)]],
-            after: ["a_sharp_edge", "a_chopping_block", "break_ground", "twine_and_thong", "timber"],
+            after: ["a_sharp_edge", "a_chopping_block", "break_ground", "twine_and_thong", "timber", "stone_in_hand"],
             rewards: [Xp("engineering", 30.0), Item("torch", 8)],
         ),
         // Side quests about camp: each teaches a first tool or a way to shape what you build with.
@@ -69,7 +69,7 @@
             name: "a_coin_purse", age: "nomad", branch: "start", title: "A Coin Purse",
             why: "Coins fill a pack fast. A hide and two twine (raw hide cures on a drying rack) make a coin purse that holds a thousand coins in one slot; right-click it to tip them out again. Make one.",
             tasks: [[Craft("coin_purse", 1)]],
-            after: ["twine_and_thong"],
+            after: ["twine_and_thong", "hung_to_dry"],
             side: true,
             rewards: [Xp("crafting", 20.0), Item("bread", 1)],
         ),
@@ -124,7 +124,7 @@
         (
             name: "stone_in_hand", age: "nomad", branch: "main", title: "Stone in Hand",
             why: "Soft stone will not take an edge. Find hard rock (granite, diorite, andesite or basalt near the surface, deepslate deep down) and break it with your flint pickaxe. Sand beside cobblestone over two sticks makes a grindstone in the 2×2 grid: set it down, and beside it one hard rock in the grid becomes a stone head. At the crafting table, three heads over two sticks make a stone pickaxe, and three heads with two sticks a stone axe (the recipe viewer shows the shape). Stone tools mine twice as fast and reach coal for torches.",
-            tasks: [[Craft("stone_pickaxe", 1), Craft("stone_axe", 1)]],
+            tasks: [[Craft("grindstone", 1), Craft("stone_pickaxe", 1), Craft("stone_axe", 1)]],
             after: ["crafting_table"],
             rewards: [Xp("engineering", 51.0), Xp("mining", 31.0)],
         ),
@@ -192,7 +192,7 @@
             name: "pockets", age: "nomad", branch: "home", title: "Pockets",
             why: "Herbs and seeds eat slots; a pouch holds a thousand of a kind in one. A hide and a twine side by side make a herb pouch, a twine over a hide a seed pouch (Crafting 3).",
             tasks: [[Craft("herb_pouch", 1)], [Craft("seed_pouch", 1)]],
-            after: ["twine_and_thong"],
+            after: ["twine_and_thong", "hung_to_dry"],
             side: true,
             rewards: [Xp("crafting", 40.0)],
         ),
@@ -272,9 +272,9 @@
         ),
         (
             name: "hung_to_dry", age: "nomad", branch: "cooking", title: "Hung to Dry",
-            why: "Meat keeps if you dry it. Lash four sticks and three twine into a drying rack (Crafting 3) and stand it under open sky. Right-click it with raw meat or fish in hand to hang up to eight; go gathering, and ten minutes later it is jerky, which heals 2 and, unlike cooked food, stacks in your pack. A fire within three blocks dries it twice as fast; a roof over it stops it. Make a rack and bring home four jerky.",
+            why: "Meat keeps if you dry it. Lash four sticks and three twine into a drying rack (Crafting 1) and stand it under open sky. Right-click it with raw meat or fish in hand to hang up to eight; go gathering, and ten minutes later it is jerky, which heals 2 and, unlike cooked food, stacks in your pack. A fire within three blocks dries it twice as fast; a roof over it stops it. Make a rack and bring home four jerky.",
             tasks: [[Craft("drying_rack", 1), Have("jerky", 4)]],
-            after: ["meat_and_fire"],
+            after: ["meat_and_fire", "crafting_table"],
             rewards: [Xp("cooking", 80.0), Xp("crafting", 20.0)],
         ),
         (
@@ -347,7 +347,7 @@
             name: "a_fish_supper", age: "nomad", branch: "hunter", title: "A Fish Supper",
             why: "A fish tastes far better cooked. Roast three at a campfire: hold the raw fish and right-click the fire. Catch the three yourself.",
             tasks: [[Catch("tag:fish", 3), Cook("tag:fish", 3)]],
-            after: ["bare_hands"],
+            after: ["bare_hands", "first_night"],
             rewards: [Xp("cooking", 60.0), Xp("fishing", 40.0)],
         ),
         (
@@ -384,14 +384,14 @@
             name: "a_stones_throw", age: "nomad", branch: "combat", title: "A Stone's Throw",
             why: "A sling hits from twelve blocks away, where a blade must be close: birds, runners, or something you would rather not stand next to. Lay a hide between two twine in a row at the crafting table. Hold it and click a creature in clear sight: each shot throws one cobblestone from your pack, hit or miss, so carry a stack. It hits softer than a stone sword (2 at most), and every hit trains Ranged. A sling stone that hits is left lying where the creature stood about one time in four; one that misses, or hits for nothing, is gone. Walk over and pick up what lies there before you throw again, and a stack of cobblestone lasts. Bring down five creatures and reach Ranged 4.",
             tasks: [[Craft("sling", 1), Kill("any", 5), Level("ranged", 4)]],
-            after: ["twine_and_thong", "something_hostile"],
+            after: ["twine_and_thong", "something_hostile", "hung_to_dry"],
             rewards: [Xp("ranged", 100.0), Xp("crafting", 30.0)],
         ),
         (
             name: "hide_wraps", age: "nomad", branch: "combat", title: "Hide Wraps",
             why: "Armour turns blows aside and trains Defence. Hide gloves (two hide) and boots (three hide) are the cheapest pieces. Make both at the crafting table.",
             tasks: [[Craft("hide_gloves", 1), Craft("hide_boots", 1)]],
-            after: ["hide_and_seek"],
+            after: ["hide_and_seek", "hung_to_dry"],
             rewards: [Xp("crafting", 50.0), Xp("defence", 40.0)],
         ),
         (
