@@ -303,7 +303,8 @@ impl Flush {
 
 /// How a creature scavenges (docs/creature-ai.md, "Scavenging"): it slinks in to food
 /// left lying on the ground within `reach` blocks, by item name or `tag:` (`takes`), and
-/// makes off home with one piece, which it eats there; killed first, it drops it. It
+/// makes off home with one piece, which it eats there; killed first, it drops it. Stuck
+/// short of food (a fence, a wall between), it leaves it be for `give_up` seconds. It
 /// comes only while no player is within `shy` blocks of it or the food, so a hunter who
 /// leaves the kill lying, turns their back and walks off may lose a share of it. Wild
 /// only: a kept one or one on an errand lets food lie.
@@ -313,13 +314,21 @@ pub struct Scavenge {
     pub takes: Vec<String>,
     pub reach: f32,
     pub shy: f32,
+    /// Seconds it leaves be food it got stuck short of (a fence, a wall between), as a
+    /// chase with no way is given up.
+    #[serde(default = "scrap_give_up")]
+    pub give_up: f32,
+}
+
+fn scrap_give_up() -> f32 {
+    30.0
 }
 
 impl Scavenge {
     /// Near enough to be watched coming, and shy of a player close enough to stop it.
     pub fn check(&self) -> Result<(), String> {
-        if self.takes.is_empty() || !(4.0..=24.0).contains(&self.reach) || !(2.0..=12.0).contains(&self.shy) || self.shy >= self.reach {
-            return Err(format!("`scavenge` needs something it takes, reach 4 to 24 blocks and shy 2 to 12 blocks, less than its reach, not {self:?}"));
+        if self.takes.is_empty() || !(4.0..=24.0).contains(&self.reach) || !(2.0..=12.0).contains(&self.shy) || self.shy >= self.reach || !(5.0..=120.0).contains(&self.give_up) {
+            return Err(format!("`scavenge` needs something it takes, reach 4 to 24 blocks, shy 2 to 12 blocks, less than its reach, and give_up 5 to 120 seconds, not {self:?}"));
         }
         Ok(())
     }

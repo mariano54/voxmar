@@ -1365,7 +1365,7 @@ pub(super) mod tests {
             CreatureRegistry::new(defs, Default::default(), &meat_blocks(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
         };
         assert_eq!(build("scavenge: (takes: [\"tag:meat\"], reach: 16.0, shy: 6.0)"), Ok(()));
-        for bad in ["(takes: [], reach: 16.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 30.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 16.0, shy: 1.0)", "(takes: [\"tag:meat\"], reach: 6.0, shy: 8.0)"] {
+        for bad in ["(takes: [], reach: 16.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 30.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 16.0, shy: 1.0)", "(takes: [\"tag:meat\"], reach: 6.0, shy: 8.0)", "(takes: [\"tag:meat\"], reach: 16.0, shy: 6.0, give_up: 2.0)", "(takes: [\"tag:meat\"], reach: 16.0, shy: 6.0, give_up: 600.0)"] {
             assert!(build(&format!("scavenge: {bad}")).is_err_and(|e| e.contains("`scavenge` needs")), "{bad}");
         }
         assert!(build("scavenge: (takes: [\"tag:nothing\"], reach: 16.0, shy: 6.0)").is_err_and(|e| e.contains("nothing it `takes`")));

@@ -107,9 +107,6 @@ const LURED_WITHIN: f32 = 3.0;
 /// Blocks from a scavenger that it snatches food lying on the ground from (its brain asks
 /// within `modules::SNATCH`, 1.3, of where the food lay).
 const SNATCH_REACH: f32 = 1.6;
-/// Seconds a scavenger leaves be food it got stuck short of (`Live::no_scrap`): a fox at a
-/// pen's fence with the meat inside goes about its day.
-const SCRAP_GIVE_UP: u64 = 30;
 
 /// A live creature.
 #[derive(Clone, Debug)]
@@ -215,7 +212,7 @@ pub struct Live {
     /// are never saved, so it goes with one that leaves the loaded world.
     pub carrying: Option<ItemStack>,
     /// Food on the ground it found no way to (`creature::Scavenge`): where it lay, and the
-    /// tick until which it leaves food there be (`SCRAP_GIVE_UP`), as a chase it found no
+    /// tick until which it leaves food there be (`Scavenge::give_up`), as a chase it found no
     /// way to win is given up (`brain::Memory::NoWay`). Not saved.
     pub no_scrap: Option<(Vec3, u64)>,
     /// The last view each player was sent, to send only changes.
@@ -1306,9 +1303,9 @@ impl Server {
                 // there be for a while.
                 if creature.carrying.is_none()
                     && doing_any(species, &creature.mind, &["scavenge"])
-                    && let Some(goal) = decision.goal
+                    && let (Some(goal), Some(scavenge)) = (decision.goal, &species.def.scavenge)
                 {
-                    creature.no_scrap = Some((goal, self.tick + SCRAP_GIVE_UP * TICKS_PER_SECOND as u64));
+                    creature.no_scrap = Some((goal, self.tick + (scavenge.give_up * TICKS_PER_SECOND as f32) as u64));
                 }
                 creature.decision.goal = None;
                 creature.mind.goal = None;
@@ -6415,7 +6412,8 @@ mod fight_tests {
                 server.tick_creatures();
                 tried |= scavenging(&server);
                 // Once it has given the meat up (and thought again since), it leaves it be.
-                let since = |until: u64| until - SCRAP_GIVE_UP * TICKS_PER_SECOND as u64 + TICKS_PER_SECOND as u64;
+                let give_up = server.content.creatures.get(server.creatures.live[&id].species).def.scavenge.as_ref().expect("a fox scavenges").give_up;
+                let since = |until: u64| until - (give_up * TICKS_PER_SECOND as f32) as u64 + TICKS_PER_SECOND as u64;
                 let given_up = server.creatures.live[&id].no_scrap.is_some_and(|(_, until)| (since(until)..until).contains(&server.tick));
                 if given_up && scavenging(&server) {
                     late += 1;
