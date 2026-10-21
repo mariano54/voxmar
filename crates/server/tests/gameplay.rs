@@ -8344,15 +8344,15 @@ impl Pacing {
         out
     }
 
-    /// The longest wait with nothing new, from the start to `to`: its seconds, the second it
-    /// began, and the new thing that ended it (none, if the run did).
-    fn longest_gap(&self, to: f32) -> (f32, f32, Option<&str>) {
+    /// The longest wait with nothing new that began at `since` or later, up to `to`: its
+    /// seconds, the second it began, and the new thing that ended it (none, if the run did).
+    fn longest_gap(&self, since: f32, to: f32) -> (f32, f32, Option<&str>) {
         let mut times: Vec<(f32, Option<&str>)> = self.new.iter().map(|(at, _, name)| (*at, Some(name.as_str()))).collect();
         times.push((to, None));
         let mut from = 0.0;
         let mut longest = (0.0, 0.0, None);
         for (at, name) in times {
-            if at - from > longest.0 {
+            if from >= since && at - from > longest.0 {
                 longest = (at - from, from, name);
             }
             from = from.max(at);
@@ -9032,10 +9032,10 @@ impl Fresh {
         for (i, &ground) in grounds.iter().enumerate() {
             let last = i + 1 == grounds.len();
             let cell = ground + IVec3::Y;
-            // Open as the place action finds it: air, or a plant or snow a block replaces
+            // Open as the place action finds it: air, or a plant a block replaces
             // (not water), on solid ground.
             let open = |c: &Client| {
-                c.world.block(cell).is_some_and(|b| b == BlockId::AIR || (c.content.blocks.info(b).replaceable && c.content.blocks.info(b).fluid.is_none()))
+                c.world.block(cell).is_some_and(|b| c.content.blocks.info(b).gives_room())
                     && c.world.block(ground).is_some_and(|b| c.content.blocks.def(b).solid)
             };
             if !last && (!open(&self.c) || Self::creature_on(&self.c, cell)) {
@@ -9933,6 +9933,18 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // rest shaped between firings (Crafting 5): seven plain, as the book counts them (A Kiln
     // Load's four were given, not shaped), then twelve tempered, two from four fired clay
     // and a straw at the table. What is left when it is spent waits for the charcoal.
+    // Earthenware, open since The Potter: two bowls and a jar of fired clay in the grid
+    // (Crafting 2 and 3), at the table: between loads the player may be off digging clay.
+    let table = site.table;
+    let bowls = |f: &mut Fresh| {
+        f.at_table(table);
+        f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
+    };
+    let jar = |f: &mut Fresh| {
+        f.at_table(table);
+        f.craft(&[(1, fired, 1), (3, fired, 1), (4, fired, 1)], "base:earthen_jar", 1);
+        f.wait(5.0, "the server counting the crockery", |c| quest_status(c, "earthenware").0);
+    };
     let brick_work = |f: &mut Fresh| {
         // Counted in the pack, where the bricks wait for the ring and the crucible, less A
         // Kiln Load's four given: the server counts the crafts toward Brick by Brick once a
@@ -9941,6 +9953,15 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         if !quest_status(&f.c, "a_kiln_load").0 {
             let more = f.have(fired) + 12;
             f.fire_clay(&site, more);
+            // Between loads, as A Kiln Load says: Earthenware's crockery from the fired clay,
+            // the bowls after one load and the jar after the next.
+            if !quest_status(&f.c, "earthenware").0 && f.have(fired) >= 3 {
+                if f.have("base:earthen_bowl") == 0 {
+                    bowls(f);
+                } else if f.have("base:earthen_jar") == 0 {
+                    jar(f);
+                }
+            }
             if quest_status(&f.c, "a_kiln_load").0 {
                 f.mark("a_kiln_load");
             }
@@ -9952,15 +9973,16 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
             f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
             f.mark("first_bricks");
         } else if !quest_status(&f.c, "earthenware").0 {
-            // Earthenware, open since A Kiln Load: two bowls and a jar of fired clay in the
-            // grid (Crafting 2 and 3), fired for as the bricks are.
+            // Earthenware, if no load left fired clay to spare for it: fired for as the
+            // bricks are.
             if f.have(fired) < 6 {
                 let more = f.have(fired) + 12;
                 f.fire_clay(&site, more);
             }
-            f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
-            f.craft(&[(1, fired, 1), (3, fired, 1), (4, fired, 1)], "base:earthen_jar", 1);
-            f.wait(5.0, "the server counting the crockery", |c| quest_status(c, "earthenware").0);
+            if f.have("base:earthen_bowl") == 0 {
+                bowls(f);
+            }
+            jar(f);
         } else if !quest_status(&f.c, "a_table_for_two").0 {
             // A Table for Two, open since the Farm Age, made between firings: two oak stools
             // (Construction 1) and a table (Construction 3) at the crafting table, set by the
@@ -10185,6 +10207,12 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     eprintln!("{}", timeline(&f));
     eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
     check_pacing(&mut f);
+    // From the lit hearth on, the Farm line never goes longer with nothing new than one
+    // action may go on: the kiln work between loads is work a player has not done before.
+    let (hearth, end) = (f.marks.iter().find(|m| m.name == "hearth_lit").expect("the hearth lit").at, f.secs());
+    let pacing = f.pacing.borrow();
+    let (gap, from, ended) = pacing.longest_gap(hearth, end);
+    assert!(gap <= PACING_WAIT, "{gap:.1} s with nothing new from {from:.1} s on the Farm line (the hearth lit at {hearth:.1} s), ended by {}", ended.unwrap_or("the end of the run"));
 }
 
 /// Something new comes every three minutes of the line, several things, and no one action
@@ -10215,6 +10243,10 @@ const PACING_NEW: usize = 5;
 /// clay at the pit kiln, 29 to 40 s in 32 runs, Oct 20).
 const PACING_STRETCH: f32 = 60.0;
 
+/// The longest the Farm line, from the lit hearth, may go with nothing new, in server
+/// seconds: no longer than one action may go on (`PACING_STRETCH`).
+const PACING_WAIT: f32 = PACING_STRETCH;
+
 /// The pacing check's report: what was new in each window of the run, by kind, and the
 /// longest stretch of one action over and over.
 fn pacing_report(pacing: &Pacing, end: f32) -> String {
@@ -10235,7 +10267,7 @@ fn pacing_report(pacing: &Pacing, end: f32) -> String {
             all.join("; ")
         );
     }
-    let (gap, from, ended) = pacing.longest_gap(end);
+    let (gap, from, ended) = pacing.longest_gap(0.0, end);
     out += &format!("  longest wait with nothing new: {gap:.1} s from {from:.1} s, ended by {}\n", ended.unwrap_or("the end of the run"));
     let (what, secs, times) = &pacing.longest;
     out += &format!("  longest single-action stretch: {what}, {times} times over {secs:.1} s\n");

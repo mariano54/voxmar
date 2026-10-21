@@ -295,7 +295,7 @@ Timber, First Night) and the Crafting Table, and every other path starts from a 
 main line reaches: the crafting table, the stone tools, the first night or the bed. Each path runs as a chain:
 mining runs A Pile of Stone and Dig In, and Black Flecks (a coal sample lifted with flint, or one coal ore, from the Crafting Table), Coal and Cinders (twelve coal, after it and Stone in Hand; Torchlight waits on it), First Ore, Stockpile; fighting runs
 Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw; the camp runs Make
-Camp, Company at Camp, Pantry Shelves, From the Shelves, with A Lit Corner and A Bench to
+Camp, By Rushlight, Company at Camp, Pantry Shelves, From the Shelves, Put It Away, with A Lit Corner and A Bench to
 Work At beside it; grain runs A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore.
 
 Siblings that are one job are now one quest in parts. A task was already a list of parts
@@ -354,12 +354,14 @@ a snare set over itself counts once; broken, built over or washed away, it comes
 straight away if its owner is playing, else as they join, when their `placed` tallies are
 counted again from the world's cells; a quest finished drops the cells no open quest still
 counts),
-`Stocked(item, store, n)` (that item put in a store of that block and left there:
-`stocked:STORE:ITEM`, in `push_store`, net of what is taken back out), `CraftNear(item,
+`Stocked(item, store, n)` (that item put in a store of that block, or of any store block
+with a `tag:` store, and left there: `stocked:STORE:ITEM`, in `push_store` and `put_away`,
+net of what is taken back out), `PutAway(item, n)` (put away into a home's stores with
+the Put away key: `put_away:ITEM`, in `put_away` only; Put It Away asks it), `CraftNear(item,
 near, n)` (made by a recipe with `near`, by that tag: `crafted_near:TAG`, beside `crafted`)
 and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever empties
 the snare gets the credit and the catch, as with a shared lit fire, until traps have
-owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` tag no
+owners). Loading refuses a `Stocked` store that is not a store (or a tag no store has), a `CraftNear` tag no
 recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
 full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 68 quests, Farm 99, each counting its rite.
 
@@ -639,7 +641,7 @@ language keys, are unchanged.
 |---|---|---|
 | First Steps | Timber, Crafting Table, An Axe to It, A Chopping Block, A Sharp Edge, Twine and Thong | A Full Stone Kit |
 | The Hearth | Look It Up, First Night, Stone in Hand, A Bed of Your Own, Torchlight | Homestead Hearth (then the rite, The Farm Age) |
-| Home | Make Camp, A Lit Corner, A Bench to Work At, Pockets, Company at Camp, Pantry Shelves | From the Shelves |
+| Home | Make Camp, By Rushlight, A Lit Corner, A Bench to Work At, Pockets, Company at Camp, Pantry Shelves, Put It Away | From the Shelves |
 | Food | Meat on the Fire, A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore, Break Ground, Tools for Animals, Hung to Dry, Trail Rations | A Varied Table |
 | Hunting and Fishing | A Tempting Bite, A Friend in the Wild, Small Game, Hide and Seek, Set a Snare, Rod and Line, First Catch, A Fish Supper | Old Tusk |
 | Combat | Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw, Hide Wraps, Raise Your Guard | Hard to Put Down |
