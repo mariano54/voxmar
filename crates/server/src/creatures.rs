@@ -1217,7 +1217,9 @@ impl Server {
                         to.normalize_or_zero()
                     }
                 });
-                let (heading, side) = motion::steer(&body, &Ground::climbing(self, climbs), movement, water, wish, creature.detour, drive.speed, dt);
+                // On its way, it edges on holding its facing where its turned head would meet
+                // something (`open_way_edging`): into a gap beside a fence's corner.
+                let (heading, side) = motion::steer_edging(&body, &ground, movement, water, wish, creature.detour, drive.speed, dt, !cells.is_empty());
                 (way, way_from) = (cells, from);
                 (Drive { wish: heading, ..drive }, side)
             }

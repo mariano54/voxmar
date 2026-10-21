@@ -309,6 +309,16 @@ pub fn chase_with_hop(movement: &Movement, way: f32, speed: f32, dt: f32) -> f32
 /// goes at: a step its head meets is up only for a hop that carries it there at that pace;
 /// `dt` is how long a `step` is, which the hop is judged by.
 pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, heading: Vec3, pace: f32, dt: f32) -> bool {
+    open_way_edging(body, world, movement, water, heading, pace, dt, false)
+}
+
+/// As `open_way`; `edging`, its head may also be clear there still facing the way it faces,
+/// going on that way: `step` holds its facing where its turned head would meet something.
+/// So a creature following its way (`path::find`) edges into a gap with a fence across the
+/// corner before it, its head held off the fence, where turned toward the gap its head
+/// would meet it. Only on a way: going straight at a wall, it does not edge along it.
+#[allow(clippy::too_many_arguments)]
+pub fn open_way_edging(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, heading: Vec3, pace: f32, dt: f32, edging: bool) -> bool {
     let probe = body.size.0 * 0.5 + 0.3;
     let boxes = |p: IVec3| world.boxes(p);
     let goes = |lift: f32| {
@@ -338,10 +348,9 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // where it gets most of the way at its level but its head meets a step (`head_step`),
     // not round it. A high head at a wall two high, or under a lintel, finds no way there.
     let ahead = |to: Vec3| Body { position: to, yaw: yaw_of(heading), ..*body };
-    // Its head clear there facing the way it goes, or, going on the way it faces, still
-    // facing that way: `step` holds its facing where its turned head would meet something
-    // (edging along a wall, or into a gap with a fence across the corner before it).
-    let onward = heading.dot(body.forward()) >= -1e-4;
+    // Its head clear there facing the way it goes, or, edging, going on the way it faces
+    // and still facing that way.
+    let onward = edging && heading.dot(body.forward()) >= -1e-4;
     let clear = |to: Vec3| !ahead(to).head_blocked(world) || onward && !Body { position: to, ..*body }.head_blocked(world);
     let level = goes(0.0);
     let up = movement.jump > 0.0 && level.is_none_or(|to| ahead(to).head_step(world, heading, pace, hop_speed(movement, dt), movement.step));
@@ -495,6 +504,13 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
 /// how anything walking gets round a wall, a corner or a tree rather than pressing into it.
 /// `pace` is the speed it goes at (`open_way`).
 pub fn steer(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, wish: Vec3, side: f32, pace: f32, dt: f32) -> (Vec3, f32) {
+    steer_edging(body, world, movement, water, wish, side, pace, dt, false)
+}
+
+/// As `steer`, judging each way it might take as `open_way_edging` does.
+#[allow(clippy::too_many_arguments)]
+pub fn steer_edging(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, wish: Vec3, side: f32, pace: f32, dt: f32, edging: bool) -> (Vec3, f32) {
+    let open_way = |body: &Body, world, movement, water, heading, pace, dt| open_way_edging(body, world, movement, water, heading, pace, dt, edging);
     if wish == Vec3::ZERO || open_way(body, world, movement, water, wish, pace, dt) {
         return (wish, 0.0);
     }
