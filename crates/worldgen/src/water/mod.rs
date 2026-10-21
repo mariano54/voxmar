@@ -768,10 +768,15 @@ impl Rivers {
     /// The geology of one column, with its rivers and lakes; with `crags`, a crag's height
     /// is the top of its density rather than its preliminary surface.
     pub fn sample(&self, land: Stages, x: i32, z: i32, crags: bool) -> GeoSample {
+        self.sample_with(land, x, z, crags, &mut Corners::default())
+    }
+
+    /// [`Rivers::sample`], reading the relief at lattice corners other samples nearby
+    /// already worked out from `corners` (the same values either way).
+    pub(crate) fn sample_with(&self, land: Stages, x: i32, z: i32, crags: bool, corners: &mut Corners) -> GeoSample {
         let tiers = self.tiers(land, IVec2::new(x - 1, z - 1), IVec2::new(x + 1, z + 1));
-        let mut corners = Corners::default();
-        let ground = land.geology.lands_with(&[(x, z)], &mut corners)[0];
-        let mut sample = [self.sealed(land, &tiers, x, z, ground, &mut corners)];
+        let ground = land.geology.lands_with(&[(x, z)], corners)[0];
+        let mut sample = [self.sealed(land, &tiers, x, z, ground, corners)];
         if crags {
             crag_tops(land.geology, &mut sample, |_| (x, z));
         }

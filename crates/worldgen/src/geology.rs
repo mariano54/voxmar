@@ -655,13 +655,14 @@ impl Geology {
 
 /// Geology already sampled over a square of positions, which falls back to sampling
 /// anywhere else (and keeps those samples, since decorations reaching out of the column
-/// ask for the same few positions over and over).
+/// ask for the same few positions over and over, and the relief at the lattice corners
+/// around them, which positions a few blocks apart share).
 pub struct GeoGrid<'a> {
     world: &'a Overworld,
     min: (i32, i32),
     size: i32,
     samples: Vec<GeoSample>,
-    beyond: RefCell<FxHashMap<(i32, i32), GeoSample>>,
+    beyond: RefCell<(FxHashMap<(i32, i32), GeoSample>, Corners)>,
 }
 
 impl<'a> GeoGrid<'a> {
@@ -680,7 +681,8 @@ impl<'a> GeoGrid<'a> {
         if (0..self.size).contains(&i) && (0..self.size).contains(&j) {
             self.samples[(j * self.size + i) as usize]
         } else {
-            *self.beyond.borrow_mut().entry((x, z)).or_insert_with(|| self.world.geo(x, z))
+            let (beyond, corners) = &mut *self.beyond.borrow_mut();
+            *beyond.entry((x, z)).or_insert_with(|| self.world.geo_with(x, z, corners))
         }
     }
 
