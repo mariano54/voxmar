@@ -49,7 +49,7 @@
             (name: "{name}_crate_stack", render: Model, shape: "crate_stack", sound: Wood, textures: All("furniture_crate"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
             // A window seat: a panelled box under a cushion, built in under a window to sit
             // at (`seat`) with things kept in it (`storage`).
-            (name: "{name}_window_seat", render: Model, shape: "window_seat", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "storage", "decor", "wood"]),
+            (name: "{name}_window_seat", render: Model, shape: "window_seat", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "cushioned", "storage", "decor", "wood"]),
             // A deep sill: a board on two brackets along the wall at the top of its cell, set
             // under a window inside, for a pot or a candle.
             (name: "{name}_sill", render: Model, shape: "deep_sill", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "sill", "decor", "wood"]),
@@ -71,16 +71,26 @@
             // A rushlight holder: a peeled rush dipped in fat, held burning in a clip on a
             // little wooden stand, the poor home's candle (a `light` the home counts). Its rush
             // burns a game day, faster than a candle (flame.rs), down to the bare holder; a
-            // fresh rush (`relight_with:reed`) in the clip lights it again.
+            // fresh reed of any kind (`relight_with:reed`: rush, cattail, papyrus or sugar cane)
+            // in the clip lights it again.
             (name: "{name}_rushlight", render: Model, shape: "rushlight", solid: false, light: 7, sound: Wood, textures: All("furniture_grain"), hardness: 0.3, color: (160, 120, 70), tags: ["furniture", "light", "rushlight", "decor", "wood", "burns_days:1", "burns_out_to:{name}_rushlight_spent", "tended"],
                 particles: [(style: Flame, rate: 6.0, at: (0.7, 0.84, 0.5), spread: 0.01, size: 0.6, height: 0.15, color: Some((240, 150, 40)))]),
             (name: "{name}_rushlight_spent", render: Model, shape: "rushlight_spent", solid: false, sound: Wood, textures: All("furniture_grain"), hardness: 0.3, color: (160, 120, 70), tags: ["furniture", "wood", "relights_to:{name}_rushlight", "relight_with:reed"]),
+            // The kitchen wall: a dresser, a cupboard under a plate rack with its plates
+            // stood on show (`storage`, and `crockery` a cosy home counts); a pot crane, a
+            // post on the wall with an arm out of it and a pot hung from its hook.
+            (name: "{name}_dresser", render: Model, shape: "dresser", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "dresser", "storage", "crockery", "decor", "wood"]),
+            (name: "{name}_pot_crane", render: Model, shape: "pot_crane", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "pot_crane", "decor", "wood"]),
+            // By the fire: a rocking chair, a chair on two curved rockers with arms (a `seat`);
+            // a cradle, a crib of boards on rockers with a rush bed and a pillow in it.
+            (name: "{name}_rocking_chair", render: Model, shape: "rocking_chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "rocking_chair", "decor", "wood"]),
+            (name: "{name}_cradle", render: Model, shape: "cradle", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "cradle", "decor", "wood"]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
         // of cloth_grey and its kin, multiplied by the dye. Broken, a placed piece gives itself back.
         "dyed": [
-            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}", "shelter:draughty"]),
+            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "bolt", "decor", "building", "colour:{name}", "shelter:draughty"]),
             (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "decor", "colour:{name}"]),
             (name: "{name}_banner", render: Model, shape: "banner", facing: true, solid: false, sound: Moss, textures: All("banner_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "banner", "decor", "colour:{name}"]),
             (name: "{name}_wall_hanging", render: Model, shape: "wall_hanging", facing: true, solid: false, sound: Moss, textures: All("hanging_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "drape", "decor", "colour:{name}"]),
@@ -155,10 +165,12 @@
             name: "wooden_door_open_top", render: Model, shape: "door_open", facing: true, solid: false, support: Below, sound: Wood, textures: All("oak_planks"),
             swaps: "wooden_door_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building"],
         ),
-        // A bale of straw, tied in two places.
+        // A bale of straw, tied in two places: nine straw bound (recipes.ron). One a player
+        // set down comes apart into the nine when broken (no recipe unbinds it, so straw
+        // stays a thing only a harvest gives); a village's gives nothing (`furnishing`).
         (
             name: "hay_bale", sound: Grass, textures: Column(end: "hay_bale_top", side: "hay_bale_side"),
-            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["creative_only", "hay", "farm", "decor", "yard", "building", "shelter:draughty"],
+            drops: "straw", drop_count: 9, hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "yard", "building", "shelter:draughty", "furnishing"],
         ),
         // A barrel of staves held by two iron hoops.
         (
@@ -191,6 +203,11 @@
             drops: "core:air", hardness: 0.0, color: (110, 140, 70), tags: ["hanging", "drying", "decor"],
         ),
 
+        // A rush mat: rushes woven flat, the Nomad's rug before any loom or dye (`rug`).
+        (
+            name: "rush_mat", render: Model, shape: "rug", solid: false, sound: Grass, textures: All("basket_grey"), tint: Fixed(200, 182, 118),
+            hardness: 0.2, color: (200, 182, 118), tags: ["rug", "decor", "furnishing"],
+        ),
         // A window box: a trough of flowers on brackets, set against the wall outside under
         // a window or a sill. It is one block in every wood's stead, its own colours drawn
         // as they show (no tint), and set out under the sky it is a yard piece (`yard`).

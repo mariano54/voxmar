@@ -194,8 +194,20 @@ impl Site {
     }
 }
 
+/// The ground at one position, its rivers and lakes carved in and its crags to their tops,
+/// as `Overworld::height` reads it: for sampling the surface there (`Sampler::surface_on`)
+/// without working the ground out again.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ground(GeoSample);
+
+impl Ground {
+    pub fn height(&self) -> i32 {
+        self.0.height
+    }
+}
+
 /// A coarse description of the surface at one position, for distant terrain.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceSample {
     /// Height of the top ground block.
     pub height: i32,
@@ -267,6 +279,9 @@ pub struct Overworld {
     /// searches from the same lattice (a test's many biomes from the same places) work
     /// each out once.
     fields: water::cache::Cache<(IVec2, IVec2), Arc<[Point]>>,
+    /// The ground over tiles of one column's width (`ground_tile`), by tile: each column
+    /// reads its own and, at its border and for what reaches out of it, its neighbours'.
+    ground: water::cache::Cache<IVec2, Arc<[GeoSample]>>,
     /// Columns already generated, when a caller asked to keep them (`remember_columns`).
     remembered: std::sync::OnceLock<water::cache::Cache<ColumnPos, Arc<Column>>>,
     /// `spawn_search` without and with trails and settlements, each worked out once: a
@@ -278,6 +293,9 @@ pub struct Overworld {
 /// Points a side of a tile of `Overworld::fields`, and the bytes those tiles may hold.
 const FIELD_TILE: i32 = 16;
 const FIELD_BUDGET: usize = 16 << 20;
+/// The bytes `Overworld::ground`'s tiles may hold: the rings of columns a load makes at
+/// once and the rings either side of them.
+const GROUND_BUDGET: usize = 48 << 20;
 
 /// How far around the first place found `locate_biome` looks for the biome's interior.
 const LOCATE_INSIDE: i32 = 256;
@@ -341,6 +359,7 @@ impl Overworld {
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
             fields: water::cache::Cache::copying(FIELD_BUDGET),
+            ground: water::cache::Cache::copying(GROUND_BUDGET),
             remembered: std::sync::OnceLock::new(),
             spawns: Default::default(),
             seed: stream,
@@ -392,7 +411,7 @@ impl Overworld {
     /// a function of the seed, the content and its place, so a copy is what generating it
     /// again would make. Only the first call sets the budget.
     pub fn remember_columns(&self, bytes: usize) {
-        let _ = self.remembered.set(water::cache::Cache::new(bytes));
+        let _ = self.remembered.set(water::cache::Cache::copying(bytes));
     }
 
     /// The biomes of this world.
@@ -561,6 +580,14 @@ impl Overworld {
         self.rivers.sample(self.stages(), x, z, true)
     }
 
+    /// The ground at each of `points` (`Overworld::height` of each, and what the surface
+    /// there is sampled on), sharing the relief at the lattice corners that nearby points
+    /// read alike.
+    pub fn grounds(&self, points: impl IntoIterator<Item = (i32, i32)>) -> Vec<Ground> {
+        let mut corners = geology::Corners::default();
+        points.into_iter().map(|(x, z)| Ground(self.rivers.sample_with(self.stages(), x, z, true, &mut corners))).collect()
+    }
+
     fn stages(&self) -> water::Stages<'_> {
         water::Stages { geology: &self.geology, climate: self.geology.climate() }
     }
@@ -634,6 +661,13 @@ impl Overworld {
             *sample = self.settlements.apply(self, self.trails.apply(&land, *sample, sx, sz), sx, sz);
         }
         area
+    }
+
+    /// The ground over the `CHUNK_SIZE`×`CHUNK_SIZE` positions of the column `tile`, row by
+    /// row (`geo_area`), worked out once for the columns around it, which all read it.
+    pub(crate) fn ground_tile(&self, tile: IVec2) -> Arc<[GeoSample]> {
+        let size = voxmar_engine::coords::CHUNK_SIZE;
+        self.ground.get(tile, || self.geo_area(tile.x * size, tile.y * size, size).into())
     }
 
     /// The land trails are planned over: the ground with its rivers and lakes.
@@ -977,13 +1011,18 @@ impl Sampler<'_> {
 
     /// What the surface looks like from far away; see [`Overworld::surface_sample`].
     pub fn surface(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
-        let geo = GeoSample { height, ..self.world.ground(x, z) };
-        let site = self.site_on(&geo, x, z, slope, slope as f32);
+        self.surface_on(&Ground(self.world.ground(x, z)), x, z, height, slope)
+    }
+
+    /// [`Sampler::surface`] on the ground at (x, z) already worked out
+    /// (`Overworld::grounds`).
+    pub fn surface_on(&self, ground: &Ground, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
+        let geo = GeoSample { height, ..ground.0 };
+        // Distant terrain takes the colours of the cell alone: the biomes picked for it.
+        let (site, pick) = self.site_and_pick(&geo, x, z, slope, slope as f32);
         let (ground, water) = self.world.surface_blocks(&site, x, z);
         let canopy = if water.is_some() { None } else { self.world.ecology.canopy(&site, self.world.terrain.ground(ground), x, z) }
             .map(|(tree, cover)| (self.world.terrain.leaves(tree), cover));
-        // Distant terrain takes the colours of the cell alone.
-        let pick = self.pick(x, z);
         let byte = |c: [f32; 3]| c.map(|v| v.round().clamp(0.0, 255.0) as u8);
         let (climate, n) = self.climate_colors(&site, x, z);
         let [grass, foliage, water_color] = self.biome_colors(climate, n, &pick, Biomes::blend(pick.edge, site.fertility)).map(byte);
@@ -1119,6 +1158,11 @@ impl Sampler<'_> {
 
     /// The site on already sampled geology.
     fn site_on(&self, geo: &GeoSample, x: i32, z: i32, slope: i32, steepness: f32) -> Site {
+        self.site_and_pick(geo, x, z, slope, steepness).0
+    }
+
+    /// [`Sampler::site_on`], with the biomes picked for the position's cell on the way.
+    fn site_and_pick(&self, geo: &GeoSample, x: i32, z: i32, slope: i32, steepness: f32) -> (Site, Pick) {
         let _stage = stage::enter(Stage::Climate);
         let regional = self.grid.at(x, z);
         // Cooled by the height of the land, not of the towers and spires standing on it.
@@ -1169,7 +1213,7 @@ impl Sampler<'_> {
             site.biome = river;
         }
         (site.home, site.neighbour, site.edge, site.from_centre) = (pick.home, pick.neighbour, pick.edge, pick.from_centre);
-        site
+        (site, pick)
     }
 }
 
@@ -1340,6 +1384,26 @@ mod tests {
         Arc::new(crate::test_registry())
     }
 
+    /// The ground worked out once for many points, with the lattice's corners shared, is
+    /// each point's own, and the surface sampled on it is the surface sampled alone: at
+    /// distant land's spacings from 4 to 32 blocks, near the spawn and far off.
+    #[test]
+    fn grounds_and_the_surface_on_them_are_each_points_own() {
+        let world = shared_world(1);
+        for (cell, origin) in [(4, IVec2::new(-300, -260)), (16, IVec2::new(2000, -1500)), (32, IVec2::new(-6000, 5000))] {
+            let points: Vec<(i32, i32)> = (0..12 * 12).map(|i| (origin.x + i % 12 * cell, origin.y + i / 12 * cell)).collect();
+            let grounds = world.grounds(points.iter().copied());
+            let sampler = world.sampler(origin, origin + 12 * cell);
+            for (&(x, z), ground) in points.iter().zip(&grounds) {
+                assert_eq!(*ground, Ground(world.ground(x, z)), "({x}, {z})");
+                assert_eq!(ground.height(), world.height(x, z));
+                for slope in [0, 3] {
+                    assert_eq!(sampler.surface_on(ground, x, z, ground.height(), slope), sampler.surface(x, z, ground.height(), slope), "({x}, {z}) slope {slope}");
+                }
+            }
+        }
+    }
+
     /// The world of `seed` on the test registry, one for every test that only reads what it
     /// generates, here and in the settlements' tests: each new world would trace its rivers,
     /// trails and settlements from nothing again. What a world generates depends on neither
@@ -1442,6 +1506,22 @@ mod tests {
             for _ in 0..2 {
                 assert!(generate_columns(&kept, &at) == made, "a kept column differs from one made afresh (budget {budget})");
             }
+        }
+    }
+
+    /// A column is the same made alone, with no tile of ground (`Overworld::ground_tile`)
+    /// made yet, as made after its eight neighbours, which made the tiles it shares with
+    /// them first: what the world's caches hold never changes what a column holds. Over a
+    /// creek with waterfalls on seed 42 and plains and woods on seed 7.
+    #[test]
+    fn a_column_alone_is_the_column_after_its_neighbours() {
+        let registry = registry();
+        for (seed, at) in [(42, ColumnPos::new(-10, -3)), (42, ColumnPos::new(-33, -2)), (7, ColumnPos::new(5, -4))] {
+            let alone = Overworld::new(seed, registry.clone()).generate(at);
+            let world = Overworld::new(seed, registry.clone());
+            let around: Vec<ColumnPos> = (0..9).filter(|&i| i != 4).map(|i| at.offset(i % 3 - 1, i / 3 - 1)).collect();
+            generate_columns(&world, &around);
+            assert!(world.generate(at) == alone, "seed {seed}: column {at:?} made after its neighbours differs from it made alone");
         }
     }
 

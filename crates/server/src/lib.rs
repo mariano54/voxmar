@@ -324,6 +324,13 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
     }
 }
 
+/// How far above a block the server looks for anything solid over it (survival.ron's
+/// `roof_scan`; leaves count): whether rain falls on it, for the client to hear the rain on
+/// a fire as the server judges it.
+pub fn roof_scan(content: &Content) -> i32 {
+    rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content").roof_scan
+}
+
 /// A home's warmth tops out at `comfort_top` (`survival.ron`), which must be below the
 /// coolest a debuff comes on at as a player feels warmer (Hot's `FeltAbove`): a cosy home
 /// never makes its owner hot.
@@ -750,6 +757,11 @@ pub(crate) struct Server {
     lit: FxHashMap<IVec3, hearth::Lit>,
     /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
     smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
+    /// The tick fuelled fires were last looked over for going out (`Server::tell_fires_out`).
+    fires_out_seen: u64,
+    /// Fuelled fires gone cold since then, taken out of `lit` wherever that happened, to be
+    /// told (`Server::tell_fires_out`).
+    fires_out: Vec<hearth::Lit>,
     /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
     /// kept by owner), by core cell: set when it is first lit, kept while its fire is out or
     /// a piece of it is broken, forgotten only when its owner breaks its hearthstone or lights
@@ -938,6 +950,8 @@ impl Server {
             factory: voxmar_engine::factory::Factory::default(),
             lit,
             smoulders,
+            fires_out_seen: 0,
+            fires_out: Vec::new(),
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
@@ -1725,6 +1739,7 @@ mod tests {
             held
         };
         let mut walled = Vec::new();
+        let mut clamp_raised = false;
         for quest in content.quests.iter() {
             // The quests it surely comes after ("a|b" makes sure of neither), and itself.
             let mut before: Vec<&voxmar_engine::quest::QuestDef> = Vec::new();
@@ -1750,12 +1765,26 @@ mod tests {
                     _ => None,
                 })
                 .collect();
+            // The structures a goal has the player build or light by name: a smouldering
+            // one's char is theirs only then.
+            let raised: Vec<&str> = before
+                .iter()
+                .flat_map(|q| q.tasks.iter().flatten().map(move |g| (q, g)))
+                .filter_map(|(q, g)| match g {
+                    Goal::Built(name, _) | Goal::Lit(name, _) => [name.clone(), format!("{}:{name}", q.name.split(':').next().unwrap_or("base"))].into_iter().find_map(|name| content.multiblocks.get(&name)).map(|m| m.name.as_str()),
+                    _ => None,
+                })
+                .collect();
+            clamp_raised |= raised.iter().any(|&name| content.multiblocks.get(name).is_some_and(|m| m.smoulder.is_some()));
             let tagged = |tag: &str| taught.iter().any(|&b| blocks.def(b).has_tag(tag));
             let small = |cells: &[Option<BlockId>; voxmar_engine::craft::GRID]| cells.iter().enumerate().all(|(i, c)| c.is_none() || voxmar_engine::craft::SMALL.contains(&i));
             let worked = |method: &Method| match method {
                 Method::Craft { variants, near, .. } => (variants.iter().any(small) || tagged("crafting_table")) && near.as_deref().is_none_or(tagged),
                 Method::Cook { station, .. } => tagged(station),
                 Method::Work { .. } | Method::Process { .. } | Method::Trap { .. } => method.stations(blocks).iter().any(|&s| taught.contains(&blocks.item_of(s))),
+                // A clamp's charcoal is the clamp's, built (or lit) by a quest before. What a
+                // thing burns out to needs no station: the thing itself, got as any other.
+                Method::Smoulder { structure, .. } => raised.contains(&structure.as_str()),
                 // What a creature a player may never meet drops (one that comes only with a
                 // wandering party or in a lair, `party_only`, or a boss) is no sure way, but
                 // for one a goal has them kill.
@@ -1792,6 +1821,7 @@ mod tests {
             }
         }
         assert!(walled.is_empty(), "these quests have no route whose stations the quests before them have the player make: {walled:#?}");
+        assert!(clamp_raised, "no quest has the player build a smouldering structure by a name the check knows");
     }
 
     /// Whether a player surely comes by `entry`'s output the book's ways, working only those
@@ -2129,7 +2159,9 @@ mod tests {
     /// them lets them be picked for more: regrowth does not take them, and the journal does
     /// not log them as wild plants. The props are read from settlements.ron's furnishings
     /// (barrel, bell, hay, sacks, crates, hanging things, nets), so a mod's own props are held to it
-    /// too.
+    /// too. A prop that a player's own copy breaks into something (the hay bale's straw) must
+    /// be a `furnishing`, and `village_props_set_by_the_world_give_nothing` (gameplay tests)
+    /// breaks a world-set copy of every such prop and finds nothing.
     #[test]
     fn village_furnishings_drop_nothing() {
         use voxmar_worldgen::Select;
@@ -2151,7 +2183,8 @@ mod tests {
         for id in props {
             let name = blocks.def(id).name.clone();
             let (def, info) = (blocks.def(id), blocks.info(id));
-            assert_eq!(info.drops, voxmar_engine::block::BlockId::AIR, "{name} drops something");
+            let gives = !info.drops.is_air() && info.drop_count > 0;
+            assert!(!gives || def.has_tag("furnishing"), "{name} drops something and is not a furnishing, so a village's would too");
             assert!(!content.regrowth.regrows(def, info.solid), "{name} regrows when picked");
             let wild = ["plant", "flower", "herb", "fungus"].iter().any(|t| def.has_tag(t));
             assert!(info.solid || !wild, "{name} would be logged as a wild plant");

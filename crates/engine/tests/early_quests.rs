@@ -375,10 +375,10 @@ fn the_short_bow_comes_within_the_nomad_age() {
 }
 
 /// The Milk Pail's milkers ask a Hunter level to tame: the cheapest way through what the book
-/// makes sure of before it opens reaches the least of them. Rewards count in full, the tames
-/// and kills its goals ask at nine tenths (a storm's lesser experience) and at the cheapest
-/// way each quest allows, so a later reward change cannot open the quest with no animal in
-/// reach.
+/// makes sure of before it opens reaches the least of them. Hunter rewards count at their full
+/// value; the tames and kills its goals ask count at 9/10 of their experience (a storm's
+/// lesser experience), on the cheapest way each quest allows. So a later reward change
+/// cannot open the quest with no animal in reach.
 #[test]
 fn the_milk_pail_opens_at_the_hunter_level_its_cheapest_milker_asks() {
     let content = content();

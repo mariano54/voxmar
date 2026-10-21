@@ -103,8 +103,8 @@
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
-        // Side quests on the way to the hearth, on the cooking and home paths (the main line's
-        // walk counts no buffs): what fire, food and a home at night give.
+        // Side quests on the way to the hearth, on the cooking and home paths: what fire, food
+        // and a home at night give.
         (
             name: "a_hot_meal", age: "nomad", branch: "cooking", title: "A Hot Meal",
             why: "What you eat does more than fill you. Hold a food and use it to eat while you are hurt: a cooked meat leaves you Hearty, with room for a tenth more health while it lasts. Eat a cooked meat when you are hurt and feel it.",
@@ -141,6 +141,22 @@
             tasks: [[Craft("torch", 8)]],
             after: ["a_bed_of_your_own", "coal_and_cinders"],
             rewards: [Xp("engineering", 21.0)],
+        ),
+        (
+            name: "stone_and_clay", age: "nomad", branch: "main", title: "Stone and Clay",
+            side: true,
+            why: "Gather for the hearth before you build it: twenty-eight cobblestone (four loose stones knock together into two) and four clay from the bottom of a pond, dug with a shovel. Hold them all at once.",
+            tasks: [[Have("cobblestone", 28), Have("clay", 4)]],
+            after: ["stone_in_hand"],
+            rewards: [Xp("mining", 40.0)],
+        ),
+        (
+            name: "light_round_the_camp", age: "nomad", branch: "main", title: "Light Round the Camp",
+            side: true,
+            why: "Monsters come up where it is dark, not where it is lit. Set four torches on the ground round the place you sleep, and the night there is safer.",
+            tasks: [[Placed("torch", 4)]],
+            after: ["torchlight"],
+            rewards: [Xp("engineering", 20.0)],
         ),
         (
             name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",

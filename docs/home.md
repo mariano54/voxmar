@@ -44,16 +44,18 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
-Seats are stools, chairs, benches, settles, cushions and window seats; tables include desks
+Seats are stools, chairs, rocking chairs, benches, settles, cushions and window seats; tables include desks
 and counters; storage is whatever a home keeps things in or on: chests, blanket chests,
-cupboards and wardrobes, stair cupboards, window seats, shelves (pot shelves, pantry shelves
-and bookshelves too), crate stacks, barrel racks, jars and baskets, and a village's barrels
-and crates (every store a player opens counts but the feed trough, which is the pen's: test
-`every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
-of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage stove and
-cauldron; workshop is the loom frame, spindle stand and quern. All are craftable in the
-first two ages (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of
-gathering and crafting, not a grind.
+cupboards, dressers and wardrobes, stair cupboards, window seats, shelves (pot shelves,
+pantry shelves and bookshelves too), crate stacks, barrel racks, jars and baskets, and a
+village's barrels and crates (every store a player opens counts but the feed trough, which
+is the pen's: test `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step
+finds a Pantry made of a chest and a barrel by a campfire, "home: storage"); crockery is
+plates, bowls, jars, jugs, baskets and a dresser's plates on show; rugs include a rush mat
+(4 rushes, Crafting 1, a Nomad's first); cooking is the cottage stove and cauldron; workshop
+is the loom frame, spindle stand and quern. All are craftable in the first two ages
+(Construction 1 to 8, Crafting 1 to 8), so each step is a few minutes of gathering and
+crafting, not a grind.
 
 ## Warm, never hot
 
@@ -367,7 +369,7 @@ player on it (`base:sit`, `Requirement::Seat`, `Effect::Sit`): the server sets t
 sets them on top, and wants two free cells over it), and their eye drops to
 `vitals::SEATED_EYE` (1.3) over their feet, on the server and the client alike (`vitals::eye`; `Vitals::seated`, protocol
 40). They sit until they move off it or it goes (`vitals::still_seated`, checked once a
-second). Effects can ask `Seated`; base's **By the Fire** (`fireside`: heal x1.5, 4° warmer)
+second). Effects can ask `Seated`; base's **Fireside** (`fireside`: heal x1.5, 4° warmer)
 holds sat with a fire or the hearth within 3, so a Nomad's stool at the campfire and a chair
 at home both rest the player after a day out. Tests: server `seats.rs`. The gate's Seat step
 sits on a stool under a block two up, by a campfire (shot `seat-fire`), and steps off it.
@@ -397,7 +399,10 @@ doorway. Indoors at home behind a shut door, the **Door shut** reaction gives he
 
 How it works, for mod authors: it is all data on the blocks (blocks_furnishings.ron).
 `upper` names the block placed above with it, which rests on it (`support: Below`) and goes
-with it either way (`supported_by`). `swaps` names what using it turns it into, in the same
+with it either way (`supported_by`). `beside` names a block placed with it in the cell to
+the right of whoever sets it (a double gate's second leaf), in the same facing; the two
+are broken and turned together, and load refuses a pair whose `swaps` do not make a pair.
+`swaps` names what using it turns it into, in the same
 facing, its other half with it (`action::swapping`, the `open` action, `Effect::Swap`).
 Shut and open are two blocks with their own `solid`, and only the server turns them; the
 client is told, never guesses, so nobody walks through a door the server still holds shut.
