@@ -91,7 +91,9 @@
                 swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
             (name: "{name}_curtain_open", render: Model, shape: "curtain_open", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
                 swaps: "{name}_curtain", drops: "{name}_curtain", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
-            (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
+            // `paper_lantern` is this alone, not the metal or stone lanterns, for a quest that asks
+            // for paper lanterns (Lanterns of Cloth).
+            (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "paper_lantern", "light", "decor", "colour:{name}"]),
             (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),
             (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "yard", "colour:{name}"]),
             (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}", "shelter:draughty"]),

@@ -27,7 +27,7 @@ use voxmar_engine::content::Content;
 use voxmar_engine::lang::{def_key, title_from_id};
 use voxmar_engine::quest::{Goal, QuestDef, QuestState, Reward};
 use voxmar_engine::quest_path::QuestPath;
-use voxmar_engine::recipe_book::{Entry, Method, RecipeBook};
+use voxmar_engine::recipe_book::{Entry, Method, RecipeBook, counts};
 
 use super::HudImages;
 use super::inventory::InterfaceStyle;
@@ -1834,33 +1834,6 @@ pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, package: &str, goa
 /// or a quest's reward, which no one can set out to do, after them, whatever their levels.
 fn order_ways(ways: &mut [Entry]) {
     ways.sort_by_key(|way| (matches!(way.method, Method::Chest { .. } | Method::Trade { .. } | Method::Reward { .. }), level(&way.method)));
-}
-
-/// Whether a way of getting an item counts for a goal: a goal to cook, cooking at a
-/// station, or a home station's work that counts as cooking (the station it names, for one
-/// at a station); to craft, crafting (near the
-/// block it names, for one near a block); to catch, a line's catch; to pick or mine,
-/// breaking or harvesting; to carry or set down, any way but a quest's reward (the goal
-/// teaches the work itself); to look an item up, none, for looking it up is its lesson.
-pub(crate) fn counts(content: &Content, goal: &Goal, way: &Entry) -> bool {
-    let method = &way.method;
-    // Left to work in a home station whose work counts as cooking (an earth clamp's fired
-    // clay), at that station by its name.
-    let station_cooks = |at: Option<&str>| match method {
-        Method::Work { station, .. } => content.stations.stations.iter().any(|s| s.empty == *station && s.works.iter().any(|w| w.output == way.output && w.counts.as_deref() == Some("cooked")))
-            && at.is_none_or(|at| content.blocks.def(*station).name.rsplit(':').next() == Some(at)),
-        _ => false,
-    };
-    match goal {
-        Goal::Cook(..) => matches!(method, Method::Cook { .. }) || station_cooks(None),
-        Goal::CookAt(_, at, _) => matches!(method, Method::Cook { station, .. } if station == at) || station_cooks(Some(at)),
-        Goal::Craft(..) => matches!(method, Method::Craft { .. }),
-        Goal::CraftNear(_, at, _) => matches!(method, Method::Craft { near: Some(near), .. } if near == at),
-        Goal::Catch(..) => matches!(method, Method::Catch { .. }),
-        Goal::Pick(..) | Goal::Mine(..) => matches!(method, Method::Break { .. } | Method::Harvest { .. } | Method::Found { .. }),
-        Goal::Have(..) | Goal::Placed(..) => !matches!(method, Method::Reward { .. }),
-        _ => false,
-    }
 }
 
 /// The level in its skill a way takes, 1 for one that takes none.
