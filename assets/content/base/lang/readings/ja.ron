@@ -252,7 +252,7 @@
     "block.base.{name}_blanket_chest": "{name}のながもち",
     "block.base.{name}_washstand": "{name}のせんめんだい",
     "block.base.{name}_rushlight": "{name}のとうしんそうたて",
-    "block.base.{name}_rushlight_spent": "{name}のとうしんそうたて（もえつき）",
+    "block.base.{name}_rushlight_spent": "{name}のとうしんそうたて（から）",
     "block.base.window_box": "まどべのはなばこ",
     "block.base.{name}_stair_cupboard": "{name}のかいだんだんす",
     "block.base.{name}_wardrobe": "{name}のようふくだんす",
