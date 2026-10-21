@@ -266,6 +266,10 @@ impl Program {
                         };
                         knots.push(Knot { at, value: self.expr(value, err)?, slope, constant });
                     }
+                    // A knot at no number (NaN) is in no order, and no segment holds it.
+                    if knots.iter().any(|k| k.at.is_nan()) {
+                        return Err(err("a spline knot at no number (NaN)".into()));
+                    }
                     if knots.windows(2).any(|w| w[1].at < w[0].at) {
                         return Err(err("spline knots out of order".into()));
                     }
@@ -898,6 +902,8 @@ mod tests {
         assert!(land(&forward).unwrap_err().0.contains("unknown name"));
         let climate = MINIMAL.replace("(\"mountain\", 0.0)", "(\"mountain\", \"T\")");
         assert!(land(&climate).unwrap_err().0.contains("rain shadows"));
+        let nan = MINIMAL.replace("(1.0, 0.0, 0.2)", "(NaN, 0.0, 0.2)");
+        assert!(land(&nan).unwrap_err().0.contains("NaN"));
     }
 
     #[test]
@@ -1023,7 +1029,8 @@ mod tests {
         let mut rng = crate::rng::Rng::new(1, 2, 3, 4);
         // Rows of neighbours, which share their segments, and scattered points, which do not.
         let mut points: Vec<(f32, f32)> = (0..2000).map(|i| ((i % 50 * 8) as f32 + 3000.0, (i / 50 * 8) as f32 - 2000.0)).collect();
-        points.extend((0..2000).map(|_| (rng.range(-30_000, 30_000) as f32, rng.range(-30_000, 30_000) as f32)));
+        // A count no multiple of the lanes, so the last batch is a partial one.
+        points.extend((0..2003).map(|_| (rng.range(-30_000, 30_000) as f32, rng.range(-30_000, 30_000) as f32)));
         let fields: Vec<Field> = (0..program.fields.len()).map(|i| Field(program.field_slot(i))).collect();
         for some in points.chunks(LANES) {
             router.start(&mut lanes, some);

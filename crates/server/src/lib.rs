@@ -133,6 +133,10 @@ pub struct ServerConfig {
     /// game days in, when a test slowed by load is still running; `/wander start` and
     /// the wandering tests start theirs by hand either way.
     pub wandering_starts: bool,
+    /// The chance a gene mutates in a birth, in place of `genes::MUTATION` (aether still
+    /// raises it). `None` but in tests, which set 0 where a birth must take only its
+    /// parents' genes.
+    pub mutation: Option<f32>,
 }
 
 /// How much any one connection may ask of the server: a server operator's numbers, read
@@ -258,6 +262,7 @@ impl Default for ServerConfig {
             draw_key: None,
             lockstep: false,
             wandering_starts: true,
+            mutation: None,
         }
     }
 }
@@ -340,8 +345,8 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     if let Some(missing) = NAMED_ACTIONS.iter().find(|name| content.actions.id(name).is_none()) {
         return Err(format!("no package defines the action {missing}, which the game needs").into());
     }
-    WorldContent::load(&content)?;
-    sources_known(&content)?;
+    let world = WorldContent::load(&content)?;
+    sources_known(&content, &world)?;
     wear::WearRules::load(&content.files, &content.blocks, 0)?;
     spawn_kit::SpawnKit::load(&content.files, &content.blocks)?;
     let mut notes = Vec::new();
@@ -358,16 +363,21 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
 /// The recipe book: every way the content gives to get each item, what the world lays
 /// among them (found, broken loose).
 pub fn recipe_book(content: &Content) -> Result<voxmar_engine::recipe_book::RecipeBook, ContentError> {
+    Ok(recipe_book_of(content, &WorldContent::load(content)?))
+}
+
+/// As `recipe_book`, with `world` the world content `content` loads.
+fn recipe_book_of(content: &Content, world: &WorldContent) -> voxmar_engine::recipe_book::RecipeBook {
     let mut book = voxmar_engine::recipe_book::RecipeBook::new(content);
-    book.found(content, WorldContent::placed(content.files.iter(), &content.blocks)?);
-    Ok(book)
+    book.found(content, world.placed(content.files.iter(), &content.blocks));
+    book
 }
 
 /// Every item a player could hold has a way to get it in the recipe book, or is tagged
 /// `creative_only`: a package that adds an item nothing gives fails here, naming it and the
 /// package, rather than shipping a dead entry. A tag on an item that has a way is noted.
-fn sources_known(content: &Content) -> Result<(), String> {
-    let (dead, stale) = recipe_book(content).map_err(|e| e.to_string())?.unsourced(&content.blocks);
+fn sources_known(content: &Content, world: &WorldContent) -> Result<(), String> {
+    let (dead, stale) = recipe_book_of(content, world).unsourced(&content.blocks);
     let named = |ids: &[voxmar_engine::block::BlockId]| {
         ids.iter()
             .map(|&id| {
@@ -599,14 +609,21 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
 /// client's `priority.rs`), said outright, since whether a new thread takes its creator's
 /// class is not promised. Never below them: in a single-player game the server runs the
 /// world, and at the default class, on a machine at a load of 70-90, the gate's creatures
-/// stood still for seconds while the frames went on. `VOXMAR_THREAD_PRIORITY=off` leaves it
-/// as it starts, as it does the client's threads.
+/// stood still for seconds while the frames went on. On every platform it is marked urgent
+/// for world generation, which then never has it wait on a background worker's build
+/// (`voxmar_worldgen::mark_urgent`). `VOXMAR_THREAD_PRIORITY=off` leaves its class as it
+/// starts, as it does the client's threads; it is urgent all the same.
 fn frame_class() {
-    #[cfg(target_os = "macos")]
-    if std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off") {
-        // SAFETY: only changes the scheduling class of the current thread.
-        unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0) };
+    // Never waiting on a region a streaming worker is building.
+    voxmar_worldgen::mark_urgent();
+    if std::env::var("VOXMAR_THREAD_PRIORITY").is_ok_and(|v| v == "off") {
+        return;
     }
+    // SAFETY: only changes the scheduling class of the current thread.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
+    };
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -699,6 +716,8 @@ pub(crate) fn load_column(
 
 pub(crate) struct Server {
     config: ServerConfig,
+    /// Whether its players' land is missing, as it last said (taken back with the server).
+    land_missing: voxmar_engine::jobs::LandMissing,
     meta: WorldMeta,
     /// The last save generation begun, whether or not it counted: none is begun twice, so
     /// files a failed save left can never pass for a later one's.
@@ -831,6 +850,9 @@ pub(crate) struct Server {
 }
 
 const MAX_GENERATING: usize = 64;
+/// Columns on each side of a player's whose land must be in for streaming to stay capped
+/// (`voxmar_engine::jobs`); as the client's `workers.rs` has it.
+const LAND_AROUND: i32 = 2;
 const COLUMNS_PER_TICK: usize = 48;
 
 impl Server {
@@ -843,8 +865,7 @@ impl Server {
         incoming: Receiver<ServerConnection>,
         console: Receiver<String>,
     ) -> Self {
-        let world_content = WorldContent::load(&content).expect("checked by load_content");
-        let overworld = Overworld::shared(meta.seed, &content, &world_content);
+        let overworld = Overworld::shared_loading(meta.seed, &content).expect("checked by load_content");
         let climate = overworld.clone();
         let temperature = Field::new("core:temperature", move |x, z| climate.site(x, z).temperature);
         let land = Arc::new(weather::OverworldLand { overworld: overworld.clone(), blocks: content.blocks.clone() });
@@ -853,9 +874,10 @@ impl Server {
         let processes = process::core_processes();
         let generator: Arc<dyn Generator> = overworld.clone();
         // Load the spawn column up front and stand on its highest ground under any tree,
-        // so trees never bury the player or hold them up on a crown (`find_ground`).
+        // so trees never bury the player or hold them up on a crown (`find_ground`). The
+        // spawn found with what settles by it, before any tick (`Overworld::settle_spawn`).
         let mut world = VoxelWorld::default();
-        let spawn_block = generator.spawn_point();
+        let spawn_block = overworld.settle_spawn();
         let spawn_column = ColumnPos::of_block(spawn_block);
         let tick = meta.time.max(FIRST_TICK);
         let wear_rules = Arc::new(wear::WearRules::load(&content.files, &content.blocks, meta.seed).expect("checked by load_content"));
@@ -889,6 +911,7 @@ impl Server {
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
+            land_missing: Default::default(),
             tick,
             day: meta.day.unwrap_or(tick) as f64,
             day_speed: meta.day_speed,
@@ -1182,6 +1205,10 @@ impl Server {
         self.blaze();
         self.watch_stores();
         self.replicate_owned_traits();
+        // Loading again around any player whose land is missing (one just come, or gone
+        // beyond their view): every worker streams until it has come (voxmar_engine::jobs).
+        let missing = self.players.values().any(|p| p.joined && self.land_missing_around(p.position));
+        self.land_missing.set(missing);
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for &id in &ids {
             self.stream_columns(id);
@@ -1385,6 +1412,12 @@ impl Server {
         }
     }
 
+    /// Whether a column within `LAND_AROUND` of `position`'s is not loaded.
+    fn land_missing_around(&self, position: Vec3) -> bool {
+        let center = ColumnPos::of_block(position.floor().as_ivec3());
+        (-LAND_AROUND..=LAND_AROUND).any(|dz| (-LAND_AROUND..=LAND_AROUND).any(|dx| !self.world.contains(center.offset(dx, dz))))
+    }
+
     /// Sends loaded columns nearest-first and requests generation of missing ones.
     fn stream_columns(&mut self, id: PlayerId) {
         let Some(player) = self.players.get_mut(&id) else { return };
@@ -1405,11 +1438,18 @@ impl Server {
                         player.sent.insert(pos);
                         sent += 1;
                     }
-                } else if self.generating.len() < MAX_GENERATING && self.generating.insert(pos) {
+                } else if self.generating.len() < MAX_GENERATING
+                    && !self.generating.contains(&pos)
+                    // Generating on fewer workers than there are, when a game playing on this
+                    // machine asks it to (voxmar_engine::jobs).
+                    && let Some(slot) = voxmar_engine::jobs::start(voxmar_engine::jobs::Kind::Columns)
+                {
+                    self.generating.insert(pos);
                     let (generator, save, registry) = (self.generator.clone(), self.save.clone(), self.content.blocks.clone());
                     let (wear, today) = (self.wear_rules.clone(), wear::day(self.day));
                     let tx = self.generated_tx.clone();
                     rayon::spawn(move || {
+                        let _slot = slot;
                         let _ = tx.send((pos, load_column(save.as_ref(), &*generator, &registry, &wear, today, pos)));
                     });
                 }
@@ -1623,7 +1663,14 @@ pub(crate) fn test_server_on(content: Content) -> Server {
     // each shares (`Overworld::shared`), with the land round spawn planned once rather than
     // again for each (1.7 s a server; a test that made 34 took 75 s).
     static HELD: std::sync::OnceLock<Arc<Overworld>> = std::sync::OnceLock::new();
-    HELD.get_or_init(|| Overworld::shared(meta.seed, &content, &WorldContent::load(&content).expect("checked by load_content")));
+    // Its columns too, about 1170 of them: every test server stands round the same spawn.
+    // Servers sharing one held world wait on its inner caches less than servers on worlds
+    // of their own would; worldgen's own thread tests still cover that contention.
+    HELD.get_or_init(|| {
+        let world = Overworld::shared(meta.seed, &content, &WorldContent::load(&content).expect("checked by load_content"));
+        world.remember_columns(128 << 20);
+        world
+    });
     let (_, incoming) = crossbeam_channel::unbounded();
     let (_, console) = crossbeam_channel::unbounded();
     Server::new(config, meta, save, save::WorldState::default(), content, incoming, console)

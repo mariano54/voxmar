@@ -435,6 +435,9 @@ steps! {
     /// A pit kiln in the creatures pad, clay in hand: a right click loads it, the server
     /// sends back the firing kiln, and twelve seconds on the fired one.
     Kiln,
+    /// A wheat held to quern stones and right-clicked grinds into flour (cooking.ron's
+    /// stations: the Farm age's quern, spindle and loom work what is held, as a fire does).
+    Quern,
     /// The home motif (`music.ron`'s `home`): the Cook step's Homestead Hearth, lit and so
     /// home, roofed over; at midnight the player steps from the open under the roof and a
     /// `Home` track starts (rehearsed silently, `music::Rehearse`); out and in again that
@@ -472,6 +475,10 @@ steps! {
     /// with none of its flames in reach of its thatch, its jettied houses stand out on
     /// their beams, and its row houses stand wall to wall under one roof.
     Settlements,
+    /// The home with a byre nearest the walled town (in the nearest place that has one)
+    /// stands as planned: earth floor, a trough, hay, one doorway through the wall across
+    /// and a back door, the family's beds in the room before it.
+    Byres,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
@@ -626,12 +633,12 @@ impl Step {
     /// Whether the server runs behind (`SERVER_LAG`) in this step: in those whose checks are
     /// about playing against a lagging server (placing, digging and breaking, where blocks
     /// were lost to it, and the fight's guard and dodge, timed against where its blows fall)
-    /// and the steps before them. The rest check what lag does not change (what crafting,
-    /// a kill or a campfire gives), and run against a server at full speed, which gets
-    /// there three times sooner.
+    /// and the steps between them. The rest check what lag does not change (what crafting,
+    /// a kill or a campfire gives, the land a load brings in), and run against a server at
+    /// full speed, which gets there three times sooner.
     fn lagged(self) -> bool {
         use Step::*;
-        matches!(self, Load | Build | Arrive | Place | PlaceSettle | Dig | DigSettle | Collect | Breaks | Feel)
+        matches!(self, Build | Arrive | Place | PlaceSettle | Dig | DigSettle | Collect | Breaks | Feel)
     }
 }
 
@@ -677,8 +684,8 @@ struct Gate {
     /// Where a stage last walked the player to pick something up (`walk_to_lying`), so the
     /// step is asked once.
     walked_to: Option<Vec3>,
-    /// Where the observer floated before a step moved it (`settlements`, `reap`), to
-    /// be put back when the step ends.
+    /// Where the observer floated before a step moved it (`settlements`, `reap`, `step_up`,
+    /// `ore` and `gorge`), to be put back when the step ends (by `tarns` for the ore and gorge).
     observer_home: Option<Vec3>,
     /// Frames in this stage that what a shot is about has been on screen: it shows a frame
     /// or two after the change.
@@ -851,6 +858,11 @@ struct Gate {
     /// The look for the walled town nearest the town `/locate` found, off the frame: it
     /// plans every square nearer than the answer, seconds of work.
     town_search: Option<std::thread::JoinHandle<Option<IVec3>>>,
+    /// The home with a byre the observer goes to after the walled town: in the place with
+    /// one nearest the town, nearest its square (none until found).
+    byre: Option<voxmar_worldgen::SettlementBuilding>,
+    /// The look for it, off the frame, as it may plan squares round the town.
+    byre_search: Option<std::thread::JoinHandle<Option<voxmar_worldgen::SettlementBuilding>>>,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// The snail struck, so a fallen mark on another creature cannot end its watch.
@@ -1052,6 +1064,8 @@ struct Gate {
     /// The hotbar slot selected before the charm step took the charm in hand, put back
     /// after it.
     charm_hand: usize,
+    /// Where the player stood when the quern step began, put back after it.
+    quern_from: Vec3,
     worn_defence: u8,
     overlay_counted: (f32, f32),
     /// The fight sounds asked for, and the bursts, kicks and knocks, before `combat_feel`
@@ -1168,6 +1182,8 @@ impl Gate {
             settlement_reply: String::new(),
             town: IVec3::ZERO,
             town_search: None,
+            byre: None,
+            byre_search: None,
             ore: IVec3::ZERO,
             ore_mining: None,
             ore_sample: None,
@@ -1269,6 +1285,7 @@ impl Gate {
             music_fade: None,
             worn_states: 0,
             charm_hand: 0,
+            quern_from: Vec3::ZERO,
             worn_defence: 1,
             overlay_counted: (0.0, 0.0),
             feel_asked: Default::default(),
@@ -1847,6 +1864,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
         Step::Kiln => STEP_LIMIT,
+        Step::Quern => STEP_LIMIT,
         // The roof and the night, then three steps in or out, each waited on.
         Step::HomeMotif => STEP_LIMIT + 3.0 * QUEST_WAIT,
         // The barrel opened, then a server pass for the egg and a second for the chat; then
@@ -1863,6 +1881,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => 2.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
+        // The look for a byre, a fresh area round it to generate, and the observer home.
+        Step::Byres => BYRE_SEARCH + SETTLEMENT_LOAD + 20.0 + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
         Step::Weather => STEP_LIMIT + 10.0 + ROOF_RAIN,
         _ => STEP_LIMIT,
@@ -2185,6 +2205,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Others => others(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
         Step::Kiln => kiln(world, gate, now),
+        Step::Quern => quern(world, gate, now),
         Step::HomeMotif => home_motif(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
         Step::Snare => snare(world, gate, now),
@@ -2193,6 +2214,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Tarns => tarns(world, gate, now, in_phase),
         Step::Settlements => settlements(world, gate, now, in_phase),
+        Step::Byres => byres(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
@@ -5807,13 +5829,19 @@ const BRAND_WARMTH: f64 = 15.0;
 
 /// What the firebrand step lights and holds, picked from the content by what each is: the
 /// item that gives light held and burns away, what is held in a fire to make it, the fire
-/// (a placeable block of the station tag its recipe asks), and what it leaves burnt out.
+/// (a placeable block of the station tag its recipe asks, one a player sets down: not a
+/// creative-only flame such as a burning thatch's, which goes out with nothing to burn), and
+/// what it leaves burnt out.
 #[derive(Clone, Copy, Debug)]
 struct BrandPlan {
     brand: BlockId,
     stick: BlockId,
     fire: BlockId,
     burnt: Option<BlockId>,
+    /// The client's count of proposals as the clicking began, and the server second (of
+    /// the phase) the one `base:cook` at the fire went out.
+    proposals: u64,
+    asked: Option<f32>,
 }
 
 impl BrandPlan {
@@ -5824,9 +5852,12 @@ impl BrandPlan {
             if tools.held_light(brand) == 0 || tools.burns(brand) == 0 || recipe.def.level > 1 || !recipe.with.is_empty() {
                 continue;
             }
-            let fire = blocks.ids().find(|&b| blocks.def(b).has_tag(&recipe.def.station) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0);
+            let fire = blocks.ids().find(|&b| {
+                let def = blocks.def(b);
+                def.has_tag(&recipe.def.station) && !def.has_tag("creative_only") && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
+            });
             if let Some(fire) = fire {
-                return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand) });
+                return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand), proposals: 0, asked: None });
             }
         }
         Err("nothing in the content gives light held and burns, made at level 1 at a fire that can be set down".into())
@@ -5893,32 +5924,76 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command(&format!("give {} 1", name(plan.stick)));
             gate.advance(now);
         }
-        // The stick in hand and the fire there: held into the fire until it catches.
+        // The one stick in hand and the fire there: held into the fire until it catches. A
+        // stick picked up meanwhile (one lying where the last step was) stacks on it, and of
+        // two in hand one catches and the brand goes where it fits, the other left in hand
+        // (train 174): the sticks are cleared and the one given again.
         1 => {
             let Some(plan) = gate.firebrand else { return };
             let burning = world.resource::<ClientWorld>().block(fire_at) == Some(plan.fire);
-            let (_, slot) = holding(world, &name(plan.stick));
-            if let (true, Some(slot)) = (burning, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
+            let (sticks, slot) = holding(world, &name(plan.stick));
+            if sticks > 1 && now - gate.tap_at >= TAP_EVERY {
+                // Where the others came from, so a stick the server made twice shows here
+                // rather than being cleared away unseen: slots holding them, sticks flying to
+                // a player (picked up), and those lying near.
+                let slots: Vec<(usize, u8)> = world.resource::<LocalPlayer>().inventory.slots.iter().enumerate().filter_map(|(i, s)| s.filter(|s| s.item == plan.stick).map(|s| (i, s.count))).collect();
+                let drops = world.resource::<crate::drops::Drops>();
+                let feet = world.resource::<LocalPlayer>().position;
+                let picked: Vec<String> = drops.picked_up().filter(|(_, s, _)| s.item == plan.stick).map(|(id, s, from)| format!("#{id} {}x from {from:.1}", s.count)).collect();
+                let lying = drops.lying().filter(|(_, s, at)| s.item == plan.stick && at.distance(feet) < 8.0).count();
+                info!("gate: firebrand: {sticks} {} carried after the clear and give, in slots {slots:?}; picked up {picked:?}; {lying} lying within 8 blocks of {feet:.1}; cleared and one given again", name(plan.stick));
+                let net = world.resource::<Net>();
+                net.command(&format!("clear {}", name(plan.stick)));
+                net.command(&format!("give {} 1", name(plan.stick)));
+                gate.tap_at = now;
+                gate.taps += 1;
+            }
+            if let (true, 1, Some(slot)) = (burning, sticks, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
                 world.resource_mut::<LocalPlayer>().selected = slot;
                 aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
-                mouse(world, MouseButton::Right, true);
+                let proposals = world.resource::<Net>().proposals();
+                gate.firebrand = Some(BrandPlan { proposals, asked: None, ..plan });
                 gate.advance(now);
             } else if waited {
-                fail(world, gate, "firebrand: lit", format!("the {} ({burning}) or a {} in the hotbar ({slot:?}) never came in {BRAND_WAIT} server seconds", name(plan.fire), name(plan.stick)));
+                fail(world, gate, "firebrand: lit", format!("the {} ({burning}) or one {} in the hotbar ({sticks} in {slot:?}) never came in {BRAND_WAIT} server seconds", name(plan.fire), name(plan.stick)));
             }
         }
+        // Clicked as a player does, once the crosshair is on the fire with the stick in hand
+        // (a press the frame the aim turned spent itself on what the crosshair was on before,
+        // the stone behind, and the button held on asked nothing more), until one `base:cook`
+        // at the fire has gone out; then never again: that one cook lights it, or it fails.
         2 => {
-            let Some(plan) = gate.firebrand else { return };
+            let Some(mut plan) = gate.firebrand else { return };
             aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let held = in_hand(world);
+            let cook = content.actions.expect("base:cook");
+            if plan.asked.is_none() {
+                let aimed = world.resource::<crate::interact::Target>().hit.as_ref().is_some_and(|hit| hit.block == fire_at);
+                gate.tap(world, aimed && held.is_some_and(|s| s.item == plan.stick), now);
+                let net = world.resource::<Net>();
+                let at_fire = matches!(net.last_proposed(), Some((action, voxmar_engine::action::ActionTarget::Block { block, .. })) if action == cook && block == fire_at);
+                if net.proposals() > plan.proposals && at_fire {
+                    plan.asked = Some(gate.server_in_phase());
+                    gate.firebrand = Some(plan);
+                    mouse(world, MouseButton::Right, false);
+                }
+            }
             let held = in_hand(world);
             if held.is_some_and(|s| s.item == plan.brand) {
                 mouse(world, MouseButton::Right, false);
-                gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand", name(plan.stick), name(plan.fire), name(plan.brand))));
+                gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand, on click {}", name(plan.stick), name(plan.fire), name(plan.brand), gate.taps)));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", fire_at.x, fire_at.y, fire_at.z));
                 gate.advance(now);
-            } else if gate.server_in_phase() > BRAND_WAIT + 5.0 {
+            } else if let Some(asked) = plan.asked {
+                if gate.server_in_phase() - asked > BRAND_WAIT {
+                    let held = held.map(|s| (name(s.item), s.count));
+                    let (brands, at) = holding(world, &name(plan.brand));
+                    fail(world, gate, "firebrand: lit", format!("the base:cook of the {} at the {} (click {}) left {held:?} in hand {BRAND_WAIT} server seconds on ({brands} {} in {at:?})", name(plan.stick), name(plan.fire), gate.taps, name(plan.brand)));
+                }
+            } else if gate.waited_both(BRAND_WAIT + 5.0, now) {
+                // By both clocks, not by clicks: one never aimed at the fire clicks none.
                 let held = held.map(|s| name(s.item));
-                fail(world, gate, "firebrand: lit", format!("holding the {} in the {} for {:.1} server seconds left {held:?} in hand", name(plan.stick), name(plan.fire), gate.server_in_phase()));
+                fail(world, gate, "firebrand: lit", format!("{} clicks with {held:?} in hand sent no base:cook at the {} in {:.1} server seconds", gate.taps, name(plan.fire), gate.server_in_phase()));
             }
         }
         // The fire gone and the room's light drawn: the floor before the player, lit by the
@@ -9301,6 +9376,7 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         net.command(&clear);
         let feet = gate.feet;
         net.command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+        observer_back(gate);
         gate.next(Step::Makeable, now);
     };
     let (position, on_ground, flying, velocity, teleports) = {
@@ -9349,11 +9425,9 @@ fn step_up(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("setblock {} {} {} {}", cell.x, cell.y, cell.z, registry.def(block).name));
             }
             net.command(&format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y, stand.z as f32 + 0.5));
-            // The observer, left at the town the settlement steps judged, is brought above the
-            // course: the server tells it only of players within `players_seen`.
-            if let Some(observer) = gate.observer.as_mut() {
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y + 40, stand.z as f32 + 0.5) });
-            }
+            // The observer is brought above the course, and put back as the step ends: the
+            // server tells it only of players within `players_seen`.
+            observer_to(gate, format!("tp {} {} {}", stand.x as f32 + 0.5, stand.y + 40, stand.z as f32 + 0.5));
             gate.step_up_fault = None;
             gate.advance(now);
         }
@@ -11228,6 +11302,9 @@ enum View {
     Quests,
     /// First Night's full cooking instructions, in both languages.
     FirstNight,
+    /// First Night with a way of more inputs than any shipped recipe under its first goal,
+    /// as a mod may add (`FIT_LONG_WAY`).
+    LongWay,
     /// The menu on one settings tab.
     Menu(usize),
     /// Dead, waiting to respawn.
@@ -11310,7 +11387,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         [View::Inventory]
             .into_iter()
             .chain((0..FIT_LOOKUPS.len()).map(View::Recipes))
-            .chain([View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)])
+            .chain([View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::LongWay, View::Menu(0)])
             .collect()
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
@@ -11320,7 +11397,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             .chain((0..FIT_LOOKUP_COUNT).map(View::Recipes))
             .chain([View::Character, View::Prayers])
             .chain((0..skills).map(View::Guide))
-            .chain([View::Quests, View::FirstNight])
+            .chain([View::Quests, View::FirstNight, View::LongWay])
             .chain((0..crate::settings::TABS).map(View::Menu))
             .collect()
     };
@@ -11447,6 +11524,25 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
     }
     gate.advance(now);
+}
+
+/// The items a cooked way of `FIT_LONG_WAY` cooks with, beside the one held: more than any
+/// shipped recipe takes, as a mod may ask.
+const FIT_LONG_WAY: [&str; 5] = ["base:wheat", "base:flint", "base:oak_log", "base:wool", "base:raw_perch"];
+
+/// The first cooked way the recipe book has, with every item of `FIT_LONG_WAY` cooked with
+/// it, two of each, and some of it made: a recipe line too long for the quest book's column
+/// unless it wraps.
+fn long_way(world: &World) -> Option<voxmar_engine::recipe_book::Entry> {
+    use voxmar_engine::recipe_book::Method;
+    let content = &world.resource::<Launch>().content;
+    let book = world.resource::<crate::hud::recipes::RecipeViewer>().book()?;
+    let mut way = book.entries().iter().find(|e| matches!(e.method, Method::Cook { .. }))?.clone();
+    if let Method::Cook { with, .. } = &mut way.method {
+        *with = FIT_LONG_WAY.iter().map(|name| (content.blocks.expect(name), 2)).collect();
+    }
+    way.count = (3, 3);
+    Some(way)
 }
 
 /// A window smaller than the gate's own, where the interface steps down to 75% and the HUD
@@ -11686,7 +11782,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         Some(View::Character | View::Prayers | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
         Some(View::Journal(_)) => ui.journal_open = true,
-        Some(View::Quests | View::FirstNight) => ui.quests_open = true,
+        Some(View::Quests | View::FirstNight | View::LongWay) => ui.quests_open = true,
         Some(View::Console) => ui.console_open = true,
         Some(View::Recipes(_)) => (ui.inventory_open, ui.recipes_open) = (true, true),
         _ => {}
@@ -11714,8 +11810,12 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         };
         *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked, ..default() };
     }
-    if let Some(View::FirstNight) = view {
+    if let Some(View::FirstNight | View::LongWay) = view {
         *world.resource_mut::<crate::hud::quests::QuestView>() = crate::hud::quests::QuestView { chapter: 0, picked: Some("base:first_night".into()), ..default() };
+    }
+    let long = matches!(view, Some(View::LongWay)).then(|| long_way(world)).flatten();
+    if world.resource::<crate::hud::quests::FitWay>().0 != long {
+        world.resource_mut::<crate::hud::quests::FitWay>().0 = long;
     }
     if let Some(View::Journal(page)) = view {
         world.resource_mut::<crate::hud::journal::JournalView>().page = page;
@@ -18080,6 +18180,82 @@ fn end_kiln(world: &mut World, gate: &mut Gate, now: f32) {
     net.command("clear clay");
     net.command("clear fired_clay");
     net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
+    gate.next(Step::Quern, now);
+}
+
+/// Where the quern step sets its quern stones, from the test ground's middle: inside the
+/// creatures pad (stone underfoot, air above, walled at x -6), west of the Cook step's fire,
+/// stove and chimney, clear of them all; and where it stands, south of the quern.
+const QUERN_AT: IVec3 = IVec3::new(-4, 0, 14);
+const QUERN_STAND: Vec3 = Vec3::new(-3.5, 0.0, 12.0);
+
+/// Quern stones set down, a wheat in hand and right clicks on them, as on a fire: the
+/// wheat comes back as flour. The player is put back where the Cook step left them, for
+/// the home motif's walk.
+fn quern(world: &mut World, gate: &mut Gate, now: f32) {
+    let at = gate.feet + QUERN_AT;
+    let flour = item_count(world, "base:flour");
+    let wheat_left = item_count(world, "base:wheat");
+    match gate.phase {
+        0 => {
+            gate.quern_from = world.resource::<LocalPlayer>().position;
+            let stand = gate.feet.as_vec3() + QUERN_STAND;
+            let net = world.resource::<Net>();
+            for line in [
+                format!("fill {} {} {} {} {} {} stone", at.x, at.y - 1, at.z - 2, at.x + 1, at.y - 1, at.z),
+                format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z - 2, at.x + 1, at.y + 2, at.z),
+                format!("setblock {} {} {} quern_stones", at.x, at.y, at.z),
+                "clear wheat".to_owned(),
+                "clear flour".to_owned(),
+                "give wheat 1".to_owned(),
+                format!("tp {} {} {}", stand.x, stand.y, stand.z),
+            ] {
+                net.command(&line);
+            }
+            gate.taps = 0;
+            gate.advance(now);
+        }
+        1 => {
+            let (placed, wheat) = {
+                let client = world.resource::<ClientWorld>();
+                (client.registry.id("base:quern_stones").is_some_and(|b| client.block(at) == Some(b)), client.registry.id("base:wheat"))
+            };
+            let slot = wheat.and_then(|wheat| in_hotbar(world, &mut gate.food_moved, wheat));
+            if let (true, Some(slot), 0) = (placed, slot, flour) {
+                world.resource_mut::<LocalPlayer>().selected = slot;
+                gate.taps = 0;
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("quern grinds", Err(format!("the quern stones ({placed}) or a wheat in the hotbar ({slot:?}) never came, flour {flour}")));
+                end_quern(world, gate, now);
+            }
+        }
+        _ => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            if flour > 0 && wheat_left == 0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("quern grinds", Ok(format!("a right click on the quern stones with a wheat in hand ground it into {flour} flour")));
+                end_quern(world, gate, now);
+            } else if gate.waited_out(15.0) {
+                mouse(world, MouseButton::Right, false);
+                gate.check("quern grinds", Err(format!("right clicks on the quern stones at {at} with a wheat in hand made {flour} flour and left {wheat_left} wheat in 15 server seconds")));
+                end_quern(world, gate, now);
+            } else {
+                gate.tap(world, true, now);
+            }
+        }
+    }
+}
+
+fn end_quern(world: &mut World, gate: &mut Gate, now: f32) {
+    mouse(world, MouseButton::Right, false);
+    let (at, back) = (gate.feet + QUERN_AT, gate.quern_from);
+    let net = world.resource::<Net>();
+    // The quern goes. Its floor and the air over it are the pad's own stone and air.
+    net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    net.command("clear wheat");
+    net.command("clear flour");
+    net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
     gate.next(Step::HomeMotif, now);
 }
 
@@ -19282,6 +19458,8 @@ const TOWN_RADIUS: i32 = 10000;
 /// How far round a town's square its wall is judged: as far as the observer is sent the
 /// world at the gate's least view distance.
 const TOWN_REACH: i32 = 56;
+/// How far from the walled town the gate looks for a home with a byre.
+const BYRE_RADIUS: i32 = 4000;
 
 /// `/locate settlement` names the nearest hamlet or village; the player and the observer go
 /// there, and once the server's world around it has loaded, its blocks are judged against
@@ -19296,8 +19474,11 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             if let Some(observer) = gate.observer.as_mut() {
                 observer.replies.clear();
                 observer.connection.send(ClientMessage::Command { line: format!("locate settlement {SETTLEMENT_RADIUS}") });
-                // Where it floats over the test ground, for the last stage to bring it back to.
-                gate.observer_home = observer.position;
+                // Where it floats over the test ground, for the last stage to bring it back to
+                // (kept if a step before sent it home and its position has yet to follow).
+                if gate.observer_home.is_none() {
+                    gate.observer_home = observer.position;
+                }
             }
             gate.advance(now);
         }
@@ -19521,6 +19702,101 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 if !observer_home {
                     gate.check("settlements: back", Err("the observer never came back over the test ground".into()));
+                }
+                gate.observer_home = None;
+                gate.next(Step::Byres, now);
+            }
+        }
+    }
+}
+
+/// Server seconds the look for a byre may take, on a thread of its own.
+const BYRE_SEARCH: f32 = 30.0;
+
+/// The home with a byre nearest the walled town the Settlements step judged (or, with no
+/// town, the settlement it went to), in the nearest place that has one: the observer goes
+/// over it, and once the server has sent the world round it, its byre is judged as
+/// worldgen planned it (`judge_byre`). Then the observer goes back over the test ground.
+fn byres(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    match gate.phase {
+        // The look, on a thread of its own: planning the places about takes a while.
+        0 => {
+            let from = if gate.town != IVec3::ZERO { gate.town } else { gate.settlement };
+            gate.observer_home = gate.observer.as_ref().and_then(|o| o.position);
+            let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned();
+            gate.byre_search = Some(std::thread::spawn(move || {
+                let place = generator?.nearest_settlement(from.xz(), BYRE_RADIUS, |s| s.buildings.iter().any(|b| !b.byre.is_empty()))?;
+                let middle = place.centre.xz();
+                place.buildings.into_iter().filter(|b| !b.byre.is_empty()).min_by_key(|b| ((b.min + b.max) / 2 - middle).abs().max_element())
+            }));
+            gate.byre = None;
+            gate.advance(now);
+        }
+        // The observer goes over the byre's house once it is found.
+        1 => {
+            let Some(search) = gate.byre_search.take_if(|search| search.is_finished()) else {
+                if gate.server_in_phase() > BYRE_SEARCH {
+                    gate.check("settlement byres", Err(format!("the look for a byre within {BYRE_RADIUS} took over {BYRE_SEARCH} server seconds")));
+                    gate.phase = 2;
+                    gate.advance(now);
+                }
+                return;
+            };
+            match search.join() {
+                Ok(Some(b)) => {
+                    if let Some(observer) = gate.observer.as_mut() {
+                        let middle = (b.min + b.max) / 2;
+                        observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", middle.x, b.floor + 60, middle.y) });
+                    }
+                    gate.byre = Some(b);
+                    gate.advance(now);
+                }
+                found => {
+                    let why = match found {
+                        Ok(_) => format!("no home with a byre within {BYRE_RADIUS} of the walled town at {}", gate.town),
+                        Err(panic) => format!("the look for a byre panicked: {}", panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_else(|| "no message".into())),
+                    };
+                    gate.check("settlement byres", Err(why));
+                    gate.phase = 2;
+                    gate.advance(now);
+                }
+            }
+        }
+        // Once the observer has the byre's house round it, the byre is judged.
+        2 => {
+            let Some(b) = gate.byre.clone() else {
+                gate.advance(now);
+                return;
+            };
+            let (low, high) = (ColumnPos::of_block(IVec3::new(b.min.x - 2, 0, b.min.y - 2)).0, ColumnPos::of_block(IVec3::new(b.max.x + 2, 0, b.max.y + 2)).0);
+            let columns: Vec<ColumnPos> = (low.x..=high.x).flat_map(|x| (low.y..=high.y).map(move |z| ColumnPos::new(x, z))).collect();
+            let held = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
+            if held < columns.len() {
+                if gate.server_in_phase() > SETTLEMENT_LOAD {
+                    gate.check("settlement byres", Err(format!("the world around the byre at {} did not load: the server sent {held} of its {} columns in {SETTLEMENT_LOAD} server seconds", b.min, columns.len())));
+                    gate.advance(now);
+                }
+                return;
+            }
+            let byre = judge_byre(world, gate, &b);
+            gate.check("settlement byres", byre);
+            gate.advance(now);
+        }
+        // The observer back over the test ground, where the steps after read its world.
+        3 => {
+            if let (Some(at), Some(observer)) = (gate.observer_home, gate.observer.as_mut()) {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y, at.z) });
+            }
+            gate.advance(now);
+        }
+        _ => {
+            let back = match (gate.observer_home, gate.observer.as_ref()) {
+                (Some(at), Some(observer)) => observer.position.is_some_and(|p| p.distance(at) < 3.0),
+                _ => true,
+            };
+            if back || gate.server_in_phase() > 20.0 {
+                if !back {
+                    gate.check("settlement byres: back", Err("the observer never came back over the test ground".into()));
                 }
                 gate.observer_home = None;
                 gate.next(Step::Recipes, now);
@@ -19853,13 +20129,56 @@ fn judge_rows(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
             }
         }
     }
-    if joins == 0 {
-        return Err(format!("{name}: no homes planned wall to wall within {TOWN_REACH} of its square at {at}"));
+    // Two joins at least, so the line never rests on one house.
+    if joins < 2 {
+        return Err(format!("{name}: {joins} joins between homes planned wall to wall within {TOWN_REACH} of its square at {at}, under 2"));
     }
     if !wrong.is_empty() {
         return Err(format!("{name}: of {joins} joins between row houses within {TOWN_REACH}: {}", wrong.join("; ")));
     }
     Ok(format!("{name}: {joins} joins between row houses within {TOWN_REACH} stand wall to wall under one roof"))
+}
+
+/// A home's byre as the server built it, behind its room and never in it: an earth floor
+/// (but for the trough let into it), a wall across from the room with one doorway, a door
+/// out the back, and hay.
+fn judge_byre(world: &World, gate: &Gate, b: &voxmar_worldgen::SettlementBuilding) -> Result<String, String> {
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let name = |p: IVec3| observer.world.block(p).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let solid = |p: IVec3| observer.world.block(p).is_some_and(|b| client.registry.def(b).solid);
+    let at = |p: IVec2, y: i32| IVec3::new(p.x, y, p.y);
+    let open = |p: IVec2| !solid(at(p, b.floor + 1)) && !solid(at(p, b.floor + 2));
+    let what = format!("the {} at {}", b.what, b.min);
+    let back = b.facing.turn(0, 1);
+    let mut wrong = Vec::new();
+    if b.byre.iter().any(|p| b.room.contains(p)) {
+        wrong.push("its byre is in its room".to_owned());
+    }
+    let floors: Vec<String> = b.byre.iter().map(|&p| name(at(p, b.floor))).collect();
+    let earth = floors.iter().filter(|n| n.contains("dirt")).count();
+    let trough = floors.iter().filter(|n| n.contains("water")).count();
+    if earth + 1 != b.byre.len() || trough != 1 {
+        wrong.push(format!("{earth} of its {} byre columns floored in earth and {trough} troughs, under {:?}", b.byre.len(), floors.iter().filter(|n| !n.contains("dirt")).collect::<Vec<_>>()));
+    }
+    let front = b.byre.iter().map(|p| p.dot(back)).min().unwrap_or(0);
+    let last = b.byre.iter().map(|p| p.dot(back)).max().unwrap_or(0);
+    let across: Vec<IVec2> = b.byre.iter().filter(|p| p.dot(back) == front).map(|&p| p - back).collect();
+    let doorways = across.iter().filter(|&&p| open(p)).count();
+    if doorways != 1 || across.iter().any(|&p| !open(p) && !solid(at(p, b.floor + 1))) {
+        wrong.push(format!("{doorways} doorways in the wall across from the room"));
+    }
+    let out = b.byre.iter().filter(|p| p.dot(back) == last).filter(|&&p| open(p + back)).count();
+    if out == 0 {
+        wrong.push("no door out the back".into());
+    }
+    if !b.byre.iter().any(|&p| name(at(p, b.floor + 1)).contains("hay")) {
+        wrong.push("no hay".into());
+    }
+    if !wrong.is_empty() {
+        return Err(format!("{what}: {}", wrong.join("; ")));
+    }
+    Ok(format!("{what}: a byre of {} columns behind its room, on earth with a trough, a doorway through the wall across, {out} wide out the back, hay", b.byre.len()))
 }
 
 /// The town's shaped roofs as the server built them: every roof piece its plan lays within
@@ -19886,21 +20205,49 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     if !wrong.is_empty() {
         return Err(format!("{name}: {} of its {} roof pieces within {TOWN_REACH} are not as planned: {}", wrong.len(), planned.len(), wrong.into_iter().take(4).collect::<Vec<_>>().join("; ")));
     }
-    // The town's flames first (by the settlements' own table, not a tag looked up per
-    // block over the whole town), then only the blocks within their reach.
-    let mut flames: Vec<IVec3> = Vec::new();
-    for z in at.z - TOWN_REACH..=at.z + TOWN_REACH {
-        for x in at.x - TOWN_REACH..=at.x + TOWN_REACH {
-            for y in at.y - 24..=at.y + 40 {
-                let p = IVec3::new(x, y, z);
-                if observer.world.block(p).is_some_and(|b| generator.settlement_flame(b)) {
-                    flames.push(p);
+    // The flames the town's plan sets (by the settlements' own table), each standing where
+    // planned, then only the blocks within their reach: never a look at every block of the
+    // town in one frame.
+    let all_flames = generator.settlement_planned(at.xz(), &|b| generator.settlement_flame(b));
+    let planned_flames: Vec<(IVec3, BlockId)> = all_flames.iter().copied().filter(|r| within(r.0)).collect();
+    let missing: Vec<String> = planned_flames.iter().filter(|&&(p, b)| observer.world.block(p) != Some(b)).map(|&(p, b)| format!("{} at {p} is {}", block(Some(b)), block(observer.world.block(p)))).collect();
+    if !missing.is_empty() {
+        return Err(format!("{name}: {} of its {} flames within {TOWN_REACH} are not as planned: {}", missing.len(), planned_flames.len(), missing.into_iter().take(4).collect::<Vec<_>>().join("; ")));
+    }
+    let flames: Vec<IVec3> = planned_flames.into_iter().map(|r| r.0).collect();
+    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+    let reach = generator.settlement_fire_reach() + 1;
+    // No flame the plan never set within a fire's reach of its roofs: a look about each
+    // roof piece, each cell once, knowing the planned flames as far out as that look goes.
+    // Those set over the ground (a lamp's torch on its post) stand where the generator finds
+    // that ground; once found they are judged for reach with the rest.
+    let planned_at: rustc_hash::FxHashSet<IVec3> = all_flames.iter().map(|r| r.0).filter(|p| (p.xz() - at.xz()).abs().max_element() <= TOWN_REACH + reach).collect();
+    let on_ground: FxHashMap<IVec3, BlockId> = generator.settlement_planned_on_ground(at.xz(), &|b| generator.settlement_flame(b)).into_iter().collect();
+    let mut flames = flames;
+    let mut looked: rustc_hash::FxHashSet<IVec3> = rustc_hash::FxHashSet::default();
+    let mut unplanned: Vec<String> = Vec::new();
+    for &(r, _) in &planned {
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let p = r + IVec3::new(x, y, z);
+                    if looked.insert(p)
+                        && !planned_at.contains(&p)
+                        && let Some(b) = observer.world.block(p).filter(|&b| generator.settlement_flame(b))
+                    {
+                        if on_ground.get(&p) == Some(&b) {
+                            flames.push(p);
+                        } else {
+                            unplanned.push(format!("{} at {p}", block(Some(b))));
+                        }
+                    }
                 }
             }
         }
     }
-    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
-    let reach = generator.settlement_fire_reach() + 1;
+    if !unplanned.is_empty() {
+        return Err(format!("{name}: {} flames the plan never set stand within {reach} of its roofs: {}", unplanned.len(), unplanned.into_iter().take(4).collect::<Vec<_>>().join("; ")));
+    }
     for &f in &flames {
         for z in -reach..=reach {
             for y in -reach..=reach {
@@ -19955,9 +20302,7 @@ fn gorge(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let net = world.resource::<Net>();
             net.command("time set noon");
             net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
-            if let Some(observer) = gate.observer.as_mut() {
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 40, at.z) });
-            }
+            observer_to(gate, format!("tp {} {} {}", at.x, at.y + 40, at.z));
             gate.advance(now);
         }
         2 => {
@@ -20042,6 +20387,25 @@ struct TarnVisit {
     return_teleports: (u32, u32),
 }
 
+/// Sends the observer away with the `tp` in `line`, keeping where it floated before for
+/// `observer_back` (the first such move's start, while no step has put it back yet: the ore
+/// and gorge steps move it twice before the tarns step returns it).
+fn observer_to(gate: &mut Gate, line: String) {
+    if let Some(observer) = gate.observer.as_mut() {
+        if gate.observer_home.is_none() {
+            gate.observer_home = observer.position;
+        }
+        observer.connection.send(ClientMessage::Command { line });
+    }
+}
+
+/// Puts the observer back where it floated before `observer_to` moved it.
+fn observer_back(gate: &mut Gate) {
+    if let (Some(home), Some(observer)) = (gate.observer_home.take(), gate.observer.as_mut()) {
+        observer.connection.send(ClientMessage::Command { line: return_teleport(home) });
+    }
+}
+
 /// `/tp` centres integer-looking horizontal coordinates on a block. Retain the saved
 /// f32's full decimal precision and spell integral positions with a fractional part.
 fn return_teleport(at: Vec3) -> String {
@@ -20054,8 +20418,9 @@ fn return_teleport(at: Vec3) -> String {
 
 /// Visits a real pool filled by the tarn rule. Both peers must receive at least twenty
 /// matching source-water surface columns, then the loaded pool is captured from above.
-/// The generator chooses the place; no hand-built pool can satisfy this step. Both peers
-/// return to the gorge before the next lookup, including after a failed pool load.
+/// The generator chooses the place; no hand-built pool can satisfy this step. Before the next
+/// lookup, including after a failed pool load, the player returns to where it stood (the
+/// gorge) and the observer to where it floated before the ore and gorge steps moved it.
 fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     match gate.phase {
         0 => {
@@ -20070,10 +20435,16 @@ fn tarns(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             });
             let Some(at) = at else {
                 gate.check("tarns", Err("no visible generated tarn in the sampled alpine highlands".into()));
+                // Sent home, its way back kept: its position still lags the return, and the
+                // settlement step takes `observer_home` as home over that.
+                if let (Some(home), Some(observer)) = (gate.observer_home, gate.observer.as_mut()) {
+                    observer.connection.send(ClientMessage::Command { line: return_teleport(home) });
+                }
                 gate.next(Step::Settlements, now);
                 return;
             };
-            let Some(observer) = gate.observer.as_ref().and_then(|o| o.position) else {
+            // Its way back: where the steps before took it from, else where it is.
+            let Some(observer) = gate.observer_home.take().or_else(|| gate.observer.as_ref().and_then(|o| o.position)) else {
                 gate.check("tarns", Err("no observer position to return to after the visit".into()));
                 gate.next(Step::Settlements, now);
                 return;
@@ -20222,9 +20593,7 @@ fn ore(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.ore = at;
             let net = world.resource::<Net>();
             net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
-            if let Some(observer) = gate.observer.as_mut() {
-                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y + 40, at.z) });
-            }
+            observer_to(gate, format!("tp {} {} {}", at.x, at.y + 40, at.z));
             gate.advance(now);
         }
         2 => {
@@ -20774,11 +21143,22 @@ fn load_parts(world: &World) -> [bool; LOAD_PARTS.len()] {
     let (tiles, wanted) = lod.progress();
     [
         player.joined,
-        client.stats.pending_columns == 0 && client.voxels.len() >= 9,
+        client.stats.pending_columns == 0 && client.voxels.len() >= 9 && all_columns_in(player, client),
         client.stats.jobs_in_flight == 0,
         tiles >= wanted,
         world.resource::<crate::weather::WeatherReady>().0,
     ]
+}
+
+/// Whether every column the server streams round the player has arrived: those within
+/// the view distance, the client's or the integrated server's if less (as the server
+/// takes it, `Player::view_distance`). Without it the load passed as soon as meshing
+/// caught up with what had come so far: on an idle machine with the first few columns
+/// in, at 0.8 s, on a loaded one only once the last had come, at 49 s, and the land
+/// checks after read as many columns as had arrived.
+fn all_columns_in(player: &LocalPlayer, client: &ClientWorld) -> bool {
+    let radius = client.view_distance.min(voxmar_server::ServerConfig::default().view_distance);
+    client.all_in(ColumnPos::of_block(player.position.floor().as_ivec3()), radius)
 }
 
 /// Columns within `AGREE_WITHIN` of `feet`.
@@ -21140,6 +21520,17 @@ mod tests {
     }
 
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// The firebrand step holds its stick in a fire a player sets down and keeps: a
+    /// creative-only flame (the blaze of a burning thatch, first of the fires in the data)
+    /// went out under the stick and nothing caught.
+    #[test]
+    fn the_firebrand_step_holds_its_stick_in_a_players_fire() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let plan = super::BrandPlan::of(&content).unwrap();
+        let fire = content.blocks.def(plan.fire);
+        assert!(!fire.has_tag("creative_only"), "the firebrand step's fire is {}, creative only", fire.name);
+    }
 
     /// The Home step lays the crafting table from oak planks in the home barrel: the
     /// loaded data has a table recipe of oak planks to lay, whichever wood's comes first.

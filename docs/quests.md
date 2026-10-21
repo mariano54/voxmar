@@ -311,7 +311,7 @@ Each new feature has a quest that teaches it, in two parts the book counts one b
 
 | Quest | Age, path, after | Parts |
 |---|---|---|
-| A Chopping Block | Nomad, start; An Axe to It and A Bed of Your Own (Crafting 2 by then) | one set down; twelve planks split by it |
+| A Chopping Block | Nomad, start; An Axe to It, A Bed of Your Own (Crafting 2 by then) and Timber | one set down; twelve planks split by it |
 | Set a Snare | Nomad, hunter; Twine and Thong | one set down; a catch taken from a trap |
 | Old Tusk | Nomad, hunter; Hide and Seek and Raise Your Guard | a flint spear made; Old Tusk killed |
 | Light in the Window | Farm, home; A Homely Home | two hide windows made; two set down |
@@ -386,7 +386,7 @@ only crafted.
 | Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
 | Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
 | Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp | |
-| Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln | |
+| Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln; side quests A Keen Edge (a copper tool mended at the grindstone, after Copper Kit) and A Bronze Edge (a bronze pickaxe, after First Bronze and A Keen Edge) | |
 
 Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore run come after
 it (Hammer and Anvil, from the kiln-age PR, goes before The Crucible when it lands). Crucible
@@ -408,6 +408,67 @@ Saves (pre-release, accepted): a quest's finished state is kept by name, but que
 tasks changed count from what a save already tallied: Brick by Brick now counts bricks
 crafted rather than held, The Crucible and A Pit Kiln also want theirs set down, and A
 Kiln Yard is gone. A save part way along may have a step to do again.
+
+## Fishing in the Farm book (Oct 20)
+
+Fishing was the Farm book's thinnest path (Patient Angler and Many Kinds of Fish). Five
+side quests (`side: true`) now run along it. Each one teaches where or how a fish bites,
+or what a catch is for, and each pays in bread: no reward hands over an item that a home
+quest's lesson teaches (a rug or a cushion would meet A Rug Underfoot, A Cosy Home or Heart
+of the Home before the player made one). `Ate("tag:fish")` counts raw fish too, as no tag
+names cooked fish alone:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
+| Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, 2 bread |
+| Cold Water Trout | Still Water Perch | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked | Fishing 120, 4 bread |
+| Three Waters | Salt and Sardines, Still Water Perch | A fourth kind past minnow, sardine and perch: a trout or a cod | Fishing 150, 4 bread |
+| Fish on the Table | Salt and Sardines | A lit hearth, eight fish cooked and six eaten | Cooking 120, 4 bread |
+
+None of them is in a capstone's `after`, so Many Kinds of Fish still closes the path.
+
+## Crafting in the Farm book (Oct 20)
+
+The Farm book's Crafting path had only its capstone, Master and Journeyman. Four side
+quests (`side: true`) now teach what the bench makes from what the Farm age brings: trophies,
+cloth and dyes. Each pays in bread:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Fang and Stick | The Farm Age | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
+| Lanterns of Cloth | A Rug Underfoot | Paper lanterns (Crafting 6): two made and set down at home, each a light | Crafting 60, 2 bread |
+| A Dooryard | Lanterns of Cloth | An awning and bunting made, then the Dooryard felt (an awning and two yard things under open sky) | Crafting 100, 4 bread |
+| Five Colours | A Rug Underfoot | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
+
+## About camp in the Nomad book (Oct 20)
+
+Four side quests (`side: true`) join the Nomad book's first path, each teaching a first tool
+or a way to shape what is built, and each paying bread:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Flint First | Crafting Table | The flint pickaxe and the digging stick, the tools before stone | Engineering 20, 1 bread |
+| A Coin Purse | Twine and Thong | A hide and two twine hold a thousand coins in one slot | Crafting 20, 1 bread |
+| Steps and Slabs | A Chopping Block, A Bench to Work At | Slabs and stairs made, two of each set down | Construction 30, 1 bread |
+| A Fence and a Gate | Steps and Slabs, A Bench to Work At | Posts, fences and a gate: a fence is two high to creatures; the gate swings open | Construction 40, 2 bread |
+
+## Fire, food and night in the Nomad book (Oct 20)
+
+Three side quests (`side: true`) on the way to the lit Homestead Hearth teach what a fire, a
+meal and a home at night give, each by the buff it names (`Felt`), so they hold whatever
+the buff comes to need. They sit on the cooking and home paths: the main line's walk
+(`the_main_quest_line_earns_every_level_it_asks_for`) counts no buffs. Each pays bread:
+
+| Quest | Path | After | Teaches | Pays |
+|---|---|---|---|---|
+| A Hot Meal | Cooking | First Night | Eating when hurt; cooked meat leaves you Hearty (`hearty`) | Cooking 20, 1 bread |
+| By the Fire | Home | First Night, Crafting Table | A stool made, and sitting by the fire (`fireside`): heal half as fast again, warmed | Construction 20, 1 bread |
+| An Evening In | Home | Homestead Hearth | After dark, under the roof within four blocks of the lit hearth (`evening_in`) | Construction 40, 2 bread |
+
+A Fence and a Gate counts `plain_fence`, the straight length alone, so gates and corners
+(which carry `fence` too) are not its six fences; `content.rs`
+`a_fence_and_a_gate_wants_fences_not_gates` holds it.
 
 ## Readable to a newcomer (Oct 13)
 

@@ -247,18 +247,20 @@ fn column_hash(column: &Column, registry: &BlockRegistry) -> u64 {
     h
 }
 
-/// Columns over rivers and lakes, caves, forests, mountains and coasts on three seeds, and
-/// around a waterfall on a fourth.
-const GOLDEN: [(u64, [(i32, i32); 8]); 4] = [
+/// Columns over rivers and lakes, caves, forests, mountains and coasts on three seeds,
+/// around a waterfall on a fourth, and spread kilometres apart on two more.
+const GOLDEN: [(u64, [(i32, i32); 8]); 6] = [
     (1, [(0, 0), (1, 0), (0, 2), (60, -90), (-120, 40), (150, 150), (-40, -200), (-9, -6)]),
     (42, [(-10, -3), (-9, -2), (-1, 0), (0, 0), (-33, -2), (93, -63), (-10, -11), (4, 31)]),
     (0x5eed, [(0, 0), (60, -90), (-120, 40), (150, 150), (-40, -200), (-128, 28), (47, 162), (8, 8)]),
     // Around a waterfall at (-894, 298): its curtain, pool and the water feeding its lip.
     (0, [(-28, 9), (-29, 9), (-27, 9), (-28, 8), (-28, 10), (-29, 8), (-27, 10), (-29, 10)]),
+    (7, [(0, 0), (-1, 0), (31, -17), (-75, 120), (240, 9), (-201, -233), (5, 310), (-330, 77)]),
+    (99, [(2, -3), (2, -2), (-64, -64), (128, -40), (-250, 180), (300, 290), (-14, -400), (411, -9)]),
 ];
 
 /// The hash of `GOLDEN`'s columns per seed, as generation makes them now.
-const EXPECTED: [u64; 4] = [0x6fe0c486f705eed6, 0x07e39c2961008711, 0xf315e242d3aba9c3, 0xefd2a5f5d8aa5492];
+const EXPECTED: [u64; 6] = [0x6fe0c486f705eed6, 0x07e39c2961008711, 0xf315e242d3aba9c3, 0xefd2a5f5d8aa5492, 0xe1e02ed3215f490e, 0xee605fccb7cebada];
 
 /// Generation's output stays exactly as it was: performance work must not change a block.
 /// When a change to the output is deliberate (new terrain, a biome's colours), replace
@@ -285,18 +287,19 @@ fn output_is_unchanged() {
     );
 }
 
-/// The hash of the light over four 3×3 areas, one per seed of `GOLDEN`, as lighting makes it now.
+/// The hash of the light over four 3×3 areas, one per seed of `GOLDEN`'s first four, as
+/// lighting makes it now.
 const LIGHT: u64 = 0x2923024e18114411;
 
 /// Lighting stays exactly as it was too: the light of the centre column of a 3×3 area on
-/// each of `GOLDEN`'s seeds, with the border the mesher reads. When generation changes on
+/// each of `GOLDEN`'s first four seeds, with the border the mesher reads. When generation changes on
 /// purpose this changes with it; set `LIGHT` to the hash this test prints.
 #[test]
 fn light_is_unchanged() {
     use rayon::prelude::*;
     let registry = registry();
     // Every seed and column on its own core, the light mixed in seed order.
-    let regions: Vec<LitRegion> = GOLDEN
+    let regions: Vec<LitRegion> = GOLDEN[..4]
         .par_iter()
         .map(|&(seed, columns)| {
             let world = Overworld::new(seed, registry.clone());

@@ -29,9 +29,10 @@ impl Plugin for InteractPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Target>()
             .init_resource::<crate::fight::Fighting>()
+            .init_resource::<crate::creatures::Tending>()
             .add_systems(
                 Update,
-                (select_slot.after(player::zoom), find_target, crate::creatures::aim, pick_block, break_and_place, crate::fight::guard, crate::fight::quick_prayers, draw_target)
+                (select_slot.after(player::zoom), find_target, crate::creatures::forget_tending_on_rejoin, crate::creatures::aim, pick_block, break_and_place, crate::fight::guard, crate::fight::quick_prayers, draw_target)
                     .chain()
                     .in_set(InteractSystems)
                     .run_if(in_state(crate::menu::Screen::InGame)),
@@ -374,20 +375,24 @@ fn break_and_place(
             let context = ClientContext { world: &world, player: &player, content };
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             if actions.0.get(open_store).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
-                net.propose_from(&player, open_store, action_target);
+                // Heard by what is opened (a barrel, a jar: `sounds.ron`'s ways).
+                net.propose_from_with(&player, open_store, action_target, worked(&context, hit.block));
                 target.used_right = true;
                 player.store_asked = true;
+                target.press_spent = true;
                 return;
             }
         }
         // A machine takes what it burns or works from the hand, or gives what it made; the
-        // server says how it is doing. Anything else in hand is placed against it.
+        // server says how it is doing. Anything else in hand is placed against it, on a press
+        // of its own: what is left in hand after one it took from is not laid on it.
         if let (Some(hit), Some(use_machine)) = (hit, actions.0.id("base:use_machine")) {
             let context = ClientContext { world: &world, player: &player, content };
             let action_target = ActionTarget::Block { block: hit.block, face: hit.face };
             if actions.0.get(use_machine).is_some_and(|def| def.validate(&context, action_target).is_ok()) {
                 net.propose_from(&player, use_machine, action_target);
                 target.place_cooldown = 0.4;
+                target.press_spent = true;
                 return;
             }
         }
@@ -862,6 +867,50 @@ mod tests {
         assert_eq!(proposed, [content.actions.expect("base:light")], "lit, and the campfire kept in hand");
     }
 
+    /// A chest opened with a block in hand, the button held on while its screen comes: the
+    /// block is not laid against it.
+    #[test]
+    fn holding_on_after_opening_a_chest_lays_nothing() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, content.blocks.expect("base:chest"));
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(content.blocks.expect("base:cobblestone"), 4));
+        player.selected = 0;
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+        for _ in 0..20 {
+            app.update();
+        }
+        let proposed: Vec<ActionId> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect();
+        assert_eq!(proposed, [content.actions.expect("base:open_store")], "opened, and nothing laid against it");
+    }
+
+    /// A block put into a hopper, the button held on: it goes in, and nothing is laid
+    /// against the hopper after.
+    #[test]
+    fn holding_on_after_using_a_machine_lays_nothing() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, content.blocks.expect("base:hopper"));
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(content.blocks.expect("base:cobblestone"), 4));
+        player.selected = 0;
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().clear();
+        for _ in 0..20 {
+            app.update();
+        }
+        let proposed: Vec<ActionId> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect();
+        assert_eq!(proposed, [content.actions.expect("base:use_machine")], "put in, and nothing laid against it");
+    }
+
     /// Content that leaves `core:mine` out (a partial mod): holding the button does
     /// nothing, frame after frame, and proposes nothing.
     #[test]
@@ -876,6 +925,21 @@ mod tests {
         assert_eq!(app.world().resource::<ClientWorld>().block(block), Some(stone));
         let proposed = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).count();
         assert_eq!(proposed, 0);
+    }
+
+    /// A store opened is proposed with the block opened, so it is heard as what it is (a
+    /// barrel's lid, a jar's).
+    #[test]
+    fn a_store_is_opened_with_what_it_is() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, _server_side) = app(content.actions.clone());
+        let barrel = content.blocks.expect("base:barrel");
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, barrel);
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        app.update();
+        let open_store = content.actions.id("base:open_store").unwrap();
+        let proposed = app.world().resource::<Net>().take_proposed();
+        assert!(proposed.iter().any(|p| p.action == open_store && p.with == [barrel]), "{:?}", proposed.iter().map(|p| (p.action, p.with.clone())).collect::<Vec<_>>());
     }
 
     /// A ripe crop that fruits again, above the player's Farming level: right click says
@@ -893,6 +957,43 @@ mod tests {
         assert!(refusals.iter().any(|why| why.contains("Farming") && why.contains(&level)), "{refusals:?}");
         let proposed = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter(|m| matches!(m, voxmar_protocol::ClientMessage::Propose { .. })).count();
         assert_eq!(proposed, 0);
+    }
+
+    /// A stick held to a campfire is held in it (`base:cook`), as the gate's firebrand step
+    /// does: what one press sends, the hotbar slot in hand and then the cook, and letting go
+    /// at once sends nothing more (a release cancels only mining), whether held on or not.
+    #[test]
+    fn a_stick_held_to_a_campfire_is_held_in_it() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        for held_on in [true, false] {
+            let (mut app, block, server_side) = app(content.actions.clone());
+            let id = |name: &str| content.blocks.expect(name);
+            app.world_mut().resource_mut::<ClientWorld>().set_block(block, id("base:campfire"));
+            app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosX, distance: 2.0 });
+            let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+            player.inventory.slots[3] = Some(voxmar_engine::inventory::ItemStack::new(id("base:stick"), 1));
+            player.selected = 3;
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+            app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+            app.update();
+            for _ in 0..100 {
+                let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+                mouse.clear();
+                if !held_on {
+                    mouse.release(MouseButton::Right);
+                }
+                app.update();
+            }
+            let sent: Vec<String> = std::iter::from_fn(|| server_side.try_recv().ok().flatten())
+                .filter_map(|m| match m {
+                    voxmar_protocol::ClientMessage::Propose { action, .. } => Some(content.actions.get(action).map_or_else(|| format!("{action:?}"), |a| a.name.clone())),
+                    voxmar_protocol::ClientMessage::Input(input) => Some(format!("slot {}", input.selected_slot)),
+                    voxmar_protocol::ClientMessage::Cancel => Some("cancel".into()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(sent, ["slot 3", "base:cook"], "held on: {held_on}");
+        }
     }
 
     /// A log held to a chopping block with an axe about splits on the press; the button held

@@ -53,7 +53,8 @@ pub enum Method {
     /// Caught on a line, from `level` in `skill`.
     Catch { skill: Option<crate::skill::SkillId>, level: u8 },
     /// Taken from a sprung `trap` (its set block) that caught `creature`: that creature's
-    /// loot, `chance` of the time, from `level` in `skill`.
+    /// loot, `chance` of the times one steps in (the trap's own chance of holding it, by
+    /// the loot's), from `level` in `skill`.
     Trap { trap: BlockId, creature: CreatureId, chance: f32, skill: crate::skill::SkillId, level: u8 },
     /// Taken from bees in `block` (a wild nest, a full skep), with `holding` in hand if the
     /// take asks for it, `chance` of the time, from `level` in `skill`.
@@ -69,6 +70,9 @@ pub enum Method {
     /// `from` is lit again into (a lamp filled with fat), using up an item tagged `fuel`
     /// if lighting it does.
     Burn { from: BlockId, relit: bool, fuel: Option<String> },
+    /// Left where `from` was charred in the structure `structure` (a clamp's firewood), lit
+    /// and left to smoulder; `early` if it was opened before its time.
+    Smoulder { structure: String, from: BlockId, early: bool },
     /// Found in the world (its generator lays it) and broken loose as itself, with `tool`
     /// (the least that does) if it needs one, from `level` in `skill`.
     Found { tool: Option<BlockId>, skill: Option<crate::skill::SkillId>, level: u8 },
@@ -113,6 +117,16 @@ pub struct RecipeBook {
     uses: FxHashMap<BlockId, Vec<usize>>,
     /// What the world lays, as each is held ([`listed_as`]).
     laid: std::collections::HashSet<BlockId>,
+    /// The creative-only blocks a way breaks that the world never lays (a zinc ore sample
+    /// no vein sets down): ways no player meets.
+    unlaid: std::collections::HashSet<BlockId>,
+}
+
+/// The item a way that takes any of `accepts` shows going in: the first a player can come
+/// by, not one only the creative catalogue has (a hollow root no one can break loose).
+fn shown_input(blocks: &crate::block::BlockRegistry, accepts: &[BlockId]) -> Option<BlockId> {
+    let items = accepts.iter().map(|&b| blocks.item_of(b));
+    items.clone().find(|&item| !blocks.def(item).has_tag(CREATIVE_ONLY)).or_else(|| items.clone().next())
 }
 
 /// The block `id` is held as: itself, or for one of its placed forms (another look, a
@@ -190,7 +204,7 @@ impl RecipeBook {
         // takes its kind.
         for (id, process) in content.machines.processes() {
             let machines: Vec<BlockId> = content.machines.iter().filter(|m| m.processes.contains(&id)).map(|m| m.block).collect();
-            let inputs: Vec<(BlockId, u8)> = process.inputs.iter().filter_map(|(accepts, n)| Some((blocks.item_of(*accepts.first()?), *n))).collect();
+            let inputs: Vec<(BlockId, u8)> = process.inputs.iter().filter_map(|(accepts, n)| Some((shown_input(blocks, accepts)?, *n))).collect();
             let made = process.outputs.iter().map(|&(item, n)| (item, n, 1.0)).chain(process.byproducts.iter().copied());
             for (item, n, chance) in made {
                 let method = Method::Process { machines: machines.clone(), inputs: inputs.clone(), tier: process.tier, chance };
@@ -201,8 +215,8 @@ impl RecipeBook {
         // Home stations: each work, left in the station's empty block.
         for station in &content.stations.stations {
             for work in &station.works {
-                let Some(&input) = work.accepts.first() else { continue };
-                let method = Method::Work { station: station.empty, input: blocks.item_of(input), takes: work.takes, skill: work.skill, level: work.level };
+                let Some(input) = shown_input(blocks, &work.accepts) else { continue };
+                let method = Method::Work { station: station.empty, input, takes: work.takes, skill: work.skill, level: work.level };
                 let uses = work.accepts.iter().copied().chain(method.stations(blocks)).collect();
                 book.add(blocks, Entry { method, output: work.output, count: (work.gives, work.gives) }, uses);
             }
@@ -287,7 +301,7 @@ impl RecipeBook {
         for trap in &content.traps.traps {
             for &creature in &trap.catches {
                 for drop in &content.creatures.get(creature).loot {
-                    let method = Method::Trap { trap: trap.set, creature, chance: drop.loot.chance, skill: trap.skill, level: trap.level };
+                    let method = Method::Trap { trap: trap.set, creature, chance: trap.chance(creature) * drop.loot.chance, skill: trap.skill, level: trap.level };
                     let uses = method.stations(blocks);
                     book.add(blocks, Entry { method, output: drop.item, count: drop.loot.count }, uses);
                 }
@@ -371,6 +385,18 @@ impl RecipeBook {
                 book.add(blocks, Entry { method: Method::Burn { from, relit, fuel: fuel.map(str::to_owned) }, output, count: (1, 1) }, takes);
             }
         }
+        // A smouldering structure: what each of its wood cells, charred through or opened
+        // early, breaks to, as many as the heap drops.
+        for structure in content.multiblocks.iter() {
+            let Some(smoulder) = &structure.smoulder else { continue };
+            let Some(&from) = smoulder.wood.first().and_then(|&at| structure.takes(at).first()) else { continue };
+            for (left, early) in [(smoulder.done, false), (smoulder.early, true)] {
+                if let Some(output) = held(left) {
+                    let n = blocks.info(left).drop_count;
+                    book.add(blocks, Entry { method: Method::Smoulder { structure: structure.name.clone(), from, early }, output, count: (n, n) }, vec![from]);
+                }
+            }
+        }
         book
     }
 
@@ -395,6 +421,18 @@ impl RecipeBook {
         }
     }
 
+    /// Whether the world lays `block` (as [`found`](Self::found) was told): a creative-only
+    /// block a player only ever meets where the generator set it.
+    pub fn laid(&self, blocks: &crate::block::BlockRegistry, block: BlockId) -> bool {
+        self.laid.contains(&listed_as(blocks, block))
+    }
+
+    /// Whether a player can meet `entry`: not by breaking a creative-only block the world
+    /// never lays (as [`found`](Self::found) was told).
+    pub fn met(&self, entry: &Entry) -> bool {
+        !matches!(entry.method, Method::Break { block, .. } if self.unlaid.contains(&block))
+    }
+
     /// Adds what the world lays (`placed`, from its generator's data) that breaking gives
     /// back as itself: found, not made. Items that are never placed (seeds) are left out,
     /// and so are furnishings: one the world placed (a village's bed) gives nothing broken.
@@ -404,6 +442,15 @@ impl RecipeBook {
         placed.sort();
         placed.dedup();
         self.laid.extend(placed.iter().map(|&b| listed_as(blocks, b)));
+        let laid = &self.laid;
+        self.unlaid = self
+            .entries
+            .iter()
+            .filter_map(|e| match e.method {
+                Method::Break { block, .. } if blocks.def(block).has_tag(CREATIVE_ONLY) && !laid.contains(&listed_as(blocks, block)) => Some(block),
+                _ => None,
+            })
+            .collect();
         // A crop the world lays ripe (a wild cabbage) is foraged as it stands.
         for (_, crop) in content.crops.iter().filter(|(_, crop)| placed.contains(&crop.ripe())) {
             for (item, loot) in &crop.forage {
@@ -673,6 +720,13 @@ mod tests {
         let rabbit = content.creatures.id("base:rabbit").unwrap();
         let caught: Vec<BlockId> = book.using(snare).iter().filter(|e| matches!(e.method, Method::Trap { creature, .. } if creature == rabbit)).map(|e| e.output).collect();
         assert_eq!(caught.len(), content.creatures.get(rabbit).loot.len(), "{caught:?}");
+        // A hare is held by its own chance, not the snare's: what it leaves comes that much
+        // less often.
+        let hare = content.creatures.id("base:hare").unwrap();
+        let trap = content.traps.traps.iter().find(|t| t.set == snare).unwrap();
+        let held = book.using(snare).into_iter().filter_map(|e| match e.method { Method::Trap { creature, chance, .. } if creature == hare => Some(chance), _ => None });
+        let loot = content.creatures.get(hare).loot.iter().map(|d| trap.chance(hare) * d.loot.chance);
+        assert!(trap.chance(hare) < 0.6 && held.eq(loot), "the hare's own chance");
         // Bees: honey from a full skep, and a skep of bees from a nest with a skep in hand.
         assert!(ways("base:honey").iter().any(|m| matches!(m, Method::Bees { block, holding: None, .. } if *block == id("base:honey_skep"))));
         assert!(ways("base:bee_skep").iter().any(|m| matches!(m, Method::Bees { block, holding: Some(skep), .. } if *block == id("base:bee_nest") && *skep == id("base:skep"))));
@@ -696,6 +750,13 @@ mod tests {
         assert_eq!(burnt("base:charred_stick"), [(id("base:firebrand"), false)]);
         assert_eq!(burnt("base:clay_oil_lamp"), [(id("base:clay_oil_lamp_empty"), true)]);
         assert!(burnt("base:torch_guttering").is_empty());
+        // A clamp's firewood, charred through, is charcoal; opened early, charred wood.
+        let charred = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Smoulder { structure, from, early } = m { Some((structure, from, early)) } else { None }).collect::<Vec<_>>();
+        assert_eq!(charred("base:charcoal"), [("base:charcoal_clamp".to_owned(), id("base:firewood"), false)]);
+        assert_eq!(charred("base:charred_wood"), [("base:charcoal_clamp".to_owned(), id("base:firewood"), true)]);
+        // As many as a heap breaks to: four charcoal, two charred wood.
+        let heap = |item: &str| book.making(id(item)).iter().find(|e| matches!(e.method, Method::Smoulder { .. })).map(|e| e.count);
+        assert_eq!((heap("base:charcoal"), heap("base:charred_wood")), (Some((4, 4)), Some((2, 2))));
         let fat = content.blocks.tagged("fat").next().expect("something is fat");
         assert!(book.using(fat).iter().any(|e| matches!(&e.method, Method::Burn { relit: true, fuel: Some(tag), .. } if tag == "fat") && e.output == id("base:clay_oil_lamp")));
         // Food left too long: the cooking entries it burns in make it.
@@ -720,8 +781,9 @@ mod tests {
         assert_eq!((found(dirt), found(stone), found(seeds)), (1, 0, 0), "dirt is found, stone breaks to cobblestone, seeds are never laid");
     }
 
-    /// A station a package adds (a quern) shows its ways, cooked at it and crafted near it,
-    /// with no code for it: one path from data for every station.
+    /// A station a package adds (a quern, tagged `millstone` apart from base's own quern)
+    /// shows its ways, cooked at it and crafted near it, with no code for it: one path from
+    /// data for every station.
     #[cfg(unix)]
     #[test]
     fn a_station_a_package_adds_lists_its_ways_with_no_code() {
@@ -733,12 +795,12 @@ mod tests {
             std::os::unix::fs::symlink(shipped.join(package).canonicalize().unwrap(), dir.join(package)).unwrap();
         }
         std::fs::write(dir.join("mill/blocks.ron"), r#"(blocks: [
-            (name: "quern", textures: All("stone"), hardness: 1.0, color: (120, 120, 120), tags: ["quern"]),
+            (name: "quern", textures: All("stone"), hardness: 1.0, color: (120, 120, 120), tags: ["millstone"]),
             (name: "meal", item: true, render: Plant, solid: false, textures: All("wheat"), hardness: 0.0, color: (220, 210, 170)),
             (name: "cake", item: true, render: Plant, solid: false, textures: All("bread"), hardness: 0.0, color: (220, 190, 130)),
         ])"#).unwrap();
-        std::fs::write(dir.join("mill/cooking.ron"), r#"(recipes: [(input: "base:wheat", output: "meal", station: "quern", skill: "core:cooking", level: 1, xp: 1.0, stop_burning: 0)])"#).unwrap();
-        std::fs::write(dir.join("mill/recipes.ron"), r#"(recipes: [(ingredients: ["meal", "base:honey"], output: "cake", near: "quern")])"#).unwrap();
+        std::fs::write(dir.join("mill/cooking.ron"), r#"(recipes: [(input: "base:wheat", output: "meal", station: "millstone", skill: "core:cooking", level: 1, xp: 1.0, stop_burning: 0)])"#).unwrap();
+        std::fs::write(dir.join("mill/recipes.ron"), r#"(recipes: [(ingredients: ["meal", "base:honey"], output: "cake", near: "millstone")])"#).unwrap();
         let content = Content::load(&dir).expect("the mill loads");
         std::fs::remove_dir_all(&dir).unwrap();
         let book = RecipeBook::new(&content);

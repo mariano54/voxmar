@@ -78,7 +78,8 @@ impl Server {
 
     /// A block changed at `changed`: a smouldering structure it was part of, no longer
     /// standing, has been opened, and what it holds is part-burnt. One partly in land not
-    /// loaded is judged once all of it is there again, never as opened for the land missing.
+    /// loaded is never counted opened for the land missing: [`Server::tend_smoulders`]
+    /// judges it once all of it is there again.
     pub(crate) fn smoulder_changed(&mut self, changed: IVec3) {
         if self.smoulders.is_empty() {
             return;
@@ -102,18 +103,28 @@ impl Server {
     }
 
     /// Looks over each smouldering structure: rain on its open flue is counted as it falls,
-    /// loaded or not (one not loaded is open as it was when last seen), and one whose time
-    /// is up is done once all of it is loaded; until then it waits.
+    /// loaded or not (one not loaded is open as it was when last seen); with all of it
+    /// loaded, one no longer standing was opened (broken while part of it was not loaded),
+    /// and one whose time is up is done. Until then it waits.
     pub(crate) fn tend_smoulders(&mut self) {
         if self.smoulders.is_empty() {
             return;
         }
         let (now, tick, day, wet) = (self.day.floor() as u64, self.tick, self.day, self.survival.douse_rain);
         let cores: Vec<IVec3> = self.smoulders.keys().copied().collect();
-        let mut done = Vec::new();
+        let (mut done, mut opened) = (Vec::new(), Vec::new());
         for core in cores {
             let s = &self.smoulders[&core];
-            let cells: Vec<IVec3> = self.content.multiblocks.get(&s.structure).and_then(|m| m.smoulder.as_ref()).map_or_else(Vec::new, |sm| sm.wood.iter().map(|&o| core + turned(o, s.turn)).collect());
+            if let Some(m) = self.content.multiblocks.get(&s.structure)
+                && m.cells_at(core, s.turn).all(|p| self.world.block(p).is_some())
+                && !m.stands(core, |p| self.world.block(p))
+            {
+                opened.push(core);
+                continue;
+            }
+            // All of it, not only its wood: a piece broken where the land is not loaded is
+            // judged (opened, above) before its time can be up.
+            let cells: Vec<IVec3> = self.content.multiblocks.get(&s.structure).map_or_else(Vec::new, |m| m.cells_at(core, s.turn).collect());
             let loaded = self.block(core).is_some() && cells.iter().all(|&p| self.block(p).is_some());
             if self.block(core).is_some() {
                 let roofed = !self.open_sky(core + IVec3::Y);
@@ -137,15 +148,21 @@ impl Server {
         for core in done {
             self.end_smoulder(core, End::Done);
         }
+        for core in opened {
+            self.end_smoulder(core, End::Opened);
+        }
     }
 
     /// Turns what `core`'s structure chars into what it made: done, its share of the burn
     /// rained on spoiled (from the top down, where the rain came in) and the rest charred
-    /// well; opened, all part-burnt. A cell emptied by hand stays empty. The core burns out.
+    /// well; opened, all part-burnt. A cell emptied by hand, or with something else set in
+    /// it, is left as it is. The core burns out.
     fn end_smoulder(&mut self, core: IVec3, end: End) {
         let Some(s) = self.smoulders.remove(&core) else { return };
-        let Some(smoulder) = self.content.multiblocks.get(&s.structure).and_then(|m| m.smoulder.clone()) else { return };
-        let mut cells: Vec<IVec3> = smoulder.wood.iter().map(|&o| core + turned(o, s.turn)).filter(|&p| self.block(p).is_some_and(|b| !b.is_air())).collect();
+        let Some(structure) = self.content.multiblocks.get(&s.structure).cloned() else { return };
+        let Some(smoulder) = structure.smoulder.clone() else { return };
+        let wood = |o: IVec3, p: IVec3| self.block(p).is_some_and(|b| structure.takes(o).contains(&b));
+        let mut cells: Vec<IVec3> = smoulder.wood.iter().map(|&o| (o, core + turned(o, s.turn))).filter(|&(o, p)| wood(o, p)).map(|(_, p)| p).collect();
         cells.sort_by_key(|p| std::cmp::Reverse(p.y));
         let spoiled = match end {
             End::Opened => 0,
@@ -213,18 +230,20 @@ mod tests {
     const CORNER: IVec3 = IVec3::new(8, FLOOR + 1, 8);
     const FLUE: IVec3 = IVec3::new(10, FLOOR + 2, 10);
 
-    /// A stone floor under open sky, and player 1 on it holding `item`.
+    /// A stone floor under open sky, two columns wide, and player 1 on it holding `item`.
     fn fixture(item: &str) -> Server {
         let mut server = crate::test_server();
         server.world = Default::default();
         let stone = id(&server, "base:stone");
-        let mut column = Column::default();
-        for x in 0..32 {
-            for z in 0..32 {
-                column.set_block(IVec3::new(x, FLOOR, z), stone);
+        for cx in 0..2 {
+            let mut column = Column::default();
+            for x in 0..32 {
+                for z in 0..32 {
+                    column.set_block(IVec3::new(x, FLOOR, z), stone);
+                }
             }
+            server.world.insert(ColumnPos::new(cx, 0), Arc::new(column));
         }
-        server.world.insert(ColumnPos::new(0, 0), Arc::new(column));
         let (client, connection) = voxmar_protocol::local_pair();
         std::mem::forget(client);
         let at = Vec3::new(10.5, (FLOOR + 1) as f32, 6.5);
@@ -246,29 +265,42 @@ mod tests {
 
     /// Nine firewood under earth, kindling on the roof: the clamp as multiblocks.ron draws it.
     fn build(server: &mut Server) {
+        build_at(server, CORNER);
+    }
+
+    /// The clamp with its north-west corner at `corner`.
+    fn build_at(server: &mut Server, corner: IVec3) {
         let (wood, earth, kindling) = (id(server, "base:firewood"), id(server, "base:dirt"), id(server, "base:kindling"));
         for x in 0..5 {
             for z in 0..5 {
                 let inner = (1..4).contains(&x) && (1..4).contains(&z);
-                server.set_block(CORNER + IVec3::new(x, 0, z), if inner { wood } else { earth });
+                server.set_block(corner + IVec3::new(x, 0, z), if inner { wood } else { earth });
                 if inner {
-                    server.set_block(CORNER + IVec3::new(x, 1, z), if (x, z) == (2, 2) { kindling } else { earth });
+                    server.set_block(corner + IVec3::new(x, 1, z), if (x, z) == (2, 2) { kindling } else { earth });
                 }
             }
         }
     }
 
     fn light(server: &mut Server) {
+        light_at(server, FLUE);
+    }
+
+    fn light_at(server: &mut Server, flue: IVec3) {
         let action = server.content.actions.expect("base:light");
-        server.propose(1, action, ActionTarget::Block { block: FLUE, face: Face::PosY }, Instant::now());
+        server.propose(1, action, ActionTarget::Block { block: flue, face: Face::PosY }, Instant::now());
     }
 
     /// What lies where the firewood was, by name and how many of each.
     fn charred(server: &Server) -> Vec<(String, usize)> {
+        charred_at(server, CORNER)
+    }
+
+    fn charred_at(server: &Server, corner: IVec3) -> Vec<(String, usize)> {
         let mut found: Vec<(String, usize)> = Vec::new();
         for x in 1..4 {
             for z in 1..4 {
-                let name = server.block(CORNER + IVec3::new(x, 0, z)).map_or_else(String::new, |b| server.content.blocks.def(b).name.clone());
+                let name = server.block(corner + IVec3::new(x, 0, z)).map_or_else(String::new, |b| server.content.blocks.def(b).name.clone());
                 match found.iter_mut().find(|(n, _)| *n == name) {
                     Some((_, count)) => *count += 1,
                     None => found.push((name, 1)),
@@ -358,6 +390,49 @@ mod tests {
         server.set_block(CORNER, BlockId::AIR);
         assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 9)]);
         assert!(server.smoulders.is_empty() && server.block(FLUE) == Some(BlockId::AIR));
+    }
+
+    /// Its wood swapped for stone while it smoulders opens it, and the stone is left as it
+    /// is: only wood chars.
+    #[test]
+    fn what_was_set_in_its_woods_place_is_not_charred() {
+        let mut server = fixture("base:torch");
+        sky(&mut server, "clear");
+        build(&mut server);
+        light(&mut server);
+        server.set_block(CORNER + IVec3::new(1, 0, 1), id(&server, "base:stone"));
+        assert!(server.smoulders.is_empty(), "opened");
+        assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 8), ("base:stone".to_owned(), 1)]);
+    }
+
+    /// A piece broken while its land is not loaded opens it once all of it is loaded again,
+    /// never waiting out its time to char well: a clamp across two columns, its flue and
+    /// wood loaded, its east earth broken in the column that is not, is not done when its
+    /// time is up.
+    #[test]
+    fn a_clamp_broken_while_unloaded_is_opened_once_loaded() {
+        let mut server = fixture("base:torch");
+        // Its east earth ring (x 32) alone in the next column.
+        let (corner, flue) = (IVec3::new(28, FLOOR + 1, 8), IVec3::new(30, FLOOR + 2, 10));
+        server.players.get_mut(&1).unwrap().position = Vec3::new(30.5, (FLOOR + 1) as f32, 6.5);
+        sky(&mut server, "clear");
+        build_at(&mut server, corner);
+        light_at(&mut server, flue);
+        assert_eq!(server.smoulders.len(), 1, "lit");
+        server.day += burn_ticks(&server) * 3.0 / 8.0;
+        server.tend_smoulders();
+        let east = corner + IVec3::new(4, 0, 2);
+        let mut column = server.world.remove(ColumnPos::new(1, 0)).unwrap();
+        assert!(server.block(flue).is_some() && server.block(corner + IVec3::new(3, 0, 3)).is_some(), "only the east earth is unloaded");
+        std::sync::Arc::make_mut(&mut column).set_block(east, BlockId::AIR);
+        server.smoulder_changed(east);
+        server.day += burn_ticks(&server);
+        server.tend_smoulders();
+        assert_eq!(server.smoulders.len(), 1, "not judged with part of it unloaded, its time up");
+        server.world.insert(ColumnPos::new(1, 0), column);
+        server.tend_smoulders();
+        assert!(server.smoulders.is_empty(), "opened once loaded");
+        assert_eq!(charred_at(&server, corner), [("base:charred_wood_heap".to_owned(), 9)]);
     }
 
     /// Rain on the open flue for half the burn spoils half the heaps to ash, from the top;
