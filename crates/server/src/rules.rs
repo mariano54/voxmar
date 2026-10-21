@@ -53,6 +53,10 @@ pub(crate) struct SurvivalRules {
     /// The most health a second brings back by itself, however many heal buffs and prayers
     /// are on: eating stays the way to heal in a hurry.
     pub heal_most: f32,
+    /// The top of the comfortable band, °C: a home's warmth (effects.ron's `home_warmth`)
+    /// lifts how warm a player feels this far and no further. Below whatever makes a player
+    /// hot (`load_content` checks), so a cosy home never does.
+    pub comfort_top: f32,
 }
 
 /// One package's `survival.ron`: whichever numbers it sets.
@@ -81,6 +85,7 @@ struct SurvivalFile {
     sleep_threat_reach: Option<f32>,
     sleep_after_hurt: Option<f32>,
     heal_most: Option<f32>,
+    comfort_top: Option<f32>,
 }
 
 impl SurvivalRules {
@@ -96,7 +101,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; set.push(stringify!($field)); })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most, comfort_top);
             laid.set(&file.package, FILE, "survival rules", set, notes);
         }
         macro_rules! set {
@@ -141,6 +146,7 @@ impl SurvivalRules {
             sleep_threat_reach: set!(sleep_threat_reach),
             sleep_after_hurt: set!(sleep_after_hurt),
             heal_most: set!(heal_most),
+            comfort_top: set!(comfort_top),
         };
         let checks = [
             (rules.max_health > 0, "max_health must be above 0"),
@@ -160,6 +166,7 @@ impl SurvivalRules {
             (rules.sleep_threat_reach.is_finite() && (0.0..=64.0).contains(&rules.sleep_threat_reach), "sleep_threat_reach must be 0 to 64 blocks"),
             (rules.sleep_after_hurt.is_finite() && (0.0..=600.0).contains(&rules.sleep_after_hurt), "sleep_after_hurt must be 0 to 600 seconds"),
             (rules.heal_most.is_finite() && rules.heal_most > 0.0, "heal_most must be above 0"),
+            (rules.comfort_top.is_finite(), "comfort_top must be a temperature"),
             (rules.pack_end.len() <= SLOTS - HOTBAR_SLOTS, "pack_end holds at most as many items as the pack has slots besides the hotbar"),
             (rules.new_inventory(true).is_some(), "pack_end and starter_kit together do not fit in an inventory"),
         ];
@@ -262,6 +269,41 @@ mod tests {
         assert!(load(&SHIPPED.replace("safe_fall", "safe_falls")).is_err(), "a misspelt field is refused");
         assert_eq!(rules.meal_most, 2.0);
         assert!(load(&SHIPPED.replace("meal_most: 2.0", "meal_most: 0.5")).unwrap_err().contains("meal_most"), "a ceiling under 1 would make meals worse at home");
+    }
+
+    /// A full home (every step and room on, by its own fire at night) warms a cold night
+    /// all it can, and in warm air leaves its owner comfortable, never Hot: its warmth tops
+    /// out at `comfort_top`, and on a day already that warm it adds nothing. The top must be
+    /// below Hot.
+    #[test]
+    fn a_full_home_in_warm_air_leaves_its_owner_comfortable_not_hot() {
+        use voxmar_engine::effect::{HomeSurvey, Shelter, Situation, Walls};
+        let content = voxmar_engine::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap();
+        let rules = SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).unwrap();
+        let effects = &content.effects;
+        let hot = effects.too_warm_at().expect("a debuff for feeling too warm");
+        assert!(crate::comfort_below_hot(&content, rules.comfort_top).is_ok());
+        assert!(crate::comfort_below_hot(&content, hot).unwrap_err().contains("comfort_top"), "a top at Hot is refused");
+        let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 99)).collect(), walls: Walls::all(Shelter::Fine, 60) };
+        let weather = voxmar_engine::weather::Weather::NONE;
+        let felt_in = |air: f32| {
+            let mut situation = Situation { felt: air, warmed: false, outdoors: false, weather: &weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: effects.near_asks(), worn: &[], seated: false, night: true };
+            let first = effects.active(&situation, &[]);
+            let modifiers = effects.modifiers(&first);
+            situation.felt = modifiers.felt(air, rules.comfort_top);
+            let on: Vec<String> = effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).collect();
+            (modifiers, situation.felt, on)
+        };
+        let (modifiers, cold_night, on) = felt_in(0.0);
+        assert!(on.iter().any(|name| name == "base:heart_of_the_home") && on.iter().any(|name| name == "base:evening_in"), "the full home is on: {on:?}");
+        assert!(modifiers.home_warmth >= 15.0, "a full home warms by {}", modifiers.home_warmth);
+        assert_eq!(cold_night, modifiers.home_warmth, "a cold night gets all of it");
+        for air in [20.0, 25.0, 28.0, rules.comfort_top] {
+            let (_, felt, on) = felt_in(air);
+            assert!(felt <= rules.comfort_top && felt >= air, "{air} °C air feels {felt} °C at home");
+            assert!(!on.iter().any(|name| name == "core:hot" || name == "core:overheated"), "{air} °C air at home is not hot: {on:?}");
+        }
+        assert_eq!(felt_in(34.0).1, 34.0, "a day already hot is no hotter for a home, nor cooler");
     }
 
     #[test]

@@ -380,6 +380,8 @@
     "block.base.{name}_peg_rail": "{name}の掛け釘",
     "block.base.{name}_blanket_chest": "{name}の長持",
     "block.base.{name}_washstand": "{name}の洗面台",
+    "block.base.{name}_rushlight": "{name}の灯心草立て",
+    "block.base.window_box": "窓辺の花箱",
     "block.base.{name}_stair_cupboard": "{name}の階段箪笥",
     "block.base.{name}_wardrobe": "{name}の洋服だんす",
     "block.base.{name}_desk": "{name}の机",

@@ -383,6 +383,8 @@
     "block.base.{name}_peg_rail": "{name} Peg Rail",
     "block.base.{name}_blanket_chest": "{name} Blanket Chest",
     "block.base.{name}_washstand": "{name} Washstand",
+    "block.base.{name}_rushlight": "{name} Rushlight",
+    "block.base.window_box": "Window Box",
     "block.base.{name}_stair_cupboard": "{name} Stair Cupboard",
     "block.base.{name}_wardrobe": "{name} Wardrobe",
     "block.base.{name}_desk": "{name} Desk",
