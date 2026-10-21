@@ -1300,11 +1300,14 @@ fn the_home_ladder_follows_the_players_home() {
     let effects = &content.effects;
     assert_eq!(ambience.check_home(effects), Ok(()));
     let holding = |names: &[&str]| names.iter().map(|name| ActiveEffect { effect: effects.find(name).unwrap(), seconds_left: None }).collect::<Vec<_>>();
-    assert_eq!(ambience.home_step(effects, &[]), 0.0);
-    assert_eq!(ambience.home_step(effects, &holding(&["mired"])), 0.0, "not a home");
-    assert_eq!(ambience.home_step(effects, &holding(&["camp"])), 1.0);
-    assert_eq!(ambience.home_step(effects, &holding(&["hearthside", "workbench"])), 2.0);
-    assert_eq!(ambience.home_step(effects, &holding(&["camp", "heart_of_the_home"])), 6.0, "the highest held");
+    let ladder = ambience.home_ladder(effects);
+    assert_eq!(ladder.len(), 6);
+    let step = |names: &[&str]| super::defs::home_step(&ladder, &holding(names));
+    assert_eq!(step(&[]), 0.0);
+    assert_eq!(step(&["mired"]), 0.0, "not a home");
+    assert_eq!(step(&["camp"]), 1.0);
+    assert_eq!(step(&["hearthside", "workbench"]), 2.0);
+    assert_eq!(step(&["camp", "heart_of_the_home"]), 6.0, "the highest held");
     // The embers grow with each step: none at a camp, faint by a bare hearth, full at the top.
     let embers = ambience.beds.iter().find(|b| b.name == "base:embers").unwrap();
     let level = |step: f32| {
@@ -1320,4 +1323,33 @@ fn the_home_ladder_follows_the_players_home() {
         let mistyped = Ambience::load(&[ContentFile { package: "base".into(), name: FILE.into(), source: bad.into() }]).unwrap();
         assert!(mistyped.check_home(effects).is_err(), "{bad}");
     }
+}
+
+/// The works without a smith's noise have their own: hides scraped at the tannery, the
+/// smokehouse's fire, boats at the boathouse, each from its building; and the market's
+/// trade grows with the place, none at a hamlet's trader, some in a village, a town's
+/// stalls busy all day. By night the tanner and the market rest.
+#[test]
+fn a_towns_market_is_busier_than_a_villages() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let names = ["tannery", "smokehouse", "moorings", "market", "market_busy"];
+    let heard = |people: f32, sun: f32| {
+        let set = [("settlement", 10.0), ("settlementedge", 0.0), ("settlementpeople", people), ("sun", sun)];
+        let (timeline, _) = run(&ambience, &scene(&ambience, "town", &["plains", "temperate"], &set), 600.0);
+        names.map(|name| {
+            let at: Vec<_> = timeline.iter().filter_map(|(_, c)| match c { Cue::Sound { sound: s, at, .. } if *s == sound(name) => Some(*at), _ => None }).collect();
+            assert!(at.iter().all(|at| *at == Some(Vec3::new(12.0, 0.0, 0.0))), "{name} from its building: {at:?}");
+            at.len()
+        })
+    };
+    let [tannery, smokehouse, moorings, market, busy] = heard(30.0, 0.8);
+    assert!(tannery > 0 && smokehouse > 0 && moorings > 0, "a village's works by day: {tannery} {smokehouse} {moorings}");
+    assert!(market > 0 && busy == 0, "a village's stalls now and then: {market}, {busy}");
+    let town = heard(90.0, 0.8);
+    assert!(town[4] > 0 && town[3] + town[4] > 2 * (market + busy), "a town's market: {town:?}, a village's {market} + {busy}");
+    let hamlet = heard(5.0, 0.8);
+    assert_eq!(hamlet[3] + hamlet[4], 0, "a hamlet's trader: {hamlet:?}");
+    let night = heard(90.0, -0.8);
+    assert_eq!([night[0], night[3], night[4]], [0, 0, 0], "the tanner and the market at night: {night:?}");
 }

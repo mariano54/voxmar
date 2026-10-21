@@ -171,11 +171,20 @@ pub enum Synth {
     /// A well-kept hearth's bed of embers: a soft, warm glow of breath under the flames,
     /// coals ticking and chinking as they settle.
     Embers,
+    /// A tanner at work: a blade drawn over a hide on the beam in long rasping strokes, a
+    /// wet slap as it is turned.
+    Scrape,
+    /// A boat at its mooring: its hull knocking hollow on the jetty, the rope creaking as
+    /// it takes up, water lapping under.
+    Hull,
+    /// A market stall's trade: coins counted out clinking onto the board, and a crate or
+    /// a sack set down.
+    Coins,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 59] = [
+    pub const ALL: [Synth; 62] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -235,6 +244,9 @@ impl Synth {
         Synth::Bellows,
         Synth::Quern,
         Synth::Embers,
+        Synth::Scrape,
+        Synth::Hull,
+        Synth::Coins,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -335,6 +347,9 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Sizzle => sizzle(&mut noise),
         Synth::Bellows => bellows(&mut noise),
         Synth::Quern => quern(&mut noise),
+        Synth::Scrape => scrape(&mut noise),
+        Synth::Hull => hull(&mut noise),
+        Synth::Coins => coins(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -1788,6 +1803,78 @@ fn chop(noise: &mut Noise) -> Vec<f32> {
     for (after, gain) in [(0.3, 0.5), (0.42, 0.35)] {
         ring(&mut out, split + after + between(noise, 0.0, 0.05), log * 0.7, &[(1.0, 1.0, 0.02), (2.4, 0.3, 0.01)], gain);
     }
+    out
+}
+
+/// A tanner scraping a hide on the beam: three to five long strokes, each a rasp of
+/// mid-bright noise swelling and fading as the blade is drawn down, and a soft wet slap of
+/// the hide turned over now and then between them.
+fn scrape(noise: &mut Noise) -> Vec<f32> {
+    let strokes = 3 + (noise.unit() * 3.0) as usize;
+    let every = between(noise, 0.55, 0.75);
+    let mut out = vec![0.0f32; seconds(strokes as f32 * every + 0.6)];
+    let mut t = 0.02;
+    for stroke in 0..strokes {
+        let length = between(noise, 0.28, 0.4);
+        let mut rasp = Svf::new(between(noise, 1400.0, 2200.0), 1.2);
+        let grain = Drift::new(noise, 40.0);
+        add_at(&mut out, t, seconds(length), |j| {
+            let x = j as f32 / seconds(length) as f32;
+            let swell = (PI * x).sin().powi(2);
+            rasp.band(noise.next()) * swell * (0.6 + 0.4 * grain.unit(j as f32 / SR)) * 0.9
+        });
+        if stroke + 1 < strokes && noise.unit() < 0.35 {
+            crack(&mut out, noise, t + length + 0.08, (0.012, 0.02), (250.0, 450.0), 0.45);
+        }
+        t += every * between(noise, 0.9, 1.1);
+    }
+    out
+}
+
+/// A boat at its mooring: two or three hollow knocks of the hull on the jetty's piles,
+/// a rope creaking taut between them, and water lapping, swelling and falling.
+fn hull(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(2.6)];
+    let mut lap = Svf::new(500.0, 0.6);
+    let length = out.len() as f32;
+    for (i, sample) in out.iter_mut().enumerate() {
+        let x = i as f32 / length;
+        *sample += lap.low(noise.next()) * 0.25 * (TAU * 1.3 * x).sin().abs() * (PI * x).sin();
+    }
+    let wood = between(noise, 140.0, 200.0);
+    let mut t = between(noise, 0.05, 0.3);
+    for _ in 0..2 + (noise.unit() * 2.0) as usize {
+        ring(&mut out, t, wood * between(noise, 0.95, 1.05), &[(1.0, 1.0, 0.05), (2.3, 0.35, 0.02), (3.9, 0.15, 0.01)], between(noise, 0.5, 0.9));
+        crack(&mut out, noise, t, (0.004, 0.008), (500.0, 900.0), 0.3);
+        t += between(noise, 0.5, 0.8);
+    }
+    // The rope: a short run of fine ticks, falling in pitch as it stretches.
+    let mut at = between(noise, 0.6, 1.2);
+    let start = between(noise, 900.0, 1300.0);
+    for k in 0..12 {
+        let gain = between(noise, 0.06, 0.14);
+        tap(&mut out, noise, at, 0.004, start * (1.0 - 0.025 * k as f32), gain);
+        at += between(noise, 0.015, 0.03);
+    }
+    out
+}
+
+/// Trade at a market stall: four to eight coins counted out onto the board, each a short
+/// bright ring of thin metal, quick at first then slower; and a crate or sack set down.
+fn coins(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(1.8)];
+    let mut t = 0.02;
+    let mut every = between(noise, 0.07, 0.1);
+    for _ in 0..4 + (noise.unit() * 5.0) as usize {
+        let (pitch, gain) = (between(noise, 3200.0, 4800.0), between(noise, 0.35, 0.7));
+        ring(&mut out, t, pitch, &[(1.0, 1.0, 0.03), (1.47, 0.6, 0.02), (2.09, 0.35, 0.012)], gain);
+        crack(&mut out, noise, t, (0.0008, 0.0015), (5000.0, 7000.0), 0.2);
+        t += every;
+        every *= between(noise, 1.05, 1.2);
+    }
+    let set = t + between(noise, 0.15, 0.35);
+    ring(&mut out, set, between(noise, 110.0, 160.0), &[(1.0, 1.0, 0.04), (2.1, 0.3, 0.015)], 0.6);
+    crack(&mut out, noise, set, (0.01, 0.02), (300.0, 600.0), 0.4);
     out
 }
 
