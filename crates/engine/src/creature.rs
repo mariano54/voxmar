@@ -524,6 +524,39 @@ pub struct Senses {
     pub keep: f32,
 }
 
+/// How one of a settlement's people barks (`Server::bark`): heard by players within
+/// `range` blocks who see them, each bark to the same player no more than once in `every`
+/// seconds (a greeting, an alarm and a sigh each keep their own).
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Barking {
+    pub range: f32,
+    pub every: f32,
+}
+
+/// The farthest, in blocks, a bark carries.
+pub const MOST_BARK_RANGE: f32 = 64.0;
+/// The longest, in seconds, between one bark and the same again to the same player.
+pub const MOST_BARK_EVERY: f32 = 600.0;
+
+impl Default for Barking {
+    fn default() -> Self {
+        Self { range: 24.0, every: 6.0 }
+    }
+}
+
+impl Barking {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.range >= 1.0 && self.range <= MOST_BARK_RANGE) {
+            return Err(format!("`barking.range` is from 1 to {MOST_BARK_RANGE} blocks, not {}", self.range));
+        }
+        if !(self.every.is_finite() && (0.0..=MOST_BARK_EVERY).contains(&self.every)) {
+            return Err(format!("`barking.every` is from 0 to {MOST_BARK_EVERY} seconds, not {}", self.every));
+        }
+        Ok(())
+    }
+}
+
 impl Default for Senses {
     fn default() -> Self {
         Self { sight: 16.0, hearing: 12.0, field: 180.0, close: 3.0, react: 0.0, keep: 10.0 }
@@ -773,6 +806,9 @@ pub struct CreatureDef {
     pub temperament: Temperament,
     #[serde(default)]
     pub senses: Senses,
+    /// How far its barks carry and how often it makes one to the same player.
+    #[serde(default)]
+    pub barking: Barking,
     /// How far from home it roams before turning back, in blocks.
     #[serde(default = "leash")]
     pub leash: f32,
@@ -887,6 +923,8 @@ struct CreatureFile {
     condition: Option<condition::SetConditionRules>,
     #[serde(default)]
     climbing: Option<SetClimbing>,
+    #[serde(default)]
+    genetics: Option<SetGenetics>,
 }
 
 /// One package's `creatures.ron`: its species, and what it sets of the world's rules.
@@ -897,11 +935,12 @@ pub struct CreaturePackage {
     pub defence: Option<SetDefenceTraining>,
     pub condition: Option<condition::SetConditionRules>,
     pub climbing: Option<SetClimbing>,
+    pub genetics: Option<SetGenetics>,
 }
 
 /// What packages set for every creature in the world: how many there are, how their
-/// blows train Defence, how kept animals' condition is reckoned, and how high a hop up a
-/// step goes. Each is single-valued data a later package replaces field by field
+/// blows train Defence, how kept animals' condition is reckoned, how high a hop up a step
+/// goes, and how often a birth mutates. Each is single-valued data a later package replaces field by field
 /// ([`crate::content::Settable`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Rules {
@@ -909,6 +948,7 @@ pub struct Rules {
     pub defence: DefenceTraining,
     pub condition: condition::ConditionRules,
     pub climbing: Climbing,
+    pub genetics: Genetics,
 }
 
 /// How many creatures the world holds. A package's `creatures.ron` may set any of them
@@ -1051,6 +1091,42 @@ crate::content::settable! {
     SetClimbing for Climbing { step_rise: f32 }
 }
 
+/// How often a gene mutates at a birth (docs/breeding.md, "Mutation"): `mutation` per gene,
+/// before aether, which raises it up to five times where it is strongest. A package's
+/// `creatures.ron` may set it (`genetics`); a later package's replaces an earlier one's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Genetics {
+    /// The chance per gene, from 0 (young are only ever their parents' genes) to 0.2, so
+    /// five times it at the strongest aether is still a chance.
+    pub mutation: f32,
+}
+
+impl Default for Genetics {
+    fn default() -> Self {
+        Self { mutation: crate::genes::MUTATION }
+    }
+}
+
+crate::content::settable! {
+    /// What one package sets of genetics.
+    SetGenetics for Genetics { mutation: f32 }
+}
+
+impl Genetics {
+    /// Whether the chance is one: from 0 to 0.2.
+    pub fn check(&self) -> Result<(), RegistryError> {
+        if !(self.mutation.is_finite() && (0.0..=0.2).contains(&self.mutation)) {
+            return Err(RegistryError(format!("genetics: `mutation` ({}) must be from 0 to 0.2, a chance per gene that five times over is still one", self.mutation)));
+        }
+        Ok(())
+    }
+
+    /// The chance a gene mutates at a birth where the aether is `aether` (0 to 1).
+    pub fn mutation_at(&self, aether: f32) -> f32 {
+        self.mutation * (1.0 + 4.0 * aether.clamp(0.0, 1.0))
+    }
+}
+
 impl Climbing {
     /// Whether a hop at this rise gets up a block and clears no fence two high.
     pub fn check(&self) -> Result<(), RegistryError> {
@@ -1164,7 +1240,7 @@ impl CreatureRegistry {
                 *name = format!("{namespace}:{name}");
             }
         };
-        let (limits, defence, condition, climbing) = (file.limits, file.defence, file.condition, file.climbing);
+        let (limits, defence, condition, climbing, genetics) = (file.limits, file.defence, file.condition, file.climbing, file.genetics);
         let defs = file
             .creatures
             .into_iter()
@@ -1191,7 +1267,7 @@ impl CreatureRegistry {
                 def
             })
             .collect();
-        Ok(CreaturePackage { defs, limits, defence, condition, climbing })
+        Ok(CreaturePackage { defs, limits, defence, condition, climbing, genetics })
     }
 
     /// Resolves species against the blocks (items) and skills.
@@ -1200,6 +1276,7 @@ impl CreatureRegistry {
         rules.defence.check()?;
         rules.condition.check()?;
         rules.climbing.check()?;
+        rules.genetics.check()?;
         let mut registry = Self { rules, ..Self::default() };
         for mut def in defs {
             def.body.size = (def.body.size.0 * def.body.scale, def.body.size.1 * def.body.scale);
@@ -1248,6 +1325,7 @@ impl CreatureRegistry {
             }
             def.death.check().map_err(error)?;
             def.senses.check().map_err(error)?;
+            def.barking.check().map_err(error)?;
             if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
                 return Err(error(format!("`flees_below` is a share of its health, 0 to 1, not {:?}", def.flees_below)));
             }
@@ -1367,6 +1445,11 @@ impl CreatureRegistry {
         &self.rules.condition
     }
 
+    /// How often a birth mutates.
+    pub fn genetics(&self) -> &Genetics {
+        &self.rules.genetics
+    }
+
     pub fn id(&self, name: &str) -> Option<CreatureId> {
         self.by_name.get(name).copied()
     }
@@ -1465,6 +1548,23 @@ mod tests {
     use super::*;
     use crate::block::BlockDef;
     use crate::content::Settable;
+
+    /// Barking in range passes; a range or wait out of it on either side is refused.
+    #[test]
+    fn barking_out_of_range_is_refused() {
+        let good = Barking::default();
+        assert!(good.check().is_ok());
+        let broken = [
+            Barking { range: 0.5, ..good },
+            Barking { range: MOST_BARK_RANGE + 1.0, ..good },
+            Barking { every: -1.0, ..good },
+            Barking { every: MOST_BARK_EVERY + 1.0, ..good },
+            Barking { every: f32::NAN, ..good },
+        ];
+        for b in broken {
+            assert!(b.check().is_err_and(|e| e.contains("barking")), "{b:?} was let through");
+        }
+    }
 
     /// A circle in range passes; each number out of its range on either side is refused,
     /// naming `circle`.
@@ -1654,6 +1754,24 @@ mod tests {
             let blocks = BlockRegistry::new(vec![]).unwrap();
             assert!(CreatureRegistry::new(Vec::new(), Rules { limits: bad, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{bad:?} loaded");
         }
+    }
+
+    /// A package sets how often a birth mutates; the shipped default is `genes::MUTATION`,
+    /// aether raises it up to five times, and a chance past 0.2 (or none at all) is refused.
+    #[test]
+    fn genetics_loads_from_the_file_and_is_checked() {
+        let source = RABBIT.replacen("(creatures:", "(genetics: (mutation: 0.0), creatures:", 1);
+        let set = CreatureRegistry::read("base", &source).unwrap().genetics.expect("set");
+        assert_eq!(CreatureRegistry::read("base", RABBIT).unwrap().genetics, None);
+        let (rules, changed) = Genetics::default().with(&set);
+        assert_eq!((rules.mutation, changed), (0.0, vec!["mutation"]));
+        assert_eq!(Genetics::default().mutation, crate::genes::MUTATION);
+        assert_eq!((Genetics::default().mutation_at(0.0), Genetics::default().mutation_at(1.0)), (crate::genes::MUTATION, 5.0 * crate::genes::MUTATION));
+        let blocks = BlockRegistry::new(vec![]).unwrap();
+        for mutation in [-0.1, 0.21, f32::NAN] {
+            assert!(CreatureRegistry::new(Vec::new(), Rules { genetics: Genetics { mutation }, ..Default::default() }, &blocks, &SkillRegistry::default()).is_err(), "{mutation} loaded");
+        }
+        assert!(CreatureRegistry::new(Vec::new(), Rules { genetics: Genetics { mutation: 0.0 }, ..Default::default() }, &blocks, &SkillRegistry::default()).is_ok());
     }
 
     #[test]

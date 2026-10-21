@@ -128,7 +128,8 @@ blocks (it hears and smells them), when they hold its food within its hearing, o
 hurt it; a player it has noticed it keeps in mind for `keep` seconds out of sight (default 10, at most 60), so
 turning away does not drop a chase. Just noticing someone, it takes a double take of `react`
 seconds, facing them, alert, before it runs, hunts or comes to look: the moment a player has to
-back off, or to creep closer behind it. A blow skips the double take.
+back off, or to creep closer behind it. A blow skips the double take. What it then does starts
+afresh after the look, so prey that looks and then runs still raises the alarm to its kin.
 
 ## Aggression
 
@@ -152,8 +153,9 @@ back off, or to creep closer behind it. A blow skips the double take.
   taking over in that same decision. A warning only tells a hunt before it comes, and
   never changes whom a hunter goes for or when: it warns the one its hunt would go for (the
   nearest it would hunt, as far off, kept, frightened or on an errand as much as not) if
-  it sees them; one it does not see it has not noticed (unless they are close, hurt it or
-  hold its food), so it leaves them be. One that only defends itself (a badger, a bear)
+  it sees them, and goes unwarned for one it has noticed but cannot see now (one close,
+  its keeper, one who hurt it or holds its food, or one it saw within its `keep`); one it
+  does not see and has not noticed it leaves be. One that only defends itself (a badger, a bear)
   warns those it sees (in its field of view with a clear line from its eyes, the same
   `in_view` look it notices by) within its `radius`, and then defends
   its ground. No warning goes to a player holding the food that tempts it unless it hunts
@@ -331,7 +333,12 @@ if it jumps, down no further than `SAFE_DROP` in a chase and otherwise no furthe
 it climbs back unless onto open ground (`Walker::drop`, `way_out`), at most 1500 cells within 24 blocks, again
 at most once a second and only when its goal has moved. It walks the cells' centres, still
 steering, so a wolf finds the doorway in a wall (a shut door is a wall) and a sheep after
-wheat follows the player through it. A creature is made facing open air, so none starts
+wheat follows the player through it. Before a gap barely wider than it that its box would
+not go straight through from where it is (a boar come along a fence to a gate), it first
+makes for the point square in front of the gap's middle, a cell back, and goes in from
+there; it does so only where it would go straight in from that point, so a step it climbs
+is no gap. Cattle broader than a block (an aurochs, a bison) fit no gate one wide; they
+are led through a double gate (`<timber>_double_gate`). A creature is made facing open air, so none starts
 with its head in a trunk. Next, from the deep dive:
 
 - A per-species movement profile for that search (step, jump, safe fall, media) and sparse
