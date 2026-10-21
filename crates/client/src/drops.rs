@@ -229,8 +229,9 @@ pub(crate) fn show(
 /// server last said: `ClientWorld::shown`), each drawn still on its spot (`BlockDef::shows`),
 /// as large as it lies dropped, turned to face out as the block does. At the front, before
 /// the drops (`show` cut them to what is drawn, nearest first): the renderer keeps the first
-/// models, so a crowd of dropped stacks never leaves a shelf bare.
-fn shelf_things(player: Res<LocalPlayer>, world: Res<ClientWorld>, pieces: Option<Res<TexturePieces>>, mut models: ResMut<ItemModels>) {
+/// models, so a crowd of dropped stacks never leaves a shelf bare. What a player or a figure
+/// holds goes in front of these after (`held::show` and `figures::show` run after this).
+pub(crate) fn shelf_things(player: Res<LocalPlayer>, world: Res<ClientWorld>, pieces: Option<Res<TexturePieces>>, mut models: ResMut<ItemModels>) {
     let eye = player.eye();
     let mut shelved = Vec::new();
     for (&pos, things) in &world.shown {
