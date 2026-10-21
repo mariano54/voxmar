@@ -305,7 +305,7 @@ mod tests {
         let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 99)).collect(), walls: Walls::all(Shelter::Fine, 60) };
         let weather = voxmar_engine::weather::Weather::NONE;
         let felt_in = |air: f32| {
-            let mut situation = Situation { felt: air, warmed: false, outdoors: false, weather: &weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: effects.near_asks(), worn: &[], seated: false, night: true };
+            let mut situation = Situation { felt: air, warmed: false, outdoors: false, weather: &weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: effects.near_asks(), worn: &[], seated: false, seat: &[], night: true };
             let first = effects.active(&situation, &[]);
             let modifiers = effects.modifiers(&first);
             situation.felt = modifiers.felt(air, rules.comfort_top);

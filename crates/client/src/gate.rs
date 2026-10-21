@@ -8629,7 +8629,7 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 let effects = &launch.content.effects;
                 let survey = voxmar_engine::effect::HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), u32::from(tag == "bed" || tag == "light"))).collect(), ..Default::default() };
                 let calm = voxmar_engine::weather::Weather::NONE;
-                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], worn: &[], seated: false, night: false };
+                let situation = voxmar_engine::effect::Situation { felt: 15.0, warmed: false, outdoors: true, weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: &[], worn: &[], seated: false, seat: &[], night: false };
                 let tags = client.registry.id("base:sleeping_bag").map(|b| client.registry.def(b).tags.clone()).unwrap_or_default();
                 let wanted = effects.given_by_sleep(&situation, &tags);
                 let shown = |id| player.vitals.effects.iter().find(|a| a.effect == id);

@@ -748,7 +748,7 @@ impl Server {
         let anchor = home.floor().as_ivec3();
         let survey = self.survey_around(anchor, Some(Self::me(id)?));
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[], worn: &[], seated: false, night: self.night() };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(&survey), done: &player.quests_done, held: &[], near: &[], worn: &[], seated: false, seat: &[], night: self.night() };
         let effects = &self.content.effects;
         let name = |effect| {
             let def = effects.get(effect);

@@ -41,6 +41,8 @@
     "effect.base.at_table.description": "Sat at a table: a meal heals a quarter more, and its good lasts a quarter longer.",
     "effect.base.reading_nook": "Reading Nook",
     "effect.base.reading_nook.description": "Sat by a window with books to hand: you learn a tenth more.",
+    "effect.base.feet_up": "Feet Up",
+    "effect.base.feet_up.description": "Sat with your feet on a footstool: you heal a quarter faster.",
     "effect.base.stung": "Stung",
     "effect.base.stung.description": "Bee stings: slower to heal for a while. Smoke them calm first.",
     "effect.base.waterside": "Waterside",

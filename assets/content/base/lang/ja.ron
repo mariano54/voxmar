@@ -38,6 +38,8 @@
     "effect.base.at_table.description": "食卓に座っている。食事の回復が1.25倍になり、効き目も1.25倍長く続く。",
     "effect.base.reading_nook": "読書の窓辺",
     "effect.base.reading_nook.description": "本を手元に窓辺に座っている。経験が1割増える。",
+    "effect.base.feet_up": "足を休める",
+    "effect.base.feet_up.description": "足置きに足をのせて座っている。回復が1.25倍になる。",
     "effect.base.stung": "ハチ刺され",
     "effect.base.stung.description": "ハチに刺された。しばらく回復が遅い。先に煙でおとなしくさせよう。",
     "effect.base.waterside": "水辺",
