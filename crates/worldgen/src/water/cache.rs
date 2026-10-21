@@ -109,6 +109,10 @@ impl<V> Shared<V> {
             }
             let maker = !*making;
             if !maker && !(copying && crate::parallel::urgent()) {
+                #[cfg(test)]
+                if crate::parallel::urgent() {
+                    urgent_waits();
+                }
                 // Made by then, or its maker gave up and this thread may take it on.
                 drop(self.made.wait(making));
                 continue;
@@ -155,6 +159,33 @@ pub(crate) enum Hold {
 #[cfg(test)]
 std::thread_local! {
     static HOLDING: std::cell::RefCell<Option<(Hold, std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+static URGENT_WAITS: Mutex<Option<std::sync::mpsc::Sender<Wait>>> = Mutex::new(None);
+
+/// What a test watching for urgent waits hears (`on_urgent_wait`).
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Wait {
+    /// An urgent thread is about to wait on another's make.
+    Urgent,
+    /// What the test itself sends when the thread it watches has its answer.
+    Answered,
+}
+
+/// Has every urgent thread about to wait on another thread's make say so on `waited`, until
+/// given `None`: a test of a path on which every cache copies fails the moment one does.
+#[cfg(test)]
+pub(crate) fn on_urgent_wait(waited: Option<std::sync::mpsc::Sender<Wait>>) {
+    *URGENT_WAITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = waited;
+}
+
+#[cfg(test)]
+fn urgent_waits() {
+    if let Some(waited) = &*URGENT_WAITS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) {
+        let _ = waited.send(Wait::Urgent);
+    }
 }
 
 /// Has the calling thread's next make of a `kind` of value, once made and before anyone
@@ -333,7 +364,7 @@ mod tests {
     }
 
     /// A maker that panics leaves the value unmade and unmarked: the next thread to ask makes
-    /// it, and an urgent one asking meanwhile waits for that one.
+    /// it.
     #[test]
     fn a_maker_that_panics_leaves_it_unmarked() {
         let shared: Shared<u8> = Shared::default();

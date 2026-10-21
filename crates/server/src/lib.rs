@@ -551,6 +551,9 @@ impl Drop for ServerHandle {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        // Stopped, it says no more whether its players' land is missing: left set, a later
+        // world in the process, on a server elsewhere, would stream unlimited throughout.
+        voxmar_engine::jobs::set_land_missing(false);
     }
 }
 

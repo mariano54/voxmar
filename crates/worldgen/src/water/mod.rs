@@ -1981,39 +1981,49 @@ mod tests {
     /// The server's tick never waits on a region a background worker is building: a worker
     /// holds its first make of a region's stream channels open, once a cached value and once
     /// a value inside one (a basin's totals, an exit's), with everything above it being made;
-    /// the tick, asking for the same channels, makes its own, which, done first, is kept.
+    /// the tick, asking for the same channels, makes its own, which, done first, is kept. On
+    /// this path every cache copies, so an urgent thread (or its helpers) about to wait on
+    /// another's make at all fails it then and there (`cache::on_urgent_wait`).
     #[test]
     fn an_urgent_thread_never_waits_on_a_region_being_built() {
+        use cache::Wait;
         use std::sync::mpsc::channel;
         use std::time::Duration;
+        // Only against a hang, never what passes: a region's speed is the perf tools' to judge.
+        const HANG: Duration = Duration::from_secs(600);
         let world = crate::Overworld::new(1, Arc::new(crate::test_registry()));
         let world = &world;
+        let (heard_tx, heard) = channel();
+        cache::on_urgent_wait(Some(heard_tx.clone()));
         for (i, kind) in [cache::Hold::Cached, cache::Hold::Inner].into_iter().enumerate() {
             // Regions of their own, so each worker has something left to make.
             let region = IVec2::new(4 * i as i32 - 2, 3);
             let (held_tx, held) = channel();
             let (release_tx, release) = channel();
-            let (done_tx, done) = channel();
-            std::thread::scope(|scope| {
+            let answered = heard_tx.clone();
+            let first = std::thread::scope(|scope| {
                 let worker = scope.spawn(move || {
                     cache::hold_on(kind, held_tx, release);
                     world.rivers.channels(world.stages(), Level::Stream, region)
                 });
-                held.recv_timeout(Duration::from_secs(120)).expect("the worker made something");
+                held.recv_timeout(HANG).expect("the worker made something");
                 let urgent = scope.spawn(move || {
                     crate::parallel::mark_urgent();
                     let channels = world.rivers.channels(world.stages(), Level::Stream, region);
-                    let _ = done_tx.send(());
+                    let _ = answered.send(Wait::Answered);
                     channels
                 });
-                // Half the held make's wait (cache::hold), so a wait on it fails here, and time
-                // for a whole region of its own on a loaded machine (over 60 s in a full test run).
-                let answered = done.recv_timeout(Duration::from_secs(300)).is_ok();
+                // The urgent thread's answer, or its first wait on the held make.
+                let first = heard.recv_timeout(HANG);
                 let _ = release_tx.send(());
                 let (own, shared) = (urgent.join().unwrap(), worker.join().unwrap());
-                assert!(answered, "hold {i}: the urgent thread waited on the worker");
                 assert!(Arc::ptr_eq(&own, &shared), "hold {i}: the urgent thread's own, done first, is the worker's too");
+                first
             });
+            assert_eq!(first, Ok(Wait::Answered), "hold {i}: the urgent thread waited on the worker");
+            // Anything heard after the answer: a wait it took on the way out.
+            assert!(heard.try_iter().all(|w| w == Wait::Answered), "hold {i}: an urgent wait");
         }
+        cache::on_urgent_wait(None);
     }
 }
