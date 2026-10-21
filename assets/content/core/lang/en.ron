@@ -1180,6 +1180,7 @@
     "creature.doing.defend": "fighting back",
     "creature.doing.fire": "keeping back from the fire",
     "creature.doing.hide": "sitting tight in the grass",
+    "creature.doing.scavenge": "stealing food",
     "creature.doing.flee": "fleeing",
     "creature.doing.freeze": "frozen still",
     "creature.doing.graze": "grazing",

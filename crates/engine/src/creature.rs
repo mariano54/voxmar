@@ -301,6 +301,30 @@ impl Flush {
     }
 }
 
+/// How a creature scavenges (docs/creature-ai.md, "Scavenging"): it slinks in to food
+/// left lying on the ground within `reach` blocks, by item name or `tag:` (`takes`), and
+/// makes off home with one piece, which it eats there; killed first, it drops it. It
+/// comes only while no player is within `shy` blocks of it or the food, so a hunter who
+/// leaves the kill lying, turns their back and walks off may lose a share of it. Wild
+/// only: a kept one or one on an errand lets food lie.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Scavenge {
+    pub takes: Vec<String>,
+    pub reach: f32,
+    pub shy: f32,
+}
+
+impl Scavenge {
+    /// Near enough to be watched coming, and shy of a player close enough to stop it.
+    pub fn check(&self) -> Result<(), String> {
+        if self.takes.is_empty() || !(4.0..=24.0).contains(&self.reach) || !(2.0..=12.0).contains(&self.shy) || self.shy >= self.reach {
+            return Err(format!("`scavenge` needs something it takes, reach 4 to 24 blocks and shy 2 to 12 blocks, less than its reach, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
 /// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
 /// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
@@ -764,6 +788,10 @@ pub struct CreatureDef {
     /// startles them. Unset, it flees at its kind's distance.
     #[serde(default)]
     pub flush: Option<Flush>,
+    /// It steals food left lying on the ground (`Scavenge`): a fox makes off with a
+    /// hunter's meat. Unset, it lets dropped food lie.
+    #[serde(default)]
+    pub scavenge: Option<Scavenge>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -1172,6 +1200,8 @@ pub struct Creature {
     pub breed_food: Vec<crate::block::BlockId>,
     /// Each product's item.
     pub products: Vec<crate::block::BlockId>,
+    /// What it steals from the ground (`Scavenge::takes`), as items.
+    pub scraps: Vec<crate::block::BlockId>,
 }
 
 impl Creature {
@@ -1296,6 +1326,12 @@ impl CreatureRegistry {
             if let Some(tires) = def.tires {
                 tires.check().map_err(error)?;
             }
+            if let Some(scavenge) = &def.scavenge {
+                if def.boss || def.supernatural {
+                    return Err(error("is a boss or supernatural, and steals no one's food (`scavenge`)".into()));
+                }
+                scavenge.check().map_err(error)?;
+            }
             if let Some(flush) = def.flush {
                 if def.boss || def.supernatural || def.attack.is_some() {
                     return Err(error("sits tight and bursts away (`flush`), which is for prey: not a boss, a supernatural kind or one that attacks".into()));
@@ -1339,6 +1375,13 @@ impl CreatureRegistry {
                 Ok(found)
             };
             let (eats, favourite) = (foods(&def.diet.eats)?, foods(&def.diet.favourite)?);
+            let scraps = match &def.scavenge {
+                Some(scavenge) => foods(&scavenge.takes)?,
+                None => Vec::new(),
+            };
+            if def.scavenge.is_some() && scraps.is_empty() {
+                return Err(error("scavenges (`scavenge`), but nothing it `takes` is an item".into()));
+            }
             let or_favourite = |names: Option<&Vec<String>>| -> Result<Vec<_>, RegistryError> {
                 match names.filter(|n| !n.is_empty()) {
                     Some(names) => foods(names),
@@ -1393,7 +1436,7 @@ impl CreatureRegistry {
             if registry.by_name.insert(def.name.clone(), id).is_some() {
                 return Err(error("defined twice".into()));
             }
-            registry.creatures.push(Creature { def, behaviours, modules, parts, reach, head, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products });
+            registry.creatures.push(Creature { def, behaviours, modules, parts, reach, head, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products, scraps });
         }
         Ok(registry)
     }
