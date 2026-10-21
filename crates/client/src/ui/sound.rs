@@ -34,7 +34,7 @@ impl Plugin for UiSoundPlugin {
             .init_resource::<JinglesAsked>()
             .add_systems(Startup, (synthesize, jingle_clips))
             .add_systems(Update, ask_jingles)
-            .add_systems(Update, ((click_buttons, hover_buttons, hear_screens, hear_refusals), play.in_set(Audible)).chain())
+            .add_systems(Update, ((click_buttons, hover_buttons, hear_screens, hear_refusals, hear_news), play.in_set(Audible)).chain())
             .add_systems(Update, play_jingles.in_set(Audible));
     }
 }
@@ -71,10 +71,13 @@ pub enum UiSound {
     Milestone,
     /// A path's last quest (its capstone) finished (`hud::celebrate`).
     CapstoneDone,
+    /// Something the player set going finished while they were away: a clamp charred
+    /// through, a kiln gone cold (`ServerMessage::Fired`).
+    Fired,
 }
 
 impl UiSound {
-    pub const ALL: [UiSound; 13] = [
+    pub const ALL: [UiSound; 14] = [
         UiSound::Click,
         UiSound::Hover,
         UiSound::Item,
@@ -88,6 +91,7 @@ impl UiSound {
         UiSound::LevelUp,
         UiSound::Milestone,
         UiSound::CapstoneDone,
+        UiSound::Fired,
     ];
 
     /// Its name in `sounds.ron`'s `interface`.
@@ -106,6 +110,7 @@ impl UiSound {
             UiSound::LevelUp => "level_up",
             UiSound::Milestone => "level_milestone",
             UiSound::CapstoneDone => "capstone_done",
+            UiSound::Fired => "fired",
         }
     }
 
@@ -476,6 +481,18 @@ fn hear_refusals(toasts: Option<Res<crate::hud::skills::SkillToasts>>, time: Res
 }
 
 const REFUSE_EVERY: f32 = 0.35;
+
+/// News of something finished elsewhere (`hud::skills`) sounds `Fired`, once however much
+/// came in the same frame.
+fn hear_news(toasts: Option<ResMut<crate::hud::skills::SkillToasts>>, mut sounds: MessageWriter<UiSound>) {
+    // Taken mutably only with news waiting, so the toasts are not marked changed each frame.
+    if let Some(mut toasts) = toasts
+        && toasts.has_fired()
+    {
+        toasts.take_fired();
+        sounds.write(UiSound::Fired);
+    }
+}
 
 /// A screen opening sounds `Open`; one closing with none opening, `Close` (the recipes
 /// closing back onto the inventory, the last screen shut). Switching from one screen to

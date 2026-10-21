@@ -33,6 +33,10 @@
 //   seconds (1 to 30), then flat out again. Set on prey faster than a sprinting player
 //   (6.1), so a chase on foot ends in a catch; hurt, it runs up to `hurt` slower (0 to
 //   0.9, at the last of its health). Kept animals and villages' run as ever.
+// - `flush` is how a game bird sits tight (docs/creature-ai.md, "Flush"): crouched still
+//   while a player is beyond `hold` blocks (1 to 6), then within it bursts away at `burst`
+//   times its run (1 to 2.5) for `seconds` (0.2 to 3). Prey only; kept birds and
+//   villages' sit tight for no one.
 // - `loot` is what it drops: always (chance 1) or by chance, more with the right tool
 //   (`tools`: the tags of what the killer holds) and, for rarer finds, with level.
 (
@@ -72,6 +76,9 @@
     // gap would otherwise come down on a fence two high beyond it. Anything that jumps at
     // all still gets up a block.
     climbing: (step_rise: 1.45),
+    // How often a gene mutates at a birth, before aether raises it up to five times
+    // (docs/breeding.md, "Mutation"): from 0 to 0.2.
+    genetics: (mutation: 0.005),
     creatures: [
         // --- Small and common: where everyone starts -------------------------------------
         (
@@ -131,6 +138,7 @@
             ],
             movement: (walk: 1.5, run: 4.8, turn: 480.0, jump: 6.5),
             senses: (field: 150.0, react: 0.3),
+            flush: (hold: 3.5, burst: 1.6, seconds: 1.0),
             habitat: (
                 biomes: [("tag:grassland", 0.7), ("tag:jungle", 1.0), ("tag:scrubland", 0.6), ("tag:forest", 0.3)],
                 comfort: (temperature: (6.0, 36.0), moisture: (0.3, 2.4)),
@@ -585,6 +593,7 @@
             group: (size: (2, 6)),
             temperament: (fear: 0.85, nervousness: 0.8, curiosity: 0.25, sociability: 0.9, energy: 0.6),
             senses: (sight: 14.0, hearing: 18.0, field: 150.0, react: 0.3),
+            flush: (hold: 2.5, burst: 2.0, seconds: 0.8),
             leash: 14.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["wheat"]),
             xp: (kill: 3.0, skill: "hunter"),
@@ -877,6 +886,7 @@
             group: (size: (1, 3)),
             temperament: (fear: 0.85, nervousness: 0.75, curiosity: 0.25, sociability: 0.4, energy: 0.5),
             senses: (sight: 16.0, hearing: 20.0, field: 150.0, react: 0.3),
+            flush: (hold: 3.0, burst: 1.8, seconds: 1.2),
             leash: 16.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["wheat"]),
             xp: (kill: 4.0, skill: "hunter"),

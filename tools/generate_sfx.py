@@ -6,9 +6,9 @@ sitting on a wooden seat,
 casting a line, picking an item up, feeding an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
 spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, food
 coming off the fire done or burnt, a loaf baked, and a tool nearly worn out and breaking;
-for the interface, a quest book's page turned and a soft "no" when something is refused;
-and the building materials' steps, placings and breakings (timber, thatch, shingle,
-cobblestone, stone brick, wattle, daub, hide, terracotta) under materials/;
+for the interface, a quest book's page turned, a soft "no" when something is refused, and
+a firing finished; and the building materials' steps, placings and breakings (timber,
+thatch, shingle, cobblestone, stone brick, wattle, daub, hide, terracotta) under materials/;
 and the work of the first two ages under work/: flint knapped,
 a hide scraped, clay shaped, pottery, stone dressed, cord twisted, wood whittled, the
 home stations loaded, a kiln fed and what it fires (pottery, charcoal), ore
@@ -447,6 +447,19 @@ def cooked(rng):
     sizzle = bandpass(rng.standard_normal(n), 4800, 0.8) * np.exp(-t / 0.22) * 0.6
     out = sizzle + crackles(rng, seconds, 18, 0.5) * np.exp(-t / 0.3)
     place(out, 0.3, knock(rng, rng.uniform(380, 460), 0.8))
+    return out
+
+
+def fired(rng):
+    """A firing finished (a clamp charred through, a kiln gone cold), heard wherever the
+    player is: the last embers crackling away, a deep earthen settle, and fired ware ringing
+    once as it cools."""
+    seconds = 1.6
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    out = crackles(rng, seconds, 14, 0.55) * np.exp(-t / 0.45)
+    place(out, 0.12, knock(rng, rng.uniform(150, 180), 0.9))
+    place(out, 0.42, modes(rng.uniform(610, 660), 1.1, [(1.0, 0.35, 0.5), (2.76, 0.12, 0.25), (5.4, 0.05, 0.12)]))
     return out
 
 
@@ -1376,6 +1389,7 @@ SOUNDS = {
     "catch": (catch, 2),
     "burnt": (burnt, 2),
     "cooked": (cooked, 2),
+    "fired": (fired, 2),
     "page": (page, 2),
     "refuse": (refuse, 2),
     "materials/timber_step": (timber_step, 4),

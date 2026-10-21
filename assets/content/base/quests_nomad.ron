@@ -143,6 +143,22 @@
             rewards: [Xp("engineering", 21.0)],
         ),
         (
+            name: "stone_and_clay", age: "nomad", branch: "main", title: "Stone and Clay",
+            side: true,
+            why: "Gather for the hearth before you build it: twenty-eight cobblestone (four loose stones knock together into two) and four clay from the bottom of a pond, dug with a shovel. Hold them all at once.",
+            tasks: [[Have("cobblestone", 28), Have("clay", 4)]],
+            after: ["stone_in_hand"],
+            rewards: [Xp("mining", 40.0)],
+        ),
+        (
+            name: "light_round_the_camp", age: "nomad", branch: "main", title: "Light Round the Camp",
+            side: true,
+            why: "Monsters come up where it is dark, not where it is lit. Set four torches on the ground round the place you sleep, and the night there is safer.",
+            tasks: [[Placed("torch", 4)]],
+            after: ["torchlight"],
+            rewards: [Xp("engineering", 20.0)],
+        ),
+        (
             name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",
             capstone: true,
             why: "Your home: you wake here after dying, and the road to the Farm age begins. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone or cobblestone blocks level with it, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel (one cobblestone over two sticks).",

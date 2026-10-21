@@ -757,6 +757,11 @@ pub(crate) struct Server {
     lit: FxHashMap<IVec3, hearth::Lit>,
     /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
     smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
+    /// The tick fuelled fires were last looked over for going out (`Server::tell_fires_out`).
+    fires_out_seen: u64,
+    /// Fuelled fires gone cold since then, taken out of `lit` wherever that happened, to be
+    /// told (`Server::tell_fires_out`).
+    fires_out: Vec<hearth::Lit>,
     /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
     /// kept by owner), by core cell: set when it is first lit, kept while its fire is out or
     /// a piece of it is broken, forgotten only when its owner breaks its hearthstone or lights
@@ -945,6 +950,8 @@ impl Server {
             factory: voxmar_engine::factory::Factory::default(),
             lit,
             smoulders,
+            fires_out_seen: 0,
+            fires_out: Vec::new(),
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
@@ -2152,7 +2159,9 @@ mod tests {
     /// them lets them be picked for more: regrowth does not take them, and the journal does
     /// not log them as wild plants. The props are read from settlements.ron's furnishings
     /// (barrel, bell, hay, sacks, crates, hanging things, nets), so a mod's own props are held to it
-    /// too.
+    /// too. A prop that a player's own copy breaks into something (the hay bale's straw) must
+    /// be a `furnishing`, and `village_props_set_by_the_world_give_nothing` (gameplay tests)
+    /// breaks a world-set copy of every such prop and finds nothing.
     #[test]
     fn village_furnishings_drop_nothing() {
         use voxmar_worldgen::Select;
@@ -2174,7 +2183,8 @@ mod tests {
         for id in props {
             let name = blocks.def(id).name.clone();
             let (def, info) = (blocks.def(id), blocks.info(id));
-            assert_eq!(info.drops, voxmar_engine::block::BlockId::AIR, "{name} drops something");
+            let gives = !info.drops.is_air() && info.drop_count > 0;
+            assert!(!gives || def.has_tag("furnishing"), "{name} drops something and is not a furnishing, so a village's would too");
             assert!(!content.regrowth.regrows(def, info.solid), "{name} regrows when picked");
             let wild = ["plant", "flower", "herb", "fungus"].iter().any(|t| def.has_tag(t));
             assert!(info.solid || !wild, "{name} would be logged as a wild plant");

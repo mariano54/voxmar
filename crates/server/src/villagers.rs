@@ -23,17 +23,23 @@
 //! comes no nearer them for `give_up` seconds (they stand where it cannot go) breaks off,
 //! goes home a while, teaching that player nothing during the cooldown. It heals only
 //! after a further `give_up` seconds without being struck.
+//!
+//! They react to what is about them (`people.react`): a player who comes near is greeted
+//! (they stop, turn to them and hum, then go on with their day), a monster or a hunter
+//! near sends them home crying out a while (guards stand), one struck cries out, rain
+//! sends them in from the square, the yards and the fields, and they sigh content as
+//! they reach their bed. What they say is a bark (`Server::bark`).
 
 use std::collections::BTreeMap;
 
 use rustc_hash::FxHashMap;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::creature::brain::{Errand, Pose};
-use voxmar_engine::creature::{CreatureId, mix, unit_from};
+use voxmar_engine::creature::{Bark, Behaviour, CreatureId, Kind, mix, unit_from};
 use voxmar_engine::genes;
 use voxmar_engine::glam::{IVec2, IVec3, Vec2, Vec3, Vec3Swizzles};
 use voxmar_protocol::{CreatureGone, TICKS_PER_DAY, TICKS_PER_SECOND};
-use voxmar_worldgen::people::{LiveDef, Place, is, place_at};
+use voxmar_worldgen::people::{LiveDef, Place, ReactDef, is, place_at};
 use voxmar_worldgen::{BuildingKind, SettlementInfo, SettlementLevers};
 
 use crate::Server;
@@ -63,6 +69,9 @@ pub struct Villagers {
     /// A short-lived guard cooldown outlives a forgotten town, so leaving/rejoining
     /// cannot reset a safe-spot fight. Entries expire on the server's clock.
     recovering: BTreeMap<(u64, usize), Recovery>,
+    /// Who barked what to which player, until the tick they may again
+    /// (`Barking::every`, `Server::bark`).
+    pub(crate) barked: FxHashMap<(u32, u32, Bark), u64>,
 }
 
 /// One of a settlement's people who died.
@@ -149,6 +158,9 @@ struct Town {
     max: IVec2,
     people: Vec<Person>,
     alive: bool,
+    /// Rain heavy enough to send people in falls on its square (looked at every
+    /// `scan_every`).
+    raining: bool,
 }
 
 #[derive(Default)]
@@ -169,6 +181,16 @@ struct Person {
     health: Option<u16>,
     /// Spots looked for in a row and none found: each miss draws its next pick otherwise.
     misses: u64,
+    /// Greeting a player, until a tick.
+    greeting: Option<(u32, u64)>,
+    /// Each player greeted, by `player_key`, is greeted again no sooner than this tick.
+    greet_after: BTreeMap<String, u64>,
+    /// Frightened home by a monster or a hunter until this tick.
+    afraid_until: u64,
+    /// Struck, they cry out again no sooner than this tick.
+    alarm_after: u64,
+    /// The day after the last they sighed content reaching their bed (0: never).
+    sighed: u64,
 }
 
 /// What came of looking for a way.
@@ -216,7 +238,7 @@ impl Town {
         let centre = IVec2::new(info.centre.x, info.centre.z);
         let (min, max) = (min.min(centre) - margin, max.max(centre) + margin);
         let people = info.people.iter().map(|_| Person::default()).collect();
-        Self { levers: info.levers, info, min, max, people, alive: false }
+        Self { levers: info.levers, info, min, max, people, alive: false, raining: false }
     }
 
     /// Blocks from `at` to the nearest of its ground.
@@ -276,6 +298,7 @@ impl Server {
         if tick.is_multiple_of(ticks(live.scan_every)) {
             self.villagers.failed.retain(|_, until| *until > tick);
             self.scan_towns(&live);
+            self.look_at_the_sky();
         }
         let ids: Vec<(u32, u64, usize)> = self.villagers.by_creature.iter().map(|(&id, &(t, i))| (id, t, i)).collect();
         for (id, town, i) in ids {
@@ -285,6 +308,16 @@ impl Server {
         }
         if tick.is_multiple_of(ticks(live.call_every)) {
             self.call_guards(&live);
+        }
+    }
+
+    /// Whether rain heavy enough to send people in falls on each living settlement's square.
+    fn look_at_the_sky(&mut self) {
+        let rain = self.overworld.settlement_people().react.rain;
+        let (tick, day) = (self.tick, self.day);
+        for town in self.villagers.towns.values_mut().filter(|t| t.alive) {
+            let at = Vec2::new(town.info.centre.x as f32 + 0.5, town.info.centre.z as f32 + 0.5);
+            town.raining = self.weather.local(&mut self.temperature, at, tick, day).weather.precipitation >= rain;
         }
     }
 
@@ -541,6 +574,17 @@ impl Server {
             return (Place::Home, usize::MAX, day);
         }
         let (place, slot) = place_at(people, resident.routine, seed, &t.levers, day, now.fract() as f32, |p| t.has(p, &people.shrine));
+        // So does anyone frightened, a while; one abed or at home already stays there.
+        if t.people[i].afraid_until > self.tick && !matches!(place, Place::Sleep | Place::Home) {
+            return (Place::Home, usize::MAX, day);
+        }
+        // Rain sends everyone but the guards in from the open.
+        let react = &people.react;
+        let open = react.shelter.contains(&place)
+            || (place == Place::Work && resident.work.map_or(react.shelter.contains(&Place::Yard), |w| react.outdoor.iter().any(|o| is(&t.info.buildings[w], o))));
+        if t.raining && !resident.guard && open {
+            return (Place::Home, slot, day);
+        }
         (place, slot, day)
     }
 
@@ -568,6 +612,10 @@ impl Server {
             return;
         }
         self.villagers.towns.get_mut(&town).expect("listed").people[i].quarry = None;
+        let react = self.overworld.settlement_people().react.clone();
+        if self.react(id, town, i, at, &react) {
+            return;
+        }
         let (place, slot, day) = self.place_now(town, i, seed);
         let fresh = {
             let trip = self.villagers.towns[&town].people[i].trip.as_ref();
@@ -601,7 +649,9 @@ impl Server {
             self.villagers.towns.get_mut(&town).expect("listed").people[i].trip = Some(trip);
             return;
         }
-        let trip = self.villagers.towns.get_mut(&town).expect("listed").people[i].trip.as_mut().expect("checked");
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        let sighed = person.sighed;
+        let trip = person.trip.as_mut().expect("checked");
         let Some(&next) = trip.path.get(trip.step) else { return };
         let to = next.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
         let d = to.with_y(0.0).distance(at.with_y(0.0));
@@ -609,6 +659,10 @@ impl Server {
         if d < 0.9 && !last {
             trip.step += 1;
             trip.best = (f32::MAX, tick);
+        } else if d < 1.0 && last && trip.place == Place::Sleep && sighed != day + 1 {
+            // In bed at last: a content sigh, once a night.
+            person.sighed = day + 1;
+            self.bark(id, Bark::Content);
         } else if d < 1.0 && last && trip.place == Place::Patrol && trip.next_spot.is_none() {
             // A patrol stops a moment at each stop, then walks on.
             trip.next_spot = Some(tick + ticks(live.patrol_pause));
@@ -618,6 +672,84 @@ impl Server {
             // Stuck: find the way again from here.
             trip.next_spot = Some(tick);
         }
+    }
+
+    /// Person `i` (creature `id`, at `at`) reacts to what is about them (`people.react`),
+    /// by the one sight rule every creature looks by (`Server::in_view`: where they face,
+    /// nothing hiding it): a monster or a hunter seen near frightens anyone but a guard home
+    /// crying out, and a player near they have noticed and see is greeted: they stop where
+    /// they stand, turn to them and hum. Whether they stand greeting, their day waiting.
+    fn react(&mut self, id: u32, town: u64, i: usize, at: Vec3, react: &ReactDef) -> bool {
+        let tick = self.tick;
+        let guard = self.villagers.towns[&town].info.people[i].guard;
+        let Some(me) = self.creatures.live.get(&id) else { return false };
+        let (body, field) = (me.body, self.content.creatures.get(me.species).def.senses.field);
+        let sees = |c: &crate::creatures::Live| self.in_view(&body, field, c.body.position + Vec3::Y * c.body.size.1 * 0.8);
+        let threat = |c: &crate::creatures::Live| {
+            let species = self.content.creatures.get(c.species);
+            c.owner.is_none() && !c.companion && (species.def.kind == Kind::Monster || species.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Hunt { .. })))
+        };
+        // Abed, they sleep on (`place_now` keeps them there).
+        let abed = self.villagers.towns[&town].people[i].trip.as_ref().is_some_and(|t| t.place == Place::Sleep);
+        let frightened = !guard && !abed && self.creatures.live.iter().any(|(&other, c)| other != id && c.body.position.distance(at) <= react.fear && threat(c) && sees(c));
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        if frightened {
+            let was = person.afraid_until > tick;
+            person.afraid_until = tick + ticks(react.afraid);
+            if let Some(trip) = person.trip.as_mut().filter(|_| person.greeting.take().is_some()) {
+                trip.next_spot = Some(tick);
+                trip.face = None;
+            }
+            if !was {
+                self.bark(id, Bark::Alarm);
+            }
+            return false;
+        }
+        let person = &self.villagers.towns[&town].people[i];
+        // One struck, running from whoever struck them, greets no one.
+        let afraid = person.afraid_until > tick || self.creatures.live.get(&id).is_some_and(|c| c.mind.attacker().is_some());
+        let asleep = person.trip.as_ref().is_none_or(|t| t.place == Place::Sleep || t.pursuit.is_some());
+        let due = |p: &crate::player::Player| person.greet_after.get(&crate::player_key(&p.name)).is_none_or(|&after| tick >= after);
+        let me = &self.creatures.live[&id];
+        let noticed = |p: &crate::player::Player| me.mind.noticed.iter().any(|n| n.0 == p.id) && self.in_view(&body, field, p.eye());
+        let near = |p: &crate::player::Player| p.joined && p.position.with_y(0.0).distance(at.with_y(0.0)) <= react.greet && (p.position.y - at.y).abs() <= react.greet && noticed(p);
+        let greeted = match person.greeting {
+            Some((player, until)) if tick < until && !afraid => self.players.get(&player).filter(|p| p.joined).map(|p| (player, p.position, false)),
+            Some(_) => None,
+            None if !afraid && !asleep => self
+                .players
+                .values()
+                .filter(|p| near(p) && due(p))
+                .min_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)))
+                .map(|p| (p.id, p.position, true)),
+            None => None,
+        };
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        let Some((player, eyes, new)) = greeted else {
+            // A greeting over: back to their day from where they stand, no longer turned to
+            // the player.
+            if person.greeting.take().is_some()
+                && let Some(trip) = person.trip.as_mut()
+            {
+                trip.next_spot = Some(tick);
+                trip.face = None;
+            }
+            return false;
+        };
+        let Some(trip) = person.trip.as_mut() else { return false };
+        trip.path = vec![at.floor().as_ivec3()];
+        trip.step = 0;
+        trip.pose = Pose::Idle;
+        trip.face = Some(eyes + Vec3::new(0.0, 1.6, 0.0));
+        if new {
+            person.greeting = Some((player, tick + ticks(react.greet_for)));
+            if let Some(name) = self.players.get(&player).map(|p| crate::player_key(&p.name)) {
+                person.greet_after.retain(|_, after| *after > tick);
+                person.greet_after.insert(name, tick + ticks(react.greet_every));
+            }
+            self.bark(id, Bark::Greet);
+        }
+        true
     }
 
     /// Person `i` (a guard, creature `id`) at `at` goes after `player`: a way to where they
@@ -976,6 +1108,7 @@ impl Server {
     fn call_guards(&mut self, live: &LiveDef) {
         let tick = self.tick;
         let mut calls: Vec<(u64, Vec3, u32)> = Vec::new();
+        let mut alarms: Vec<(u32, u64, usize)> = Vec::new();
         for (&id, &(town, i)) in &self.villagers.by_creature {
             let Some(c) = self.creatures.live.get(&id) else { continue };
             if self.villagers.towns[&town].info.people[i].guard {
@@ -983,6 +1116,16 @@ impl Server {
             }
             if let Some(player) = c.mind.attacker() {
                 calls.push((town, c.body.position, player));
+                alarms.push((id, town, i));
+            }
+        }
+        // Struck, they cry out (again no sooner than an `afraid` later).
+        let afraid = ticks(self.overworld.settlement_people().react.afraid);
+        for (id, town, i) in alarms {
+            let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+            if person.alarm_after <= tick {
+                person.alarm_after = tick + afraid;
+                self.bark(id, Bark::Alarm);
             }
         }
         for (town, at, player) in calls {
@@ -1055,12 +1198,266 @@ mod tests {
         server
     }
 
+    /// Creature `id` has noticed player `player` (as `brain::think` would, the player in its
+    /// sight or close by).
+    fn notice(server: &mut Server, id: u32, player: u32) {
+        server.creatures.live.get_mut(&id).unwrap().mind.noticed.push((player, 10.0, 0.0));
+    }
+
     fn player(server: &mut Server) {
         let (_, connection) = voxmar_protocol::local_pair();
         let mut player = crate::player::Player::new(1, connection, Vec3::new(8.0, 200.0, 8.0), 2, server.tick, server.survival.max_health, &server.config.limits);
         player.joined = true;
         player.name = "Tëster".into();
         server.players.insert(1, player);
+    }
+
+    /// Sets the server's clock to the first time of day person 0 of settlement 1 is out in
+    /// the open (not at home nor in bed).
+    fn out_in_the_open(server: &mut Server) {
+        let seed = mix(server.villagers.towns[&1].info.people[0].seed, 0);
+        for step in 0..40 {
+            server.day = TICKS_PER_DAY as f64 * step as f64 / 40.0;
+            if !matches!(server.place_now(1, 0, seed).0, Place::Home | Place::Sleep) {
+                return;
+            }
+        }
+        panic!("never out of doors in a day");
+    }
+
+    /// Someone out of doors with a player stepping up to them stops where they stand, turns
+    /// to them and greets them, once: their day waits until the greeting is over, and they
+    /// greet no one again before `greet_every`.
+    #[test]
+    fn a_player_near_is_greeted_once_and_the_day_waits() {
+        let mut server = fixture("base:villager", 1);
+        out_in_the_open(&mut server);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let live = server.live();
+        let react = server.overworld.settlement_people().react.clone();
+        server.tick = 1_000;
+        server.follow_day(id, 1, 0, &live);
+        assert!(server.villagers.towns[&1].people[0].greeting.is_none(), "greeted no one");
+        player(&mut server);
+        let at = server.creatures.live[&id].body.position;
+        server.players.get_mut(&1).unwrap().position = at + Vec3::new(react.greet - 1.0, 0.0, 0.0);
+        // Noticed (close by, they hear them) but behind a wall: not seen, not greeted.
+        notice(&mut server, id, 1);
+        let wall: Vec<IVec3> = (0..3).map(|y| at.floor().as_ivec3() + IVec3::new(1, y, 0)).collect();
+        let stone = server.content.blocks.expect("base:stone");
+        wall.iter().for_each(|&cell| server.set_block(cell, stone));
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        assert!(server.villagers.towns[&1].people[0].greeting.is_none(), "greeted a player through a wall");
+        wall.iter().for_each(|&cell| server.set_block(cell, BlockId::AIR));
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        let person = &server.villagers.towns[&1].people[0];
+        let (whom, until) = person.greeting.expect("greeted the player");
+        assert_eq!(whom, 1);
+        let trip = person.trip.as_ref().unwrap();
+        assert_eq!(trip.path, [at.floor().as_ivec3()], "walked on while greeting");
+        assert!(trip.face.is_some_and(|f| f.x > at.x), "not turned to the player: {:?}", trip.face);
+        let after = *person.greet_after.values().next().expect("the player's wait");
+        server.tick = until - 1;
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(server.villagers.towns[&1].people[0].greet_after.values().copied().collect::<Vec<_>>(), [after], "greeted again within the greeting");
+        server.tick = until;
+        server.follow_day(id, 1, 0, &live);
+        let person = &server.villagers.towns[&1].people[0];
+        assert!(person.greeting.is_none(), "the greeting did not end");
+        server.tick = after - 1;
+        server.follow_day(id, 1, 0, &live);
+        assert!(server.villagers.towns[&1].people[0].greeting.is_none(), "greeted again before greet_every");
+        server.tick = after;
+        server.follow_day(id, 1, 0, &live);
+        assert!(server.villagers.towns[&1].people[0].greeting.is_some(), "no greeting once greet_every had passed");
+    }
+
+    /// The wait to greet again is each player's own; and one struck stops greeting the
+    /// player who struck them, and greets no one while they remember the blow.
+    #[test]
+    fn the_greeting_wait_is_each_players_and_the_struck_greet_no_one() {
+        let mut server = fixture("base:villager", 1);
+        out_in_the_open(&mut server);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let live = server.live();
+        let react = server.overworld.settlement_people().react.clone();
+        server.tick = 1_000;
+        player(&mut server);
+        let at = server.creatures.live[&id].body.position;
+        server.players.get_mut(&1).unwrap().position = at + Vec3::new(react.greet - 1.0, 0.0, 0.0);
+        notice(&mut server, id, 1);
+        server.follow_day(id, 1, 0, &live);
+        let (_, until) = server.villagers.towns[&1].people[0].greeting.expect("greeted the first player");
+        // The first gone and another come, after the greeting and well within the first's wait.
+        server.players.remove(&1);
+        server.tick = until;
+        server.follow_day(id, 1, 0, &live);
+        let (_, connection) = voxmar_protocol::local_pair();
+        let mut other = crate::player::Player::new(2, connection, at + Vec3::new(react.greet - 1.0, 0.0, 0.0), 2, server.tick, server.survival.max_health, &server.config.limits);
+        other.joined = true;
+        other.name = "Other".into();
+        server.players.insert(2, other);
+        notice(&mut server, id, 2);
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        let (whom, _) = server.villagers.towns[&1].people[0].greeting.expect("the second player waited on the first's greeting");
+        assert_eq!(whom, 2);
+        // Struck by them: the greeting ends there, and no one is greeted while it is remembered.
+        server.creatures.live.get_mut(&id).unwrap().mind.remember(voxmar_engine::creature::brain::Memory::HurtBy(2), 30.0);
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        let person = &server.villagers.towns[&1].people[0];
+        assert!(person.greeting.is_none(), "still greeting the player who struck them");
+        let eyes = server.players[&2].position + Vec3::new(0.0, 1.6, 0.0);
+        assert!(person.trip.as_ref().is_none_or(|t| t.face != Some(eyes)), "still facing the player who struck them");
+        server.tick += ticks(react.greet_every) + 1;
+        server.follow_day(id, 1, 0, &live);
+        assert!(server.villagers.towns[&1].people[0].greeting.is_none(), "greeted while running from a blow");
+    }
+
+    /// A monster near sends folk home crying out for `afraid`; a guard stands its ground.
+    #[test]
+    fn a_monster_near_sends_folk_home_but_not_guards() {
+        for (species, frightened) in [("base:villager", true), ("base:guard", false)] {
+            let mut server = fixture(species, 1);
+            out_in_the_open(&mut server);
+            server.bring_out(1, 0);
+            let id = server.villagers.towns[&1].people[0].creature.expect("out");
+            let live = server.live();
+            server.tick = 1_000;
+            let (before, _, _) = server.place_now(1, 0, server.creatures.live[&id].seed);
+            assert_ne!(before, Place::Home, "{species}: home already");
+            let monster = server.content.creatures.id("base:shambler").expect("a monster");
+            let at = server.creatures.live[&id].body.position;
+            server.place_creature(monster, at + Vec3::new(3.0, 0.0, 0.0), 9, 0.0).expect("placed");
+            server.follow_day(id, 1, 0, &live);
+            let afraid = server.villagers.towns[&1].people[0].afraid_until > server.tick;
+            assert_eq!(afraid, frightened, "{species}: afraid {afraid}");
+            let (place, _, _) = server.place_now(1, 0, server.creatures.live[&id].seed);
+            assert_eq!(place == Place::Home, frightened, "{species} goes to {place:?}");
+        }
+    }
+
+    /// A bark reaches the players within its `barking.range` who see the one barking, the
+    /// same bark to the same player once in `barking.every` (another bark, or another
+    /// player, waits on nothing), and an admin's `/creatures bark` heeds neither.
+    #[test]
+    fn a_bark_carries_its_range_and_waits_per_player() {
+        use voxmar_protocol::ServerMessage;
+        let mut server = fixture("base:villager", 1);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let at = server.creatures.live[&id].body.position;
+        let barking = server.content.creatures.get(server.creatures.live[&id].species).def.barking;
+        server.tick = 1_000;
+        let mut ears = Vec::new();
+        for (n, off) in [(1u32, 2.0), (2, 3.0), (3, barking.range + 1.0)] {
+            let (client, connection) = voxmar_protocol::local_pair();
+            let mut p = crate::player::Player::new(n, connection, at + Vec3::new(off, 0.0, 0.0), 2, server.tick, server.survival.max_health, &server.config.limits);
+            p.joined = true;
+            p.name = format!("P{n}");
+            server.players.insert(n, p);
+            server.creatures.show(n, id);
+            ears.push(client);
+        }
+        let heard = |ears: &[voxmar_protocol::ClientConnection]| -> Vec<Vec<Bark>> {
+            ears.iter().map(|c| std::iter::from_fn(|| c.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Bark { creature, bark } if creature == id => Some(bark), _ => None }).collect()).collect()
+        };
+        server.bark(id, Bark::Greet);
+        server.bark(id, Bark::Greet);
+        server.bark(id, Bark::Alarm);
+        assert_eq!(heard(&ears), [vec![Bark::Greet, Bark::Alarm], vec![Bark::Greet, Bark::Alarm], vec![]], "within range once each, beyond it nothing");
+        server.tick += ticks(barking.every) - 1;
+        server.bark(id, Bark::Greet);
+        assert_eq!(heard(&ears), [vec![], vec![], vec![]], "greeted again within `every`");
+        server.bark_command(at, "greet");
+        assert_eq!(heard(&ears), [vec![Bark::Greet], vec![Bark::Greet], vec![Bark::Greet]], "the command waited, or kept to the range");
+        server.tick += ticks(barking.every) + 1;
+        server.bark(id, Bark::Greet);
+        assert_eq!(heard(&ears)[1], [Bark::Greet], "never greeted again after `every`");
+    }
+
+    /// Someone abed with a monster near sleeps on: fright sends folk home, and they are home.
+    #[test]
+    fn a_monster_near_leaves_sleepers_abed() {
+        let mut server = fixture("base:villager", 1);
+        let seed = mix(server.villagers.towns[&1].info.people[0].seed, 0);
+        let night = (0..40).map(|step| TICKS_PER_DAY as f64 * step as f64 / 40.0).find(|&day| {
+            server.day = day;
+            server.place_now(1, 0, seed).0 == Place::Sleep
+        });
+        server.day = night.expect("never abed in a day");
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let live = server.live();
+        server.tick = 1_000;
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().map(|t| t.place), Some(Place::Sleep), "not abed");
+        let monster = server.content.creatures.id("base:shambler").expect("a monster");
+        let at = server.creatures.live[&id].body.position;
+        server.place_creature(monster, at + Vec3::new(2.0, 0.0, 0.0), 9, 0.0).expect("placed");
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        assert!(server.villagers.towns[&1].people[0].afraid_until <= server.tick, "a sleeper frightened");
+        assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().map(|t| t.place), Some(Place::Sleep), "got up for a monster");
+        // And one frightened before bedtime goes to bed when the day says, not home to stand.
+        server.villagers.towns.get_mut(&1).unwrap().people[0].afraid_until = server.tick + 100;
+        assert_eq!(server.place_now(1, 0, seed).0, Place::Sleep, "kept from bed by a fright");
+    }
+
+    /// A monster near but out of sight (under the floor, as in a cave below the square)
+    /// frightens no one: fear goes by the same look as everything a creature sees.
+    #[test]
+    fn a_monster_unseen_under_the_floor_frightens_no_one() {
+        let mut server = fixture("base:villager", 1);
+        out_in_the_open(&mut server);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let live = server.live();
+        server.tick = 1_000;
+        let monster = server.content.creatures.id("base:shambler").expect("a monster");
+        let at = server.creatures.live[&id].body.position;
+        server.place_creature(monster, at + Vec3::new(2.0, -4.0, 0.0), 9, 0.0).expect("placed");
+        server.follow_day(id, 1, 0, &live);
+        assert!(server.villagers.towns[&1].people[0].afraid_until <= server.tick, "frightened by a monster under the floor");
+    }
+
+    /// Rain sends folk in from the open (a yard, for someone with no work to go to), and
+    /// leaves the guards at their watch.
+    #[test]
+    fn rain_sends_folk_in_from_the_open() {
+        for (species, sheltering) in [("base:villager", true), ("base:guard", false)] {
+            let mut server = fixture(species, 1);
+            out_in_the_open(&mut server);
+            let seed = mix(server.villagers.towns[&1].info.people[0].seed, 0);
+            let (dry, slot, _) = server.place_now(1, 0, seed);
+            let open = dry != Place::Home && dry != Place::Sleep;
+            assert!(open, "{species} indoors: {dry:?}");
+            server.villagers.towns.get_mut(&1).unwrap().raining = true;
+            let (wet, wet_slot, _) = server.place_now(1, 0, seed);
+            assert_eq!((wet == Place::Home, wet_slot), (sheltering, slot), "{species}: {dry:?} in the dry, {wet:?} in the rain");
+        }
+    }
+
+    /// A town's sky is looked at as the weather is: rain over it past `react.rain` makes it
+    /// raining, clear skies dry again.
+    #[test]
+    fn a_town_knows_when_it_rains() {
+        let mut server = fixture("base:villager", 1);
+        server.villagers.towns.get_mut(&1).unwrap().alive = true;
+        let centre = server.villagers.towns[&1].info.centre;
+        let at = Vec2::new(centre.x as f32 + 0.5, centre.z as f32 + 0.5);
+        let tick = server.tick;
+        for (name, raining) in [("rain", true), ("clear", false), ("rain", true)] {
+            let preset = server.content.weather.preset(name).expect("a preset").clone();
+            server.weather.force(preset.at(1.0), at, 60, tick);
+            server.look_at_the_sky();
+            assert_eq!(server.villagers.towns[&1].raining, raining, "under {name}");
+        }
     }
 
     /// The spot a person sets out for is drawn by the day, the slot and the leg, never the

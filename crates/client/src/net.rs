@@ -493,6 +493,11 @@ pub(crate) fn receive(
                 debug!("refused: {why}");
                 toasts.refused(why, time.elapsed_secs())
             }
+            ServerMessage::Fired { words } => {
+                let words = locale.render(&words, &world.registry);
+                debug!("fired: {words}");
+                toasts.news(words, time.elapsed_secs())
+            }
             ServerMessage::Weather { weather: report, effects, nearby, quick } => {
                 weather.receive(report, effects, nearby, quick, time.elapsed_secs())
             }
