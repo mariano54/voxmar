@@ -58,6 +58,22 @@
             after: ["charcoal"],
             rewards: [Xp("engineering", 30.0)],
         ),
+        (
+            name: "a_woodpile", age: "farm", branch: "fuel", title: "A Woodpile",
+            side: true,
+            why: "A clamp takes nine firewood, and a second is soon wanted. Carry a chopping block (a flint over a log), set it down, and split logs on it with an axe in your pack, two firewood a log; keep eighteen stacked, two clamps' worth.",
+            tasks: [[Have("chopping_block", 1), Have("firewood", 18)]],
+            after: ["charcoal"],
+            rewards: [Xp("construction", 40.0)],
+        ),
+        (
+            name: "opened_too_soon", age: "farm", branch: "fuel", title: "Opened Too Soon",
+            side: true,
+            why: "A clamp opened before its two hours are up gives charred wood, not charcoal: part-burnt, but still fuel for a campfire or a hearth. Break into a smouldering clamp early and keep four charred wood.",
+            tasks: [[Have("charred_wood", 4)]],
+            after: ["a_woodpile"],
+            rewards: [Xp("engineering", 30.0)],
+        ),
         // Fuel before metal, and the Engineering and Mining that copper asks for (design
         // drafts 100 and 102: the nomad path alone left both short of 5).
         (
