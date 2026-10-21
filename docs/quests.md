@@ -547,15 +547,25 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 | Defence | Hide Wraps, then **Hard to Put Down** (Nomad, new) | Hide armour at 1, copper armour 10 | Hide wraps, then a shield (Raise Your Guard) |
 | Hitpoints | **Hard to Put Down** (Nomad, new) | Twice your level in health; 12 is 24 | None: it grows with blows landed |
 | Magic | A Place to Pray (Farm) | Bark Skin at 1, Ember Arm 4, Mending 10 | The stone altar |
-| Alchemy | **Herb Lore** (Nomad, new) | A taste only: herb lore from three kinds of wanderer | None yet |
+| Alchemy | **Herb Lore** (Nomad, new), then Simples, The Healer's Bag and Where Roots Grow (Farm) | Roots shown and an aether mote at 5 | None yet |
 | Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 3 | Sling to short bow |
 
 Two new side quests fill the skills that had nothing before:
-- **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 3 and Hitpoints 12. Both
+- **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 4 and Hitpoints 12. Both
   skills train only in a fight, and nothing had pointed at either of them.
 - **Herb Lore** (Nomad, farming, after Wild Harvest) asks the player to deal with a herb
   gatherer, a travelling alchemist or a wandering healer. These are the three wanderers that
   teach Alchemy for herbs, and they are the only Alchemy anything gives today.
+
+Alchemy trains on nothing made before brewing, a later age's, so only quests and a
+wanderer's once-only lesson raise it, and the lines it opens at Alchemy 5 (the herb gatherer
+shows where roots grow, the hedge witch trades a mote of aether) were out of every early
+player's reach (Oct 21). Three Farm side quests on the Fields path now take a player there,
+on the 2x book scale: **Simples** (after Herb Garden: four kinds of herb picked, two hanging
+herbs tied, 200 Alchemy), **The Healer's Bag** (deal with a wandering healer or a travelling
+alchemist, 200 Alchemy and a herb pouch) and **Where Roots Grow** (deal with the herb gatherer
+or the hedge witch, now at Alchemy 5). `early_quests.rs` holds it: the lowest Alchemy any
+wanderer's line asks is surely had by a quest that sends the player to one of those kinds.
 
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).

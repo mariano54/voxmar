@@ -660,3 +660,45 @@ fn a_goal_above_its_books_level_is_caught() {
     let short = shortfalls(&content);
     assert!(short.iter().any(|s| s.starts_with("base:a_side_of_beef") && s.contains("cooked_beef")), "{short:#?}");
 }
+
+/// Skills nothing made, caught or fought trains before a later age: Alchemy waits for
+/// brewing, so the books' rewards (and a wanderer's lesson, once) are all that raise it.
+const BOOK_TRAINED: [&str; 1] = ["alchemy"];
+
+/// A wanderer's line gated on a book-trained skill is out of reach unless a quest takes the
+/// player there: for the lowest level any line asks, some Nomad or Farm quest sends the player
+/// to deal with a party of that kind once its chain surely gives that level (`Books::sure`,
+/// rewards through the book's scale).
+#[test]
+fn the_books_bring_a_book_trained_skill_to_the_first_wanderer_line_it_opens() {
+    use voxmar_engine::wander::ResolvedNeed;
+    let content = content();
+    let books = Books { content: &content };
+    for name in BOOK_TRAINED {
+        let id = books.skill(name).expect("a book-trained skill");
+        // The lowest level a line asks, and the kinds whose lines ask it.
+        let gated: Vec<(u8, String)> = content
+            .wandering
+            .iter()
+            .flat_map(|(_, e)| {
+                e.meetings.iter().flat_map(|m| m.lines.iter()).flat_map(|l| l.needs.iter()).filter_map(move |n| match n {
+                    ResolvedNeed::Skill(s, level) if *s == id => Some((*level, Books::local(&e.def.name))),
+                    _ => None,
+                })
+            })
+            .collect();
+        let Some(gate) = gated.iter().map(|(level, _)| *level).min() else { continue };
+        let kinds: Vec<&str> = gated.iter().filter(|(level, _)| *level == gate).map(|(_, kind)| kind.as_str()).collect();
+        let need = books.xp_for(gate);
+        let sent: Vec<(String, f32)> = content
+            .quests
+            .iter()
+            .filter(|q| (q.age == "nomad" || q.age == "farm") && q.tasks.iter().all(|t| t.iter().any(|g| matches!(g, Goal::Met(kind, _) if kinds.contains(&Books::local(kind).as_str())))))
+            .map(|q| (q.name.clone(), books.sure(&q.name, name).0))
+            .collect();
+        assert!(
+            sent.iter().any(|(_, sure)| *sure >= need),
+            "{name} {gate} opens a line of {kinds:?}, but no Nomad or Farm quest sends the player to one with {need:.0} xp surely had: {sent:?}"
+        );
+    }
+}
