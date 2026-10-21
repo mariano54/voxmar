@@ -1419,13 +1419,15 @@ fn place_tip(
 }
 
 /// Where a tip `wide` across starts, from a point at `x`: `gap` to its right, or, where that
-/// would run into the panel `beside` to the right, `gap` to its left; kept within the window
-/// `width` across.
+/// would run into the panel `beside` to the right and there is room on the left, `gap` to
+/// its left (with no room either side it stays right, never pulled back over the point);
+/// kept within the window `width` across.
 fn tip_left(x: f32, gap: f32, wide: f32, width: Option<f32>, beside: Option<Rect>) -> f32 {
     let mut left = x + gap;
     if let Some(panel) = beside
         && panel.min.x > x
         && left + wide > panel.min.x
+        && x - gap - wide >= 2.0 * PX
     {
         left = x - gap - wide;
     }
@@ -1454,7 +1456,7 @@ mod tests {
         assert!(left + wide <= catalogue.min.x);
         assert_eq!(tip_left(1013.0, gap, wide, width, None), 1017.0, "no catalogue open");
         assert_eq!(tip_left(1400.0, gap, wide, width, Some(catalogue)), 1706.0 - wide - 2.0 * PX, "in the catalogue: on screen");
-        assert_eq!(tip_left(100.0, gap, 360.0, width, Some(Rect::new(300.0, 0.0, 600.0, 100.0))), 2.0 * PX, "never off the left");
+        assert_eq!(tip_left(100.0, gap, 360.0, width, Some(Rect::new(300.0, 0.0, 600.0, 100.0))), 104.0, "no room on the left: stays right, not over the point");
     }
 
     #[test]

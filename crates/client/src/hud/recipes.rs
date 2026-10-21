@@ -321,8 +321,33 @@ fn report(mut viewer: ResMut<RecipeViewer>, net: Res<crate::net::Net>) {
     }
 }
 
+/// The block a player cooks at for a station tag: one they set down (placeable, its own
+/// item, not creative only), a `station` first, as the campfire is for `fire`; else the
+/// first block tagged at all. Not the first tagged: for `fire` that is an ember scale, a drop
+/// that only glows.
+fn station_block(content: &voxmar_engine::content::Content, tag: &str) -> Option<voxmar_engine::block::BlockId> {
+    let blocks = &content.blocks;
+    let set_down = |&b: &voxmar_engine::block::BlockId| blocks.info(b).placeable && blocks.item_of(b) == b && !blocks.def(b).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY);
+    blocks
+        .tagged(tag)
+        .filter(set_down)
+        .find(|&b| blocks.def(b).has_tag("station"))
+        .or_else(|| blocks.tagged(tag).find(set_down))
+        .or_else(|| blocks.tagged(tag).next())
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// A fire recipe's card names the campfire a player cooks at, not the first block
+    /// tagged `fire` (an ember scale), and a tag no block carries names none.
+    #[test]
+    fn a_cooking_card_names_the_station_a_player_sets_down() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let name = |tag: &str| super::station_block(&content, tag).map(|b| content.blocks.def(b).name.clone());
+        assert_eq!(name("fire").as_deref(), Some("base:campfire"));
+        assert_eq!(name("no_such_station"), None);
+    }
     use super::*;
 
     #[test]
@@ -576,7 +601,7 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
                 card.spawn(text(font, "+", BODY, MUTED));
                 item_cell(card, font, images, Some(item), count(n));
             }
-            if let Some(fire) = content.blocks.tagged(station).next() {
+            if let Some(fire) = station_block(content, station) {
                 card.spawn(text(font, "+", BODY, MUTED));
                 item_cell(card, font, images, Some(fire), None);
             }
@@ -687,7 +712,7 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
         }
         Method::Catch { skill, level: at } => [(locale.get("recipes.catch").to_owned(), MUTED)].into_iter().chain(level(*skill, *at)).collect(),
         Method::Cook { station, skill, level, burnt, .. } => {
-            let station = content.blocks.tagged(station).next().map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
+            let station = station_block(content, station).map_or_else(|| station.clone(), |block| locale.block(content.blocks.def(block)));
             let mut lines = vec![(locale.format("recipes.cook", &[("station", &station)]), MUTED)];
             lines.push((locale.get("recipes.cook.use").to_owned(), SOFT));
             let skill = skill.map(|id| locale.skill(content.skills.get(id)));

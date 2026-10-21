@@ -5825,7 +5825,7 @@ impl BrandPlan {
             }
             let fire = blocks.ids().find(|&b| {
                 let def = blocks.def(b);
-                def.has_tag(&recipe.def.station) && !def.has_tag("creative_only") && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
+                def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
             });
             if let Some(fire) = fire {
                 return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand) });
@@ -21148,7 +21148,7 @@ mod tests {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
         let plan = super::BrandPlan::of(&content).unwrap();
         let fire = content.blocks.def(plan.fire);
-        assert!(!fire.has_tag("creative_only"), "the firebrand step's fire is {}, creative only", fire.name);
+        assert!(!fire.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "the firebrand step's fire is {}, creative only", fire.name);
     }
 
     /// The Home step lays the crafting table from oak planks in the home barrel: the
