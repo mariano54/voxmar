@@ -145,7 +145,7 @@ fn the_singles_load_and_can_be_made() {
     let obtained: BTreeSet<BlockId> = content.recipes.iter().map(|r| r.output).collect();
     let singles = [
         "candle", "brazier", "cauldron", "cottage_stove", "loom_frame", "spindle_stand", "quern_stones", "wind_flags", "stone_grave_slab", "mossy_grave_slab", "stone_headstone",
-        "mossy_headstone", "iron_hanging_lantern", "copper_hanging_lantern", "stone_lantern", "sandstone_lantern", "calcite_column", "sandstone_column", "stone_column", "window_box", "rush_mat", "sack",
+        "mossy_headstone", "iron_hanging_lantern", "copper_hanging_lantern", "stone_lantern", "sandstone_lantern", "calcite_column", "sandstone_column", "stone_column", "window_box", "rush_mat", "fishing_net", "sack",
     ];
     for name in singles {
         let id = content.blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("no {name}"));
@@ -245,4 +245,21 @@ fn a_sack_is_woven_at_home_and_keeps_grain() {
     let twine = blocks.expect("base:twine");
     let recipe = content.recipes.iter().find(|r| r.output == sack).expect("a sack is made");
     assert!(recipe.cells().iter().flatten().all(|&cell| cell == twine), "woven of twine");
+}
+
+/// The fishing net a village hangs to dry on a frame by the water is one a player can knot
+/// and hang at home: made of twine, given back whole where a player hung it and nothing where a
+/// village did (`furnishing`).
+#[test]
+fn a_fishing_net_is_made_at_home_as_the_villages_hang_it() {
+    let content = content();
+    let blocks = &content.blocks;
+    let net = blocks.expect("base:fishing_net");
+    let (def, info) = (blocks.def(net), blocks.info(net));
+    assert!(!def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "a net is a survival piece");
+    assert!(def.has_tag("furnishing") && def.has_tag("decor"), "a village's net gives nothing, a player's comes back");
+    assert_eq!((info.drops, info.drop_count), (net, 1), "a net hung at home comes back whole");
+    let twine = blocks.expect("base:twine");
+    let recipe = content.recipes.iter().find(|r| r.output == net).expect("a net is made");
+    assert!(recipe.cells().iter().flatten().any(|&cell| cell == twine), "knotted of twine");
 }
