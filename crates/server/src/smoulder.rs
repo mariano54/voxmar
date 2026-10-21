@@ -35,8 +35,9 @@ pub struct Smouldering {
     /// this was kept.
     #[serde(default)]
     pub by: Option<String>,
-    /// Whether whoever lit it has been told it is done: when its time is up out of loaded
-    /// land, before it is turned into what it made there, once they are on to hear it.
+    /// Whether whoever lit it has been told it is done (or it waits for them to be on,
+    /// `Waiting`): when its time is up out of loaded land, before it is turned into what it
+    /// made there.
     #[serde(default)]
     pub told: bool,
     /// Whether a block of it changed while part of it was not loaded: it may have been
@@ -44,6 +45,17 @@ pub struct Smouldering {
     #[serde(default)]
     pub doubt: bool,
 }
+
+/// News of a firing for a player away when it came: whose (`player_key`) and what it says.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Waiting {
+    pub owner: String,
+    pub words: Words,
+}
+
+/// How much news waits for one player away: the newest, so a long absence brings back what
+/// is true now rather than every firing since.
+const NEWS_WAITING: usize = 8;
 
 /// How a smoulder ended.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -189,15 +201,12 @@ impl Server {
         }
         // Done out of loaded land: told now, wherever they are, of all it was lit with (none
         // of it can change unloaded), and turned into what it made once loaded.
-        // Whoever lit it away, it waits to be told when they are on again.
         for core in told {
-            let Some(s) = self.smoulders.get(&core).cloned() else { continue };
+            let Some(s) = self.smoulders.get_mut(&core) else { continue };
+            s.told = true;
+            let s = s.clone();
             let heaps = self.content.multiblocks.get(&s.structure).and_then(|m| m.smoulder.as_ref()).map_or(0, |smoulder| smoulder.wood.len());
-            if self.tell_done(&s, heaps)
-                && let Some(s) = self.smoulders.get_mut(&core)
-            {
-                s.told = true;
-            }
+            self.tell_done(&s, heaps);
         }
         for core in done {
             self.end_smoulder(core, End::Done);
@@ -266,13 +275,31 @@ impl Server {
     }
 
     /// Sends `words` to the player keyed `owner` (`player_key`), if they are on.
-    /// Whether they were on to hear it.
-    fn tell_fired(&self, owner: &str, words: Words) -> bool {
-        let player = self.players.values().find(|p| crate::player_key(&p.name) == owner);
-        if let Some(player) = player {
+    /// Sends `words` to the player keyed `owner` (`player_key`); one away hears it when on
+    /// again (`tell_waiting`), the newest `NEWS_WAITING` kept for each.
+    fn tell_fired(&mut self, owner: &str, words: Words) {
+        if let Some(player) = self.players.values().find(|p| crate::player_key(&p.name) == owner) {
             player.connection.send(voxmar_protocol::ServerMessage::Fired { words });
+            return;
         }
-        player.is_some()
+        self.news_waiting.push(Waiting { owner: owner.to_owned(), words });
+        let theirs = self.news_waiting.iter().filter(|w| w.owner == owner).count();
+        if theirs > NEWS_WAITING
+            && let Some(oldest) = self.news_waiting.iter().position(|w| w.owner == owner)
+        {
+            self.news_waiting.remove(oldest);
+        }
+    }
+
+    /// Tells player `id`, just on, the news that came while they were away, oldest first.
+    pub(crate) fn tell_waiting(&mut self, id: voxmar_protocol::PlayerId) {
+        let Some(player) = self.players.get(&id) else { return };
+        let key = crate::player_key(&player.name);
+        let (theirs, rest): (Vec<Waiting>, Vec<Waiting>) = std::mem::take(&mut self.news_waiting).into_iter().partition(|w| w.owner == key);
+        self.news_waiting = rest;
+        for waiting in theirs {
+            player.connection.send(voxmar_protocol::ServerMessage::Fired { words: waiting.words });
+        }
     }
 
     /// Turns what `core`'s structure chars into what it made: done, its share of the burn
@@ -324,18 +351,18 @@ impl Server {
 
     /// Whoever lit `s` hears it is done, wherever they are, and what waits there of the
     /// `heaps` of wood it charred: its share of the burn rained on spoiled.
-    /// Whether they were on to hear it.
-    fn tell_done(&self, s: &Smouldering, heaps: usize) -> bool {
-        let Some(by) = &s.by else { return false };
-        let Some(structure) = self.content.multiblocks.get(&s.structure) else { return false };
-        let Some(smoulder) = structure.smoulder.as_ref() else { return false };
+    fn tell_done(&mut self, s: &Smouldering, heaps: usize) {
+        let Some(by) = &s.by else { return };
+        let Some(structure) = self.content.multiblocks.get(&s.structure) else { return };
+        let Some(smoulder) = structure.smoulder.as_ref() else { return };
         let share = s.wet as f64 / s.done.saturating_sub(s.lit).max(1) as f64;
         let spoiled = (heaps as f64 * share.min(1.0)).round() as usize;
         let title = Words::Own(def_key("multiblock", &structure.name), structure.title.clone());
         let info = self.content.blocks.info(smoulder.done);
         let count = (heaps - spoiled) * info.drop_count as usize;
         let words = if spoiled > 0 { Words::key("multiblock.smoulder_done_wet").with("spoiled", Words::text(spoiled)) } else { Words::key("multiblock.smoulder_done") };
-        self.tell_fired(by, words.with("structure", title).with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(info.drops).name.clone())))
+        let words = words.with("structure", title).with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(info.drops).name.clone()));
+        self.tell_fired(by, words);
     }
 
     pub(crate) fn saved_smoulders(&self) -> Vec<Smouldering> {
@@ -686,7 +713,8 @@ mod tests {
     }
 
     /// A clamp done out of loaded land while whoever lit it is away tells them when they are
-    /// on again, once; told done and then found opened once loaded, it tells them so.
+    /// on again, once (the news kept, and saved with the world, meanwhile); told done and
+    /// then found opened once loaded, it tells them so.
     #[test]
     fn a_clamp_done_while_its_lighter_is_away_tells_them_when_back() {
         let (mut server, client) = heard("base:torch");
@@ -707,11 +735,18 @@ mod tests {
         let away = server.players.remove(&1).expect("the lighter");
         server.day += burn_ticks(&server) + 1.0;
         server.tend_smoulders();
-        assert!(!server.smoulders.values().any(|s| s.told), "not told while they are away");
+        assert_eq!(server.news_waiting.len(), 1, "kept for them while they are away");
+        // Saved with the world, and back with it.
+        let saved: Vec<super::Waiting> = ron::from_str(&ron::to_string(&server.news_waiting).unwrap()).unwrap();
+        assert_eq!(saved, server.news_waiting);
         server.players.insert(1, away);
         server.tend_smoulders();
+        assert!(keys(&client).is_empty(), "told as they come on, not before");
+        server.tell_waiting(1);
         assert_eq!(keys(&client), ["multiblock.smoulder_done"], "told once back");
+        assert!(server.news_waiting.is_empty());
         server.tend_smoulders();
+        server.tell_waiting(1);
         assert!(keys(&client).is_empty(), "told once");
         // Its corner earth gone while no one saw: opened, once loaded, and they hear so.
         std::sync::Arc::make_mut(&mut column).set_block(CORNER, BlockId::AIR);
@@ -730,6 +765,24 @@ mod tests {
             }
         }
         assert_eq!(opened, [("multiblock.smoulder_opened".to_owned(), Some(voxmar_engine::lang::Words::text(count)), Some(voxmar_engine::lang::Words::Block(wood)))], "told it was opened after all");
+    }
+
+    /// News waits for a player away, the newest few, and only theirs is told them.
+    #[test]
+    fn news_for_a_player_away_keeps_the_newest_and_is_theirs() {
+        use super::NEWS_WAITING;
+        use voxmar_engine::lang::Words;
+        let (mut server, client) = heard("base:torch");
+        let ada = crate::player_key(&server.players[&1].name);
+        for i in 0..NEWS_WAITING + 3 {
+            server.tell_fired("someone_away", Words::text(i));
+        }
+        server.tell_fired("other", Words::text("not theirs"));
+        assert_eq!(server.news_waiting.iter().filter(|w| w.owner == "someone_away").count(), NEWS_WAITING);
+        assert_eq!(server.news_waiting.first().map(|w| w.words.clone()), Some(Words::text(3)), "the oldest went first");
+        server.tell_waiting(1);
+        assert!(client.try_recv().ok().flatten().is_none_or(|m| !matches!(m, voxmar_protocol::ServerMessage::Fired { .. })), "none was {ada}'s");
+        assert_eq!(server.news_waiting.len(), NEWS_WAITING + 1, "theirs kept for them");
     }
 
     /// Its wood swapped for stone while it smoulders opens it, and the stone is left as it
