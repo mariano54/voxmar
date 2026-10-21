@@ -33,9 +33,9 @@ pub struct VoiceDef {
     /// or glide on slime). Unset: as `like`'s, else true.
     pub ground: Option<bool>,
     /// How much of its unbidden chatter is a call rather than an idle sound, through each
-    /// part of the day: a cock crows at dawn, wolves howl and frogs croak by night. Unset:
-    /// as `like`'s, else a call a quarter of the time all day.
-    pub calls: Option<Calls>,
+    /// part of the day: a cock crows at dawn, wolves howl and frogs croak by night. An hour
+    /// it leaves unset is as `like`'s, else a call a quarter of the time.
+    pub calls: CallsDef,
     pub step: Option<EventDef>,
     pub idle: Option<EventDef>,
     pub graze: Option<EventDef>,
@@ -96,9 +96,24 @@ fn one() -> f32 {
     1.0
 }
 
-/// The share of a voice's chatter that is a call, by the part of the day.
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+/// The shares of calls a voice gives, by the part of the day, as its file writes them.
+#[derive(Clone, Copy, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct CallsDef {
+    pub dawn: Option<f32>,
+    pub day: Option<f32>,
+    pub dusk: Option<f32>,
+    pub night: Option<f32>,
+}
+
+impl CallsDef {
+    fn hours(&self) -> [Option<f32>; 4] {
+        [self.dawn, self.day, self.dusk, self.night]
+    }
+}
+
+/// The share of a voice's chatter that is a call, by the part of the day.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Calls {
     pub dawn: f32,
     pub day: f32,
@@ -116,6 +131,12 @@ impl Default for Calls {
 }
 
 impl Calls {
+    /// Each hour as the nearest of `chain` (a voice and those it is `like`) that gives it.
+    fn of(chain: &[(&str, &VoiceDef)]) -> Calls {
+        let hour = |i: usize| chain.iter().find_map(|(_, v)| v.calls.hours()[i]).unwrap_or(CALLS);
+        Calls { dawn: hour(0), day: hour(1), dusk: hour(2), night: hour(3) }
+    }
+
     /// The share at `part` of the day.
     pub fn at(&self, part: Part) -> f32 {
         match part {
@@ -248,6 +269,9 @@ impl Bank {
         for file in files.iter().filter(|f| f.name == FILE) {
             let def: BankFile = options.from_str(&file.source).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
             for (name, voice) in def.voices {
+                if voice.calls.hours().into_iter().flatten().any(|share| !(0.0..=1.0).contains(&share)) {
+                    return Err(format!("{}/{FILE}: voice `{name}`: `calls` are shares of its chatter, 0 to 1", file.package));
+                }
                 voices.insert(name, (file.package.clone(), voice));
             }
             for (name, entry) in def.species {
@@ -293,10 +317,7 @@ impl Bank {
             let size = chain.iter().find_map(|(_, v)| v.size);
             let pitch = entry.pitch.unwrap_or_else(|| size.map_or(1.0, |size| pitch_for_size(size, height)));
             let ground = chain.iter().find_map(|(_, v)| v.ground).unwrap_or(true);
-            let calls = chain.iter().find_map(|(_, v)| v.calls).unwrap_or_default();
-            if [calls.dawn, calls.day, calls.dusk, calls.night].iter().any(|share| !(0.0..=1.0).contains(share)) {
-                return Err(format!("{FILE}: species `{name}`: `calls` are shares of its chatter, 0 to 1"));
-            }
+            let calls = Calls::of(&chain);
             bank.species[id.0 as usize] = Some(Voice { events, pitch, gain: entry.gain.max(0.0), ground, calls });
         }
         Ok(bank)
@@ -438,7 +459,7 @@ mod tests {
                 r#"(
                     voices: {
                         "cock": (idle: (clips: ["a.ogg"]), call: (clips: ["c.ogg"]), calls: (dawn: 0.9, night: 0.0)),
-                        "hen": (like: "cock"),
+                        "hen": (like: "cock", calls: (day: 0.5)),
                         "plain": (idle: (clips: ["a.ogg"])),
                     },
                     species: { "rabbit": (voice: "hen"), "hare": (voice: "plain") },
@@ -448,10 +469,15 @@ mod tests {
         )
         .unwrap();
         let calls = |name| bank.voice(creatures.find(name).unwrap()).unwrap().calls;
-        assert_eq!(calls("rabbit"), Calls { dawn: 0.9, day: CALLS, dusk: CALLS, night: 0.0 });
+        // The hen's own day, the cock's dawn and night, and the quarter for the dusk neither gives.
+        assert_eq!(calls("rabbit"), Calls { dawn: 0.9, day: 0.5, dusk: CALLS, night: 0.0 });
         assert_eq!(calls("hare"), Calls::default());
-        let refused = Bank::load(&files(&[("base", r#"(voices: {"v": (idle: (clips: ["a.ogg"]), calls: (night: 1.5))}, species: {"rabbit": (voice: "v")})"#)]), creatures);
-        assert!(refused.is_err_and(|e| e.contains("calls")));
+        // Out of range, not a number or a misspelt hour, in a voice no species speaks with.
+        for bad in ["(night: 1.5)", "(dawn: -0.1)", "(day: NaN)", "(nite: 0.5)"] {
+            let source = format!(r#"(voices: {{"v": (idle: (clips: ["a.ogg"])), "unused": (idle: (clips: ["a.ogg"]), calls: {bad})}}, species: {{"rabbit": (voice: "v")}})"#);
+            let refused = Bank::load(&files(&[("base", source.as_str())]), creatures);
+            assert!(refused.is_err(), "{bad}");
+        }
     }
 
     /// Dawn and dusk straddle sunrise and sunset; night lies between, day the rest.

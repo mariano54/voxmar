@@ -352,28 +352,35 @@ impl Overworld {
     /// another holds open (each gameplay test starts its own on one seed) finds the land
     /// round its spawn already planned rather than keeping its first player waiting.
     pub fn shared(seed: u64, content: &voxmar_engine::content::Content, world: &WorldContent) -> Arc<Self> {
-        let Ok(world) = Self::share(seed, content, || Ok::<_, std::convert::Infallible>(Self::with_content(seed, content.blocks.clone(), world)));
-        world
-    }
-
-    /// As `shared`, reading the world content from `content` only when no generator for
-    /// it is held: a server started beside another on its world reads none.
-    pub fn shared_loading(seed: u64, content: &voxmar_engine::content::Content) -> Result<Arc<Self>, ContentError> {
-        Self::share(seed, content, || Ok(Self::with_content(seed, content.blocks.clone(), &WorldContent::load(content)?)))
-    }
-
-    fn share<E>(seed: u64, content: &voxmar_engine::content::Content, make: impl FnOnce() -> Result<Self, E>) -> Result<Arc<Self>, E> {
-        type Held = ((u64, u64), std::sync::Weak<Overworld>);
-        static SHARED: std::sync::Mutex<Vec<Held>> = std::sync::Mutex::new(Vec::new());
         let key = (seed, content.fingerprint());
-        let mut shared = SHARED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        shared.retain(|(_, held)| held.strong_count() > 0);
-        if let Some(found) = shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade()) {
+        let mut shared = Self::held().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(found) = Self::find(&mut shared, key) {
+            return found;
+        }
+        let made = Arc::new(Self::with_content(seed, content.blocks.clone(), world));
+        shared.push((key, Arc::downgrade(&made)));
+        made
+    }
+
+    /// As `shared`, reading the world content from `content` (outside the lock) only when
+    /// no generator for it is held: a server started beside another on its world reads none.
+    pub fn shared_loading(seed: u64, content: &voxmar_engine::content::Content) -> Result<Arc<Self>, ContentError> {
+        let key = (seed, content.fingerprint());
+        if let Some(found) = Self::find(&mut Self::held().lock().unwrap_or_else(|poisoned| poisoned.into_inner()), key) {
             return Ok(found);
         }
-        let made = Arc::new(make()?);
-        shared.push((key, Arc::downgrade(&made)));
-        Ok(made)
+        Ok(Self::shared(seed, content, &WorldContent::load(content)?))
+    }
+
+    /// The generators `shared` hands out, by seed and content fingerprint.
+    fn held() -> &'static std::sync::Mutex<Vec<((u64, u64), std::sync::Weak<Overworld>)>> {
+        static SHARED: std::sync::Mutex<Vec<((u64, u64), std::sync::Weak<Overworld>)>> = std::sync::Mutex::new(Vec::new());
+        &SHARED
+    }
+
+    fn find(shared: &mut Vec<((u64, u64), std::sync::Weak<Overworld>)>, key: (u64, u64)) -> Option<Arc<Self>> {
+        shared.retain(|(_, held)| held.strong_count() > 0);
+        shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade())
     }
 
     /// The biomes of this world.
@@ -1159,6 +1166,8 @@ impl Overworld {
 
     /// Walks outwards on a spiral until it finds open, temperate grassland on dry land;
     /// `built`: also off trails and outside settlements, which plan by the search without.
+    /// Each is worked out once (`spawns`), so a search must never ask for its own kind's
+    /// spawn: it would wait on itself.
     fn spawn_search(&self, built: bool) -> IVec3 {
         *self.spawns[built as usize].get_or_init(|| self.search_spawn(built))
     }
