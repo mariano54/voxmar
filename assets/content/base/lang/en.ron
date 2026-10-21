@@ -39,6 +39,8 @@
     "effect.base.fireside.description": "Sat by a fire: you heal half as fast again, and it warms you.",
     "effect.base.at_table": "At the Table",
     "effect.base.at_table.description": "Sat at a table: a meal heals a quarter more, and its good lasts a quarter longer.",
+    "effect.base.reading_nook": "Reading Nook",
+    "effect.base.reading_nook.description": "Sat by a window with books to hand: you learn a tenth more.",
     "effect.base.stung": "Stung",
     "effect.base.stung.description": "Bee stings: slower to heal for a while. Smoke them calm first.",
     "effect.base.waterside": "Waterside",

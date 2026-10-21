@@ -127,6 +127,27 @@ fn a_meal_at_the_table_does_more() {
     assert_eq!((modifiers.meal_heal, modifiers.meal_time), (1.25, 1.25));
 }
 
+/// Sat with a bookshelf beside the stool and a window close by, the player is in a Reading
+/// Nook and learns a tenth more. The shelf alone, or standing by both, is no nook.
+#[test]
+fn a_seat_by_a_window_and_books_is_a_reading_nook() {
+    let mut server = fixture();
+    let nook = server.content.effects.id("base:reading_nook").expect("base's reading_nook");
+    let has = |server: &Server| server.players[&1].vitals.effects.iter().any(|a| a.effect == nook);
+    server.set_block(STOOL + IVec3::new(1, 0, 0), id(&server, "base:oak_bookshelf"));
+    sit(&mut server, STOOL);
+    crate::process::Survival.run(&mut server);
+    assert!(!has(&server), "a Reading Nook with no window");
+    server.set_block(STOOL + IVec3::new(0, 1, 2), id(&server, "base:hide_window"));
+    crate::process::Survival.run(&mut server);
+    assert!(has(&server), "sat by books and a window, not in a Reading Nook");
+    assert_eq!(server.players[&1].modifiers.xp, 1.1);
+    let player = server.players.get_mut(&1).unwrap();
+    player.position = Vec3::new(8.5, (FLOOR + 1) as f32, 8.5);
+    crate::process::Survival.run(&mut server);
+    assert!(!has(&server), "a Reading Nook standing up");
+}
+
 /// Every meal effect on at once (the larder, the herb nook, the kitchen garden, home
 /// cooking, the table) would make a meal's good last 2.27 times as long: survival's
 /// meal_most holds it to 2. The heal (1.82 times) is under it and stays whole.

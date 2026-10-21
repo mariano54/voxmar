@@ -43,6 +43,10 @@
         // Sat at a table: a meal eaten there does more (as a pantry's and a larder's do).
         (name: "at_table", kind: Buff, title: "At the Table", description: "Sat at a table: a meal heals a quarter more, and its good lasts a quarter longer.",
             when: Some(All([Seated, Near("table", 2)])), modifiers: (meal_heal: 1.25, meal_time: 1.25)),
+        // Sat by a window with a bookshelf to hand: a reading nook, the quiet corner of a
+        // lived-in home (no home needed: a shelf and a window by a seat make the nook).
+        (name: "reading_nook", kind: Buff, title: "Reading Nook", description: "Sat by a window with books to hand: you learn a tenth more.",
+            when: Some(All([Seated, Near("books", 2), Near("window", 3)])), modifiers: (xp: 1.1)),
         // Taking from bees without smoke (bees.ron).
         (name: "stung", kind: Debuff, title: "Stung", description: "Bee stings: slower to heal for a while. Smoke them calm first.",
             modifiers: (heal: 0.75)),

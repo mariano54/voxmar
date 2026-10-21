@@ -9270,7 +9270,8 @@ fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
 const SEAT_WAIT: f32 = 8.0;
 
 /// A stool two blocks south of the test ground's feet (the door stood north), a campfire
-/// beside it, a table on its other side and a block over it two up, a house's roof; sat on
+/// beside it, a table on its other side (a bookshelf on it and a hide window on that, a
+/// reading nook) and a block over it two up, a house's roof; sat on
 /// from the feet by right clicks with a hand that places nothing, then stood up from with a
 /// step back.
 fn seat(world: &mut World, gate: &mut Gate, now: f32) {
@@ -9290,6 +9291,7 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
     };
     let fireside = |world: &World| has(world, "base:fireside");
     let at_table = |world: &World| has(world, "base:at_table");
+    let nook = |world: &World| has(world, "base:reading_nook");
     let standing_eye = |world: &World| {
         let player = world.resource::<LocalPlayer>();
         player.position.y + voxmar_engine::physics::player::EYE_HEIGHT
@@ -9323,6 +9325,8 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
             net.command(&format!("setblock {} {} {} stone", stool.x, stool.y + 2, stool.z));
             net.command(&format!("setblock {} {} {} oak_table", table.x, table.y, table.z));
+            net.command(&format!("setblock {} {} {} oak_bookshelf", table.x, table.y + 1, table.z));
+            net.command(&format!("setblock {} {} {} hide_window", table.x, table.y + 2, table.z));
             gate.advance(now);
         }
         // Right clicks on the stool's seat until the server sets the player on it.
@@ -9355,15 +9359,16 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
         2 => {
             let (eye, standing) = (world.resource::<LocalPlayer>().eye().y, standing_eye(world));
             let lower = eye < standing - 0.25;
-            if lower && fireside(world) && at_table(world) {
+            if lower && fireside(world) && at_table(world) && nook(world) {
                 if gate.shot(world, "seat-fire").is_none() {
                     return;
                 }
                 gate.check("seat: by the fire", Ok(format!("sat on a stool under a roof two up, by a campfire: the eye dropped {:.2} below standing there, and By the Fire came on", standing - eye)));
                 gate.check("seat: at the table", Ok("sat with a table beside the stool, At the Table came on".into()));
+                gate.check("seat: reading nook", Ok("sat with a bookshelf beside the stool and a window over it, Reading Nook came on".into()));
                 gate.advance(now);
             } else if gate.waited_out(SEAT_WAIT) {
-                gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, By the Fire {}, At the Table {}", fireside(world), at_table(world))));
+                gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, By the Fire {}, At the Table {}, Reading Nook {}", fireside(world), at_table(world), nook(world))));
                 leave(world, gate);
             }
         }
