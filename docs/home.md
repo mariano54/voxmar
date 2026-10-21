@@ -756,7 +756,10 @@ window draws across and back with a right click (`swaps`, as a door; drawn back 
 light in (`light_filter: 8`), so a lit home's window glows low at night, and drawn back
 the light goes through as air (`a_drawn_curtain_keeps_the_light_in`; the gate's walls step
 hangs one inside a pane and draws it back: "home: curtain"). Either way it is a curtain for
-the ladder's steps and a drape (`drape`, which Soft furnishings asks beside a rug). The gate's Door step then
+the ladder's steps and a drape (`drape`, which Soft furnishings asks beside a rug). Drawn
+across (`curtain_drawn`), curtains also hush a draughty room's whistle on a windy night:
+half with one near, silent with two (ambience.ron's `curtained` group, which the draught
+beds play under; `a_draughty_home_whistles_until_daubed`). The gate's Door step then
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).
 
