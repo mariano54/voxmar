@@ -468,9 +468,10 @@ one afraid or greeting a player) within `chat` blocks who see each other stop an
 both stand turned to each other for `chat_for` seconds with a contented hum, then go on
 with their day, and stop to talk again only after `chat_every`. At night (bound for bed
 or in it) one who sees a player inside their home tells them to leave, with a cry, and
-tells that player again only after `intruder_every`; by day a visitor is let be. Reaching their bed for
-the night, they sigh content once a night. A guard sent after a player who struck a villager knows who they
-are after, whatever stands between them.
+tells that player again only after `intruder_every`; by day a visitor is let be. Reaching
+their bed for the night, they sigh content once a night. A guard sent after a player who
+struck a villager (or killed one, in one blow or many) knows who they are after, whatever
+stands between them.
 
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter

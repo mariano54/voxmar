@@ -1604,7 +1604,7 @@ impl Server {
         let Some(creature) = self.creatures.live.remove(&id) else { return };
         self.creatures.gone.push(CreatureGone { id, died: true });
         // One of a settlement's people: noted dead now, so no save misses it.
-        self.villager_died(id);
+        self.villager_died(id, creature.mind.attacker().map(|player| (player, creature.body.position)));
         self.wandering_died(id);
         self.lair_boss_died(id);
         let species = self.content.creatures.get(creature.species);
@@ -1663,7 +1663,7 @@ impl Server {
         }
         if self.creatures.live.remove(&id).is_some() {
             self.creatures.gone.push(CreatureGone { id, died: true });
-            self.villager_died(id);
+            self.villager_died(id, None);
             self.wandering_died(id);
             self.lair_boss_died(id);
         }
