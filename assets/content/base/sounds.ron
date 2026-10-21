@@ -211,10 +211,11 @@
                 (tags: ["burnt"], sounds: ["sounds/burnt_1.ogg", "sounds/burnt_2.ogg"], volume: 0.8),
                 (tags: ["cooked"], sounds: ["sounds/cooked_1.ogg", "sounds/cooked_2.ogg"], volume: 0.7),
                 // What the Farm age's hand stations give, as it comes off them: flour gathered
-                // up in a dusty sift, twine wound off with a snap, cloth folded off the loom.
+                // up in a dusty sift, twine wound off with a snap, cloth folded off the loom (a
+                // bolt: cloth made up into a rug or a banner is not the loom's).
                 (tags: ["flour"], sounds: ["sounds/work/flour_1.ogg", "sounds/work/flour_2.ogg"], volume: 0.9),
                 (tags: ["twine"], sounds: ["sounds/work/twine_1.ogg", "sounds/work/twine_2.ogg"], volume: 1.2),
-                (tags: ["cloth"], sounds: ["sounds/work/cloth_1.ogg", "sounds/work/cloth_2.ogg"], volume: 0.6),
+                (tags: ["bolt"], sounds: ["sounds/work/cloth_1.ogg", "sounds/work/cloth_2.ogg"], volume: 0.6),
             ],
             ways: [
                 // Clay or cobble set into a pit kiln: a knock into the embers and a breath of
@@ -240,7 +241,11 @@
         "base:sit": (
             sounds: ["sounds/sleep_1.ogg"], volume: 0.6,
             // A stool, chair, bench or settle: a knock of its legs and a creak.
-            ways: [(name: "wooden_seat", with: ["tag:wood"], sounds: ["sounds/seat_wood_1.ogg", "sounds/seat_wood_2.ogg"], volume: 0.6)],
+            ways: [
+                // A cushioned seat (a window seat): the rustle, as a cushion.
+                (name: "cushioned_seat", with: ["tag:cushioned"], sounds: ["sounds/sleep_1.ogg"], volume: 0.6),
+                (name: "wooden_seat", with: ["tag:wood"], sounds: ["sounds/seat_wood_1.ogg", "sounds/seat_wood_2.ogg"], volume: 0.6),
+            ],
         ),
         // A line whipped out over the water (the plop is the water's own).
         // A line cast, and what it lands: a fish breaking the water and flapping on the bank.
