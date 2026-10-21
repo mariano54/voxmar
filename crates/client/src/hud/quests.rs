@@ -931,11 +931,11 @@ fn draw(
     (mut web, stage): (Query<(Entity, &mut ScrollPosition), With<Web>>, Query<&ComputedNode, With<Stage>>),
     detail: Query<Entity, With<Detail>>,
     (mut recentre, mut zoom_at): (ResMut<Recentre>, ResMut<ZoomAt>),
-    mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool, IVec2)>>,
+    mut drawn: Local<Option<(QuestView, u32, Vec<String>, usize, IVec2)>>,
 ) {
     // New content (a world played with other packages), a new recipe book, new ways:
     // cleared while the book is shut too.
-    way_cache.keep_for(viewer.book());
+    way_cache.keep_for(&viewer);
     if !ui.quests_open {
         *drawn = None;
         return;
@@ -943,7 +943,7 @@ fn draw(
     // The web's room inside its well, as laid out for this window: drawn again when the
     // window changes it. The card over its right side leaves the layout as it is.
     let room = stage.single().map_or(Vec2::ZERO, |computed| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
-    let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some(), room.as_ivec2());
+    let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), way_cache.1, room.as_ivec2());
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() && !recentre.0 && !fit_way.is_changed() {
         return;
     }
@@ -1771,15 +1771,15 @@ fn drag_web(
 }
 
 /// Each goal's ways (by quest, task and goal), worked out once for the recipe book they
-/// came from (that book's address).
+/// came from (that book's number).
 #[derive(Default)]
 struct WayCache(std::collections::HashMap<String, Vec<Entry>>, usize);
 
 impl WayCache {
     /// Forgets the ways once the recipe book is another (built again for a world of other
     /// content), whichever system saw it first.
-    fn keep_for(&mut self, book: Option<&RecipeBook>) {
-        let at = book.map_or(0, |book| std::ptr::from_ref(book) as usize);
+    fn keep_for(&mut self, viewer: &super::recipes::RecipeViewer) {
+        let at = viewer.book_number();
         if self.1 != at {
             self.0.clear();
             self.1 = at;
@@ -2031,7 +2031,7 @@ fn track(
     (world, time, mut near): (Res<crate::world::ClientWorld>, Res<Time>, Local<(f32, Vec<bool>)>),
 ) {
     let content = &launch.content;
-    way_cache.keep_for(viewer.book());
+    way_cache.keep_for(&viewer);
     for (unpin, interaction) in &unpins {
         if *interaction == Interaction::Pressed {
             toggle_pin(&mut settings, content, &unpin.0);
@@ -2074,6 +2074,8 @@ fn track(
         matters.sort();
         matters.dedup();
         *chosen = Some((chose_for, shown_ways, matters));
+        // Other ways may need other stations: looked for again now, not at the next look.
+        near.0 = 0.0;
     }
     let Some((_, shown_ways, matters)) = chosen.as_ref() else { return };
     let mut held: Vec<BlockId> = player.inventory.slots.iter().flatten().map(|stack| stack.item).filter(|item| matters.binary_search(item).is_ok()).collect();
@@ -2088,7 +2090,7 @@ fn track(
         let eye = player.eye();
         near.1 = shown_ways.iter().map(|(_, (_, way))| station_of(way).is_none_or(|tag| !voxmar_engine::craft::tags_near(&[tag], &content.blocks, eye, |pos| world.block(pos)).is_empty())).collect();
     }
-    // The book too, by its address: one built again for other content draws the ways again.
+    // The book too, by its number: one built again for other content draws the ways again.
     let wanted = (settings.pinned_quests.clone(), player.quests_rev, locale.code().to_owned(), book_key.clone(), way_cache.1, held.clone(), near.1.clone());
     if drawn.as_ref() == Some(&wanted) {
         return;
