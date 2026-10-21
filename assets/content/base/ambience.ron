@@ -126,7 +126,7 @@
             // Soft: straw, hide, turf and earth take the drops in.
             "thatch": "roof_soft", "hide": "roof_soft", "soil": "roof_soft", "grass": "roof_soft", "mud": "roof_soft", "moss": "roof_soft", "sand": "roof_soft",
             // A tap: shingles, boards, timber, woven withies and fired tiles.
-            "shingle": "roof_tap", "timber": "roof_tap", "wood": "roof_tap", "wattle": "roof_tap", "terracotta": "roof_tap",
+            "shingle": "roof_tap", "timber": "roof_tap", "wood": "roof_tap", "wattle": "roof_tap", "terracotta": "roof_tap", "cradle": "roof_tap",
             // Dull: stone, brick, gravel and clay daub.
             "stone": "roof_dull", "cobblestone": "roof_dull", "stone_brick": "roof_dull", "gravel": "roof_dull", "daub": "roof_dull",
             // Bright: glass.

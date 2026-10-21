@@ -276,6 +276,31 @@ impl Fire {
     }
 }
 
+/// How a game bird sits tight (docs/creature-ai.md, "Flush"): a player it has noticed
+/// beyond `hold` blocks it lets be, crouched still in the grass and hoping not to be seen;
+/// one who comes within `hold` it bursts away from, at `burst` times its run for its first
+/// `seconds`, and its kin burst with it. So a stalker who keeps coming gets close, and is
+/// startled at the last. Hurt, it flees as any prey does; a kept bird or one on an errand
+/// sits tight for no one.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Flush {
+    pub hold: f32,
+    pub burst: f32,
+    pub seconds: f32,
+}
+
+impl Flush {
+    /// Close enough to be a surprise, but not so close it is stepped on; a burst faster
+    /// than its run, and short.
+    pub fn check(&self) -> Result<(), String> {
+        if !(1.0..=6.0).contains(&self.hold) || !(1.0..=2.5).contains(&self.burst) || !(0.2..=3.0).contains(&self.seconds) {
+            return Err(format!("`flush` needs hold 1 to 6 blocks, burst 1 to 2.5 and seconds 0.2 to 3, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
 /// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
 /// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
@@ -473,6 +498,39 @@ pub struct Senses {
     /// Seconds it keeps a player it noticed in mind once it no longer senses them
     /// (`brain::Mind::noticed`): turned away from one it has seen, it does not forget them.
     pub keep: f32,
+}
+
+/// How one of a settlement's people barks (`Server::bark`): heard by players within
+/// `range` blocks who see them, each bark to the same player no more than once in `every`
+/// seconds (a greeting, an alarm and a sigh each keep their own).
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Barking {
+    pub range: f32,
+    pub every: f32,
+}
+
+/// The farthest, in blocks, a bark carries.
+pub const MOST_BARK_RANGE: f32 = 64.0;
+/// The longest, in seconds, between one bark and the same again to the same player.
+pub const MOST_BARK_EVERY: f32 = 600.0;
+
+impl Default for Barking {
+    fn default() -> Self {
+        Self { range: 24.0, every: 6.0 }
+    }
+}
+
+impl Barking {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.range >= 1.0 && self.range <= MOST_BARK_RANGE) {
+            return Err(format!("`barking.range` is from 1 to {MOST_BARK_RANGE} blocks, not {}", self.range));
+        }
+        if !(self.every.is_finite() && (0.0..=MOST_BARK_EVERY).contains(&self.every)) {
+            return Err(format!("`barking.every` is from 0 to {MOST_BARK_EVERY} seconds, not {}", self.every));
+        }
+        Ok(())
+    }
 }
 
 impl Default for Senses {
@@ -687,6 +745,10 @@ pub struct CreatureDef {
     /// hunter on foot can run it down. Unset, it runs flat out as long as it flees.
     #[serde(default)]
     pub tires: Option<Tires>,
+    /// It sits tight and then bursts away (`Flush`): a game bird lets a player close and
+    /// startles them. Unset, it flees at its kind's distance.
+    #[serde(default)]
+    pub flush: Option<Flush>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -716,6 +778,9 @@ pub struct CreatureDef {
     pub temperament: Temperament,
     #[serde(default)]
     pub senses: Senses,
+    /// How far its barks carry and how often it makes one to the same player.
+    #[serde(default)]
+    pub barking: Barking,
     /// How far from home it roams before turning back, in blocks.
     #[serde(default = "leash")]
     pub leash: f32,
@@ -1216,8 +1281,15 @@ impl CreatureRegistry {
             if let Some(tires) = def.tires {
                 tires.check().map_err(error)?;
             }
+            if let Some(flush) = def.flush {
+                if def.boss || def.supernatural || def.attack.is_some() {
+                    return Err(error("sits tight and bursts away (`flush`), which is for prey: not a boss, a supernatural kind or one that attacks".into()));
+                }
+                flush.check().map_err(error)?;
+            }
             def.death.check().map_err(error)?;
             def.senses.check().map_err(error)?;
+            def.barking.check().map_err(error)?;
             if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
                 return Err(error(format!("`flees_below` is a share of its health, 0 to 1, not {:?}", def.flees_below)));
             }
@@ -1433,6 +1505,23 @@ mod tests {
     use super::*;
     use crate::block::BlockDef;
     use crate::content::Settable;
+
+    /// Barking in range passes; a range or wait out of it on either side is refused.
+    #[test]
+    fn barking_out_of_range_is_refused() {
+        let good = Barking::default();
+        assert!(good.check().is_ok());
+        let broken = [
+            Barking { range: 0.5, ..good },
+            Barking { range: MOST_BARK_RANGE + 1.0, ..good },
+            Barking { every: -1.0, ..good },
+            Barking { every: MOST_BARK_EVERY + 1.0, ..good },
+            Barking { every: f32::NAN, ..good },
+        ];
+        for b in broken {
+            assert!(b.check().is_err_and(|e| e.contains("barking")), "{b:?} was let through");
+        }
+    }
 
     /// A circle in range passes; each number out of its range on either side is refused,
     /// naming `circle`.

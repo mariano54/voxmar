@@ -655,8 +655,8 @@ fn break_and_place(
             net.propose_from(&player, place, action_target);
             cues.write(SoundCue::for_block(&world, item, Cue::Place));
             world.set_block(cell, placed);
-            if let Some(upper) = content.blocks.upper(placed) {
-                world.set_block(cell + IVec3::Y, upper);
+            for (by, block) in content.blocks.placed_with(placed) {
+                world.set_block(cell + by, block);
             }
             let selected = player.selected;
             player.inventory.take_one(selected);

@@ -290,6 +290,11 @@ pub struct BlockDef {
     /// The block placed in the cell above along with it, by name, in the same facing, and
     /// broken with it: a door's top half, which rests on it (`support: Below`).
     pub upper: Option<String>,
+    /// The block placed beside it along with it, by name, in the same facing: in the cell to
+    /// the right of whoever sets it, facing it (`Facing::beside`). The two are broken and
+    /// turned (`swaps`) together: a double gate's second leaf. Only a block that comes in
+    /// facings has one.
+    pub beside: Option<String>,
     /// What coats it in place (`with`, a block held, one used up) and what it is then
     /// (`into`): clay on a wattle panel daubs it. It takes the level of the recipe that makes
     /// `into` and teaches its experience a piece (server `coat.rs`).
@@ -330,6 +335,17 @@ impl Facing {
             Facing::East => IVec3::X,
             Facing::South => IVec3::Z,
             Facing::West => IVec3::NEG_X,
+        }
+    }
+
+    /// The cell beside a block facing this way, to the right of whoever set it standing
+    /// before it and facing it (see [`BlockDef::beside`]).
+    pub const fn beside(self) -> IVec3 {
+        match self {
+            Facing::North => IVec3::NEG_X,
+            Facing::East => IVec3::NEG_Z,
+            Facing::South => IVec3::X,
+            Facing::West => IVec3::Z,
         }
     }
 
@@ -589,6 +605,7 @@ impl Default for BlockDef {
             shape: None,
             swaps: None,
             upper: None,
+            beside: None,
             coat: None,
         }
     }
@@ -623,6 +640,7 @@ impl BlockDef {
         self.wall.iter_mut().for_each(fill);
         self.swaps.iter_mut().for_each(fill);
         self.upper.iter_mut().for_each(fill);
+        self.beside.iter_mut().for_each(fill);
         if let Some(coat) = &mut self.coat {
             fill(&mut coat.with);
             fill(&mut coat.into);
@@ -650,6 +668,7 @@ impl BlockDef {
         self.wall.iter_mut().for_each(qualify);
         self.swaps.iter_mut().for_each(qualify);
         self.upper.iter_mut().for_each(qualify);
+        self.beside.iter_mut().for_each(qualify);
         self.shape.iter_mut().for_each(qualify);
         if let Some(coat) = &mut self.coat {
             qualify(&mut coat.with);
@@ -885,6 +904,9 @@ pub struct BlockInfo {
     /// The block placed above with it, facing north (see [`BlockDef::upper`] and
     /// [`BlockRegistry::upper`]).
     pub upper: Option<BlockId>,
+    /// The block placed beside it with it, facing north (see [`BlockDef::beside`] and
+    /// [`BlockRegistry::beside`]).
+    pub beside: Option<BlockId>,
     /// Its shape, made ready for its facing (see [`BlockRegistry::shape`]), for a block
     /// drawn as one.
     pub shape: Option<u16>,
@@ -1293,6 +1315,20 @@ impl BlockRegistry {
                     }
                     None => None,
                 },
+                beside: match &def.beside {
+                    Some(name) => {
+                        let by = *by_name.get(name).ok_or_else(|| RegistryError(format!("`{}` has unknown block beside it `{name}`", def.name)))?;
+                        // It needs a facing to know which cell is beside it.
+                        if !def.facing || !defs[by.0 as usize].facing {
+                            return Err(RegistryError(format!("`{}` has block `{name}` beside it, but a block set beside another needs facings, both of them", def.name)));
+                        }
+                        if defs[by.0 as usize].upper.is_some() || defs[by.0 as usize].beside.is_some() || def.upper.is_some() {
+                            return Err(RegistryError(format!("`{}` has block `{name}` beside it: a pair set side by side has no upper half nor a third block", def.name)));
+                        }
+                        Some(by)
+                    }
+                    None => None,
+                },
                 shape,
                 climbable: def.has_tag(CLIMBABLE_TAG),
             });
@@ -1323,9 +1359,25 @@ impl BlockRegistry {
         }
         // An upper half is only ever placed with its lower; a form swapped to that drops
         // another block (an open door, dropping the door) is only ever swapped to.
+        // A pair set side by side turns into a pair (an open double gate's leaves), each leaf
+        // into the other's partner's form.
+        for (i, block) in info.iter().enumerate() {
+            let Some(by) = block.beside else { continue };
+            let together = match (block.swaps, info[by.0 as usize].swaps) {
+                (None, None) => true,
+                (Some(to), Some(other)) => info[to.0 as usize].beside == Some(other),
+                _ => false,
+            };
+            if !together {
+                return Err(RegistryError(format!(
+                    "`{}` and `{}` beside it must turn (`swaps`) together into a block and the block beside that",
+                    defs[i].name, defs[by.0 as usize].name
+                )));
+            }
+        }
         let forms: Vec<BlockId> = info
             .iter()
-            .flat_map(|block| block.upper.into_iter().chain(block.swaps.filter(|&to| info[to.0 as usize].drops != to)))
+            .flat_map(|block| block.upper.into_iter().chain(block.beside).chain(block.swaps.filter(|&to| info[to.0 as usize].drops != to)))
             .collect();
         for form in forms {
             placement_forms[form.0 as usize] = true;
@@ -1586,6 +1638,20 @@ impl BlockRegistry {
     pub fn upper(&self, block: BlockId) -> Option<BlockId> {
         let up = self.info(block).upper?;
         Some(self.info(block).facing.map_or(up, |facing| self.facing(up, facing)))
+    }
+
+    /// The block placed beside `block` with it (see [`BlockDef::beside`]), in its facing, and
+    /// the cell it goes in from `block`'s.
+    pub fn beside(&self, block: BlockId) -> Option<(IVec3, BlockId)> {
+        let by = self.info(block).beside?;
+        let facing = self.info(block).facing?;
+        Some((facing.beside(), self.facing(by, facing)))
+    }
+
+    /// The blocks placed with `block` (its upper half, the block beside it), each with the
+    /// cell it goes in from `block`'s.
+    pub fn placed_with(&self, block: BlockId) -> impl Iterator<Item = (IVec3, BlockId)> + '_ {
+        self.upper(block).map(|up| (IVec3::Y, up)).into_iter().chain(self.beside(block))
     }
 
     /// Like [`Self::id`] but for names the engine or generator cannot work without.
@@ -1973,6 +2039,30 @@ mod tests {
         assert_eq!(load(r#"(name: "ladder", render: Model, shape: "slab", tags: ["climbable"])"#), Ok(()));
         let loose = load(r#"(name: "ladder", render: Model, shape: "slab", solid: false, tags: ["climbable"])"#).unwrap_err();
         assert!(loose.contains("`base:ladder` is climbable"), "{loose}");
+    }
+
+    /// A pair set side by side (`beside`) needs facings on both, no upper half or third
+    /// block, and `swaps` that turn the pair into a pair; a double gate's four forms load.
+    #[test]
+    fn a_pair_set_side_by_side_that_would_come_apart_is_refused() {
+        let load = |blocks: &str| {
+            let defs = BlockRegistry::parse("base", &format!("(blocks: [{blocks}])")).unwrap();
+            BlockRegistry::with_shapes(defs, &shapes()).map(|_| ()).map_err(|e| e.0)
+        };
+        let gate = r#"(name: "gate", facing: true, beside: "leaf", swaps: "gate_open"), (name: "gate_open", facing: true, solid: false, beside: "leaf_open", swaps: "gate"),
+            (name: "leaf", facing: true, swaps: "leaf_open", drops: "core:air"), (name: "leaf_open", facing: true, solid: false, swaps: "leaf", drops: "core:air")"#;
+        assert_eq!(load(gate), Ok(()));
+        let unknown = load(r#"(name: "gate", facing: true, beside: "leaf")"#).unwrap_err();
+        assert!(unknown.contains("unknown block beside it `base:leaf`"), "{unknown}");
+        let unfaced = load(r#"(name: "gate", beside: "leaf"), (name: "leaf", facing: true)"#).unwrap_err();
+        assert!(unfaced.contains("needs facings"), "{unfaced}");
+        let three = load(r#"(name: "gate", facing: true, beside: "leaf"), (name: "leaf", facing: true, beside: "gate")"#).unwrap_err();
+        assert!(three.contains("no upper half nor a third block"), "{three}");
+        // The first leaf turns, the second does not; or the second turns into the wrong leaf.
+        let alone = load(r#"(name: "gate", facing: true, beside: "leaf", swaps: "gate_open"), (name: "gate_open", facing: true, beside: "leaf", swaps: "gate"), (name: "leaf", facing: true)"#).unwrap_err();
+        assert!(alone.contains("must turn (`swaps`) together"), "{alone}");
+        let crossed = load(&gate.replace(r#"swaps: "leaf_open", drops"#, r#"swaps: "gate", drops"#)).unwrap_err();
+        assert!(crossed.contains("must turn (`swaps`) together"), "{crossed}");
     }
 
     #[test]

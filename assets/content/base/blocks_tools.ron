@@ -30,15 +30,29 @@
             particles: [(style: Smoke, rate: 3.0, at: (0.5, 1.0, 0.5), spread: 0.2, size: 1.8, height: Some(7.0), range: Some(96.0), over: Some(("hearth", 3)), color: Some((150, 146, 140)))],
         ),
         // The Farm age's fire (multiblocks.ron): a pit kiln fires clay into pots, vials and
-        // bricks; kiln bricks build the Crucible Kiln round a crucible, which smelts copper
-        // and tin and alloys them into bronze once the kiln stands.
+        // bricks; kiln bricks make the crucible, and bricks tempered with straw from the
+        // field (they take the heat without cracking) build the Crucible Kiln round it,
+        // which smelts copper and tin and alloys them into bronze once the kiln stands.
         (
             name: "pit_kiln", sound: Stone, textures: Sides(top: "pit_kiln_top", bottom: "cobblestone", side: "pit_kiln_side"),
             hardness: 1.5, color: (120, 90, 70), tags: ["pit_kiln", "station", "heat"], light: 8,
         ),
+        // Loaded and firing (stations.ron), then fired and cooling with the wares in it.
+        (
+            name: "pit_kiln_firing", sound: Stone, textures: Sides(top: "pit_kiln_firing_top", bottom: "cobblestone", side: "pit_kiln_firing_side"),
+            drops: "pit_kiln", hardness: 1.5, color: (150, 90, 60), tags: ["creative_only", "pit_kiln", "heat"], light: 12,
+        ),
+        (
+            name: "pit_kiln_fired", sound: Stone, textures: Sides(top: "pit_kiln_fired_top", bottom: "cobblestone", side: "pit_kiln_fired_side"),
+            drops: "pit_kiln", hardness: 1.5, color: (120, 100, 90), tags: ["creative_only", "pit_kiln", "heat"], light: 4,
+        ),
         (
             name: "kiln_bricks", sound: Stone, textures: All("kiln_bricks"),
             hardness: 2.0, color: (160, 90, 60), tags: ["kiln_bricks", "bricks", "building", "shelter:fine"],
+        ),
+        (
+            name: "tempered_kiln_bricks", sound: Stone, textures: All("tempered_kiln_bricks"),
+            hardness: 2.0, color: (176, 112, 70), tags: ["kiln_bricks", "tempered", "bricks", "building", "shelter:fine"],
         ),
         (
             name: "crucible", sound: Stone, textures: Sides(top: "crucible_top", bottom: "kiln_bricks", side: "crucible_side"),
@@ -144,6 +158,10 @@
         // Part-burnt wood, from a clamp opened before its time: firewood's heat, not charcoal's.
         (template: "drop", name: "charred_wood", tags: ["charred", "fuel"], all: (color: (70, 52, 40))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
+        // Straw: the stalks a ripe grain crop leaves when it is cut, one or two a sown plant and
+        // one a wild tuft (crops.ron). It tempers kiln bricks for the Crucible Kiln, thatches
+        // (fibre) and twists into twine, and nine bind into a hay bale.
+        (template: "drop", name: "straw", tags: ["straw", "fibre"], all: (color: (220, 196, 110))),
         // Flour, ground at a quern from wheat or rye, bakes at a fire into bread.
         (template: "drop", name: "flour", tags: ["flour"], all: (color: (236, 228, 206))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),

@@ -63,8 +63,9 @@ impl Loads {
 /// reach, so the readout does not flicker at its edge.
 const SEEN_FROM: f32 = 8.0;
 
-/// How often the look at loaded stations comes, in seconds.
-const LOOK_SECONDS: u64 = 5;
+/// How often the look at loaded stations comes, in seconds: often enough that a pit kiln's
+/// twelve-second load shows fired within a second of being done.
+const LOOK_SECONDS: u64 = 1;
 
 /// `base:stations`: turns done stations in loaded columns to their ready blocks.
 pub(crate) struct Stations;
@@ -113,10 +114,15 @@ impl Server {
         })
     }
 
-    /// Minutes left, rounded up, for a load due at `due`.
-    fn minutes_left(&self, due: u64) -> u64 {
+    /// The words for the time left on a load due at `due`: `minutes`, rounded up, or under
+    /// a minute `seconds`, so a pit kiln's twelve seconds is not "about 1 min".
+    fn time_left(&self, [minutes, seconds]: [&str; 2], due: u64) -> Words {
         let ticks = due.saturating_sub(self.tick);
-        ticks.div_ceil(60 * TICKS_PER_SECOND as u64).max(1)
+        if ticks < 60 * TICKS_PER_SECOND as u64 {
+            Words::key(seconds).with("seconds", Words::text(ticks.div_ceil(TICKS_PER_SECOND as u64).max(1)))
+        } else {
+            Words::key(minutes).with("minutes", Words::text(ticks.div_ceil(60 * TICKS_PER_SECOND as u64)))
+        }
     }
 
     /// What is on the station at `pos` as `agent` sees it (`ClientMessage::LookAtStation`):
@@ -161,7 +167,7 @@ impl Server {
             Phase::Working => match self.stations.get(pos) {
                 Some(load) if self.tick >= load.due => self.take_from_station(agent, pos, station, load),
                 Some(load) => {
-                    let words = Words::key("station.working").with("item", Words::Block(self.content.blocks.def(load.item).name.clone())).with("minutes", Words::text(self.minutes_left(load.due)));
+                    let words = self.time_left(["station.working", "station.working_seconds"], load.due).with("item", Words::Block(self.content.blocks.def(load.item).name.clone()));
                     self.tell_station(agent, words);
                 }
                 // Working with nothing on it (a command set it so): it is empty.
@@ -232,7 +238,7 @@ impl Server {
         }
         self.stations.loads.insert(pos, Load { item: stack.item, count, due: self.tick + ticks.max(1) });
         self.set_block(pos, station.working);
-        let mut words = Words::key("station.loaded").with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone())).with("minutes", Words::text(self.minutes_left(self.tick + ticks.max(1))));
+        let mut words = self.time_left(["station.loaded", "station.loaded_seconds"], self.tick + ticks.max(1)).with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(stack.item).name.clone()));
         if speed > 1.0 {
             words = Words::key("station.loaded_faster").with("words", words);
         }
@@ -461,6 +467,45 @@ mod tests {
         assert_eq!(at(&server, AT), "base:drying_rack");
         assert!(xp(&server, "core:cooking") > cooking, "taking pays Cooking");
         assert_eq!(server.stations.get(AT), None);
+    }
+
+    /// The pit kiln: clay in hand loads it (up to twelve) and it fires with nobody by it,
+    /// twelve seconds; taken, all twelve are fired clay (none cracks), pay Crafting and
+    /// count as cooked. Cobblestone fires to stone the same way, and a held log loads nothing.
+    #[test]
+    fn clay_left_in_a_pit_kiln_is_fired_twelve_seconds_later() {
+        let mut server = fixture(1);
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        server.set_block(AT, block(&server, "base:pit_kiln"));
+        hold(&mut server, "base:clay", 16);
+        server.use_station(1, AT);
+        assert_eq!(at(&server, AT), "base:pit_kiln_firing");
+        // Said in seconds, not "about 1 min".
+        let told: Vec<String> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Chat { text, .. } => Some(format!("{text:?}")), _ => None }).collect();
+        assert!(told.iter().any(|t| t.contains("station.loaded_seconds") && t.contains("(\"seconds\", Text(\"12\"))")), "{told:?}");
+        assert_eq!(carried(&server, "base:clay"), 4, "twelve go in, four stay in hand");
+        server.tick += MINUTE / 5 - 1;
+        server.show_done_stations();
+        assert_eq!(at(&server, AT), "base:pit_kiln_firing", "not yet");
+        server.tick += 1;
+        server.show_done_stations();
+        assert_eq!(at(&server, AT), "base:pit_kiln_fired");
+        let crafting = xp(&server, "core:crafting");
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:fired_clay"), 12, "none cracked");
+        assert_eq!(at(&server, AT), "base:pit_kiln");
+        assert_eq!(xp(&server, "core:crafting") - crafting, 720, "taking pays Crafting, 6 a clay (in tenths)");
+        assert_eq!(server.players[&1].tallies.get("cooked:base:fired_clay"), Some(&12), "Fire the Clay counts it cooked");
+        hold(&mut server, "base:cobblestone", 3);
+        server.use_station(1, AT);
+        server.tick += MINUTE / 5;
+        server.show_done_stations();
+        server.use_station(1, AT);
+        assert_eq!(carried(&server, "base:stone"), 3);
+        hold(&mut server, "base:oak_log", 1);
+        server.use_station(1, AT);
+        assert_eq!((at(&server, AT).as_str(), carried(&server, "base:oak_log")), ("base:pit_kiln", 1), "a log is no kiln load");
     }
 
     /// A raw hide off a beast cures on the rack in ten minutes, and taking it pays Crafting.

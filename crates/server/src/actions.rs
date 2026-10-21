@@ -424,9 +424,11 @@ impl Server {
                     self.set_block(cell, placed);
                     // A light picked up burning burns on from where it was.
                     self.set_down_burnt(cell, item, wear);
-                    // Its upper half goes in above with it (a door's top).
-                    if let Some(upper) = self.content.blocks.upper(placed) {
-                        self.set_block(cell + IVec3::Y, upper);
+                    // What goes in with it: its upper half above (a door's top), the block
+                    // beside it (a double gate's second leaf).
+                    let with: Vec<(IVec3, BlockId)> = self.content.blocks.placed_with(placed).collect();
+                    for (by, block) in with {
+                        self.set_block(cell + by, block);
                     }
                     if self.marks_placed(item, placed) {
                         self.placed.insert(cell);

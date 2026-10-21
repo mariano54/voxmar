@@ -493,7 +493,7 @@ mod tests {
         let table = words(&locale, &content, content.blocks.id("base:stone_pickaxe").unwrap(), &Reach::Table);
         assert!(table.contains("Crafting Table"), "{table}");
         // Something cooked, from what goes in it.
-        let (input, cooked) = content.cooking.iter().next().map(|(input, recipe)| (input, recipe.output)).unwrap();
+        let (input, cooked) = content.player_cooking().next().map(|(input, recipe)| (input, recipe.output)).unwrap();
         let cook = plan(&content, &book, &[(content.blocks.item_of(input), 1)].into_iter().collect(), false, &none);
         let found = cook.iter().find(|m| m.output == cooked).expect("the cooked thing shows");
         // What a crucible takes besides what is held counts: three copper ingots alone are

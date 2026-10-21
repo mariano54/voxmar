@@ -318,6 +318,9 @@ pub struct Mind {
     /// out of sight (`Senses::keep`) and the seconds since it first noticed them (its double take,
     /// `Senses::react`).
     pub noticed: Vec<(u32, f32, f32)>,
+    /// Whether its last decision was a double take: what it chose then is still fresh when
+    /// it first acts (a flight still raises the alarm to its kin).
+    pub looking: bool,
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
     /// near, how far it likes to stray).
     pub seed: u64,
@@ -350,6 +353,7 @@ impl Mind {
             winded: 0.0,
             held_off: None,
             noticed: Vec::new(),
+            looking: false,
         }
     }
 
@@ -616,7 +620,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         }
     };
     let (index, _, want) = chosen;
-    let fresh = mind.doing != Some(index);
+    let fresh = mind.doing != Some(index) || mind.looking;
     if fresh {
         mind.doing = Some(index);
         mind.since = 0.0;
@@ -627,12 +631,15 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     let taking = want.target.filter(|p| {
         !mind.recalls(Memory::HurtBy(p.id)) && mind.noticed.iter().any(|n| n.0 == p.id && n.2 < def.senses.react)
     });
-    if let Some(p) = taking {
-        return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
-    }
+    // A decision spent on anything but its warning, a double take too, runs the warning's
+    // lapse.
     let warns = creature.modules[index].0.name() == "warn";
     if !warns {
         lapse_warning(mind, dt);
+    }
+    mind.looking = taking.is_some();
+    if let Some(p) = taking {
+        return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
     }
     // Not running, it gets its wind back (`Tires`).
     if creature.modules[index].0.name() != "flee" {
@@ -764,6 +771,36 @@ pub(super) mod tests {
         mind.hurt(&wolf, Some(1), 1.0);
         let struck = think(&wolf, &mut mind, &situation(&far));
         assert!(struck.goal.is_some(), "struck, it stood and looked: {struck:?}");
+    }
+
+    /// A double take spent on anyone but the one it warns runs its warning's lapse, as any
+    /// other decision does: a look at one unseen beside it does not hold a warning open.
+    #[test]
+    fn a_double_take_runs_a_warnings_lapse() {
+        let wolf = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, senses: (react: 0.6), attack: (damage: (1, 3), reach: 1.0), warn: (near: 1.5, seconds: 1.0), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.warning = Some(Warning { seconds: 0.4, lapse: 0.0 });
+        let close = [Seen { in_view: false, ..player(Vec3::new(2.5, 0.0, 0.0)) }];
+        let decision = think(&wolf, &mut mind, &situation(&close));
+        assert_eq!((decision.pose, doing(&wolf, &mind)), (Pose::Alert, "hunt"), "a look at the one beside it");
+        assert!(mind.warning.is_some_and(|w| (w.lapse - 0.2).abs() < 1e-4), "the look held the warning: {:?}", mind.warning);
+    }
+
+    /// Prey with a double take looks, then flees, and its first decision to flee still
+    /// raises the alarm to its kin, as one with no double take does at once.
+    #[test]
+    fn prey_that_looks_first_still_raises_the_alarm_when_it_runs() {
+        let deer = species(&format!(
+            "(creatures: [(name: \"deer\", health: 4, {BODY}, senses: (react: 0.4), temperament: (fear: 0.9), behaviours: [(do: Wander(radius: 6.0)), (do: Flee(radius: 10.0))])])"
+        ));
+        let near = [player(Vec3::new(5.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        let mut decisions = (0..6).map(|_| think(&deer, &mut mind, &situation(&near)));
+        assert!(decisions.next().is_some_and(|d| d.goal.is_none() && d.face == Some(near[0].position)), "no look first");
+        let first_flight = decisions.find(|d| d.goal.is_some()).expect("it never fled");
+        assert!(first_flight.alarm, "its first flight raised no alarm: {first_flight:?}");
     }
 
     #[test]
@@ -902,6 +939,14 @@ pub(super) mod tests {
         }
         let decision = think(&wolf, &mut mind, &situation(&hidden));
         assert_eq!((mind.attacker(), doing(&wolf, &mind), decision.goal), (Some(2), "hunt", Some(hidden[1].position)), "the warned one stayed: it goes for them, not the unseen one");
+        // One it has noticed (seen once) and then cannot see, within `keep`, it goes for
+        // unwarned: a warning goes only to one seen.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let _ = think(&wolf, &mut mind, &situation(&at));
+        assert_eq!(doing(&wolf, &mind), "warn", "seen, warned");
+        let gone = [Seen { in_view: false, ..at[0] }];
+        let decision = think(&wolf, &mut mind, &situation(&gone));
+        assert_eq!((doing(&wolf, &mind), decision.goal, decision.pose), ("hunt", Some(gone[0].position), Pose::Idle), "noticed, out of view: hunted unwarned");
         let mut mind = Mind::new(&wolf.def.temperament, 2);
         let _ = think(&wolf, &mut mind, &Situation { kept: true, ..situation(&at) });
         assert_eq!(doing(&wolf, &mind), "warn", "kept, it hunts as before, with its warning");
@@ -1187,6 +1232,49 @@ pub(super) mod tests {
         for bad in ["(after: 3.0, pace: 0.5, rest: 4.0, hurt: 1.0)", "(after: 0.5, pace: 0.5, rest: 4.0)", "(after: 3.0, pace: 1.0, rest: 4.0)", "(after: 3.0, pace: 0.1, rest: 4.0)", "(after: 3.0, pace: 0.5, rest: 40.0)"] {
             assert!(build(bad).is_err_and(|e| e.contains("`tires` needs")), "{bad}");
         }
+    }
+
+    /// A game bird that sits tight (`creature::Flush`) crouches still while a noticed
+    /// player is beyond its `hold`, then bursts away when they come within it: its first
+    /// `seconds` at `burst` times its run, then at its run. Kept, it flees at its kind's
+    /// distance as ever. Bad numbers, or a flush on a kind that attacks, are refused.
+    #[test]
+    fn a_game_bird_sits_tight_then_bursts_away() {
+        let bird = species(&format!(
+            "(creatures: [(name: \"quail\", health: 2, {BODY}, movement: (walk: 1.0, run: 5.0), flush: (hold: 2.5, burst: 2.0, seconds: 0.6), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 10.0)), (do: Freeze)])])"
+        ));
+        let far = [player(Vec3::new(6.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&bird.def.temperament, 2);
+        for _ in 0..10 {
+            let decision = think(&bird, &mut mind, &situation(&far));
+            assert_eq!((doing(&bird, &mind), decision.pose, decision.goal, decision.speed), ("hide", Pose::Crouched, None, 0.0), "sits tight at six blocks");
+        }
+        let near = [player(Vec3::new(2.0, 0.0, 0.0))];
+        let full = 5.0 * mind.personality.pace();
+        let ran: Vec<u32> = (0..6)
+            .map(|_| {
+                let decision = think(&bird, &mut mind, &situation(&near));
+                assert_eq!(doing(&bird, &mind), "flee");
+                (decision.speed / full * 100.0).round() as u32
+            })
+            .collect();
+        // Thinking every 0.2 s: three at the burst, then its run.
+        assert_eq!(ran, [200, 200, 200, 100, 100, 100], "{ran:?}");
+        let _ = think(&bird, &mut mind, &situation(&far));
+        assert_eq!(doing(&bird, &mind), "flee", "flushed, it runs clear and does not settle again at six blocks");
+        let mut kept = Mind::new(&bird.def.temperament, 2);
+        let _ = think(&bird, &mut kept, &Situation { kept: true, ..situation(&far) });
+        assert_eq!(doing(&bird, &kept), "flee", "a kept bird sits tight for no one");
+
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("flush: (hold: 3.0, burst: 1.8, seconds: 1.0)"), Ok(()));
+        for bad in ["flush: (hold: 0.5, burst: 1.8, seconds: 1.0)", "flush: (hold: 8.0, burst: 1.8, seconds: 1.0)", "flush: (hold: 3.0, burst: 3.0, seconds: 1.0)", "flush: (hold: 3.0, burst: 0.5, seconds: 1.0)", "flush: (hold: 3.0, burst: 1.8, seconds: 5.0)"] {
+            assert!(build(bad).is_err_and(|e| e.contains("`flush` needs")), "{bad}");
+        }
+        assert!(build("flush: (hold: 3.0, burst: 1.8, seconds: 1.0), attack: (damage: (1, 3))").is_err_and(|e| e.contains("for prey")));
     }
 
     #[test]
