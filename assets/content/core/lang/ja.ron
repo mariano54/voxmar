@@ -565,6 +565,7 @@
     "quest.goal.fertilised": "{item}で作物を育てる",
     "quest.goal.ate": "{item}を食べる",
     "quest.goal.laid": "家の蓄えから{item}を並べる",
+    "quest.goal.put_away": "片付けキーで{item}をしまう",
     "quest.goal.mended": "{item}を直す",
     "quest.goal.watering": "{item}を耕地のそばに置いて水をやる",
     "quest.goal.placed": "{item}を置く",

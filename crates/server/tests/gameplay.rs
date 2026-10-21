@@ -9040,10 +9040,10 @@ impl Fresh {
         for (i, &ground) in grounds.iter().enumerate() {
             let last = i + 1 == grounds.len();
             let cell = ground + IVec3::Y;
-            // Open as the place action finds it: air, or a plant or snow a block replaces
+            // Open as the place action finds it: air, or a plant a block replaces
             // (not water), on solid ground.
             let open = |c: &Client| {
-                c.world.block(cell).is_some_and(|b| b == BlockId::AIR || (c.content.blocks.info(b).replaceable && c.content.blocks.info(b).fluid.is_none()))
+                c.world.block(cell).is_some_and(|b| c.content.blocks.info(b).gives_room())
                     && c.world.block(ground).is_some_and(|b| c.content.blocks.def(b).solid)
             };
             if !last && (!open(&self.c) || Self::creature_on(&self.c, cell)) {
@@ -9942,9 +9942,14 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // Load's four were given, not shaped), then twelve tempered, two from four fired clay
     // and a straw at the table. What is left when it is spent waits for the charcoal.
     // Earthenware, open since The Potter: two bowls and a jar of fired clay in the grid
-    // (Crafting 2 and 3).
-    let bowls = |f: &mut Fresh| f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
+    // (Crafting 2 and 3), at the table: between loads the player may be off digging clay.
+    let table = site.table;
+    let bowls = |f: &mut Fresh| {
+        f.at_table(table);
+        f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
+    };
     let jar = |f: &mut Fresh| {
+        f.at_table(table);
         f.craft(&[(1, fired, 1), (3, fired, 1), (4, fired, 1)], "base:earthen_jar", 1);
         f.wait(5.0, "the server counting the crockery", |c| quest_status(c, "earthenware").0);
     };

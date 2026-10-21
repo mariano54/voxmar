@@ -1170,6 +1170,53 @@ def rocker_place(rng):
     return out
 
 
+def pot_ready(rng):
+    """A pot's load cooked through (work done, nobody by): the bubbling easing to a last few
+    slow blups, and the lid giving a small rattle as the steam lifts it."""
+    out = np.zeros(int(1.0 * RATE))
+    at = 0.0
+    for i in range(5):
+        place(out, at, drop(rng, rng.uniform(260, 420)), 0.6 - 0.08 * i)
+        at += rng.uniform(0.09, 0.16) * (1 + 0.3 * i)
+    for i in range(3):
+        place(out, 0.55 + i * rng.uniform(0.05, 0.07), knock(rng, rng.uniform(900, 1200)), 0.35 - 0.08 * i)
+    return out
+
+
+def rack_dry(rng):
+    """Strips on a drying rack dried through: a dry, papery rattle as they stiffen in the
+    air, and a tick of the rack's frame."""
+    out = np.zeros(int(0.7 * RATE))
+    place(out, 0.0, rustle(rng, 0.45, rng.uniform(3200, 3800)), 0.6)
+    place(out, 0.05, trickle(rng, 0.35, 4200, 60), 0.4)
+    place(out, 0.42, knock(rng, rng.uniform(380, 460)), 0.4)
+    return out
+
+
+def compost_ready(rng):
+    """A compost heap rotted down: the heap slumping with a soft, damp settle and a few
+    crumbs running down its side."""
+    out = np.zeros(int(0.8 * RATE))
+    place(out, 0.0, thud(rng, 0.35, 0.03, 0.12), 0.8)
+    place(out, 0.05, rustle(rng, 0.4, rng.uniform(900, 1200)), 0.5)
+    place(out, 0.25, trickle(rng, 0.45, 2000, 50), 0.4)
+    return out
+
+
+def skep_full(rng):
+    """A skep filled with honey: the bees' hum swelling as they fan the comb, then settling."""
+    n = int(1.2 * RATE)
+    t = np.arange(n) / RATE
+    out = np.zeros(n)
+    for _ in range(6):
+        f = rng.uniform(190, 260)
+        wobble = 1 + 0.02 * np.sin(2 * np.pi * rng.uniform(3, 7) * t + rng.uniform(0, 6.3))
+        phase = np.cumsum(2 * np.pi * f * wobble / RATE)
+        out += np.sign(np.sin(phase)) * 0.12 + 0.3 * np.sin(phase)
+    out = bandpass(out, 600, 0.8) * np.sin(np.pi * t / t[-1]) ** 1.5
+    return out
+
+
 def grind(rng):
     """A quern turned: the upper stone rumbling round on the lower, a turn and more of gritty,
     low grinding, and grain crunching between them."""
@@ -1363,6 +1410,10 @@ SOUNDS = {
     "materials/terracotta_place": (terracotta_place, 3),
     "materials/terracotta_break": (terracotta_break, 3),
     "work/knap": (knap, 3),
+    "work/pot_ready": (pot_ready, 2),
+    "work/rack_dry": (rack_dry, 2),
+    "work/compost_ready": (compost_ready, 2),
+    "work/skep_full": (skep_full, 2),
     "work/scrape_hide": (scrape_hide, 2),
     "work/shape_clay": (shape_clay, 2),
     "work/clink": (clink, 2),

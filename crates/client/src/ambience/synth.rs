@@ -180,11 +180,20 @@ pub enum Synth {
     /// A market stall's trade: coins counted out clinking onto the board, and a crate or
     /// a sack set down.
     Coins,
+    /// A nightjar on a warm night over open ground: a long, dry, wooden churring, its
+    /// pitch shifting now and then between two rattles, and a clap of its wings at the end.
+    Churr,
+    /// Ice on frozen water settling as the night cools: a deep thoom and the eerie,
+    /// falling "pew" of the sound running away through the sheet.
+    IceSing,
+    /// Fired brick or hearthstone cooling after the fire is out: a few dry ticks, irregular,
+    /// now and then a small bright tink as it contracts.
+    Cooling,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 62] = [
+    pub const ALL: [Synth; 65] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -247,6 +256,9 @@ impl Synth {
         Synth::Scrape,
         Synth::Hull,
         Synth::Coins,
+        Synth::Churr,
+        Synth::IceSing,
+        Synth::Cooling,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -350,6 +362,9 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Scrape => scrape(&mut noise),
         Synth::Hull => hull(&mut noise),
         Synth::Coins => coins(&mut noise),
+        Synth::Churr => churr(&mut noise),
+        Synth::IceSing => ice_sing(&mut noise),
+        Synth::Cooling => cooling(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -1994,6 +2009,90 @@ fn clatter(noise: &mut Noise) -> Vec<f32> {
     }
     let bowl = between(noise, 300.0, 450.0);
     ring(&mut out, t + 0.1, bowl, &[(1.0, 1.0, 0.035), (2.6, 0.4, 0.015)], 0.6);
+    out
+}
+
+/// A nightjar's churring: a rattle of short, woody pulses some thirty to forty a second,
+/// switching between a lower, slower and a higher, quicker rattle every second or so, for a
+/// few seconds; then, sometimes, a sharp clap of its wings as it flies off.
+fn churr(noise: &mut Noise) -> Vec<f32> {
+    let length = between(noise, 3.0, 5.5);
+    let mut out = vec![0.0f32; seconds(length + 0.4)];
+    let rattles = [(between(noise, 26.0, 30.0), between(noise, 1050.0, 1250.0)), (between(noise, 36.0, 42.0), between(noise, 1450.0, 1700.0))];
+    let mut body = Svf::new(rattles[0].1, 5.0);
+    let (mut t, mut which, mut until) = (0.02, 0, between(noise, 0.6, 1.4));
+    while t < length {
+        if t > until {
+            which = 1 - which;
+            until = t + between(noise, 0.5, 1.4);
+            body = Svf::new(rattles[which].1, 5.0);
+        }
+        let (rate, centre) = rattles[which];
+        let period = 1.0 / rate;
+        // The whole phrase swells in and dies away.
+        let shape = (t / 0.4).min(1.0) * ((length - t) / 0.6).clamp(0.0, 1.0);
+        let count = seconds(period * 0.55);
+        let first = seconds(t);
+        for j in 0..count {
+            let x = j as f32 / count as f32;
+            let pulse = (PI * x).sin().powi(2) * ((TAU * centre * j as f32 / SR).sin() * 0.6 + noise.next() * 0.4);
+            out[first + j] += body.band(pulse) * 2.5 * shape;
+        }
+        t += period * between(noise, 0.94, 1.06);
+    }
+    if noise.unit() < 0.5 {
+        crack(&mut out, noise, length + 0.1, (0.006, 0.01), (900.0, 1400.0), 0.5);
+        crack(&mut out, noise, length + 0.16, (0.006, 0.01), (900.0, 1400.0), 0.35);
+    }
+    out
+}
+
+/// Ice singing: a dull thoom from deep under the sheet, then the crack's sound racing away
+/// through it, high frequencies first, as a falling whistle ("pew") from a couple of
+/// kilohertz down to a low hum over most of a second, ringing on faintly.
+fn ice_sing(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(2.4)];
+    let start = between(noise, 0.02, 0.06);
+    crack(&mut out, noise, start, (0.002, 0.005), (2500.0, 4500.0), 0.35);
+    let thoom = between(noise, 45.0, 70.0);
+    add_at(&mut out, start, seconds(1.4), |j| {
+        let local = j as f32 / SR;
+        0.9 * (TAU * thoom * local).sin() * (-local * 4.0).exp() * (local / 0.01).min(1.0)
+    });
+    let (from, to) = (between(noise, 1800.0, 2600.0), between(noise, 90.0, 160.0));
+    let fall = between(noise, 5.0, 8.0);
+    for (delay, gain) in [(0.0, 0.7), (between(noise, 0.15, 0.3), 0.35)] {
+        let mut osc = Osc::default();
+        add_at(&mut out, start + delay, seconds(1.6), |j| {
+            let local = j as f32 / SR;
+            let frequency = to + (from - to) * (-local * fall).exp();
+            gain * osc.next(frequency) * (local / 0.004).min(1.0) * (-local * 2.2).exp()
+        });
+    }
+    out
+}
+
+/// Brick or stone cooling: three to seven dry ticks over a couple of seconds at uneven
+/// gaps, each a hair's click of a crack, and sometimes a small ringing tink among them.
+fn cooling(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(2.8)];
+    let mut t = between(noise, 0.02, 0.1);
+    for _ in 0..3 + (noise.unit() * 5.0) as usize {
+        if t > 2.3 {
+            break;
+        }
+        let gain = between(noise, 0.25, 0.7);
+        crack(&mut out, noise, t, (0.0015, 0.004), (2200.0, 4200.0), gain);
+        if noise.unit() < 0.3 {
+            let ring = between(noise, 1800.0, 2800.0);
+            let mut osc = Osc::default();
+            add_at(&mut out, t + 0.002, seconds(0.25), |j| {
+                let local = j as f32 / SR;
+                0.18 * gain * osc.next(ring) * (-local * 22.0).exp()
+            });
+        }
+        t += between(noise, 0.12, 0.6);
+    }
     out
 }
 

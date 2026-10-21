@@ -922,6 +922,14 @@ pub struct BlockInfo {
     pub climbable: bool,
 }
 
+impl BlockInfo {
+    /// Whether a block set down may take this cell from it: air, or a plant a block
+    /// replaces, but not water or another fluid.
+    pub fn gives_room(&self) -> bool {
+        self.replaceable && self.fluid.is_none()
+    }
+}
+
 /// A texture referenced by block definitions; its index is the texture array layer.
 #[derive(Clone, Debug)]
 pub struct TextureRef {
