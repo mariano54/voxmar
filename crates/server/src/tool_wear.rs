@@ -1,7 +1,8 @@
 //! Tools and weapons wearing out in the hand (`voxmar_engine::tool::Wear`, each package's
 //! `tools.ron`): a block broken, soil tilled or a blow that lands takes uses from what the
 //! player holds, the skill its kind trains saves one now and then, and worn to nothing it
-//! breaks (leaving nothing, or a head a pack names). The player hears it warn once it is nearly worn
+//! breaks (leaving nothing, or a head a pack names), a spare of its kind coming up into the
+//! hand where `Wear::spare` says. The player hears it warn once it is nearly worn
 //! out, and hears and sees it break (`ServerMessage::ToolWore`). Creative play wears nothing.
 
 use voxmar_engine::inventory::{CURSOR, ItemStack};
@@ -51,6 +52,19 @@ impl Server {
         match slot {
             CURSOR => player.inventory.cursor = now,
             _ => player.inventory.slots[slot] = now,
+        }
+        // Broken in the hand with nothing left there, a spare of its kind comes up from the
+        // pack: its like first, else the one of its kind with most uses left.
+        if worn == Worn::Broke && now.is_none() && slot == player.selected && tools.wear().spare {
+            let kind = tools.tool(Some(item)).kind.filter(|_| !blocks.def(item).has_tag("weapon"));
+            let spare = (0..player.inventory.slots.len())
+                .filter_map(|i| player.inventory.slots[i].map(|s| (i, s)))
+                .filter(|&(i, s)| i != slot && (s.item == item || kind.is_some() && tools.tool(Some(s.item)).kind == kind) && tools.uses(s.item) > 0)
+                .max_by_key(|&(i, s)| (s.item == item, tools.uses(s.item).saturating_sub(s.wear), std::cmp::Reverse(i)))
+                .map(|(i, _)| i);
+            if let Some(i) = spare {
+                player.inventory.slots[slot] = player.inventory.slots[i].take();
+            }
         }
         let mut left = Vec::new();
         for piece in rest.into_iter().flat_map(voxmar_engine::inventory::split_stack) {
@@ -227,6 +241,56 @@ mod tests {
         let left = server.content.tools.head(pick).map(|head| ItemStack::new(head, 1));
         assert_eq!(server.players[&1].inventory.slots[0], left, "broken, nothing but a head it names is left in the hand");
         assert_eq!(told(&client), (0, 1));
+    }
+
+    /// A tool that breaks in the hand with a spare of its kind in the pack: the spare comes
+    /// up into the hand (the same tool first, else the one of its kind with most uses
+    /// left), so the work goes on; a weapon's spare is the same weapon. With none, the
+    /// hand stays empty, and a broken tool on the pointer brings nothing up.
+    #[test]
+    fn a_tool_broken_in_hand_brings_up_a_spare_of_its_kind() {
+        let worn_out = |server: &mut Server, slot: usize| {
+            let player = server.players.get_mut(&1).unwrap();
+            let stack = player.inventory.slots[slot].as_mut().unwrap();
+            stack.wear = server.content.tools.uses(stack.item) - 1;
+        };
+        let (mut server, client) = holding("base:flint_axe", 0);
+        let [flint_axe, stone_axe, flint_pick] = ["base:flint_axe", "base:stone_axe", "base:flint_pickaxe"].map(|n| server.content.blocks.expect(n));
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[3] = Some(ItemStack { wear: 20, ..ItemStack::new(stone_axe, 1) });
+        player.inventory.slots[12] = Some(ItemStack { wear: 100, ..ItemStack::new(stone_axe, 1) });
+        player.inventory.slots[20] = Some(ItemStack::new(flint_pick, 1));
+        worn_out(&mut server, 0);
+        let log = put(&mut server, "base:oak_log");
+        server.wear_on_block(1, log, false, server.tool_in_hand(1));
+        let slots = &server.players[&1].inventory.slots;
+        assert_eq!((slots[0], slots[3], slots[12]), (Some(ItemStack { wear: 20, ..ItemStack::new(stone_axe, 1) }), None, Some(ItemStack { wear: 100, ..ItemStack::new(stone_axe, 1) })), "the axe of most uses left came up");
+        assert_eq!(told(&client), (0, 1), "the break is still told");
+        // The same tool before a better one.
+        let (mut server, _client) = holding("base:flint_axe", 0);
+        let player = server.players.get_mut(&1).unwrap();
+        (player.inventory.slots[5], player.inventory.slots[6]) = (Some(ItemStack::new(stone_axe, 1)), Some(ItemStack::new(flint_axe, 1)));
+        worn_out(&mut server, 0);
+        let log = put(&mut server, "base:oak_log");
+        server.wear_on_block(1, log, false, server.tool_in_hand(1));
+        assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(flint_axe, 1)), "its like first");
+        // No spare of its kind: the hand stays empty; the pickaxe stays where it was.
+        let (mut server, _client) = holding("base:flint_axe", 0);
+        server.players.get_mut(&1).unwrap().inventory.slots[20] = Some(ItemStack::new(flint_pick, 1));
+        worn_out(&mut server, 0);
+        let log = put(&mut server, "base:oak_log");
+        server.wear_on_block(1, log, false, server.tool_in_hand(1));
+        let slots = &server.players[&1].inventory.slots;
+        assert_eq!((slots[0], slots[20]), (None, Some(ItemStack::new(flint_pick, 1))));
+        // A weapon: only the same weapon comes up.
+        let (mut server, _client) = holding("base:bone_club", 0);
+        let [club, tusk] = ["base:bone_club", "base:tusk_club"].map(|n| server.content.blocks.expect(n));
+        let player = server.players.get_mut(&1).unwrap();
+        (player.inventory.slots[7], player.inventory.slots[8]) = (Some(ItemStack::new(tusk, 1)), Some(ItemStack::new(club, 1)));
+        worn_out(&mut server, 0);
+        server.wear_held(1, 1);
+        let slots = &server.players[&1].inventory.slots;
+        assert_eq!((slots[0], slots[7], slots[8]), (Some(ItemStack::new(club, 1)), Some(ItemStack::new(tusk, 1)), None));
     }
 
     /// Nearly worn out, a tool says in words how it is mended, by what and where, as its

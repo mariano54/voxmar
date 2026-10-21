@@ -21,9 +21,12 @@
 // block tagged `mend_near` unless the tool names its own, gives back `mend` of its uses a
 // piece (more where its recipe takes fewer pieces), and making a new one must never be
 // cheaper than mending (checked at load). Metal tools and weapons are mended at a grindstone
-// (`mend_near:grindstone`, blocks_tools.ron), everything else at a chopping block.
+// (`mend_near:grindstone`, blocks_tools.ron), everything else at a chopping block. With
+// `spare`, a tool that breaks in the hand brings up a spare of its kind from the pack (its
+// like first, else the one with most uses left; a weapon, only its like), so the spare axe
+// An Axe to It asks for is in hand when the first one goes.
 (
-    wear: (suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.005, weapon_skill: "core:attack", warn: 0.1, mend: 0.5, mend_near: "chopping_block"),
+    wear: (suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.005, weapon_skill: "core:attack", warn: 0.1, mend: 0.5, mend_near: "chopping_block", spare: true),
     kinds: [
         (name: "pickaxe", mines: ["stone", "ore", "cobbled", "bricks", "crystal", "ice"], skill: "core:mining"),
         (name: "axe", mines: ["log", "wood", "planks", "bush"], skill: "core:crafting"),
