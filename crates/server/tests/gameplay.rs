@@ -3979,7 +3979,15 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
         }
         panic!("the settlement's people never all came out: {said}");
     };
+    // A restart first, so those in sight are the ones a restart brings out where the player
+    // stands. One who came out as the player crossed the settlement stays out while near,
+    // and was counted here, though the restart's people due out near the player left them
+    // in (one asleep 87 blocks off: 6 of 7 back).
+    drop(client);
+    let mut client = Client::join_with(config());
+    client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
     let housemates = settle(&mut client);
+    let victim = villagers(&client).into_iter().find(|v| v.seed == victim.seed).unwrap_or(victim);
     assert!(housemates.contains(&victim.seed), "the {name} asleep was not among those in sight");
     arm_for_villager_death(&mut client);
     strike_until(&mut client, victim.id, 20, |c| !c.creatures.contains_key(&victim.id));
