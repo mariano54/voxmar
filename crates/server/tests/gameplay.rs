@@ -4072,7 +4072,15 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
         }
         panic!("the settlement's people never all came out and were all held: {said}");
     };
+    // A restart first, so those in sight are the ones a restart brings out where the player
+    // stands. One who came out as the player crossed the settlement stays out while near,
+    // and was counted here, though the restart's people due out near the player left them
+    // in (one asleep 87 blocks off: 6 of 7 back).
+    drop(client);
+    let mut client = Client::join_with(config());
+    client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
     let housemates = settle(&mut client);
+    let victim = villagers(&client).into_iter().find(|v| v.seed == victim.seed).unwrap_or(victim);
     assert!(housemates.contains(&victim.seed), "the {name} asleep was not among those in sight");
     arm_for_villager_death(&mut client);
     strike_until(&mut client, victim.id, 20, |c| !c.creatures.contains_key(&victim.id));
@@ -7218,7 +7226,13 @@ fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
         let lying = c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>();
         lying + held(c).saturating_sub(held_at_join)
     };
-    client.pump_until(|c| spilled(c) == 3 * 64);
+    // They fell out as the server started, so are there by the time the chest is read. The
+    // wait is by the server's clock, well inside a dropped stack's life (`dropped::LIFETIME`):
+    // one by the wall's could outlast them (half an hour of the server's, 90 s at the tests'
+    // speed) and then only time out, saying nothing of what the player saw.
+    client.pump_ticks(10 * TICKS_PER_SECOND as u64, |c| spilled(c) == 3 * 64);
+    let lying: Vec<_> = client.items.values().filter(|i| i.stack.item == cobblestone).map(|i| (i.stack.count, i.position)).collect();
+    assert_eq!(spilled(&client), 3 * 64, "lying {lying:?}, held {} ({held_at_join} as they came in), tick {}", held(&client), client.server_tick);
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
