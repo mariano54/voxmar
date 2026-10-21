@@ -97,6 +97,7 @@ Built now (`engine::creature::brain::modules`):
 | hunt | danger | chases and strikes, by RuneScape's rules; strikes up to its height and 1.5 blocks over its feet and down at a head 1.5 under them, from a pit's rim (`strike: (above, below)` on the creature), and only along a way through the air from its body to the player's head or middle (`blow_open`: never through a roof or a wall, and standing at a target it has no such way to, it gives up at once; a charge, which runs at the target first, needs instead a lane along the ground from one side of its body or the other, `charge_open`: a wall across its run shuts it off, a trunk on the line does not); stalkers creep crouched, then pounce; gives up past its leash (unless struck there in the last 3 s: it fights back), or after balking twice running (a search finding no way to its target brings a balk on sooner; standing over or under its target out of that reach, a player down a hole too deep, it has no way at once), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
 | defend | danger | fights back when hurt (the boar, the bull, the bear); gives up as hunt does |
 | curious | social | comes to look from a distance, backs off if you come closer |
+| warn | danger | every creature whose kind has a `warn`: stands its ground and warns a player before it attacks them (its stance and `warn` sound): a hunter those it would hunt, one that only defends itself those it sees within its radius, never one holding its food unless it hunts; goes for one who stays its seconds or comes within `near`, as if struck; lets be one who backs off first (see "Warnings" below) |
 | return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
 
 Planned (from the deep dive's library): cache food, drink, sleep, bask, seek shade, huddle,
@@ -116,6 +117,16 @@ curse spread, aura, molt rebirth, dream walk.
 | Vibration | burrowers | running feet; sneaking is silent |
 | Aether | supernatural only | the aether field and aether-bearing items |
 
+Where it looks decides what it notices (`senses.field`, `close`, `react` in its data). It sees a
+player within `field` degrees either way of where it faces, with nothing opaque between
+(`Server::in_view`); a deer's eyes see most of the way round (160), a wolf's to the front (110),
+and 180, the default, sees all round. Out of view it notices a player only within `close`
+blocks (it hears and smells them), when they hold its food within its hearing, or once they
+hurt it; a player it has noticed it keeps in mind for `keep` seconds out of sight (default 10, at most 60), so
+turning away does not drop a chase. Just noticing someone, it takes a double take of `react`
+seconds, facing them, alert, before it runs, hunts or comes to look: the moment a player has to
+back off, or to creep closer behind it. A blow skips the double take.
+
 ## Aggression
 
 - **Temperament, not type.** Hostile is high aggression and low fear; neutral is a
@@ -127,8 +138,40 @@ curse spread, aura, molt rebirth, dream walk.
   both. Weak areas stay safe for strong players; camping one spot calms down.
 - **Provocation**: a blow angers a creature that can fight (if it is brave enough and not
   badly hurt; otherwise it flees) and is remembered. Kin within earshot are alarmed.
-- **Warnings** (planned): many creatures warn before attacking (an adder rattles at 5
-  blocks and strikes at 2; a bear stands up), so players can back away.
+- **Warnings** (Oct 20): a creature whose kind has a `warn` (creatures.ron) warns a
+  player before it attacks them, so they can back away: it stands its ground facing them
+  in its warning stance (a pose, `Pose::Warning`, protocol 58: its `stance` of nod, crouch
+  and rear, drawn as a tell is) and makes its `warn` sound (the wolf's snarls slowed
+  into a low growl, the bear's deep roar, the badger's alarm lowered to a hiss; a kind
+  whose voice has none uses its `alert`, and every kind that warns in the base game has
+  one). If they stay its `seconds`, or come within its `near` blocks, it is provoked
+  (`Mind::provoked`) and goes for them as if they had struck it, its hunt or defence
+  taking over in that same decision. A warning only tells a hunt before it comes, and
+  never changes whom a hunter goes for or when: it warns the one its hunt would go for (the
+  nearest it would hunt, as far off, kept, frightened or on an errand as much as not) if
+  it sees them; one it does not see it has not noticed (unless they are close, hurt it or
+  hold its food), so it leaves them be. One that only defends itself (a badger, a bear)
+  warns those it sees (in its field of view with a clear line from its eyes, the same
+  `in_view` look it notices by) within its `radius`, and then defends
+  its ground. No warning goes to a player holding the food that tempts it unless it hunts
+  (a hunter's chase outranked the food before, and still does): a lured bear or badger
+  follows the food as before. It warns no one creative, of more than twice its level or
+  settled long in one place, nor having given up a chase, and one that only defends
+  itself not while frightened, kept or on an errand; struck, it fights at once. One clock runs for the creature, whoever it warns
+  (a second player stepping nearer does not start it over), and a warning holds over
+  decisions spent on anything else for `WARN_LAPSE` (0.5 s); a player must go `WARN_EXIT`
+  (1.5) blocks past where it began to warn to be let be, so the edge does not flicker.
+  Then the warning is over, with no grudge, and a later one starts afresh. The wolf growls
+  head low for 1.5 s (at once within 4 blocks), the badger hunches and hisses for 1.2 s
+  within 5 (2), the brown bear stands up and roars for 2 s within 8 (3). Load-checked: an
+  attack to follow it, no boss, a `radius` (2 to 16) only for one that does not hunt, near
+  0.5 to a block inside the radius, seconds 0.5 to 4, stance 0 to 1. Tests: the engine's
+  `a_warning_hunter_warns_then_goes_for_one_who_stays`,
+  `a_defender_that_warns_defends_its_ground` and `warnings_out_of_range_are_refused`; the
+  server's `a_wolf_warns_before_it_goes_for_a_player`,
+  `lured_bears_and_badgers_follow_without_warning` and `a_badger_warns_only_one_it_sees`.
+  The gate's Narrow and Feel steps summon their bear held and let it go with the first
+  blow, as Climb does its wolf: stepping close is meant to provoke it.
 
 ## Roaming
 

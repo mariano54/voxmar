@@ -657,6 +657,16 @@ impl Overworld {
         self.lairs.defs()
     }
 
+    /// Whether a settlement's plan covers (x, z), out to a few blocks past its edge.
+    pub fn in_settlement(&self, x: i32, z: i32) -> bool {
+        self.settlement_covers(x, z)
+    }
+
+    /// The height of the settlement whose plan covers (x, z), if one does.
+    pub fn settlement_height(&self, x: i32, z: i32) -> Option<i32> {
+        self.settlements.height_covering(self, x, z)
+    }
+
     /// Whether a settlement's plan covers (x, z).
     pub(crate) fn settlement_covers(&self, x: i32, z: i32) -> bool {
         self.settlements.covers(self, x, z)
@@ -1182,6 +1192,14 @@ impl Generator for Overworld {
 }
 
 impl Overworld {
+    /// The spawn point, found with everything near it that is found once per world (the
+    /// spawn's estimate, the squares in reach, the spawn's square settled): the server
+    /// asks before its first tick, so no tick waits on a streaming worker's first search.
+    pub fn settle_spawn(&self) -> IVec3 {
+        self.settlements.settle_spawn(self);
+        self.spawn_search(true)
+    }
+
     /// Near where a new player spawns, from the land alone, before trails and
     /// settlements: the spawn point unless it would fall on a trail or in a settlement,
     /// and then a step or two along the same search. Settlements plan by it, so the

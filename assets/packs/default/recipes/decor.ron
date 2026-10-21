@@ -12,6 +12,8 @@
         "furn_stew": ["#3a2a14", "#4a5a1c", "#5e7a24", "#728e30", "#8aa63c"],
         "furn_brick": ["#5a3a30", "#704a3c", "#865a48", "#9a6c58", "#ae7e68"],
         "furn_thread": ["#8a7a5a", "#a6966e", "#c2b286", "#d8c89c"],
+        "furn_planter": ["#4a3220", "#5c3e28", "#6e4c32", "#80593c", "#926848"],
+        "furn_bloom": ["#2e5a22", "#3f7a2c", "#5a9a3a", "#d0342c", "#f0c838", "#f4f0e8", "#5070d8"],
     },
     textures: {
         "block/furniture_wood": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
@@ -119,6 +121,13 @@
         "block/shingles_grey": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
             Paint(palette: "wood", base: 0.6, shade: [Noise(cells: (4, 4), amount: 0.2), Stripes(period: 2.0, width: 0.5, amount: -0.08, vertical: true), Grain(0.12)], clean: true),
             Grid(legend: {'d': "wood:0", 'l': "wood:5"}, rows: ["ldllldllldllldll", ".d...d...d...d..", ".d...d...d...d..", "dddddddddddddddd", "llldllldllldllld", "...d...d...d...d", "...d...d...d...d", "dddddddddddddddd", "ldllldllldllldll", ".d...d...d...d..", ".d...d...d...d..", "dddddddddddddddd", "llldllldllldllld", "...d...d...d...d", "...d...d...d...d", "dddddddddddddddd"]),
+        ]),
+        "block/window_box_wood": (palettes: {"planter": "furn_planter"}, layers: [
+            Paint(palette: "planter", base: 0.55, shade: [Boards(height: 3, seam: -0.45, joint: -0.3, value: 0.2, bevel: 0.1), Noise(cells: (4, 8), amount: 0.2)], clean: true),
+        ]),
+        "block/window_box_blooms": (palettes: {"bloom": "furn_bloom"}, layers: [
+            Paint(palette: "bloom", base: 0.2, shade: [Noise(cells: (4, 4), octaves: 2, amount: 0.25), Speckle(chance: 0.15, amount: 0.2)], clean: true),
+            Grid(legend: {'r': "bloom:3", 'y': "bloom:4", 'w': "bloom:5", 'b': "bloom:6", 'c': "bloom:4"}, rows: ["................", ".....yyc.....rrc", ".rrc.yy......rr.", ".rr......wwc....", ".........ww.....", ".......rrc....bb", "...bbc.rr.....bb", "...bb......yyc..", "...........yy...", ".....wwc........", ".yyc.ww......wwc", ".yy......bbc.ww.", ".........bb.....", "...rrc.....rrc..", "...rr..yyc.rr..w", ".......yy......w"]),
         ]),
         "block/basket_grey": (palettes: {"wood": "furn_wood", "ink": "furn_ink"}, layers: [
             Paint(palette: "wood", base: 0.58, shade: [Boards(height: 2, seam: -0.4, joint: -0.3, value: 0.22, bevel: 0.1), Grain(0.12)], clean: true),

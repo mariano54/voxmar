@@ -26,7 +26,7 @@
             why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["the_farm_age", "fire_the_clay"],
-            rewards: [Xp("crafting", 305.0), Item("earthen_jug", 1), Item("earthen_plate", 2)],
+            rewards: [Xp("crafting", 305.0), Item("firewood", 4)],
         ),
         (
             name: "a_pot_on_the_fire", age: "farm", branch: "cooking", title: "A Pot on the Fire",
@@ -62,8 +62,8 @@
         // drafts 100 and 102: the nomad path alone left both short of 5).
         (
             name: "charcoal", age: "farm", branch: "fuel", title: "Charcoal",
-            why: "Fuel before metal: coal or charcoal smelts copper and makes torches. Burn logs down at a campfire (hold a log and right-click the fire), or mine coal ore from a seam: a small black-flecked stone on the ground marks one below. Char sixteen logs, or mine twenty-four coal ore. An earth clamp chars sixteen logs at a time with nobody by it (An Earth Clamp).",
-            tasks: [[Cook("charcoal", 16)], [Mine("coal_ore", 24)]],
+            why: "Fuel before metal: coal or charcoal smelts copper and makes torches, and only they burn hot enough for the Crucible Kiln. Charcoal comes from a clamp. Hold a log and right-click a chopping block (a flint over a log, Crafting 2) with an axe in your pack: two firewood. Lay nine firewood three by three on the ground, wall them round and roof them over with earth, and put kindling (three sticks) on the roof's middle for a flue. Light the kindling from a torch: two hours on, nobody by it, the clamp leaves thirty-six charcoal. Rain down the open flue spoils some to ash, so roof it over. Or dig out a coal seam: a small black-flecked stone on the ground marks one below. Light a clamp and have sixteen charcoal, or mine twenty-four coal.",
+            tasks: [[Lit("charcoal_clamp", 1), Have("charcoal", 16)], [Mine("coal_ore", 24)]],
             after: ["fuel_to_hand", "a_pit_kiln"],
             rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
         ),
@@ -134,15 +134,15 @@
             rewards: [Xp("construction", 80.0)],
         ),
         (
-            name: "an_earth_clamp", age: "farm", branch: "pottery", title: "An Earth Clamp",
-            why: "A kiln wants you standing by it; a clamp does not. Heap eight dirt over a log at the crafting table (Construction 3) for an earth clamp, then right-click it with up to sixteen clay or logs in hand. It smoulders for a minute while you dig, chop or mine, and gives back fired clay that never cracks, or charcoal. It is slower than firing by hand, but your hands are free, so keep both going. While it smoulders it is a fire: it smokes bees calm and dries a rack beside it faster. Make a clamp and fire sixteen clay or char sixteen logs.",
-            tasks: [[Craft("earth_clamp", 1), CookAt("fired_clay", "earth_clamp", 16)], [Craft("earth_clamp", 1), CookAt("charcoal", "earth_clamp", 16)]],
-            after: ["a_pit_kiln"],
+            name: "an_earth_clamp", age: "farm", branch: "pottery", title: "A Second Clamp",
+            why: "The Crucible Kiln burns thirty-two charcoal at a lighting, and every melt after wants more. A clamp takes two hours, so build the next while the last one smoulders, and roof each flue against rain. While it smoulders the flue is a fire: a drying rack beside it dries twice as fast. Light two clamps.",
+            tasks: [[Lit("charcoal_clamp", 2)]],
+            after: ["charcoal"],
             rewards: [Xp("construction", 60.0), Xp("crafting", 40.0)],
         ),
         (
             name: "fire_the_clay", age: "farm", branch: "main", title: "Fire the Clay",
-            why: "Hold clay and right-click the pit kiln: after a moment it comes out as fired clay. Low Crafting levels crack some, so bring spare (a cracked one is clay again). Waiting at the kiln? Heap eight dirt over a log for an earth clamp (An Earth Clamp): it fires sixteen at once, none cracked, while you dig. Fire twelve.",
+            why: "Hold clay and right-click the pit kiln: after a moment it comes out as fired clay. Low Crafting levels crack some, so bring spare (a cracked one is clay again). Fire twelve.",
             tasks: [[Cook("fired_clay", 12)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("crafting", 100.0)],
@@ -282,7 +282,7 @@
             why: "Wool makes beds, cloth and sleeping bags. Right-click a kept sheep with shears in hand whenever its wool has grown back, and gather six. Wool grows back in about six minutes: dye the first of it into cloth meanwhile, for a rug once the home is homely, or go after milk (The Milk Pail).",
             tasks: [[Have("wool", 6)]],
             after: ["a_woolly_flock"],
-            rewards: [Xp("farming", 120.0), Xp("crafting", 60.0)],
+            rewards: [Xp("farming", 120.0), Xp("crafting", 60.0), Xp("hunter", 170.0)],
         ),
         (
             name: "ducks_on_the_pond", age: "farm", branch: "husbandry", title: "Ducks on the Pond",
@@ -309,8 +309,8 @@
         ),
         (
             name: "bigger_game", age: "farm", branch: "hunter", title: "Bigger Game",
-            why: "Sheep, deer, boar and cattle give more meat and better hides, but they fight back: wear your hide wraps and keep your sword sharp. Red deer and wild boar keep to the woods, aurochs to the plains, mouflon to the mountains. Cook the haunch: mutton at Cooking 5, pork at 8, venison at 15.",
-            tasks: [[Kill("mouflon", 2)], [Kill("red_deer", 1)], [Kill("wild_boar", 1)], [Kill("aurochs", 1)]],
+            why: "Sheep, deer, boar and cattle give more meat and better hides, but they fight back: wear your hide wraps and keep your sword sharp. Red deer and wild boar keep to the woods, aurochs to the plains, mouflon to the mountains. Cook the haunch: mutton at Cooking 5, pork at 8, venison at 15. Their raw hide turns to hide hung a while on a drying rack: four sticks and three twine at the crafting table make one (Crafting 1). Make a rack.",
+            tasks: [[Kill("mouflon", 2), Craft("drying_rack", 1)], [Kill("red_deer", 1), Craft("drying_rack", 1)], [Kill("wild_boar", 1), Craft("drying_rack", 1)], [Kill("aurochs", 1), Craft("drying_rack", 1)]],
             after: ["the_farm_age"],
             rewards: [Xp("hunter", 200.0), Xp("attack", 100.0)],
         ),
@@ -505,7 +505,7 @@
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
             why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3; raw hide hung a while on a drying rack turns to hide), a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
-            after: ["shelves_and_cupboards"],
+            after: ["shelves_and_cupboards", "bigger_game"],
             rewards: [Xp("crafting", 60.0)],
         ),
         (
@@ -523,6 +523,22 @@
             rewards: [Xp("engineering", 60.0), Item("coal_ore", 8)],
         ),
         (
+            name: "a_keen_edge", age: "farm", branch: "mining", title: "A Keen Edge",
+            why: "Copper wears down like stone, but it needn't be thrown away. Metal is mended at a grindstone, the wheel you made your first stone heads on: put a worn copper tool and one copper ingot in the grid within reach of it, and the tool comes back half new. Mend a copper tool at a grindstone.",
+            tasks: [[Mended("tag:metal:copper", 1)]],
+            after: ["copper_kit"],
+            side: true,
+            rewards: [Xp("engineering", 200.0)],
+        ),
+        (
+            name: "a_bronze_edge", age: "farm", branch: "mining", title: "A Bronze Edge",
+            why: "Bronze is harder than copper: a bronze tool lasts twice as long and works faster. The patterns are copper's, in bronze ingots, at Engineering 12. Make a bronze pickaxe; when it wears, a bronze ingot mends it at your grindstone.",
+            tasks: [[Craft("bronze_pickaxe", 1)]],
+            after: ["first_bronze", "a_keen_edge"],
+            side: true,
+            rewards: [Xp("engineering", 450.0), Xp("mining", 300.0)],
+        ),
+        (
             name: "snug_for_winter", age: "farm", branch: "home", title: "Snug for Winter",
             why: "With a proper bed (A Proper Bed) and candles (Candlelight), put a roof over the Hearth with the bed and two lights beside it, and the home turns snug: warm under a roof, you heal half as fast again there, and a night's sleep in it rests you better.",
             tasks: [[Built("home_snug", 1)], [Built("home_homely", 1)], [Built("home_cosy", 1)], [Built("home_heart_of_the_home", 1)]],
@@ -538,16 +554,16 @@
         ),
         (
             name: "workshop_and_stove", age: "farm", branch: "rooms", title: "A Stove and a Quern",
-            why: "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four stones in a square under a stick (Crafting 5); a spindle stand is an oak plank, a stick, a fired clay and a twine in a square (Crafting 6); a loom frame is oak planks, sticks, a twine and a fired clay (Crafting 8). All at the crafting table.",
+            why: "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four stones (cobblestone fired in a pit kiln) in a square under a stick (Crafting 5); a spindle stand is an oak plank, a stick, a fired clay and a twine in a square (Crafting 6); a loom frame is oak planks, sticks, a twine and a fired clay (Crafting 8). All at the crafting table.",
             tasks: [[Craft("cottage_stove", 1), Craft("tag:workshop", 1)]],
-            after: ["snug_for_winter"],
+            after: ["snug_for_winter", "fire_the_clay"],
             rewards: [Xp("construction", 80.0), Xp("crafting", 80.0)],
         ),
         (
             name: "books_and_banners", age: "farm", branch: "home", title: "Books and Banners",
             why: "A bookshelf (planks and hides, Construction 8) and a banner (cloth and a stick, Crafting 5) say whose home this is. Make one of each.",
             tasks: [[Craft("tag:books", 1), Craft("tag:banner", 1)]],
-            after: ["a_rug_underfoot"],
+            after: ["a_rug_underfoot", "bigger_game"],
             rewards: [Xp("construction", 120.0), Xp("crafting", 80.0)],
         ),
         (
@@ -561,7 +577,7 @@
             name: "light_in_the_window", age: "farm", branch: "home", title: "Light in the Window",
             why: "A lit home shows at night: a window glows by the light of the room behind it. A hide window is a hide in a frame of eight sticks (Construction 3), two at a time. Make two and set them in the walls of your lit home, then look back at it after dark.",
             tasks: [[Craft("hide_window", 2), Placed("hide_window", 2)]],
-            after: ["a_homely_home"],
+            after: ["a_homely_home", "bigger_game"],
             rewards: [Xp("construction", 120.0)],
         ),
         (
@@ -730,7 +746,7 @@
             side: true,
             why: "A home with bees draws the beekeeper by day, to look over your skeps and walk your garden with you; three honey buys a spare skep for a second hive. Beeswax makes the best light a Farm home has before coal: a wick of twine over a cake of wax gives three candles. Meet the beekeeper and make three candles, or, with no visit yet, keep two cakes of wax and make six.",
             tasks: [[Met("beekeeper", 1), Craft("candle", 3)], [Have("beeswax", 2), Craft("candle", 6)]],
-            after: ["smoke_that_clings"],
+            after: ["smoke_that_clings", "bigger_game"],
             rewards: [Xp("farming", 200.0), Xp("crafting", 60.0), Item("skep", 1)],
         ),
         (
@@ -845,7 +861,7 @@
         (
             name: "lanterns_of_cloth", age: "farm", branch: "crafting", title: "Lanterns of Cloth",
             why: "A cloth over a torch, hung from a stick, is a paper lantern (Crafting 6): a soft light in any colour you dyed. Make two and set them down at home; each one counts as a light.",
-            tasks: [[Craft("tag:lantern", 2), Placed("tag:lantern", 2)]],
+            tasks: [[Craft("tag:paper_lantern", 2), Placed("tag:paper_lantern", 2)]],
             after: ["a_rug_underfoot"],
             side: true,
             rewards: [Xp("crafting", 60.0), Item("bread", 2)],

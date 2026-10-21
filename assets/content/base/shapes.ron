@@ -202,6 +202,28 @@
             (from: (1, 2, 13), to: (6, 11, 15), textures: All("furniture_linen")),
             (from: (11, 7, 12), to: (14, 10, 15), textures: All("furniture_pot")),
         ]),
+        // A rushlight holder: a foot, a post, an arm to the east and the rush burning in its
+        // clip at the arm's end.
+        "rushlight": (boxes: [
+            (from: (5, 0, 5), to: (11, 1, 11)),
+            (from: (7, 1, 7), to: (9, 10, 9)),
+            (from: (9, 9, 7.5), to: (12, 10, 8.5)),
+            (from: (11, 10, 7.75), to: (11.5, 13, 8.25), textures: All("candle_grey")),
+        ]),
+        // The same with its rush burnt down: the bare clip.
+        "rushlight_spent": (boxes: [
+            (from: (5, 0, 5), to: (11, 1, 11)),
+            (from: (7, 1, 7), to: (9, 10, 9)),
+            (from: (9, 9, 7.5), to: (12, 10, 8.5)),
+        ]),
+        // A window box against the wall behind it (south): a trough of flowers on two
+        // brackets, the blooms standing up out of it to the cell's top.
+        "window_box": (boxes: [
+            (from: (0, 4, 9), to: (16, 10, 16)),
+            (from: (1, 10, 10), to: (15, 15, 15), textures: All("window_box_blooms")),
+            (from: (2, 1, 13), to: (4, 4, 16)),
+            (from: (12, 1, 13), to: (14, 4, 16)),
+        ]),
         // A blanket chest, its front to the north: a panelled box under a lid that overhangs it.
         "blanket_chest": (boxes: [
             (from: (1, 0, 4), to: (15, 8, 15), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
@@ -382,6 +404,17 @@
         "candle": (boxes: [
             (from: (7, 0, 7), to: (9, 5, 9)),
             (from: (7.75, 5, 7.75), to: (8.25, 6.5, 8.25)),
+        ]),
+        // A candle burnt down to its end: a nub of wax and a black wick.
+        "candle_end": (boxes: [
+            (from: (7, 0, 7), to: (9, 1.5, 9)),
+            (from: (7.75, 1.5, 7.75), to: (8.25, 2.25, 8.25)),
+        ]),
+        // A clay oil lamp: a low bowl, its spout to the south and a loop of handle north.
+        "oil_lamp": (boxes: [
+            (from: (5, 0, 4), to: (11, 3, 12)),
+            (from: (7, 1, 12), to: (9, 3, 14)),
+            (from: (7, 1, 2), to: (9, 4, 4)),
         ]),
         // A chain, a cap, a glass-sided box and a foot.
         "hanging_lantern": (boxes: [
@@ -631,7 +664,8 @@
         ]),
         // A railing along the back (south) of its cell: a bottom rail, a handrail and four
         // balusters between them, a block high in all. The corner has a second run along
-        // its east side.
+        // its east side, and a hull of the two runs, so a blow at one in its open part
+        // passes the open part.
         "railing": (boxes: [
             (from: (0, 0, 13.5), to: (16, 2, 16), cull: true),
             (from: (0, 13, 13), to: (16, 16, 16), cull: true),
@@ -658,6 +692,9 @@
             (from: (2, 11, 7), to: (6.5, 13.5, 9)),
             (from: (7, 5, 2), to: (9, 7.5, 6.5)),
             (from: (7, 11, 2), to: (9, 13.5, 6.5)),
+        ], hull: [
+            (from: (0, 0, 6.5), to: (9.5, 16, 9.5)),
+            (from: (6.5, 0, 0), to: (9.5, 16, 6.5)),
         ]),
         // A field gate between two half posts: a frame of two rails and three uprights. Open,
         // it stands swung out to the north, folded against its west post.
@@ -714,6 +751,9 @@
             (from: (14, 2, 1.25), to: (15.5, 13, 2.75)),
             (from: (14, 2, 5.25), to: (15.5, 13, 6.75)),
             (from: (14, 2, 9.25), to: (15.5, 13, 10.75)),
+        ], hull: [
+            (from: (0, 0, 13), to: (16, 16, 16)),
+            (from: (13, 0, 0), to: (16, 16, 13)),
         ]),
         // A newel post: a post five texels square and a cap over it.
         "newel_post": (boxes: [

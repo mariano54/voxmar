@@ -260,6 +260,26 @@ Along the bot's run the open quests are one head per path: the next main quest, 
 Cook, Far Horizons, First Harvest, Patient Angler, A Table for Two, Earthenware, Bigger
 Game, First Metal, Fired Whole and A Place to Pray.
 
+A path waits on the stations its goals need (Oct 21): A Stove and a Quern comes after Fire
+the Clay as well as Snug for Winter, since every workshop piece now takes kiln output (the
+spindle and loom fired clay, the quern stone, which is cobblestone fired in a pit kiln), and
+Hung to Dry comes after Crafting Table, as its rack is a 3 by 3 recipe. A content test
+(`a_quest_asks_only_for_what_its_stations_are_taught_for`) holds every quest on every path to
+this: one of its routes (a quest finishes on any one of its tasks) has the player make only
+what is gathered, mined, or made at stations the quests before it have the player make,
+counting for each goal only the ways the quest book shows for it (`recipe_book::counts`). It
+prints the route it found for each quest. The main-line walk could not catch it: it walks
+only the main line, and it puts down whatever station a recipe needs. What it found: Stone
+in Hand has the player make the grindstone its stone heads are ground at, and A Full Stone
+Kit comes after it; A Fish Supper comes after First Night, which teaches its campfire; and
+the Nomad quests whose goals take hide (A Coin Purse, Pockets, A Stone's Throw, Hide Wraps)
+come after Hung to Dry, whose drying rack turns a hunt's raw hide into hide. The Farm book
+teaches its own rack, as a Farm quest comes after Farm quests only: Bigger Game has the player
+make one, and the Farm quests that take hide (Full Hide Wraps, Light in the Window, Books and
+Banners, Candlelight, The Beekeeper Calls) come after it. A drop counts only from a creature
+every player meets: the raiders and jailers that also drop hide come only with rare
+wandering parties, and a boss's drop counts once a quest before has the player kill it.
+
 ### Nomad paths, and quests in parts (Oct 14)
 
 The Nomad tab opened ten quests at once on a new world (Wild Harvest, A Pile of Stone,
@@ -386,7 +406,7 @@ only crafted.
 | Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
 | Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
 | Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp | |
-| Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln | |
+| Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln; side quests A Keen Edge (a copper tool mended at the grindstone, after Copper Kit) and A Bronze Edge (a bronze pickaxe, after First Bronze and A Keen Edge) | |
 
 Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore run come after
 it (Hammer and Anvil, from the kiln-age PR, goes before The Crucible when it lands). Crucible
@@ -560,8 +580,8 @@ that quest needs.
 | Milk | 5 min | The Milk Pail | A Full Pen |
 | A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
 | Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
-| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole; An Earth Clamp smoulders beside it |
-| An earth clamp smouldering | 1 min a load | An Earth Clamp | Firing clay by hand at the pit kiln, digging the next load, Red Metal |
+| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+| A charcoal clamp smouldering | 2 game hours (about 150 s of the quest-book bot's time, which runs about 75 s a game hour) | Charcoal | Brick by Brick: firing clay at the pit kiln to A Kiln Load's forty and crafting kiln bricks; A Second Clamp |
 | A drying rack drying | 10 min (5 by a fire) | Hung to Dry | Hunting for the next load; Trail Rations |
 | A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed, the compost's next part |
 

@@ -208,8 +208,27 @@ def book():
     tex("loom_warp", {"thread": "furn_thread"}, [paint("thread", 0.55, "Stripes(period: 2.0, width: 0.5, amount: 0.4, vertical: true), Noise(cells: (2, 8), amount: 0.2)")])
     tex("wind_flags", {}, [wind_flags()])
     tex("shingles_grey", wood_pal, [paint(W, 0.6, "Noise(cells: (4, 4), amount: 0.2), Stripes(period: 2.0, width: 0.5, amount: -0.08, vertical: true), Grain(0.12)"), shingles()])
+    # A window box's own colours, drawn as they show: it is one block in every wood's
+    # stead, its trough a weathered brown and its flowers bright, with no tint over them.
+    tex("window_box_wood", {"planter": "furn_planter"}, [paint("planter", 0.55, "Boards(height: 3, seam: -0.45, joint: -0.3, value: 0.2, bevel: 0.1), Noise(cells: (4, 8), amount: 0.2)")])
+    tex("window_box_blooms", {"bloom": "furn_bloom"}, [paint("bloom", 0.2, "Noise(cells: (4, 4), octaves: 2, amount: 0.25), Speckle(chance: 0.15, amount: 0.2)"), blooms()])
     tex("basket_grey", wood_pal, [paint(W, 0.58, "Boards(height: 2, seam: -0.4, joint: -0.3, value: 0.22, bevel: 0.1), Grain(0.12)")])
     return t
+
+
+def blooms():
+    # Flowers among the leaves of a window box, seen from the front and from above: a few
+    # heads of each colour, scattered so no two rows repeat.
+    g = canvas()
+    heads = [(1, 2, "r"), (5, 1, "y"), (9, 3, "w"), (13, 1, "r"), (3, 6, "b"), (7, 5, "r"), (11, 7, "y"), (14, 5, "b"),
+             (1, 10, "y"), (5, 9, "w"), (9, 11, "b"), (13, 10, "w"), (3, 13, "r"), (7, 14, "y"), (11, 13, "r"), (15, 14, "w")]
+    for x, y, ch in heads:
+        for dx, dy in ((0, 0), (1, 0), (0, 1), (1, 1)):
+            if x + dx < 16 and y + dy < 16:
+                g[y + dy][x + dx] = ch
+        if x + 2 < 16:
+            g[y][x + 2] = "c"
+    return grid(g, {"r": "bloom:3", "y": "bloom:4", "w": "bloom:5", "b": "bloom:6", "c": "bloom:4"})
 
 
 def pane():
@@ -265,6 +284,8 @@ def main():
         "furn_stew": ["#3a2a14", "#4a5a1c", "#5e7a24", "#728e30", "#8aa63c"],
         "furn_brick": ["#5a3a30", "#704a3c", "#865a48", "#9a6c58", "#ae7e68"],
         "furn_thread": ["#8a7a5a", "#a6966e", "#c2b286", "#d8c89c"],
+        "furn_planter": ["#4a3220", "#5c3e28", "#6e4c32", "#80593c", "#926848"],
+        "furn_bloom": ["#2e5a22", "#3f7a2c", "#5a9a3a", "#d0342c", "#f0c838", "#f4f0e8", "#5070d8"],
     },
     textures: {
 """

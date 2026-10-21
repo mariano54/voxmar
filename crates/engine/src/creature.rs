@@ -195,6 +195,45 @@ impl Circle {
     }
 }
 
+/// How a creature warns a player before it attacks (docs/creature-ai.md, "Warnings"): it
+/// stands and faces them in its warning stance (`stance`, drawn as a tell is, with its
+/// `warn` sound) for `seconds`; then, or at once if they come within `near` blocks, it
+/// goes for them as if struck. A player who backs off first is let be. A hunter warns
+/// those its hunt would go for, as far off (and so has no `radius`): the warning only
+/// tells its chase before it comes. One that only defends itself (a badger, a bear) warns
+/// those who come within `radius` blocks of it, then defends its ground.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Warn {
+    #[serde(default)]
+    pub radius: Option<f32>,
+    pub near: f32,
+    pub seconds: f32,
+    #[serde(default)]
+    pub stance: moves::Tell,
+}
+
+impl Warn {
+    /// Far enough to be seen and backed away from, near enough to be about this creature;
+    /// long enough to be read, short enough that it is no free stare. `hunts`: whether the
+    /// creature hunts, warning at its hunt's radius rather than its own.
+    pub fn check(&self, hunts: bool) -> Result<(), String> {
+        match (hunts, self.radius) {
+            (true, Some(_)) => return Err("a hunter warns as far off as it hunts: its `warn` has no `radius`".into()),
+            (false, None) => return Err("one that does not hunt needs a `radius` to warn within".into()),
+            _ => {}
+        }
+        let radius = self.radius.unwrap_or(16.0);
+        let stance = [self.stance.nod, self.stance.crouch, self.stance.rear];
+        if !(2.0..=16.0).contains(&radius) || !(0.5..=radius - 1.0).contains(&self.near) || !(0.5..=4.0).contains(&self.seconds) || stance.iter().any(|v| !(0.0..=1.0).contains(v)) {
+            return Err(format!(
+                "`warn` needs radius 2 to 16 blocks, near 0.5 to a block inside it, seconds 0.5 to 4 and its stance 0 to 1, not {self:?}"
+            ));
+        }
+        Ok(())
+    }
+}
+
 fn reach() -> f32 {
     1.0
 }
@@ -345,19 +384,57 @@ impl Default for Temperament {
     }
 }
 
-/// How far it notices things, in blocks.
+/// How far it notices things, in blocks, and where it looks.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Senses {
     pub sight: f32,
     pub hearing: f32,
+    /// How far either way of where it faces it sees, in degrees (a half angle): 180 sees
+    /// all round; a deer's eyes on the sides of its head see most of the way round, a
+    /// wolf's to the front. A player out of it, or behind something that hides them, it
+    /// notices only close by (`close`) or once they hurt it.
+    pub field: f32,
+    /// How near, in blocks, it notices a player wherever it looks: it hears and smells them.
+    pub close: f32,
+    /// Seconds it stands and looks at a player it has just noticed before it acts on
+    /// them (runs, chases, comes to look): a double take, the moment a player has to back
+    /// off. Not for one who hurts it.
+    pub react: f32,
+    /// Seconds it keeps a player it noticed in mind once it no longer senses them
+    /// (`brain::Mind::noticed`): turned away from one it has seen, it does not forget them.
+    pub keep: f32,
 }
 
 impl Default for Senses {
     fn default() -> Self {
-        Self { sight: 16.0, hearing: 12.0 }
+        Self { sight: 16.0, hearing: 12.0, field: 180.0, close: 3.0, react: 0.0, keep: 10.0 }
     }
 }
+
+impl Senses {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.field > 0.0 && self.field <= 180.0) {
+            return Err(format!("`senses.field` is a half angle above 0 and up to 180 degrees, not {}", self.field));
+        }
+        if !(self.close.is_finite() && (0.0..=self.sight.max(0.0)).contains(&self.close)) {
+            return Err(format!("`senses.close` is from 0 to its sight ({}), not {}", self.sight, self.close));
+        }
+        if !(self.react.is_finite() && (0.0..=MOST_REACT).contains(&self.react)) {
+            return Err(format!("`senses.react` is from 0 to {MOST_REACT} seconds, not {}", self.react));
+        }
+        if !(self.keep > 0.0 && self.keep <= MOST_KEEP) {
+            return Err(format!("`senses.keep` is above 0 and up to {MOST_KEEP} seconds, not {}", self.keep));
+        }
+        Ok(())
+    }
+}
+
+/// The longest double take a creature's data may give it (`Senses::react`).
+pub const MOST_REACT: f32 = 2.0;
+
+/// The longest a creature's data may have it keep a player in mind (`Senses::keep`).
+pub const MOST_KEEP: f32 = 60.0;
 
 /// How it moves, in blocks per second and degrees per second.
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -385,6 +462,13 @@ pub struct Movement {
 /// What a species walks up without a hop unless it says (`Movement::step`): a player's
 /// step, nine sixteenths of a block.
 pub const STEP: f32 = 0.5625;
+
+impl Movement {
+    /// How high it hops up what is in its way, if it jumps at all: the world's step rise.
+    pub fn hop(&self) -> Option<f32> {
+        (self.jump > 0.0).then_some(self.step_rise)
+    }
+}
 
 impl Default for Movement {
     fn default() -> Self {
@@ -521,6 +605,11 @@ pub struct CreatureDef {
     pub health: u16,
     #[serde(default)]
     pub attack: Option<Attack>,
+    /// It warns a player who comes near before it attacks them (`Warn`): a wolf growls, a
+    /// badger hisses, a bear stands up. Unset, a hunter goes straight for them and one that
+    /// only defends itself lets them be.
+    #[serde(default)]
+    pub warn: Option<Warn>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -990,7 +1079,18 @@ impl CreatureRegistry {
             for circle in def.attack.iter().chain(def.moves.iter().map(|m| &m.attack)).filter_map(|a| a.circle) {
                 circle.check().map_err(error)?;
             }
+            if let Some(warn) = def.warn {
+                if def.attack.is_none() {
+                    return Err(error("warns (`warn`) but has no `attack` to follow it with".into()));
+                }
+                if def.boss {
+                    return Err(error("is a boss, and a boss warns no one (`warn`): it fights".into()));
+                }
+                let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
+                warn.check(behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Hunt { .. }))).map_err(error)?;
+            }
             def.death.check().map_err(error)?;
+            def.senses.check().map_err(error)?;
             if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
                 return Err(error(format!("`flees_below` is a share of its health, 0 to 1, not {:?}", def.flees_below)));
             }

@@ -166,7 +166,7 @@ mod tests {
 
     fn give(server: &mut Server, slot: usize, name: &str, count: u8) {
         let item = id(server, name);
-        server.players.get_mut(&1).unwrap().inventory.slots[slot] = Some(ItemStack { item, count });
+        server.players.get_mut(&1).unwrap().inventory.slots[slot] = Some(ItemStack::new(item, count));
     }
 
     fn held(server: &Server) -> Vec<(BlockId, u8)> {
@@ -198,9 +198,9 @@ mod tests {
         // A chute brings sand.
         let sand = id(&server, "base:sand");
         let machines = server.content.machines.clone();
-        server.factory.put(AT, ItemStack { item: sand, count: 5 }, &machines);
+        server.factory.put(AT, ItemStack::new(sand, 5), &machines);
         server.watch_stores();
-        assert_eq!(server.players[&1].inventory.get(STORE), Some(ItemStack { item: sand, count: 5 }));
+        assert_eq!(server.players[&1].inventory.get(STORE), Some(ItemStack::new(sand, 5)));
         // Shift click takes it into the pack.
         act(&mut server, "core:quick_move", ActionTarget::Slot(STORE as u8));
         assert_eq!(held(&server), vec![(dirt, 10)]);
@@ -228,7 +228,7 @@ mod tests {
         act(&mut server, "core:quick_move", ActionTarget::Slot(1));
         assert_eq!(held(&server), vec![(id(&server, "base:honey"), 2)]);
         let machines = server.content.machines.clone();
-        let stone = ItemStack { item: id(&server, "base:cobblestone"), count: 1 };
+        let stone = ItemStack::new(id(&server, "base:cobblestone"), 1);
         assert_eq!(server.factory.put(AT, stone, &machines), Some(stone), "nor from a chute");
         let basket = server.content.machines.get(id(&server, "base:earthen_basket")).expect("a store");
         assert!(basket.bin_takes(id(&server, "base:windroot")) && !basket.bin_takes(id(&server, "base:honey")));
@@ -286,7 +286,7 @@ mod tests {
         let chest = server.content.treasure.chest(block).unwrap().clone();
         server.set_block(AT, block);
         let pick = server.content.treasure.opening_pick(chest.age).expect("a pick opens it");
-        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: pick, count: 1 });
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(pick, 1));
         act(&mut server, "base:pick_lock", ActionTarget::Block { block: AT, face: Face::NegX });
         let player = &server.players[&1];
         assert_eq!(player.store, Some(AT));

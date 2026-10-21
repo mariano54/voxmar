@@ -42,9 +42,7 @@ impl Plugin for RecipesPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(Update, (look_up, click, report, draw, cycle).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
-                viewer.trail.clear();
-                viewer.reported.clear();
-                (viewer.drawn, viewer.quests_drawn) = (None, None);
+                viewer.leave_game();
                 ui.recipes_open = false;
             });
     }
@@ -74,6 +72,9 @@ pub struct Lookup {
 pub struct RecipeViewer {
     pub trail: Vec<Lookup>,
     book: Option<Arc<RecipeBook>>,
+    /// How many books have been built: what was worked out from one is kept only while it
+    /// is the book (an address could come round again for a book built after one dropped).
+    built: usize,
     /// What was drawn last, to draw again only on a change.
     drawn: Option<(Lookup, String, bool, Vec<String>)>,
     /// The item and language the quests row was drawn for: it is drawn again only when
@@ -89,6 +90,25 @@ impl RecipeViewer {
         self.book.as_deref()
     }
 
+    /// Which book is built, never the same for two (0 while there is none).
+    pub fn book_number(&self) -> usize {
+        if self.book.is_some() { self.built } else { 0 }
+    }
+
+    /// Holds a newly built book.
+    fn build(&mut self, book: RecipeBook) {
+        self.book = Some(Arc::new(book));
+        self.built += 1;
+    }
+
+    /// Forgets the game left. The book goes too: the next world may load other content, and
+    /// nothing may pair that content with this book's items before `look_up` builds its own.
+    fn leave_game(&mut self) {
+        self.trail.clear();
+        self.reported.clear();
+        (self.book, self.drawn, self.quests_drawn) = (None, None, None);
+    }
+
     /// Looks `item` up, on top of what is showing.
     pub fn open(&mut self, item: BlockId, uses: bool) {
         if self.trail.last().is_some_and(|last| last.item == item && last.uses == uses) {
@@ -100,7 +120,9 @@ impl RecipeViewer {
     /// The ways the current look-up finds.
     pub fn found(&self) -> Vec<&Entry> {
         let (Some(book), Some(lookup)) = (&self.book, self.trail.last()) else { return Vec::new() };
-        if lookup.uses { book.using(lookup.item) } else { book.making(lookup.item) }
+        // Never a way no player meets: breaking an ore sample the world never lays.
+        let found = if lookup.uses { book.using(lookup.item) } else { book.making(lookup.item) };
+        found.into_iter().filter(|e| book.met(e)).collect()
     }
 
     /// Whether the quests row needs drawing for `item` in `language`, noting that it is.
@@ -204,9 +226,12 @@ fn look_up(
     start: Option<Res<StartLookup>>,
     mut commands: Commands,
 ) {
-    if viewer.book.is_none() {
+    // Built again for a world played with other content (other packages, other ways), and
+    // what was being looked up there forgotten.
+    if viewer.book.is_none() || launch.is_changed() {
         // Its world data parsed as the content loaded (`load_content` refuses it otherwise).
-        viewer.book = Some(Arc::new(voxmar_server::recipe_book(&launch.content).expect("the world data of loaded content parses")));
+        viewer.build(voxmar_server::recipe_book(&launch.content).expect("the world data of loaded content parses"));
+        viewer.trail.clear();
     }
     if let Some(StartLookup(name, uses)) = start.as_deref() {
         commands.remove_resource::<StartLookup>();
@@ -343,6 +368,22 @@ mod tests {
         assert_eq!(viewer.unreported_item(), Some(BlockId(1)), "a new game needs its own report");
     }
 
+    /// Leaving a game drops its book, so the next world's content is never read with this
+    /// one's items, and each book built after has a number of its own.
+    #[test]
+    fn leaving_a_game_drops_its_book() {
+        let mut viewer = RecipeViewer::default();
+        assert_eq!(viewer.book_number(), 0);
+        viewer.build(RecipeBook::default());
+        let first = viewer.book_number();
+        assert_ne!(first, 0);
+        viewer.leave_game();
+        assert!(viewer.book().is_none(), "the book outlived its game");
+        assert_eq!(viewer.book_number(), 0);
+        viewer.build(RecipeBook::default());
+        assert!(![0, first].contains(&viewer.book_number()), "a new book took an old number");
+    }
+
     /// A family of recipes cycling and the quests asking for it, drawn by the viewer: a
     /// second later the variant shown has turned in place, and nothing under the pointer
     /// was rebuilt (the cards, the Lay button, the quest links); another language draws
@@ -383,7 +424,7 @@ mod tests {
         // Logs in the pack change what each way still wants: the cards are drawn again,
         // the quest links are not.
         let log = app.world().resource::<Launch>().content.blocks.id("base:oak_log").unwrap();
-        app.world_mut().resource_mut::<crate::player::LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack { item: log, count: 8 });
+        app.world_mut().resource_mut::<crate::player::LocalPlayer>().inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(log, 8));
         app.update();
         assert_ne!(cards(&mut app), first_cards, "what the pack holds redraws the cards");
         assert_eq!(links(&mut app), first_links, "and leaves the quest links");
@@ -565,8 +606,7 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
             });
             // Made near a block: that block beside the grid, as a cooking station is.
             if let Some(block) = near.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(block), None);
+                plus(card, font, images, Some(block), None);
             }
         }
         Method::Cook { input, uses, with, station, .. } => {
@@ -574,12 +614,10 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
             let count = |n: u8| (n > 1).then(|| n.to_string());
             item_cell(card, font, images, Some(*input), count(*uses));
             for &(item, n) in with {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(item), count(n));
+                plus(card, font, images, Some(item), count(n));
             }
             if let Some(fire) = content.blocks.tagged(station).next() {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(fire), None);
+                plus(card, font, images, Some(fire), None);
             }
         }
         Method::Product { tool, .. } => {
@@ -589,20 +627,20 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
         }
         Method::Process { machines, inputs, .. } => {
             for (i, &(item, n)) in inputs.iter().enumerate() {
+                let count = (n > 1).then(|| n.to_string());
                 if i > 0 {
-                    card.spawn(text(font, "+", BODY, MUTED));
+                    plus(card, font, images, Some(item), count);
+                } else {
+                    item_cell(card, font, images, Some(item), count);
                 }
-                item_cell(card, font, images, Some(item), (n > 1).then(|| n.to_string()));
             }
             if let Some(&machine) = machines.first() {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(machine), None);
+                plus(card, font, images, Some(machine), None);
             }
         }
         Method::Work { station, input, takes, .. } => {
             item_cell(card, font, images, Some(*input), (*takes > 1).then(|| takes.to_string()));
-            card.spawn(text(font, "+", BODY, MUTED));
-            item_cell(card, font, images, Some(*station), None);
+            plus(card, font, images, Some(*station), None);
         }
         // What plants it (or the crop itself, if players don't), or the wild plant foraged.
         Method::Harvest { from, .. } => {
@@ -611,19 +649,20 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
         Method::Break { block, tool, .. } => {
             item_cell(card, font, images, Some(content.blocks.item_of(*block)), None);
             if let Some(tool) = tool {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(*tool), None);
+                plus(card, font, images, Some(*tool), None);
             }
         }
         Method::Trap { trap, .. } => {
             item_cell(card, font, images, Some(*trap), None);
         }
         Method::Bees { block, holding, .. } => {
+            let nest = Some(content.blocks.item_of(*block));
             if let Some(held) = holding {
                 item_cell(card, font, images, Some(*held), None);
-                card.spawn(text(font, "+", BODY, MUTED));
+                plus(card, font, images, nest, None);
+            } else {
+                item_cell(card, font, images, nest, None);
             }
-            item_cell(card, font, images, Some(content.blocks.item_of(*block)), None);
         }
         Method::Chest { chest, .. } => {
             item_cell(card, font, images, Some(*chest), None);
@@ -638,8 +677,20 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
         Method::Found { tool: Some(tool), .. } => {
             item_cell(card, font, images, Some(*tool), None);
         }
+        Method::Burn { from, .. } | Method::Smoulder { from, .. } => {
+            item_cell(card, font, images, Some(*from), None);
+        }
         Method::Drop { .. } | Method::Catch { .. } | Method::Trade { wants: None, .. } | Method::Reward { .. } | Method::Found { tool: None, .. } => {}
     }
+}
+
+/// A "+" and the item after it, together, so a recipe line that wraps never leaves the "+"
+/// at a line's end apart from its item.
+fn plus(card: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, item: Option<BlockId>, count: Option<String>) {
+    card.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|pair| {
+        pair.spawn(text(font, "+", BODY, MUTED));
+        item_cell(pair, font, images, item, count);
+    });
 }
 
 /// The words under a way's result: how it is done, and what it takes.
@@ -737,6 +788,18 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
         Method::Reward { quest } => {
             let title = content.quests.get(quest).map_or_else(|| quest.clone(), |q| super::quests::title(locale, q));
             vec![(locale.format("recipes.reward", &[("quest", &title)]), MUTED)]
+        }
+        Method::Burn { from, relit: false, .. } => vec![(locale.format("recipes.burnt_out", &[("item", &block(*from))]), MUTED)],
+        Method::Burn { from, relit: true, fuel: None } => vec![(locale.format("recipes.relit", &[("item", &block(*from))]), MUTED)],
+        Method::Burn { from, relit: true, fuel: Some(tag) } => {
+            // Named as the kind of thing it takes (`tag.fat`), never one item of many.
+            let fuel = locale.get_or(&format!("tag.{tag}"), &voxmar_engine::lang::title_from_id(tag)).to_owned();
+            vec![(locale.format("recipes.relit.with", &[("item", &block(*from)), ("fuel", &fuel)]), MUTED)]
+        }
+        Method::Smoulder { structure, from, early } => {
+            let key = if *early { "recipes.smoulder.early" } else { "recipes.smoulder" };
+            let structure = locale.get_or(&voxmar_engine::lang::def_key("multiblock", structure), &voxmar_engine::lang::title_from_id(structure)).to_owned();
+            vec![(locale.format(key, &[("item", &block(*from)), ("structure", &structure)]), MUTED)]
         }
         Method::Found { tool, skill, level: at } => {
             let tool = tool.map(|tool| (locale.format("recipes.found.tool", &[("tool", &block(tool))]), SOFT));

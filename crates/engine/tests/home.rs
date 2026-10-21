@@ -104,7 +104,7 @@ fn a_home_shows_the_highest_step_it_has_and_a_rest_to_match() {
     assert_eq!(walled("homely", Walls::all(Shelter::Draughty, 60)), ["base:snug"], "hide and wattle walls are snug, not homely");
     assert_eq!(walled("cosy", mostly_sound), ["base:homely"], "mostly sound walls are homely, not cosy");
     assert_eq!(walled("heart_of_the_home", Walls::all(Shelter::Sound, 60)), ["base:cosy"], "sound walls are cosy; the heart wants fine ones");
-    let warmth = |step: &str| effects.get(effects.id(&format!("base:{step}")).unwrap()).modifiers.warmth;
+    let warmth = |step: &str| effects.get(effects.id(&format!("base:{step}")).unwrap()).modifiers.home_warmth;
     for pair in LADDER[2..].windows(2) {
         assert!(warmth(pair[1]) > warmth(pair[0]), "{} is warmer than {}", pair[1], pair[0]);
     }
@@ -139,7 +139,7 @@ fn a_lit_corner_by_the_bed_rests_well_before_any_roof() {
     let nap = effects.given_by_sleep(&noon, &bag()).iter().map(|&(id, seconds)| (effects.get(id).name.clone(), seconds)).collect::<Vec<_>>();
     assert_eq!(nap, [("base:healing_sleep".to_owned(), 60.0), ("base:rested".to_owned(), 600.0)], "a lit corner by day is a nap: the mend and Rested, not Well rested");
     assert_eq!(rooms_in(&[("bed", 1), ("seat", 1), ("light", 2)], &calm, true), ["base:bedside"]);
-    assert_eq!(effects.get(effects.id("base:bedside").unwrap()).modifiers.warmth, 2.0);
+    assert_eq!(effects.get(effects.id("base:bedside").unwrap()).modifiers.home_warmth, 2.0);
     // Snug and a lit corner too: the one rest, once.
     let snug_corner = HomeSurvey { walls: Walls::all(Shelter::Draughty, 60), ..survey(&[("bed", 1), ("seat", 1), ("light", 2), ("hearth", 1)]) };
     let situation = Situation { felt: 15.0, warmed: false, outdoors: false, weather: &calm, biome: "base:plains", biome_tags: &[], home: Some(&snug_corner), done: &[], held: &[], near: &[], worn: &[], seated: false, night: true };
@@ -192,7 +192,7 @@ fn a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner() {
     assert!(rooms(&[("hearth", 1), ("seat", 1), ("woodpile", 1)]).is_empty(), "a stool is no settle");
     assert!(rooms_in(&corner, &Weather::NONE, true).is_empty(), "no roof, no hearth corner");
     let corner_room = effects.get(effects.id("base:hearth_corner").unwrap());
-    assert_eq!((corner_room.modifiers.warmth, corner_room.modifiers.heal), (1.0, 1.05));
+    assert_eq!((corner_room.modifiers.home_warmth, corner_room.modifiers.heal), (1.0, 1.05));
     for wood in ["birch", "oak", "dark_oak"] {
         let settle = content.blocks.def(content.blocks.expect(&format!("base:{wood}_settle")));
         assert!(settle.has_tag("seat") && settle.has_tag("settle") && !settle.solid, "{wood} settle");
@@ -216,10 +216,11 @@ fn a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber() {
     }
     assert!(rooms_in(&room, &Weather::NONE, true).is_empty(), "no roof, no bedchamber");
     let chamber = effects.get(effects.id("base:bedchamber").unwrap());
-    assert_eq!((chamber.modifiers.warmth, chamber.modifiers.heal), (1.0, 1.1));
+    assert_eq!((chamber.modifiers.home_warmth, chamber.modifiers.heal), (1.0, 1.1));
     for wood in ["birch", "oak", "dark_oak"] {
         let chest = content.blocks.expect(&format!("base:{wood}_blanket_chest"));
         assert!(content.blocks.def(chest).has_tag("storage") && content.recipes.iter().any(|r| r.output == chest), "{wood} blanket chest");
+        assert!(content.machines.iter().any(|m| m.block == chest && m.is_store()), "the {wood} blanket chest opens to keep things in");
         let stand = content.blocks.expect(&format!("base:{wood}_washstand"));
         assert!(content.blocks.def(stand).has_tag("washstand") && content.recipes.iter().any(|r| r.output == stand), "{wood} washstand");
     }
@@ -573,7 +574,7 @@ fn a_rug_and_a_hanging_under_a_roof_are_soft_furnishings() {
     assert_eq!(rooms(&[("rug", 1), ("drape", 1)]), ["base:soft_furnishings"]);
     assert!(rooms_in(&[("rug", 1), ("drape", 1)], &Weather::NONE, true).is_empty(), "no roof, no room");
     let soft = effects.get(effects.id("base:soft_furnishings").unwrap());
-    assert_eq!((soft.modifiers.warmth, soft.modifiers.heal, soft.modifiers.xp), (1.0, 1.0, 1.0), "one small modifier");
+    assert_eq!((soft.modifiers.home_warmth, soft.modifiers.heal, soft.modifiers.xp), (1.0, 1.0, 1.0), "one small modifier");
     for name in ["base:red_wall_hanging", "base:white_wall_hanging"] {
         assert!(content.blocks.def(content.blocks.expect(name)).has_tag("drape"), "{name} is a drape");
     }

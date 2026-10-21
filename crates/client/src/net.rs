@@ -58,6 +58,8 @@ pub struct Net {
     proposed: std::sync::Mutex<Vec<Proposed>>,
     /// Actions proposed since `fx` last took them, with what they aim at, to be seen.
     shown: std::sync::Mutex<Vec<(ActionId, ActionTarget)>>,
+    /// The last action proposed, with its target, for the gate to say what a click sent.
+    last: std::sync::Mutex<Option<(ActionId, ActionTarget)>>,
     /// The integrated server's ticks as `receive` began: every message of those ticks had
     /// been sent, and was taken in (`taken_ticks`).
     taken: std::sync::atomic::AtomicU64,
@@ -73,7 +75,7 @@ impl Net {
         let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
         let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
-        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), taken: Default::default(), proposals: Default::default() }
+        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), last: Default::default(), taken: Default::default(), proposals: Default::default() }
     }
 
     /// The next message from the server, for tests that play without the app.
@@ -110,6 +112,12 @@ impl Net {
         self.proposals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, target, with });
         self.shown.lock().unwrap_or_else(|e| e.into_inner()).push((action, target));
+        *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((action, target));
+    }
+
+    /// The last action proposed and what it aimed at, kept after `take_shown`.
+    pub fn last_proposed(&self) -> Option<(ActionId, ActionTarget)> {
+        *self.last.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// How many actions have been proposed since startup.
@@ -325,7 +333,7 @@ pub(crate) fn receive(
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
     (mut broken, mut catches, mut done): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>, MessageWriter<crate::sfx::Done>),
     mut fighting: ResMut<crate::fight::Fighting>,
-    mut stations: ResMut<crate::hud::target::StationSeen>,
+    (mut stations, mut wore): (ResMut<crate::hud::target::StationSeen>, MessageWriter<crate::breaking::ToolWore>),
 ) {
     let menu = if net.is_remote() { Screen::Join } else { Screen::Title };
     // Counted before reading: a tick's messages are all sent before it counts, so this many
@@ -505,6 +513,9 @@ pub(crate) fn receive(
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
             ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
+            ServerMessage::ToolWore { item, broke } => {
+                wore.write(crate::breaking::ToolWore { item, broke });
+            }
             ServerMessage::Bark { creature, bark } => creatures.bark(creature, bark),
             ServerMessage::Smoulders { at } => world.smoulders = at.into_iter().collect(),
             ServerMessage::Xp { skill, tenths } => toasts.gained(skill, tenths, time.elapsed_secs()),
