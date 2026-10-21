@@ -204,7 +204,8 @@ back off, or to creep closer behind it. A blow skips the double take.
   `seconds`, raising the alarm so its kin burst
   with it. Flushed, it recalls being scared by them (`Memory::ScaredBy`, 10 s) and runs on
   at its kind's distance rather than settle again at the edge of its hold. Hurt, it flees
-  as any prey, with no burst; kept or on an errand it sits tight for no one. A stalker who keeps coming
+  as any prey, with no burst, and from whoever hurt it at its kind's distance while it
+  recalls them; kept or on an errand it sits tight for no one. A stalker who keeps coming
   gets close, and is startled at the last. Refused at load: hold outside 1 to 6 blocks,
   burst outside 1 to 2.5, seconds outside 0.2 to 3, or a flush on a boss, a supernatural
   kind or one that attacks. Base game: pheasant (hold 3, burst 1.8, 1.2 s), quail (2.5,

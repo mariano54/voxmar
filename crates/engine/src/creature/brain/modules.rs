@@ -362,9 +362,10 @@ fn flees_at(ctx: &Ctx, radius: f32) -> f32 {
 
 /// How it sits tight from `p` (`creature::Flush`): not once they flushed it, while it
 /// recalls being scared by them, so a flushed bird runs well clear and does not settle
-/// again at the edge of its `hold`.
+/// again at the edge of its `hold`; nor from one who hurt it, while it recalls that, so a
+/// wounded bird flees them at its kind's distance.
 fn sitting(ctx: &Ctx, p: &Seen) -> Option<crate::creature::Flush> {
-    flush(ctx).filter(|_| !ctx.mind.recalls(Memory::ScaredBy(p.id)))
+    flush(ctx).filter(|_| !ctx.mind.recalls(Memory::ScaredBy(p.id)) && !ctx.mind.recalls(Memory::HurtBy(p.id)))
 }
 
 /// A game bird sits tight (`creature::Flush`): a player it has noticed, beyond its `hold`

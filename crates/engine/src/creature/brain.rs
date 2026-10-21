@@ -1232,6 +1232,12 @@ pub(super) mod tests {
         hurt.hurt(&bird, Some(1), 0.9);
         let ran: Vec<u32> = (0..3).map(|_| (think(&bird, &mut hurt, &situation(&near)).speed / full * 100.0).round() as u32).collect();
         assert_eq!((doing(&bird, &hurt), ran), ("flee", vec![100; 3]), "a hurt bird does not burst");
+        // Its fright faded and its flight forgotten, it still recalls who hurt it, and flees
+        // them at its kind's distance rather than wait for them at its hold.
+        (hurt.fear, hurt.since) = (0.0, 0.0);
+        hurt.memories.retain(|(m, _)| !matches!(m, Memory::ScaredBy(_)));
+        let _ = think(&bird, &mut hurt, &situation(&far));
+        assert_eq!(doing(&bird, &hurt), "flee", "wounded, at six blocks from the one who hurt it");
         // Beyond the distance it would flee at, it lives its day rather than sit tight.
         let mut calm = Mind::new(&bird.def.temperament, 2);
         let flees_at = 10.0 * (0.5 + calm.personality.fear());
