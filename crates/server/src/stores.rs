@@ -132,7 +132,8 @@ impl Server {
     /// `agent` puts their pack away at home (`base:put_away`): each stack off the hotbar
     /// whose item a store in the home already holds goes into the stores holding it,
     /// nearest first, onto that item's stacks and then into empty slots, as far as it fits.
-    /// The hotbar, the pouches, the grid and the pointer stay as they are.
+    /// The hotbar, the pouches, the grid and the pointer stay as they are. What goes in is
+    /// tallied by each store's block, for a quest's `Stocked`, as a move into it is.
     pub(crate) fn put_away(&mut self, agent: PlayerId) {
         if self.at_home(agent).is_none() {
             return self.tell_store(agent, Words::key("store.put_away.away"));
@@ -142,6 +143,7 @@ impl Server {
         let Some(player) = self.players.get(&agent) else { return };
         let mut pack = player.inventory.clone();
         let mut moved = 0u32;
+        let mut stocked: Vec<(String, String, u32)> = Vec::new();
         for slot in HOTBAR_SLOTS..SLOTS {
             let Some(mut stack) = pack.slots[slot] else { continue };
             let most = max_stack(stack.item);
@@ -151,6 +153,9 @@ impl Server {
                 if !holds || !machines.get(block).is_some_and(|m| m.bin_takes(stack.item)) {
                     continue;
                 }
+                let blocks = &self.content.blocks;
+                let (kind, item) = (format!("stocked:{}", blocks.def(block).name), blocks.def(stack.item).name.clone());
+                let before = stack.count;
                 let state = self.factory.state_mut(pos).expect("got above");
                 // Onto its stacks first, then into empty slots.
                 for onto in [true, false] {
@@ -172,6 +177,9 @@ impl Server {
                         stack.count -= put;
                     }
                 }
+                if stack.count < before {
+                    stocked.push((kind, item, u32::from(before - stack.count)));
+                }
                 if stack.count == 0 {
                     break;
                 }
@@ -187,6 +195,9 @@ impl Server {
         let player = self.players.get_mut(&agent).expect("got above");
         player.inventory = pack;
         player.changed(traits::INVENTORY);
+        for (kind, item, n) in stocked {
+            self.tally(agent, &kind, &item, n);
+        }
         self.pull_store(agent);
         self.tell_store(agent, Words::key("store.put_away").with("count", Words::text(moved)));
     }
@@ -491,6 +502,8 @@ mod tests {
         assert_eq!(slot(&server, 0), Some((planks, 5)), "the hotbar stays");
         assert_eq!((slot(&server, 12), slot(&server, 20)), (None, None));
         assert_eq!(slot(&server, 13), Some((stone, 3)), "the barrel holds no cobblestone");
+        let stocked = server.players[&1].tallies.get("stocked:base:barrel:base:oak_planks").copied();
+        assert_eq!(stocked, Some(84), "what went in counts for a quest's Stocked, as a move in does");
     }
 
     /// A store with no room keeps what does not fit in the pack.
