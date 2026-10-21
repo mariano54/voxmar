@@ -606,12 +606,12 @@ impl Step {
     /// Whether the server runs behind (`SERVER_LAG`) in this step: in those whose checks are
     /// about playing against a lagging server (placing, digging and breaking, where blocks
     /// were lost to it, and the fight's guard and dodge, timed against where its blows fall)
-    /// and the steps before them. The rest check what lag does not change (what crafting,
-    /// a kill or a campfire gives), and run against a server at full speed, which gets
-    /// there three times sooner.
+    /// and the steps between them. The rest check what lag does not change (what crafting,
+    /// a kill or a campfire gives, the land a load brings in), and run against a server at
+    /// full speed, which gets there three times sooner.
     fn lagged(self) -> bool {
         use Step::*;
-        matches!(self, Load | Build | Arrive | Place | PlaceSettle | Dig | DigSettle | Collect | Breaks | Feel)
+        matches!(self, Build | Arrive | Place | PlaceSettle | Dig | DigSettle | Collect | Breaks | Feel)
     }
 }
 
@@ -19680,11 +19680,22 @@ fn load_parts(world: &World) -> [bool; LOAD_PARTS.len()] {
     let (tiles, wanted) = lod.progress();
     [
         player.joined,
-        client.stats.pending_columns == 0 && client.voxels.len() >= 9,
+        client.stats.pending_columns == 0 && client.voxels.len() >= 9 && all_columns_in(player, client),
         client.stats.jobs_in_flight == 0,
         tiles >= wanted,
         world.resource::<crate::weather::WeatherReady>().0,
     ]
+}
+
+/// Whether every column the server streams round the player has arrived: those within
+/// the view distance, the client's or the integrated server's if less (as the server
+/// takes it, `Player::view_distance`). Without it the load passed as soon as meshing
+/// caught up with what had come so far: on an idle machine with the first few columns
+/// in, at 0.8 s, on a loaded one only once the last had come, at 49 s, and the land
+/// checks after read as many columns as had arrived.
+fn all_columns_in(player: &LocalPlayer, client: &ClientWorld) -> bool {
+    let radius = client.view_distance.min(voxmar_server::ServerConfig::default().view_distance);
+    client.all_in(ColumnPos::of_block(player.position.floor().as_ivec3()), radius)
 }
 
 /// Columns within `AGREE_WITHIN` of `feet`.

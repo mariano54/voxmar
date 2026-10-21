@@ -36,7 +36,8 @@ impl<T: Weigh + ?Sized> Weigh for Arc<T> {
 }
 
 /// A generated column holds about this much (106 KiB measured over 576 columns round a
-/// spawn), counted for each as its chunks are not walked.
+/// spawn), counted for each as its chunks are not walked: a budget of 128 MiB keeps about
+/// 1170 columns.
 impl Weigh for voxmar_engine::world::Column {
     fn bytes(&self) -> usize {
         112 << 10

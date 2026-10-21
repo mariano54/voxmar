@@ -567,9 +567,15 @@ impl Overworld {
 
     /// The ground at one position, with its rivers, lakes and trails.
     pub(crate) fn geo(&self, x: i32, z: i32) -> GeoSample {
+        self.geo_with(x, z, &mut geology::Corners::default())
+    }
+
+    /// [`Overworld::geo`], sharing the relief at lattice corners with other samples nearby
+    /// through `corners`: neighbouring positions read the same few corners.
+    pub(crate) fn geo_with(&self, x: i32, z: i32, corners: &mut geology::Corners) -> GeoSample {
         let sample = {
             let _stage = stage::enter(Stage::Rivers);
-            self.ground(x, z)
+            self.rivers.sample_with(self.stages(), x, z, true, corners)
         };
         let _stage = stage::enter(Stage::Trails);
         let sample = self.trails.apply(&self.land(), sample, x, z);

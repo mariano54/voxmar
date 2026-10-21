@@ -554,19 +554,27 @@ impl Ecology {
         };
         // The weight of the candidates that grow here, and how much of the list's weight
         // they keep: below `SUITED`, the plants thin out.
-        let suited = |list: &[(PlantId, f32)]| -> (f32, f32) {
+        // Each plant of a list's `grows` here, worked out once for the list (`suited`), not
+        // again for its share (`kept`) and its choice (`choose_thinned`).
+        let mut grown: Vec<f32> = Vec::new();
+        let suited = |grown: &mut Vec<f32>, list: &[(PlantId, f32)]| -> (f32, f32) {
+            grown.clear();
+            grown.extend(list.iter().map(|&(plant, _)| grows(plant)));
             let (mut all, mut total) = (0.0, 0.0);
-            for &(plant, weight) in list {
+            for (&(_, weight), &g) in list.iter().zip(grown.iter()) {
                 all += weight;
-                total += weight * grows(plant);
+                total += weight * g;
             }
             (total, if all > 0.0 { (total / (SUITED * all)).min(1.0) } else { 0.0 })
         };
         // As `grows`, thinned by the plant density (gatherables keep their rate), and the
         // share of a list's weight here that survives the thinning.
         let thinned = |plant: PlantId| grows(plant) * self.plant_density[plant.0 as usize];
-        let kept = |list: &[(PlantId, f32)], total: f32| list.iter().map(|&(p, w)| w * thinned(p)).sum::<f32>() / total;
-        let choose_thinned = |list: &[(PlantId, f32)], total: f32, u: f32| choose(list, total * kept(list, total), u, thinned);
+        let thinned_in = |grown: &[f32], list: &[(PlantId, f32)], i: usize| grown[i] * self.plant_density[list[i].0.0 as usize];
+        let kept = |grown: &[f32], list: &[(PlantId, f32)], total: f32| (0..list.len()).map(|i| list[i].1 * thinned_in(grown, list, i)).sum::<f32>() / total;
+        let choose_thinned = |grown: &[f32], list: &[(PlantId, f32)], total: f32, u: f32| {
+            choose_with(list, total * kept(grown, list, total), u, |i| thinned_in(grown, list, i))
+        };
         let fertile = 0.8 + 0.4 * site.fertility;
 
         // Rare herbs, in their patches, in the biome the position belongs to (banks and
@@ -587,7 +595,7 @@ impl Ecology {
         // weights, within a window a slow noise moves about, so neighbours mostly share a
         // kind and a place has only a few kinds at a time.
         if flora.flowers > 0.0 {
-            let (total, thriving) = suited(&flora.drifts);
+            let (total, thriving) = suited(&mut grown, &flora.drifts);
             if total > 0.0 {
                 let bloom = crate::climate::uniform(self.blooms.get_noise_2d(x as f32, z as f32));
                 let field = STRAY_FLOWERS + smoothstep(DRIFTS.0, DRIFTS.1, bloom).max(flora.bloom) + PATCH_BOOST * smoothstep(FLOWER_PATCHES.0, FLOWER_PATCHES.1, bloom);
@@ -595,12 +603,12 @@ impl Ecology {
                 // creeks and rivers.
                 let edge = smoothstep(0.05, 0.25, site.forest) * (1.0 - smoothstep(0.35, 0.6, site.forest));
                 let open = (1.0 - 0.75 * site.forest) * (1.0 + 0.5 * site.clearing + 1.2 * edge + 1.5 * site.river);
-                if take(kept(&flora.drifts, total) * flora.flowers * field * open * thriving * (0.7 + 0.6 * self.richness) * fertile) {
+                if take(kept(&grown, &flora.drifts, total) * flora.flowers * field * open * thriving * (0.7 + 0.6 * self.richness) * fertile) {
                     let variety = crate::climate::uniform(self.varieties.get_noise_2d(x as f32, z as f32));
                     let local = crate::climate::uniform(self.kinds.get_noise_2d(x as f32, z as f32)) + 0.1 * (second - 0.5);
                     let window = (KINDS_AT_ONCE / flora.drifts.len() as f32).min(1.0);
                     let drift = (variety + window * local.clamp(0.0, 1.0)).rem_euclid(1.0);
-                    return Some(self.place(choose_thinned(&flora.drifts, total, drift), third, snow));
+                    return Some(self.place(choose_thinned(&grown, &flora.drifts, total, drift), third, snow));
                 }
             }
         }
@@ -620,14 +628,14 @@ impl Ecology {
         // Carpets of grass and ferns over most of what is left, lusher in patches and in
         // clearings.
         if flora.cover > 0.0 {
-            let (total, thriving) = suited(&flora.carpet);
+            let (total, thriving) = suited(&mut grown, &flora.carpet);
             if total > 0.0 {
                 let meadow = 0.7 + 0.3 * smoothstep(-0.5, 0.4, self.meadows.get_noise_2d(x as f32, z as f32));
                 let lush = (meadow + 0.3 * site.clearing).min(1.0);
                 // The biome's cover, eased so the lushest meadows keep theirs while
                 // ordinary ground is a little thinner.
-                if take(kept(&flora.carpet, total) * flora.cover.powf(COVER_EASE) * site.vegetation * lush * thriving * fertile) {
-                    return Some(self.place(choose_thinned(&flora.carpet, total, second), third, snow));
+                if take(kept(&grown, &flora.carpet, total) * flora.cover.powf(COVER_EASE) * site.vegetation * lush * thriving * fertile) {
+                    return Some(self.place(choose_thinned(&grown, &flora.carpet, total, second), third, snow));
                 }
             }
         }
@@ -820,10 +828,15 @@ impl Ecology {
 /// Picks along the cumulative weights of the plants in `list` that grow here (`grows`),
 /// whose weights add up to `total`, with `u` in 0..1.
 fn choose(list: &[(PlantId, f32)], total: f32, u: f32, grows: impl Fn(PlantId) -> f32) -> PlantId {
+    choose_with(list, total, u, |i| grows(list[i].0))
+}
+
+/// `choose`, with each entry's `grows` by its index in `list`.
+fn choose_with(list: &[(PlantId, f32)], total: f32, u: f32, grows: impl Fn(usize) -> f32) -> PlantId {
     let mut left = u * total;
     let mut last = list[0].0;
-    for &(plant, weight) in list {
-        let weight = weight * grows(plant);
+    for (i, &(plant, weight)) in list.iter().enumerate() {
+        let weight = weight * grows(i);
         if weight > 0.0 {
             if left < weight {
                 return plant;
