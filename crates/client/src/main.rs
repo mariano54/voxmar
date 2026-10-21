@@ -398,6 +398,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     // Every shelter tag on a block says how it sounds: muffling the rain, or whistling.
     ambience.check_shelter_tags(&content.blocks)?;
+    ambience.check_home(&content.effects)?;
     recorded.check_ways(&content.blocks)?;
     recorded.check_files(&assets)?;
     ambience.check_recordings(&assets)?;
