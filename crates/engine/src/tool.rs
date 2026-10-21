@@ -357,6 +357,10 @@ impl ToolRegistry {
                 None => 0,
                 Some(n) => n.parse::<u8>().ok().filter(|n| (1..=crate::light::MAX_LIGHT).contains(n)).ok_or_else(|| bad(format!("`held_light:{n}` is not a light level from 1 to {}", crate::light::MAX_LIGHT)))?,
             };
+            // A light set down lights its place at least as well as in the hand.
+            if def.light > 0 && held_light > def.light {
+                return Err(bad(format!("`held_light:{held_light}` is brighter in hand than its own light {} set down", def.light)));
+            }
             burnt.push(burnt_to);
             if uses == 0 && tags.iter().any(|t| t == "tool") && burns == 0 && !tags.iter().any(|t| t == NEVER_WEARS) {
                 return Err(bad(format!("a tool with no `uses:N` to wear; give it one, or `{NEVER_WEARS}`")));
@@ -773,26 +777,33 @@ mod tests {
 
     /// What burns carried (`burns:N`) lasts that many seconds, counted as wear, leaves what
     /// `burns_to:` names and may light the hand (`held_light:N`); load refuses a thing that
-    /// both wears and burns, burns to nothing that exists or lights past full light.
+    /// both wears and burns, burns to nothing that exists, lights past full light or lights
+    /// brighter in hand than set down. A torch lights the hand and burns nothing down.
     #[test]
     fn what_burns_is_told_by_its_tags_and_checked() {
         let block = |name: &str, tags: &[&str]| BlockDef { name: format!("t:{name}"), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
         let skills = SkillRegistry::default();
-        let load = |brand: &[&str]| {
-            let blocks = BlockRegistry::new(vec![block("air", &[]), block("ash", &[]), block("brand", brand)]).unwrap();
+        let lit = |light: u8, brand: &[&str]| {
+            let blocks = BlockRegistry::new(vec![block("air", &[]), block("ash", &[]), BlockDef { light, ..block("brand", brand) }]).unwrap();
             let (brand, ash) = (blocks.expect("t:brand"), blocks.expect("t:ash"));
             ToolRegistry::new(vec![ToolRegistry::read("t", "(kinds: [], blocks: [])").unwrap()], &blocks, &skills).map(|tools| (tools.burns(brand), tools.burnt(brand).map(|b| b == ash), tools.held_light(brand), tools.life(brand)))
         };
+        let load = |brand: &[&str]| lit(0, brand);
         assert_eq!(load(&["burns:90", "burns_to:t:ash", "held_light:8"]).unwrap(), (90, Some(true), 8, 90));
         assert_eq!(load(&[]).unwrap(), (0, None, 0, 0), "nothing burns unless it says");
         for bad in [&["burns:0"][..], &["burns:90", "uses:20"], &["burns_to:t:ash"], &["burns:9", "burns_to:t:soot"], &["held_light:16"], &["held_light:0"]] {
             assert!(load(bad).is_err(), "{bad:?} loaded");
         }
+        assert_eq!(lit(10, &["held_light:10"]).unwrap().2, 10, "as bright in hand as set down");
+        assert!(lit(10, &["held_light:11"]).is_err(), "brighter in hand than set down");
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
         let content = crate::content::Content::load(&assets).unwrap();
         let brand = content.blocks.expect("base:firebrand");
         assert_eq!((content.tools.burns(brand), content.tools.burnt(brand), content.tools.held_light(brand)), (90, Some(content.blocks.expect("base:charred_stick")), 8));
         assert_eq!(crate::inventory::max_stack(brand), 1, "what burns is carried one at a time");
+        let torch = content.blocks.expect("base:torch");
+        assert_eq!((content.tools.held_light(torch), content.tools.burns(torch)), (12, 0), "a torch lights the hand and burns nothing down");
+        assert!(content.tools.held_light(torch) > content.tools.held_light(brand), "and lights it better than a firebrand");
     }
 
     /// Metal tools and weapons mend with their own ingot at a grindstone, not at a

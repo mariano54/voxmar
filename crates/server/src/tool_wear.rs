@@ -545,19 +545,21 @@ mod tests {
         assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(charred, 1)), "a charred stick burns no more");
     }
 
-    /// Monsters keep off where a player holds a light (a firebrand), as off a lit torch:
-    /// the spot by them counts as lit, and only while it is in hand and they live (one dead
-    /// burns no light down, so lights nothing).
+    /// Monsters keep off where a player holds a light (a firebrand, a torch), as off a lit
+    /// torch set down: the spot by them counts as lit, and only while it is in hand and they
+    /// live (one dead burns no light down, so lights nothing).
     #[test]
-    fn a_held_firebrand_lights_the_spot_for_spawning() {
-        let (mut server, _client) = holding("base:firebrand", 0);
-        let cell = server.players[&1].position.floor().as_ivec3() + IVec3::new(3, 0, 0);
-        let lit = server.lit_near(cell);
-        server.players.get_mut(&1).unwrap().health.current = 0;
-        assert!(!server.lit_near(cell), "held by the dead, it does not");
-        server.players.get_mut(&1).unwrap().health.current = 10;
-        server.players.get_mut(&1).unwrap().selected = 1;
-        assert!(lit, "held, it lights");
-        assert!(!server.lit_near(cell), "carried, it does not");
+    fn a_held_firebrand_or_torch_lights_the_spot_for_spawning() {
+        for light in ["base:firebrand", "base:torch"] {
+            let (mut server, _client) = holding(light, 0);
+            let cell = server.players[&1].position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+            let lit = server.lit_near(cell);
+            server.players.get_mut(&1).unwrap().health.current = 0;
+            assert!(!server.lit_near(cell), "{light} held by the dead, it does not");
+            server.players.get_mut(&1).unwrap().health.current = 10;
+            server.players.get_mut(&1).unwrap().selected = 1;
+            assert!(lit, "{light} held, it lights");
+            assert!(!server.lit_near(cell), "{light} carried, it does not");
+        }
     }
 }
