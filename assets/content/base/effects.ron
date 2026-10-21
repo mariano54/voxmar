@@ -38,7 +38,7 @@
             when: Some(Wearing("charge_charm")), modifiers: (speed: 1.05)),
         // Sat by a fire or the hearth (`core:sit` on a seat): a Nomad's stool at the campfire
         // or a chair at home, the rest after a day out.
-        (name: "fireside", kind: Buff, title: "By the Fire", description: "Sat by a fire: you heal half as fast again, and it warms you.",
+        (name: "fireside", kind: Buff, title: "Fireside", description: "Sat by a fire: you heal half as fast again, and it warms you.",
             when: Some(All([Seated, Any([Near("fire", 3), Near("hearth", 3)])])), modifiers: (heal: 1.5, warmth: 4.0)),
         // Sat at a table: a meal eaten there does more (as a pantry's and a larder's do).
         (name: "at_table", kind: Buff, title: "At the Table", description: "Sat at a table: a meal heals a quarter more, and its good lasts a quarter longer.",

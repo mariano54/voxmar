@@ -592,6 +592,17 @@ pub fn residents(people: &PeopleDef, houses: &[HouseDef], size: &str, levers: &L
         let seed = mix(seed ^ mix(out.len() as u64 + 0x9e09));
         out.push(Resident { species: species.to_owned(), home, work, routine, guard, seed });
     };
+    if let Some(guards) = people.guards.iter().rev().find(|g| g.size == size) {
+        let n = count(guards.count, &guards.lean, levers, &mut rng);
+        for i in 0..n as usize {
+            // Living near the gates they watch. Housed before the workers, so a place
+            // full of shops still keeps its watch.
+            let to = if gates.is_empty() { buildings.first().map_or(IVec2::ZERO, middle) } else { gates[i % gates.len()] };
+            let Some(home) = home_near(&used, None, to) else { break };
+            used[home] += 1;
+            push(&mut out, &guards.species, home, None, &guards.routines[i % guards.routines.len()], true);
+        }
+    }
     for job in &people.jobs {
         for (w, b) in buildings.iter().enumerate().filter(|(_, b)| is(b, &job.at)) {
             if !rng.chance(job.chance) {
@@ -603,16 +614,6 @@ pub fn residents(people: &PeopleDef, houses: &[HouseDef], size: &str, levers: &L
                 used[home] += 1;
                 push(&mut out, &job.species, home, Some(w), &job.routine, false);
             }
-        }
-    }
-    if let Some(guards) = people.guards.iter().rev().find(|g| g.size == size) {
-        let n = count(guards.count, &guards.lean, levers, &mut rng);
-        for i in 0..n as usize {
-            // Living near the gates they watch.
-            let to = if gates.is_empty() { buildings.first().map_or(IVec2::ZERO, middle) } else { gates[i % gates.len()] };
-            let Some(home) = home_near(&used, None, to) else { break };
-            used[home] += 1;
-            push(&mut out, &guards.species, home, None, &guards.routines[i % guards.routines.len()], true);
         }
     }
     // Everyone else: drawn home by home.

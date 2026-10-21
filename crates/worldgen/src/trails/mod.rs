@@ -209,12 +209,14 @@ impl Trails {
         Self {
             seed: rng::mix(seed ^ 0x7a11_5eed),
             laid,
-            grids: Cache::new(48 * MB),
-            gates: Cache::new(MB),
-            places: Cache::new(MB),
-            routes: Cache::new(8 * MB),
-            paths: Cache::new(16 * MB),
-            tiles: Cache::new(48 * MB),
+            // Pure functions of their keys (settlement gates come from the plans, which wait),
+            // which the server's tick may read: copying.
+            grids: Cache::copying(48 * MB),
+            gates: Cache::copying(MB),
+            places: Cache::copying(MB),
+            routes: Cache::copying(8 * MB),
+            paths: Cache::copying(16 * MB),
+            tiles: Cache::copying(48 * MB),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }

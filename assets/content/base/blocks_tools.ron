@@ -2,6 +2,11 @@
 // made). A tool is tagged `tool`, its kind, `tier:N` (what it can mine), `speed:X` (how
 // much faster than a hand on what it suits) and `yield:Y` (more and rarer finds there). A
 // hoe tills soil into farmland (`base:till`), which is what crops are sown on.
+// Tools wear out (tools.ron's `wear`): `uses:N` is how long one lasts, a better tier
+// longer; worn out it breaks to nothing (a pack may leave a part with `head:ITEM`, never
+// what it is made of). `mend:ITEM` (or `mend:#TAG`) at a chopping block mends it: one piece
+// brings back half, or all a piece of its recipe is of it, at the level its recipe asks. A
+// tool that never wears says `never_wears`.
 (
     blocks: [
         // The crafting table: a three-by-three grid for what the inventory's two-by-two
@@ -74,40 +79,52 @@
         // eight) hafted on sticks (leaves give them), in the hand's grid. Stone and trees need
         // a pickaxe and an axe (tools.ron), so these come first; the cheapest of tier 1, they
         // are the tools a refusal names (`Content::least_tool`).
-        (template: "drop", name: "flint_pickaxe", tags: ["pickaxe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
-        (template: "drop", name: "flint_axe", tags: ["axe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        (template: "drop", name: "flint_pickaxe", tags: ["uses:50", "mend:flint", "pickaxe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        (template: "drop", name: "flint_axe", tags: ["uses:50", "mend:flint", "axe", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
         // A flint knife (a flake on a stick) and a digging stick: the hunter's and the
         // digger's first tools, hand-made as the axe is. There are no wooden tools: a plank's
         // edge cuts nothing (older saves' come back as `renamed` says).
-        (template: "drop", name: "flint_knife", tags: ["knife", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
-        (template: "drop", name: "digging_stick", tags: ["shovel", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
+        (template: "drop", name: "flint_knife", tags: ["uses:50", "mend:flint", "knife", "tool", "tier:1", "speed:2"], all: (color: (70, 72, 80))),
+        (template: "drop", name: "digging_stick", tags: ["uses:50", "mend:stick", "shovel", "tool", "tier:1", "speed:2"], all: (color: (150, 110, 70))),
         // Stone: tier 2.
         // A stone head: toolstone ground to an edge at a grindstone (recipes.ron), what every
         // stone tool is hafted from.
         (template: "drop", name: "stone_head", tags: ["tool_head"], all: (color: (120, 120, 125))),
-        (template: "drop", name: "stone_pickaxe", tags: ["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
-        (template: "drop", name: "stone_axe", tags: ["axe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
-        (template: "drop", name: "stone_shovel", tags: ["shovel", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
-        (template: "drop", name: "stone_hoe", tags: ["hoe", "tool", "tier:2", "speed:4", "yield:0.05", "reap:1"], all: (color: (120, 120, 125), action: Some("base:till"))),
-        (template: "drop", name: "stone_knife", tags: ["knife", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_pickaxe", tags: ["uses:150", "mend:stone_head", "pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_axe", tags: ["uses:150", "mend:stone_head", "axe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_shovel", tags: ["uses:150", "mend:stone_head", "shovel", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_hoe", tags: ["uses:150", "mend:stone_head", "hoe", "tool", "tier:2", "speed:4", "yield:0.05", "reap:1"], all: (color: (120, 120, 125), action: Some("base:till"))),
+        (template: "drop", name: "stone_knife", tags: ["uses:150", "mend:stone_head", "knife", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         // Copper: tier 3.
-        (template: "drop", name: "copper_pickaxe", tags: ["pickaxe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
-        (template: "drop", name: "copper_axe", tags: ["axe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
-        (template: "drop", name: "copper_shovel", tags: ["shovel", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
-        (template: "drop", name: "copper_hoe", tags: ["hoe", "tool", "tier:3", "speed:7", "yield:0.1", "reap:1"], all: (color: (190, 110, 70), action: Some("base:till"))),
-        (template: "drop", name: "copper_knife", tags: ["knife", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_pickaxe", tags: ["uses:250", "mend:copper_ingot", "mend_near:grindstone", "metal:copper", "pickaxe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_axe", tags: ["uses:250", "mend:copper_ingot", "mend_near:grindstone", "metal:copper", "axe", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_shovel", tags: ["uses:250", "mend:copper_ingot", "mend_near:grindstone", "metal:copper", "shovel", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "copper_hoe", tags: ["uses:250", "mend:copper_ingot", "mend_near:grindstone", "metal:copper", "hoe", "tool", "tier:3", "speed:7", "yield:0.1", "reap:1"], all: (color: (190, 110, 70), action: Some("base:till"))),
+        (template: "drop", name: "copper_knife", tags: ["uses:250", "mend:copper_ingot", "mend_near:grindstone", "metal:copper", "knife", "tool", "tier:3", "speed:7", "yield:0.1"], all: (color: (190, 110, 70))),
+        (template: "drop", name: "bronze_pickaxe", tags: ["uses:500", "mend:bronze_ingot", "mend_near:grindstone", "metal:bronze", "pickaxe", "tool", "tier:3", "speed:10", "yield:0.12"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "bronze_axe", tags: ["uses:500", "mend:bronze_ingot", "mend_near:grindstone", "metal:bronze", "axe", "tool", "tier:3", "speed:10", "yield:0.12"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "bronze_shovel", tags: ["uses:500", "mend:bronze_ingot", "mend_near:grindstone", "metal:bronze", "shovel", "tool", "tier:3", "speed:10", "yield:0.12"], all: (color: (200, 140, 70))),
+        (template: "drop", name: "bronze_hoe", tags: ["uses:500", "mend:bronze_ingot", "mend_near:grindstone", "metal:bronze", "hoe", "tool", "tier:3", "speed:10", "yield:0.12", "reap:1"], all: (color: (200, 140, 70), action: Some("base:till"))),
+        (template: "drop", name: "bronze_knife", tags: ["uses:500", "mend:bronze_ingot", "mend_near:grindstone", "metal:bronze", "knife", "tool", "tier:3", "speed:10", "yield:0.12"], all: (color: (200, 140, 70))),
         // Iron: tier 4.
-        (template: "drop", name: "iron_pickaxe", tags: ["pickaxe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
-        (template: "drop", name: "iron_axe", tags: ["axe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
-        (template: "drop", name: "iron_shovel", tags: ["shovel", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
-        (template: "drop", name: "iron_hoe", tags: ["hoe", "tool", "tier:4", "speed:14", "yield:0.15", "reap:2"], all: (color: (200, 205, 215), action: Some("base:till"))),
-        (template: "drop", name: "iron_knife", tags: ["knife", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_pickaxe", tags: ["uses:600", "mend:iron_ingot", "mend_near:grindstone", "metal:iron", "pickaxe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_axe", tags: ["uses:600", "mend:iron_ingot", "mend_near:grindstone", "metal:iron", "axe", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_shovel", tags: ["uses:600", "mend:iron_ingot", "mend_near:grindstone", "metal:iron", "shovel", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
+        (template: "drop", name: "iron_hoe", tags: ["uses:600", "mend:iron_ingot", "mend_near:grindstone", "metal:iron", "hoe", "tool", "tier:4", "speed:14", "yield:0.15", "reap:2"], all: (color: (200, 205, 215), action: Some("base:till"))),
+        (template: "drop", name: "iron_knife", tags: ["uses:600", "mend:iron_ingot", "mend_near:grindstone", "metal:iron", "knife", "tool", "tier:4", "speed:14", "yield:0.15"], all: (color: (200, 205, 215))),
         // Fishing rods (fishing.ron): a better rod lands more and rarer fish.
-        (template: "drop", name: "fishing_rod", tags: ["rod", "tool", "tier:1"], all: (color: (130, 95, 55), action: Some("base:fish"))),
-        (template: "drop", name: "fine_rod", tags: ["rod", "tool", "tier:3", "yield:0.15"], all: (color: (200, 205, 215), action: Some("base:fish"))),
+        (template: "drop", name: "fishing_rod", tags: ["rod", "tool", "never_wears", "tier:1"], all: (color: (130, 95, 55), action: Some("base:fish"))),
+        (template: "drop", name: "fine_rod", tags: ["rod", "tool", "never_wears", "tier:3", "yield:0.15"], all: (color: (200, 205, 215), action: Some("base:fish"))),
         // Materials.
         (template: "drop", name: "stick", tags: ["stick", "wood", "fuel"], all: (color: (130, 95, 55))),
-        // Charcoal: a log burnt at a campfire (cooking.ron), fuel and torches.
+        // A firebrand: a stick held in any fire (cooking.ron) until it catches, the first light
+        // before coal. It lights the way around the hand that holds it (`held_light:N`) and
+        // scares what fears fire, but burns while carried (`burns:N` seconds, counted like a
+        // tool's wear) and leaves a charred stick (`burns_to:`). It `kindles`: lights a torch's
+        // stub again (flame.rs).
+        (template: "drop", name: "firebrand", tags: ["fire", "firelighter", "kindles", "burns:90", "burns_to:charred_stick", "held_light:8"], all: (color: (240, 140, 40))),
+        (template: "drop", name: "charred_stick", tags: ["charred", "fuel"], all: (color: (60, 46, 36))),
+        // Charcoal: from a charcoal clamp (multiblocks.ron), fuel and torches.
         // Pouches: one slot for many herbs, or many seeds (right click one to empty it).
         (template: "drop", name: "herb_pouch", tags: ["pouch", "holds:herb", "holds_each:1000"], all: (color: (120, 150, 80), action: Some("base:empty_pouch"))),
         (template: "drop", name: "coin_purse", tags: ["pouch", "holds:currency", "holds_each:1000"], all: (color: (140, 100, 60), action: Some("base:empty_pouch"))),
@@ -124,7 +141,11 @@
         (template: "drop", name: "flint", tags: ["flint", "sharp"], all: (color: (60, 60, 66))),
         (template: "drop", name: "bronze_ingot", tags: ["ingot", "metal:bronze"], all: (color: (200, 140, 70))),
         (template: "drop", name: "charcoal", tags: ["charcoal", "coal", "fuel"], all: (color: (40, 36, 34))),
+        // Part-burnt wood, from a clamp opened before its time: firewood's heat, not charcoal's.
+        (template: "drop", name: "charred_wood", tags: ["charred", "fuel"], all: (color: (70, 52, 40))),
         (template: "drop", name: "twine", tags: ["twine", "fibre"], all: (color: (210, 190, 140))),
+        // Flour, ground at a quern from wheat or rye, bakes at a fire into bread.
+        (template: "drop", name: "flour", tags: ["flour"], all: (color: (236, 228, 206))),
         (template: "drop", name: "copper_ingot", tags: ["ingot", "metal:copper"], all: (color: (190, 110, 70))),
         (template: "drop", name: "iron_ingot", tags: ["ingot", "metal:iron"], all: (color: (200, 205, 215))),
         // For taming and breeding: a treat no wild animal you can tame refuses, and taken

@@ -10,13 +10,14 @@
 #
 # A binary given as off:PATH runs with VOXMAR_THREAD_PRIORITY=off (the thread classes from
 # before the frame threads had one, see crates/client/src/priority.rs), to time one build
-# both ways; as wN:PATH, with N streaming workers (VOXMAR_WORKERS) instead of the cores less
-# two. Both may be given, as off:w8:PATH.
+# both ways; as wN:PATH, with N streaming workers (VOXMAR_WORKERS) instead of the default
+# (the cores less two while the world loads, at most six of them once it has). Both may be given, as off:w8:PATH.
 #
 #   spawn   standing at the spawn of seed 1, looking over the land, once it has loaded
 #   town    over Ashhurst, the village of seed 1 nearest its spawn (21 houses, 14
 #           people), looking over its roofs, creative and noon
-#   flight  40 s flight from the spawn of seed 1 at his fly speed: the land streaming in
+#   flight  40 s flight from the spawn of seed 1 at his fly speed: the land streaming in,
+#           with how far ahead it was meshed (the `ahead:` line) besides the frames
 #
 # SCENES picks scenes (e.g. SCENES=flight) and FLIGHT the flight's seconds (default 40). A
 # binary built with tracing (CARGO_TARGET_DIR=target/trace cargo build --release -p
@@ -152,17 +153,26 @@ for scene in $scenes; do
       while [[ $root != / && ! -d $root/assets ]]; do root=$(dirname "$root"); done
       [[ -d $root/assets ]] || { echo "$scene: no assets/ above $binary"; continue; }
       trace=$out/trace.json
+      # In a traced run any one file the game writes, the trace above all, stops at 30 GB: the game is then
+      # killed (SIGXFSZ) with the disk's last 20 GB untouched.
+      # (bash's ulimit -f counts kilobytes outside POSIX mode.)
+      limit=
       if traced "$binary"; then
         free=$(df -Pk "$out" | awk 'NR == 2 { print int($4 / 1048576) }')
         ((free >= 50)) || { echo "play_frames: ${free} GB free where traces go; a traced run wants 50" >&2; exit 1; }
+        limit=$((30 * 1024 * 1024))
       fi
-      log=$(cd "$root" && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority VOXMAR_WORKERS=$workers TRACE_CHROME=$trace \
+      log=$(cd "$root" && { [[ -z $limit ]] || ulimit -f "$limit"; } && VOXMAR_MUTE=1 VOXMAR_TIMING=1 VOXMAR_FOREGROUND=1 VOXMAR_CONFIG=$config VOXMAR_THREAD_PRIORITY=$priority VOXMAR_WORKERS=$workers TRACE_CHROME=$trace \
         "$binary" --capture "$out/$scene.png" --size 2268x1473 "${args[@]}" 2>&1 </dev/null | sed 's/\x1b\[[0-9;]*m//g')
       stats=$(grep -oE '(steady|flight): [0-9]+ frames.*' <<<"$log" | tail -1)
+      # How far the land was meshed ahead of a flight: whether streaming kept up.
+      ahead=$(grep -oE 'ahead: meshed.*' <<<"$log" | tail -1)
+      [[ -n $limit && -z $stats ]] && echo "$scene: no statistics; a trace past 30 GB stops the game"
       gpu=$(grep -m1 -oE 'AdapterInfo \{ name: "[^"]*"' <<<"$log" | sed 's/.*name: //')
       # A worker count the game turned down (more than it has threads): its default ran.
       grep -m1 '^VOXMAR_WORKERS=' <<<"$log"
       echo "$scene round $round, $binary$([[ $priority == off ]] && echo ' (priorities off)')${workers:+ ($workers workers)}: ${stats:-no frame statistics (see a run by hand)} [gpu $gpu, load $(sysctl -n vm.loadavg 2>/dev/null | awk '{ print $2 }')]"
+      [[ -n $ahead ]] && echo "  $ahead"
       # A traced build's trace of this run: read, then deleted (they run to gigabytes; the
       # temporary directory goes on exit, interrupted or not, with any left).
       if [[ -s $trace ]]; then

@@ -120,7 +120,7 @@ Named dishes (data) match exact ingredients and override the name and add an eff
 | --- | --- | --- | --- |
 | Campfire | roast | fuel | 1 |
 | Pot (on a fire) | porridge and stew (built: the cooking pot, docs/stations.md); later boil, soup, jam | a hob under or beside it, water within 4 | 3 |
-| Quern | mill grain to flour | | 5 |
+| Quern | mill grain to flour (built: quern stones, Crafting 5, four stone fired smooth under a stick; a wheat or rye held and right-clicked grinds into a flour, which bakes at a campfire into bread, half the grain of a grid loaf; design/farm-days.md) | | 3 |
 | Oven | bake bread, pies, cakes | fuel | 10 |
 | Pan (on a fire) | fry | a fat (butter, lard, bear fat, olive oil) | 12 |
 | Churn | butter, cream | milk | 15 |
@@ -129,6 +129,12 @@ Named dishes (data) match exact ingredients and override the name and add an eff
 | Drying rack | jerky from raw meat or fish in 10 min (built, docs/stations.md); later dried fruit and herbs | open sky; a fire within 3 doubles the speed; later dry air | 1 (jerky), 31 |
 | Crock | ferment: sauerkraut, pickles, sauces, cider; days | a cool place | 33 |
 | Table | banquet: dishes set out together, shared effects | | 50 |
+
+The quern has two Farm age companions that are not cooking but work the same way (cooking.ron,
+a station tag, two seconds a go, never failing): a **spindle stand** (Crafting 6, with a fired
+clay whorl) spins a wool into three twine, and a **loom frame** (Crafting 8, with fired clay
+weights) weaves a wool into a plain (white) cloth, or, with a dye flower held and a wool in
+the pack, two cloth of the flower's colour, twice what the grid's flower and wool make.
 
 Long techniques (smoking, drying, fermenting, ageing) are due-time events, like crop
 stages, computed from the conditions where the station stands and recomputed only when
