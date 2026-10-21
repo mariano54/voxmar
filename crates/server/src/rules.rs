@@ -201,23 +201,24 @@ impl SurvivalRules {
     }
 
     /// Every block that walls a room says how well it shelters it (`HomeWalls`), once: each
-    /// solid block tagged `building` or `roof`, full or shaped (roofs, slabs, stairs), but
-    /// furniture (`home_furniture`), which the survey looks past. No block says it twice.
+    /// solid block tagged `building` or `roof`, full or shaped (roofs, slabs, stairs), and
+    /// every solid shaped piece (a pot, a trough) whatever its tags, but furniture
+    /// (`home_furniture`), which the survey looks past. No block says it twice.
     pub(crate) fn check_shelters(&self, blocks: &BlockRegistry) -> Result<(), String> {
         use voxmar_engine::effect::Shelter;
         let unjudged: Vec<String> = blocks
             .ids()
-            .map(|id| blocks.def(id))
-            .filter(|def| {
+            .filter(|&id| {
+                let def = blocks.def(id);
                 let shelters = Shelter::ALL.iter().filter(|s| def.has_tag(s.tag())).count();
                 let furniture = self.furniture(&def.tags);
-                let walls = def.solid && (def.has_tag("building") || def.has_tag("roof")) && !furniture;
+                let walls = def.solid && (def.has_tag("building") || def.has_tag("roof") || blocks.is_piece(id)) && !furniture;
                 shelters > 1 || (shelters == 0 && walls)
             })
-            .map(|def| def.name.clone())
+            .map(|id| blocks.def(id).name.clone())
             .collect();
         if !unjudged.is_empty() {
-            return Err(format!("blocks: each solid `building` or `roof` block that is not furniture ({FILE}'s home_furniture) carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", ")));
+            return Err(format!("blocks: each solid `building` or `roof` block and each solid shaped piece that is not furniture ({FILE}'s home_furniture) carries exactly one of `shelter:draughty`, `shelter:sound` or `shelter:fine`, and no block more than one; these do not: {}", unjudged.join(", ")));
         }
         // A misspelt shelter tag judges nothing; a draught comes only through a draughty wall.
         let misjudged: Vec<String> = blocks

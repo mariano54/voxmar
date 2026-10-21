@@ -88,9 +88,11 @@ cheap and cosy but catches, shingles do not), as are timber posts and beams and 
 cobble slabs and stairs; a lattice window is draughty. Natural rock and the ores in it are
 sound, so a home cut into a hillside can be Cosy after the mining it took; earth, gravel, sand
 and any other solid block with no tag count as draughty, until daub coats them. Every solid
-block tagged `building` or `roof`, full or shaped, that is not furniture carries exactly one
-shelter tag, and no block more than one, checked when content loads (server `rules.rs`
-`check_shelters`), so a new one cannot slip in unjudged.
+block tagged `building` or `roof`, full or shaped, and every solid shaped piece, that is not
+furniture carries exactly one shelter tag, and no block more than one, checked when content
+loads (server `rules.rs` `check_shelters`), so a new one cannot slip in unjudged: a cooking
+pot is a `station` and the feed trough `farm`, furniture a room looks past
+(`a_pot_or_a_trough_in_a_room_leaves_its_walls_as_they_were`).
 
 How it is judged (`Server::room_walls`, beside the home survey): from where home stands, a
 scan goes out over the open cells within the home's reach (survival.ron's `home_reach`,
@@ -526,7 +528,11 @@ pack into the stores, so a home stays useful without sorting by hand.
   The pouches, the crafting grid and the pointer are skipped too, and so is any store
   that is full or does not take the item (`Machine::bin_takes`).
 - **Quests.** What goes in is tallied by each store's block (`stocked:`), as a move into an
-  open store is, so a quest's `Stocked` counts clay put away with H.
+  open store is, so a quest's `Stocked` counts clay put away with H. The Nomad home side
+  quest **Put It Away** (after From the Shelves) teaches the key: thirty-two planks into
+  any store with the key (`PutAway("tag:planks", 32)`, a `put_away:ITEM` tally only
+  `put_away` keeps; a move by hand counts for `Stocked` only). Test:
+  `planks_put_away_finish_put_it_away`.
 - **Which stores count.** Those in the home box (the same `home_stores` that Lay and the
   stations draw from, nearest first), and only while the player stands in their own home.
   `from_stores` belongs to stations and does not apply. A guest puts nothing into a

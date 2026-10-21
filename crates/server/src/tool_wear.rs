@@ -266,6 +266,30 @@ mod tests {
         }
     }
 
+    /// A worn tool and a piece of what it is made of in the grid by a chopping block: back
+    /// whole when it is made of that one piece (a flint knife, a stone shovel), else half
+    /// (a flint axe, a stone pickaxe), as A Mended Edge says; and that Nomad side quest,
+    /// open once the block is, is done.
+    #[test]
+    fn a_tool_mended_by_the_chopping_block_does_the_mending_quest() {
+        for (tool, by, whole) in [("base:flint_axe", "base:flint", false), ("base:flint_knife", "base:flint", true), ("base:stone_pickaxe", "base:stone_head", false), ("base:stone_shovel", "base:stone_head", true)] {
+            let (mut server, _client) = holding(tool, 0);
+            let [item, by] = [tool, by].map(|n| server.content.blocks.expect(n));
+            let uses = server.content.tools.uses(item);
+            put(&mut server, "base:chopping_block");
+            let craft = server.content.actions.expect("core:craft");
+            let player = server.players.get_mut(&1).unwrap();
+            player.inventory.slots[0] = None;
+            (player.inventory.craft[0], player.inventory.craft[1]) = (Some(ItemStack { wear: uses - 1, ..ItemStack::new(item, 1) }), Some(ItemStack::new(by, 1)));
+            player.quests_done = vec!["base:a_chopping_block".into()];
+            server.propose(1, craft, voxmar_engine::action::ActionTarget::Slot(1), std::time::Instant::now());
+            let left = if whole { 0 } else { uses - 1 - uses / 2 };
+            assert_eq!(server.players[&1].inventory.cursor.map(|s| (s.item, s.wear)), Some((item, left)), "{tool}: whole {whole}, on the pointer");
+            server.update_quests(1);
+            assert!(server.players[&1].quests_done.iter().any(|q| q == "base:a_mended_edge"), "{tool}: {:?}", server.players[&1].quests_done);
+        }
+    }
+
     /// Mining saves a pickaxe's wear by the level, `level` times `save_per_level` a use
     /// (about one use in two at 99), drawn by the player's count of uses, never the tick.
     #[test]
@@ -567,6 +591,43 @@ mod tests {
         server.cook(1, at);
         let inventory = &server.players[&1].inventory;
         assert_eq!((inventory.slots[0], inventory.slots[5]), (None, Some(ItemStack::new(torch, 4))));
+        // A torch keeps, so from a stack of stubs it tops up the torches carried and the
+        // stubs left stay in hand to relight the next.
+        let (mut server, _client) = holding("base:torch_stub", 0);
+        let stub = server.content.blocks.expect("base:torch_stub");
+        let player = server.players.get_mut(&1).unwrap();
+        (player.inventory.slots[0], player.inventory.slots[5]) = (Some(ItemStack::new(stub, 3)), Some(ItemStack::new(torch, 3)));
+        let at = put(&mut server, "base:campfire");
+        server.cook(1, at);
+        let inventory = &server.players[&1].inventory;
+        assert_eq!((inventory.slots[0], inventory.slots[5]), (Some(ItemStack::new(stub, 2)), Some(ItemStack::new(torch, 4))), "stubs in hand, torch topped up");
+    }
+
+    /// A bundle of sticks in a fire with the pack one place short of full: the brand is held
+    /// up and the sticks left go to that place. Full, nothing is cooked and nothing lost.
+    #[test]
+    fn a_bundle_lit_with_a_pack_nearly_full_keeps_every_stick() {
+        for free in [true, false] {
+            let (mut server, _client) = holding("base:stick", 0);
+            let [stick, brand, pick] = ["base:stick", "base:firebrand", "base:iron_pickaxe"].map(|n| server.content.blocks.expect(n));
+            let player = server.players.get_mut(&1).unwrap();
+            for slot in player.inventory.slots.iter_mut() {
+                *slot = Some(ItemStack::new(pick, 1));
+            }
+            player.inventory.slots[0] = Some(ItemStack::new(stick, 3));
+            let last = player.inventory.slots.len() - 1;
+            if free {
+                player.inventory.slots[last] = None;
+            }
+            let at = put(&mut server, "base:campfire");
+            server.cook(1, at);
+            let inventory = &server.players[&1].inventory;
+            if free {
+                assert_eq!((inventory.slots[0], inventory.slots[last]), (Some(ItemStack::new(brand, 1)), Some(ItemStack::new(stick, 2))));
+            } else {
+                assert_eq!((inventory.slots[0], inventory.count(brand)), (Some(ItemStack::new(stick, 3)), 0), "no room, not cooked");
+            }
+        }
     }
 
     /// A firebrand burns a second at a time in hand, and burnt out leaves a charred stick;
