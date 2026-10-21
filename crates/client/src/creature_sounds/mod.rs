@@ -71,6 +71,8 @@ pub enum Kind {
     Ready,
     /// Lunging or striking.
     Attack,
+    /// Warning a player off before it attacks (`creature::Warn`): a growl, a hiss, a roar.
+    Warn,
     Hurt,
     Death,
     /// Barks of a settlement's people (`Server::bark`): a hum of greeting, a cry of alarm, a
@@ -84,7 +86,7 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 14] = [
+    pub const ALL: [Kind; 15] = [
         Kind::Step,
         Kind::Idle,
         Kind::Graze,
@@ -93,6 +95,7 @@ impl Kind {
         Kind::Call,
         Kind::Ready,
         Kind::Attack,
+        Kind::Warn,
         Kind::Hurt,
         Kind::Death,
         Kind::Greet,
@@ -115,7 +118,7 @@ impl Kind {
         match self {
             Kind::Ready | Kind::Alert => Some(Kind::Call),
             Kind::Call => Some(Kind::Idle),
-            Kind::Attack => Some(Kind::Alert),
+            Kind::Attack | Kind::Warn => Some(Kind::Alert),
             Kind::Hurt => Some(Kind::Alert),
             Kind::Death => Some(Kind::Hurt),
             Kind::Greet => Some(Kind::Idle),
@@ -133,7 +136,7 @@ impl Kind {
             Kind::Graze | Kind::Rest | Kind::Content => 10.0,
             Kind::Idle | Kind::Greet | Kind::Tamed => 24.0,
             Kind::Alarm => 48.0,
-            Kind::Alert | Kind::Attack => 32.0,
+            Kind::Alert | Kind::Attack | Kind::Warn => 32.0,
             Kind::Hurt | Kind::Death | Kind::Ready => 36.0,
             Kind::Call => 56.0,
         }
@@ -149,7 +152,7 @@ impl Kind {
             Kind::Graze => 0.35,
             Kind::Idle => 0.45,
             Kind::Alert | Kind::Ready | Kind::Tamed => 0.6,
-            Kind::Attack | Kind::Hurt | Kind::Death => 0.7,
+            Kind::Attack | Kind::Warn | Kind::Hurt | Kind::Death => 0.7,
             Kind::Call => 0.8,
         }
     }

@@ -44,6 +44,8 @@ pub struct VoiceDef {
     pub call: Option<EventDef>,
     pub ready: Option<EventDef>,
     pub attack: Option<EventDef>,
+    /// Unset, its `alert`.
+    pub warn: Option<EventDef>,
     pub hurt: Option<EventDef>,
     pub death: Option<EventDef>,
     /// Barks, for a settlement's people: greeting, alarm and contentment.
@@ -65,6 +67,7 @@ impl VoiceDef {
             Kind::Call => self.call.as_ref(),
             Kind::Ready => self.ready.as_ref(),
             Kind::Attack => self.attack.as_ref(),
+            Kind::Warn => self.warn.as_ref(),
             Kind::Hurt => self.hurt.as_ref(),
             Kind::Death => self.death.as_ref(),
             Kind::Greet => self.greet.as_ref(),

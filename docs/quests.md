@@ -260,6 +260,26 @@ Along the bot's run the open quests are one head per path: the next main quest, 
 Cook, Far Horizons, First Harvest, Patient Angler, A Table for Two, Earthenware, Bigger
 Game, First Metal, Fired Whole and A Place to Pray.
 
+A path waits on the stations its goals need (Oct 21): A Stove and a Quern comes after Fire
+the Clay as well as Snug for Winter, since every workshop piece now takes kiln output (the
+spindle and loom fired clay, the quern stone, which is cobblestone fired in a pit kiln), and
+Hung to Dry comes after Crafting Table, as its rack is a 3 by 3 recipe. A content test
+(`a_quest_asks_only_for_what_its_stations_are_taught_for`) holds every quest on every path to
+this: one of its routes (a quest finishes on any one of its tasks) has the player make only
+what is gathered, mined, or made at stations the quests before it have the player make,
+counting for each goal only the ways the quest book shows for it (`recipe_book::counts`). It
+prints the route it found for each quest. The main-line walk could not catch it: it walks
+only the main line, and it puts down whatever station a recipe needs. What it found: Stone
+in Hand has the player make the grindstone its stone heads are ground at, and A Full Stone
+Kit comes after it; A Fish Supper comes after First Night, which teaches its campfire; and
+the Nomad quests whose goals take hide (A Coin Purse, Pockets, A Stone's Throw, Hide Wraps)
+come after Hung to Dry, whose drying rack turns a hunt's raw hide into hide. The Farm book
+teaches its own rack, as a Farm quest comes after Farm quests only: Bigger Game has the player
+make one, and the Farm quests that take hide (Full Hide Wraps, Light in the Window, Books and
+Banners, Candlelight, The Beekeeper Calls) come after it. A drop counts only from a creature
+every player meets: the raiders and jailers that also drop hide come only with rare
+wandering parties, and a boss's drop counts once a quest before has the player kill it.
+
 ### Nomad paths, and quests in parts (Oct 14)
 
 The Nomad tab opened ten quests at once on a new world (Wild Harvest, A Pile of Stone,

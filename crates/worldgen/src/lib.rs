@@ -1192,6 +1192,14 @@ impl Generator for Overworld {
 }
 
 impl Overworld {
+    /// The spawn point, found with everything near it that is found once per world (the
+    /// spawn's estimate, the squares in reach, the spawn's square settled): the server
+    /// asks before its first tick, so no tick waits on a streaming worker's first search.
+    pub fn settle_spawn(&self) -> IVec3 {
+        self.settlements.settle_spawn(self);
+        self.spawn_search(true)
+    }
+
     /// Near where a new player spawns, from the land alone, before trails and
     /// settlements: the spawn point unless it would fall on a trail or in a settlement,
     /// and then a step or two along the same search. Settlements plan by it, so the

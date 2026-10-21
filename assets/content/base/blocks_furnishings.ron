@@ -68,6 +68,13 @@
             // a washstand, a little table with a basin and a jug on it.
             (name: "{name}_blanket_chest", render: Model, shape: "blanket_chest", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "blanket_chest", "storage", "decor", "wood"]),
             (name: "{name}_washstand", render: Model, shape: "washstand", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "washstand", "decor", "wood"]),
+            // A rushlight holder: a peeled rush dipped in fat, held burning in a clip on a
+            // little wooden stand, the poor home's candle (a `light` the home counts). Its rush
+            // burns a game day, faster than a candle (flame.rs), down to the bare holder; a
+            // fresh rush (`relight_with:reed`) in the clip lights it again.
+            (name: "{name}_rushlight", render: Model, shape: "rushlight", solid: false, light: 7, sound: Wood, textures: All("furniture_grain"), hardness: 0.3, color: (160, 120, 70), tags: ["furniture", "light", "rushlight", "decor", "wood", "burns_days:1", "burns_out_to:{name}_rushlight_spent", "tended"],
+                particles: [(style: Flame, rate: 6.0, at: (0.7, 0.84, 0.5), spread: 0.01, size: 0.6, height: 0.15, color: Some((240, 150, 40)))]),
+            (name: "{name}_rushlight_spent", render: Model, shape: "rushlight_spent", solid: false, sound: Wood, textures: All("furniture_grain"), hardness: 0.3, color: (160, 120, 70), tags: ["furniture", "wood", "relights_to:{name}_rushlight", "relight_with:reed"]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
@@ -84,7 +91,9 @@
                 swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
             (name: "{name}_curtain_open", render: Model, shape: "curtain_open", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
                 swaps: "{name}_curtain", drops: "{name}_curtain", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
-            (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
+            // `paper_lantern` is this alone, not the metal or stone lanterns, for a quest that asks
+            // for paper lanterns (Lanterns of Cloth).
+            (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "paper_lantern", "light", "decor", "colour:{name}"]),
             (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),
             (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "yard", "colour:{name}"]),
             (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}", "shelter:draughty"]),
@@ -182,6 +191,13 @@
             drops: "core:air", hardness: 0.0, color: (110, 140, 70), tags: ["hanging", "drying", "decor"],
         ),
 
+        // A window box: a trough of flowers on brackets, set against the wall outside under
+        // a window or a sill. It is one block in every wood's stead, its own colours drawn
+        // as they show (no tint), and set out under the sky it is a yard piece (`yard`).
+        (
+            name: "window_box", render: Model, shape: "window_box", facing: true, sound: Grass, textures: All("window_box_wood"),
+            hardness: 0.6, color: (120, 150, 70), tags: ["window_box", "yard", "decor", "furnishing"],
+        ),
         // Singles. A candle (tallow until bees make wax), and the fire a hearth has. A candle
         // set down burns three game days to its end, a stub of wax never lit again (flame.rs);
         // picked up, it keeps what it has burnt.

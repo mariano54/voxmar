@@ -27,7 +27,7 @@ use voxmar_engine::content::Content;
 use voxmar_engine::lang::{def_key, title_from_id};
 use voxmar_engine::quest::{Goal, QuestDef, QuestState, Reward};
 use voxmar_engine::quest_path::QuestPath;
-use voxmar_engine::recipe_book::{Entry, Method, RecipeBook};
+use voxmar_engine::recipe_book::{Entry, Method, RecipeBook, counts};
 
 use super::HudImages;
 use super::inventory::InterfaceStyle;
@@ -931,11 +931,11 @@ fn draw(
     (mut web, stage): (Query<(Entity, &mut ScrollPosition), With<Web>>, Query<&ComputedNode, With<Stage>>),
     detail: Query<Entity, With<Detail>>,
     (mut recentre, mut zoom_at): (ResMut<Recentre>, ResMut<ZoomAt>),
-    mut drawn: Local<Option<(QuestView, u32, Vec<String>, bool, IVec2)>>,
+    mut drawn: Local<Option<(QuestView, u32, Vec<String>, usize, IVec2)>>,
 ) {
     // New content (a world played with other packages), a new recipe book, new ways:
     // cleared while the book is shut too.
-    way_cache.keep_for(viewer.book());
+    way_cache.keep_for(&viewer);
     if !ui.quests_open {
         *drawn = None;
         return;
@@ -943,7 +943,7 @@ fn draw(
     // The web's room inside its well, as laid out for this window: drawn again when the
     // window changes it. The card over its right side leaves the layout as it is.
     let room = stage.single().map_or(Vec2::ZERO, |computed| (computed.size() * computed.inverse_scale_factor() - Vec2::splat(2.0 * space::GAP)).max(Vec2::ZERO));
-    let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), viewer.book().is_some(), room.as_ivec2());
+    let wanted = (view.clone(), player.quests_rev, settings.pinned_quests.clone(), way_cache.1, room.as_ivec2());
     if drawn.as_ref() == Some(&wanted) && !locale.is_changed() && !recentre.0 && !fit_way.is_changed() {
         return;
     }
@@ -1771,15 +1771,15 @@ fn drag_web(
 }
 
 /// Each goal's ways (by quest, task and goal), worked out once for the recipe book they
-/// came from (that book's address).
+/// came from (that book's number).
 #[derive(Default)]
 struct WayCache(std::collections::HashMap<String, Vec<Entry>>, usize);
 
 impl WayCache {
     /// Forgets the ways once the recipe book is another (built again for a world of other
     /// content), whichever system saw it first.
-    fn keep_for(&mut self, book: Option<&RecipeBook>) {
-        let at = book.map_or(0, |book| std::ptr::from_ref(book) as usize);
+    fn keep_for(&mut self, viewer: &super::recipes::RecipeViewer) {
+        let at = viewer.book_number();
         if self.1 != at {
             self.0.clear();
             self.1 = at;
@@ -1834,33 +1834,6 @@ pub(crate) fn goal_ways(content: &Content, book: &RecipeBook, package: &str, goa
 /// or a quest's reward, which no one can set out to do, after them, whatever their levels.
 fn order_ways(ways: &mut [Entry]) {
     ways.sort_by_key(|way| (matches!(way.method, Method::Chest { .. } | Method::Trade { .. } | Method::Reward { .. }), level(&way.method)));
-}
-
-/// Whether a way of getting an item counts for a goal: a goal to cook, cooking at a
-/// station, or a home station's work that counts as cooking (the station it names, for one
-/// at a station); to craft, crafting (near the
-/// block it names, for one near a block); to catch, a line's catch; to pick or mine,
-/// breaking or harvesting; to carry or set down, any way but a quest's reward (the goal
-/// teaches the work itself); to look an item up, none, for looking it up is its lesson.
-pub(crate) fn counts(content: &Content, goal: &Goal, way: &Entry) -> bool {
-    let method = &way.method;
-    // Left to work in a home station whose work counts as cooking (an earth clamp's fired
-    // clay), at that station by its name.
-    let station_cooks = |at: Option<&str>| match method {
-        Method::Work { station, .. } => content.stations.stations.iter().any(|s| s.empty == *station && s.works.iter().any(|w| w.output == way.output && w.counts.as_deref() == Some("cooked")))
-            && at.is_none_or(|at| content.blocks.def(*station).name.rsplit(':').next() == Some(at)),
-        _ => false,
-    };
-    match goal {
-        Goal::Cook(..) => matches!(method, Method::Cook { .. }) || station_cooks(None),
-        Goal::CookAt(_, at, _) => matches!(method, Method::Cook { station, .. } if station == at) || station_cooks(Some(at)),
-        Goal::Craft(..) => matches!(method, Method::Craft { .. }),
-        Goal::CraftNear(_, at, _) => matches!(method, Method::Craft { near: Some(near), .. } if near == at),
-        Goal::Catch(..) => matches!(method, Method::Catch { .. }),
-        Goal::Pick(..) | Goal::Mine(..) => matches!(method, Method::Break { .. } | Method::Harvest { .. } | Method::Found { .. }),
-        Goal::Have(..) | Goal::Placed(..) => !matches!(method, Method::Reward { .. }),
-        _ => false,
-    }
 }
 
 /// The level in its skill a way takes, 1 for one that takes none.
@@ -2031,7 +2004,7 @@ fn track(
     (world, time, mut near): (Res<crate::world::ClientWorld>, Res<Time>, Local<(f32, Vec<bool>)>),
 ) {
     let content = &launch.content;
-    way_cache.keep_for(viewer.book());
+    way_cache.keep_for(&viewer);
     for (unpin, interaction) in &unpins {
         if *interaction == Interaction::Pressed {
             toggle_pin(&mut settings, content, &unpin.0);
@@ -2074,6 +2047,8 @@ fn track(
         matters.sort();
         matters.dedup();
         *chosen = Some((chose_for, shown_ways, matters));
+        // Other ways may need other stations: looked for again now, not at the next look.
+        near.0 = 0.0;
     }
     let Some((_, shown_ways, matters)) = chosen.as_ref() else { return };
     let mut held: Vec<BlockId> = player.inventory.slots.iter().flatten().map(|stack| stack.item).filter(|item| matters.binary_search(item).is_ok()).collect();
@@ -2088,7 +2063,7 @@ fn track(
         let eye = player.eye();
         near.1 = shown_ways.iter().map(|(_, (_, way))| station_of(way).is_none_or(|tag| !voxmar_engine::craft::tags_near(&[tag], &content.blocks, eye, |pos| world.block(pos)).is_empty())).collect();
     }
-    // The book too, by its address: one built again for other content draws the ways again.
+    // The book too, by its number: one built again for other content draws the ways again.
     let wanted = (settings.pinned_quests.clone(), player.quests_rev, locale.code().to_owned(), book_key.clone(), way_cache.1, held.clone(), near.1.clone());
     if drawn.as_ref() == Some(&wanted) {
         return;
