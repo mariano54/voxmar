@@ -12,5 +12,10 @@
         // (or, opening none, the next open quest of its age), so the next step is always on
         // screen.
         follow_on: true,
+        // How many pinned quests, from the top, show a way to meet their next goal under it
+        // (the recipe book's way, as the quest book shows it; none for a goal to look up).
+        ways: 1,
+        // The tracker names the key that opens the quest book at the quest.
+        book_key: true,
     ),
 )

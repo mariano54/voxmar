@@ -5813,6 +5813,10 @@ struct BrandPlan {
     stick: BlockId,
     fire: BlockId,
     burnt: Option<BlockId>,
+    /// The client's count of proposals as the clicking began, and the server second (of
+    /// the phase) the one `base:cook` at the fire went out.
+    proposals: u64,
+    asked: Option<f32>,
 }
 
 impl BrandPlan {
@@ -5828,7 +5832,7 @@ impl BrandPlan {
                 def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
             });
             if let Some(fire) = fire {
-                return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand) });
+                return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand), proposals: 0, asked: None });
             }
         }
         Err("nothing in the content gives light held and burns, made at level 1 at a fire that can be set down".into())
@@ -5903,24 +5907,48 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if let (true, Some(slot)) = (burning, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
                 world.resource_mut::<LocalPlayer>().selected = slot;
                 aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
-                mouse(world, MouseButton::Right, true);
+                let proposals = world.resource::<Net>().proposals();
+                gate.firebrand = Some(BrandPlan { proposals, asked: None, ..plan });
                 gate.advance(now);
             } else if waited {
                 fail(world, gate, "firebrand: lit", format!("the {} ({burning}) or a {} in the hotbar ({slot:?}) never came in {BRAND_WAIT} server seconds", name(plan.fire), name(plan.stick)));
             }
         }
+        // Clicked as a player does, once the crosshair is on the fire with the stick in hand
+        // (a press the frame the aim turned spent itself on what the crosshair was on before,
+        // the stone behind, and the button held on asked nothing more), until one `base:cook`
+        // at the fire has gone out; then never again: that one cook lights it, or it fails.
         2 => {
-            let Some(plan) = gate.firebrand else { return };
+            let Some(mut plan) = gate.firebrand else { return };
             aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
+            let held = in_hand(world);
+            let cook = content.actions.expect("base:cook");
+            if plan.asked.is_none() {
+                let aimed = world.resource::<crate::interact::Target>().hit.as_ref().is_some_and(|hit| hit.block == fire_at);
+                gate.tap(world, aimed && held.is_some_and(|s| s.item == plan.stick), now);
+                let net = world.resource::<Net>();
+                let at_fire = matches!(net.last_proposed(), Some((action, voxmar_engine::action::ActionTarget::Block { block, .. })) if action == cook && block == fire_at);
+                if net.proposals() > plan.proposals && at_fire {
+                    plan.asked = Some(gate.server_in_phase());
+                    gate.firebrand = Some(plan);
+                    mouse(world, MouseButton::Right, false);
+                }
+            }
             let held = in_hand(world);
             if held.is_some_and(|s| s.item == plan.brand) {
                 mouse(world, MouseButton::Right, false);
-                gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand", name(plan.stick), name(plan.fire), name(plan.brand))));
+                gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand, on click {}", name(plan.stick), name(plan.fire), name(plan.brand), gate.taps)));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", fire_at.x, fire_at.y, fire_at.z));
                 gate.advance(now);
-            } else if gate.server_in_phase() > BRAND_WAIT + 5.0 {
+            } else if let Some(asked) = plan.asked {
+                if gate.server_in_phase() - asked > BRAND_WAIT {
+                    let held = held.map(|s| name(s.item));
+                    fail(world, gate, "firebrand: lit", format!("the base:cook of the {} at the {} (click {}) left {held:?} in hand {BRAND_WAIT} server seconds on", name(plan.stick), name(plan.fire), gate.taps));
+                }
+            } else if gate.waited_both(BRAND_WAIT + 5.0, now) {
+                // By both clocks, not by clicks: one never aimed at the fire clicks none.
                 let held = held.map(|s| name(s.item));
-                fail(world, gate, "firebrand: lit", format!("holding the {} in the {} for {:.1} server seconds left {held:?} in hand", name(plan.stick), name(plan.fire), gate.server_in_phase()));
+                fail(world, gate, "firebrand: lit", format!("{} clicks with {held:?} in hand sent no base:cook at the {} in {:.1} server seconds", gate.taps, name(plan.fire), gate.server_in_phase()));
             }
         }
         // The fire gone and the room's light drawn: the floor before the player, lit by the
@@ -11229,6 +11257,9 @@ enum View {
     Quests,
     /// First Night's full cooking instructions, in both languages.
     FirstNight,
+    /// First Night with a way of more inputs than any shipped recipe under its first goal,
+    /// as a mod may add (`FIT_LONG_WAY`).
+    LongWay,
     /// The menu on one settings tab.
     Menu(usize),
     /// Dead, waiting to respawn.
@@ -11311,7 +11342,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         [View::Inventory]
             .into_iter()
             .chain((0..FIT_LOOKUPS.len()).map(View::Recipes))
-            .chain([View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)])
+            .chain([View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::LongWay, View::Menu(0)])
             .collect()
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
@@ -11321,7 +11352,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             .chain((0..FIT_LOOKUP_COUNT).map(View::Recipes))
             .chain([View::Character, View::Prayers])
             .chain((0..skills).map(View::Guide))
-            .chain([View::Quests, View::FirstNight])
+            .chain([View::Quests, View::FirstNight, View::LongWay])
             .chain((0..crate::settings::TABS).map(View::Menu))
             .collect()
     };
@@ -11448,6 +11479,25 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
     }
     gate.advance(now);
+}
+
+/// The items a cooked way of `FIT_LONG_WAY` cooks with, beside the one held: more than any
+/// shipped recipe takes, as a mod may ask.
+const FIT_LONG_WAY: [&str; 5] = ["base:wheat", "base:flint", "base:oak_log", "base:wool", "base:raw_perch"];
+
+/// The first cooked way the recipe book has, with every item of `FIT_LONG_WAY` cooked with
+/// it, two of each, and some of it made: a recipe line too long for the quest book's column
+/// unless it wraps.
+fn long_way(world: &World) -> Option<voxmar_engine::recipe_book::Entry> {
+    use voxmar_engine::recipe_book::Method;
+    let content = &world.resource::<Launch>().content;
+    let book = world.resource::<crate::hud::recipes::RecipeViewer>().book()?;
+    let mut way = book.entries().iter().find(|e| matches!(e.method, Method::Cook { .. }))?.clone();
+    if let Method::Cook { with, .. } = &mut way.method {
+        *with = FIT_LONG_WAY.iter().map(|name| (content.blocks.expect(name), 2)).collect();
+    }
+    way.count = (3, 3);
+    Some(way)
 }
 
 /// A window smaller than the gate's own, where the interface steps down to 75% and the HUD
@@ -11687,7 +11737,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         Some(View::Character | View::Prayers | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
         Some(View::Journal(_)) => ui.journal_open = true,
-        Some(View::Quests | View::FirstNight) => ui.quests_open = true,
+        Some(View::Quests | View::FirstNight | View::LongWay) => ui.quests_open = true,
         Some(View::Console) => ui.console_open = true,
         Some(View::Recipes(_)) => (ui.inventory_open, ui.recipes_open) = (true, true),
         _ => {}
@@ -11715,8 +11765,12 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         };
         *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked, ..default() };
     }
-    if let Some(View::FirstNight) = view {
+    if let Some(View::FirstNight | View::LongWay) = view {
         *world.resource_mut::<crate::hud::quests::QuestView>() = crate::hud::quests::QuestView { chapter: 0, picked: Some("base:first_night".into()), ..default() };
+    }
+    let long = matches!(view, Some(View::LongWay)).then(|| long_way(world)).flatten();
+    if world.resource::<crate::hud::quests::FitWay>().0 != long {
+        world.resource_mut::<crate::hud::quests::FitWay>().0 = long;
     }
     if let Some(View::Journal(page)) = view {
         world.resource_mut::<crate::hud::journal::JournalView>().page = page;
