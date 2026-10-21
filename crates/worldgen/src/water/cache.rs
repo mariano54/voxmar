@@ -24,6 +24,14 @@ impl<T: Weigh + ?Sized> Weigh for Arc<T> {
     }
 }
 
+/// A generated column holds about this much (106 KiB measured over 576 columns round a
+/// spawn), counted for each as its chunks are not walked.
+impl Weigh for voxmar_engine::world::Column {
+    fn bytes(&self) -> usize {
+        112 << 10
+    }
+}
+
 impl<T> Weigh for [T] {
     fn bytes(&self) -> usize {
         std::mem::size_of_val(self)
