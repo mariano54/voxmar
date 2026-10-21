@@ -370,7 +370,7 @@ player on it (`base:sit`, `Requirement::Seat`, `Effect::Sit`): the server sets t
 sets them on top, and wants two free cells over it), and their eye drops to
 `vitals::SEATED_EYE` (1.3) over their feet, on the server and the client alike (`vitals::eye`; `Vitals::seated`, protocol
 40). They sit until they move off it or it goes (`vitals::still_seated`, checked once a
-second). Effects can ask `Seated`; base's **By the Fire** (`fireside`: heal x1.5, 4° warmer)
+second). Effects can ask `Seated`; base's **Fireside** (`fireside`: heal x1.5, 4° warmer)
 holds sat with a fire or the hearth within 3, so a Nomad's stool at the campfire and a chair
 at home both rest the player after a day out. Tests: server `seats.rs`. The gate's Seat step
 sits on a stool under a block two up, by a campfire (shot `seat-fire`), and steps off it.
@@ -400,7 +400,10 @@ doorway. Indoors at home behind a shut door, the **Door shut** reaction gives he
 
 How it works, for mod authors: it is all data on the blocks (blocks_furnishings.ron).
 `upper` names the block placed above with it, which rests on it (`support: Below`) and goes
-with it either way (`supported_by`). `swaps` names what using it turns it into, in the same
+with it either way (`supported_by`). `beside` names a block placed with it in the cell to
+the right of whoever sets it (a double gate's second leaf), in the same facing; the two
+are broken and turned together, and load refuses a pair whose `swaps` do not make a pair.
+`swaps` names what using it turns it into, in the same
 facing, its other half with it (`action::swapping`, the `open` action, `Effect::Swap`).
 Shut and open are two blocks with their own `solid`, and only the server turns them; the
 client is told, never guesses, so nobody walks through a door the server still holds shut.

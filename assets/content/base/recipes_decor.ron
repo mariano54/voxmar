@@ -102,11 +102,13 @@
 
         // Singles. Tallow lights a candle, and beeswax better; a lantern holds a torch in
         // metal, a stone one in four blocks of stone.
-        (pattern: [["twine", ""], ["hide", "hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
+        // Tallow from rendered fat: a wick over a lump of lard makes two. First, as a wild
+        // boar or a bear drops lard: the quest book and the tracker lead with it.
+        (pattern: [["twine"], ["lard"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
         // Beeswax burns cleaner and longer: one cake and a wick make three (bees.ron).
         (pattern: [["twine"], ["beeswax"]], output: "candle", count: 3, skill: "core:crafting", level: 3, xp: 3.0),
-        // Tallow from rendered fat: a wick over a lump of lard makes two.
-        (pattern: [["twine"], ["lard"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
+        // Two hides make two, once raw hide is hung to dry.
+        (pattern: [["twine", ""], ["hide", "hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
         // A clay oil lamp, made empty: a twine wick in a fired clay bowl. Filled with fat by
         // a right click, it is lit (blocks_furnishings.ron).
         (pattern: [["", "twine"], ["fired_clay", "fired_clay"]], output: "clay_oil_lamp_empty", skill: "core:crafting", level: 4, xp: 4.0),

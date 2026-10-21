@@ -373,3 +373,57 @@ fn the_short_bow_comes_within_the_nomad_age() {
         }
     }
 }
+
+/// The Milk Pail's milkers ask a Hunter level to tame: the cheapest way through what the book
+/// makes sure of before it opens reaches the least of them. Hunter rewards count at their full
+/// value; the tames and kills its goals ask count at 9/10 of their experience (a storm's
+/// lesser experience), on the cheapest way each quest allows. So a later reward change
+/// cannot open the quest with no animal in reach.
+#[test]
+fn the_milk_pail_opens_at_the_hunter_level_its_cheapest_milker_asks() {
+    let content = content();
+    let short = |name: &str| name.rsplit(':').next().unwrap_or(name).to_owned();
+    let creatures: Vec<_> = content.creatures.iter().map(|(_, c)| &c.def).collect();
+    let level = creatures
+        .iter()
+        .filter(|c| c.products.iter().any(|p| short(&p.item) == "milk"))
+        .filter_map(|c| c.taming.as_ref().map(|t| t.level))
+        .min()
+        .expect("a tameable animal gives milk");
+    let need = content.skills.xp_for(level) as f32 / 10.0;
+    let tame_xp = |name: &str| creatures.iter().filter(|c| name == "any" || short(&c.name) == short(name)).filter_map(|c| c.taming.as_ref().map(|t| t.xp)).reduce(f32::min).unwrap_or(0.0);
+    let hunted = |c: &&&voxmar_engine::creature::CreatureDef| c.xp.skill.as_deref().is_some_and(|s| short(s) == "hunter");
+    let kill_xp = |name: &str| creatures.iter().filter(hunted).filter(|c| name == "any" || short(&c.name) == short(name)).map(|c| c.xp.kill).reduce(f32::min).unwrap_or(0.0);
+    // Every quest it surely comes after: an `a|b` entry may be either, so neither counts.
+    let mut before: Vec<&str> = Vec::new();
+    let mut todo: Vec<&str> = vec!["base:the_milk_pail"];
+    while let Some(name) = todo.pop() {
+        let quest = content.quests.get(name).unwrap_or_else(|| panic!("no quest {name}"));
+        for after in quest.after.iter().filter(|a| !a.contains('|')) {
+            if !before.contains(&after.as_str()) {
+                before.push(after);
+                todo.push(after);
+            }
+        }
+    }
+    let mut total = 0.0;
+    for name in &before {
+        let quest = content.quests.get(name).unwrap();
+        total += quest.rewards.iter().map(|r| match r {
+            Reward::Xp(skill, xp) if short(skill) == "hunter" => *xp,
+            _ => 0.0,
+        }).sum::<f32>();
+        let cheapest = quest
+            .tasks
+            .iter()
+            .map(|task| task.iter().map(|goal| match goal {
+                Goal::Tame(c, n) => *n as f32 * tame_xp(c),
+                Goal::Kill(c, n) => *n as f32 * kill_xp(c),
+                _ => 0.0,
+            }).sum::<f32>())
+            .reduce(f32::min)
+            .unwrap_or(0.0);
+        total += 0.9 * cheapest;
+    }
+    assert!(total >= need, "The Milk Pail opens with {total:.0} Hunter experience at the least, short of the {need:.0} Hunter {level} its cheapest milker asks");
+}

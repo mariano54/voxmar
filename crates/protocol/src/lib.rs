@@ -53,8 +53,10 @@ pub use voxmar_engine::weather::Weather;
 // 55 is unused.
 // 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
 // 57: tools wear (ItemStack::wear) and ServerMessage::ToolWore.
+// 58: a creature warning a player off before it attacks (Pose::Warning).
+// 59: a firing finished while the player was away (ServerMessage::Fired).
 // 60: ServerMessage::Shown, what stands on the blocks that show what they hold (a shelf's
-// things), a column at a time to the players who have it (58 and 59 are other lanes').
+// things), a column at a time to the players who have it.
 pub const PROTOCOL_VERSION: u32 = 60;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
@@ -196,6 +198,10 @@ pub enum ServerMessage {
     /// Something the player tried was refused, and why: shown where the interface shows
     /// refusals (by the hotbar, as for a level the player lacks), not in the console.
     Refused { why: Words },
+    /// Something the player set going finished (a clamp they lit charred through, a kiln
+    /// they fired gone cold), wherever they are: a note at the side of the screen and a
+    /// sound, so one who walked away knows to come back.
+    Fired { words: Words },
     /// The weather where the player is, sent when it changes and every few seconds, with
     /// the names of the effects showing (`valley_fog`, `hail`), strongest first, and the
     /// rain around, to show storms coming. `quick` asks the client to change to it within

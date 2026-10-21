@@ -391,18 +391,28 @@ impl ClientWorld {
     }
 }
 
-/// Starts relight+remesh jobs for dirty columns, nearest to the camera first, and remeshes
-/// columns whose level of detail changed as the camera moved.
+/// Which dirty column to mesh first, the least first: the nearest, but those the camera
+/// faces before those beside it and those behind, as if each were twice as far beside and
+/// three times as far behind as ahead. A flight meets the land ahead and passes what is
+/// behind; standing, what is looked at fills in first. With no facing, the nearest.
+fn mesh_order(pos: ColumnPos, center: ColumnPos, facing: Vec2) -> i32 {
+    let distance = pos.distance(center) as f32;
+    let along = (pos.0 - center.0).as_vec2().dot(facing).clamp(-distance, distance);
+    ((2.0 * distance - along) * 4.0).round() as i32
+}
+
+/// Starts relight+remesh jobs for dirty columns, nearest to the camera first and those it
+/// faces before the rest (`mesh_order`), and remeshes columns whose level of detail
+/// changed as the camera moved.
 fn dispatch_jobs(
     mut world: ResMut<ClientWorld>,
     camera: Query<&GlobalTransform, With<Camera3d>>,
     mut last_center: Local<Option<ColumnPos>>,
 ) {
     let max_in_flight = rayon::current_num_threads() * 2;
-    let center = camera
-        .single()
-        .map(|t| ColumnPos::of_block(t.translation().floor().as_ivec3()))
-        .unwrap_or(ColumnPos::new(0, 0));
+    let camera = camera.single().ok();
+    let center = camera.map(|t| ColumnPos::of_block(t.translation().floor().as_ivec3())).unwrap_or(ColumnPos::new(0, 0));
+    let facing = camera.map_or(Vec2::ZERO, |t| t.forward().xz().normalize_or_zero());
 
     let world = &mut *world;
     world.detail_center = center;
@@ -457,13 +467,14 @@ fn dispatch_jobs(
             }
         }
     }
-    // The nearest first, sorting only as many as there are free jobs.
+    // The first in `mesh_order`, sorting only as many as there are free jobs.
     let free = max_in_flight.saturating_sub(world.in_flight.len()).min(ready.len());
+    let order = |pos: &ColumnPos| mesh_order(*pos, center, facing);
     if free < ready.len() {
-        ready.select_nth_unstable_by_key(free, |pos| pos.distance(center));
+        ready.select_nth_unstable_by_key(free, order);
         ready.truncate(free);
     }
-    ready.sort_unstable_by_key(|pos| pos.distance(center));
+    ready.sort_unstable_by_key(order);
 
     let mut dispatched = 0;
     for pos in ready {
@@ -778,6 +789,38 @@ mod tests {
         }
         assert_eq!(world.received_ahead(eye, Vec2::X), 7);
         assert_eq!(world.meshed_ahead(eye, Vec2::X), 5, "of what came, meshed");
+    }
+
+    /// The land the camera faces is meshed first: of columns as near, ahead before beside
+    /// before behind, and ahead as soon as beside at half the distance or behind at a third.
+    #[test]
+    fn the_land_ahead_is_meshed_first() {
+        let order = |x, z, facing| mesh_order(ColumnPos::new(x, z), ColumnPos::new(0, 0), facing);
+        let east = Vec2::X;
+        assert!(order(3, 0, east) < order(0, 3, east) && order(0, 3, east) < order(-3, 0, east));
+        assert_eq!(order(6, 0, east), order(0, 3, east));
+        assert_eq!(order(9, 0, east), order(-3, 0, east));
+        assert_eq!(order(3, 0, Vec2::ZERO), order(-3, 0, Vec2::ZERO), "no facing: the nearest");
+        // Dispatched so: with columns all round and room for a few jobs, those east first.
+        let mut world = test_world();
+        for x in -6..=6 {
+            for z in -6..=6 {
+                world.voxels.insert(ColumnPos::new(x, z), Arc::new(Column::default()));
+                if x.abs() <= 5 && z.abs() <= 5 {
+                    world.dirty.insert(ColumnPos::new(x, z));
+                }
+            }
+        }
+        let mut app = App::new();
+        app.insert_resource(world).add_systems(Update, dispatch_jobs);
+        app.world_mut().spawn((Camera3d::default(), GlobalTransform::from(Transform::from_xyz(8.0, 100.0, 8.0).looking_to(Vec3::X, Vec3::Y))));
+        app.update();
+        let world = app.world().resource::<ClientWorld>();
+        let started: Vec<ColumnPos> = world.in_flight.keys().copied().collect();
+        assert!(!started.is_empty() && started.len() < 121, "{} started", started.len());
+        let east = started.iter().filter(|p| p.0.x > 0).count();
+        let west = started.iter().filter(|p| p.0.x < 0).count();
+        assert!(east > 2 * west.max(1), "{east} east, {west} west of {started:?}");
     }
 
     #[test]

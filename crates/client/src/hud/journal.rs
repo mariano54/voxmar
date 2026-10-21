@@ -92,14 +92,22 @@ pub struct Findable {
     pub studied: Option<String>,
 }
 
+/// A biome's name (or a biome tag's), in the player's language.
+fn biome_words(locale: &Locale, name: &str) -> String {
+    let local = name.strip_prefix("tag:").unwrap_or(name);
+    locale.get_or(&def_key("biome", local), &title_from_id(local)).to_owned()
+}
+
+/// Where a creature lives: the biome its habitat likes best, if it has one.
+pub(crate) fn creature_home(locale: &Locale, def: &voxmar_engine::creature::CreatureDef) -> Option<String> {
+    def.habitat.biomes.iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(biome, _)| biome_words(locale, biome))
+}
+
 /// Everything there is to find on `page`, in the content's order.
 pub fn findables(locale: &Locale, launch: &Launch, biomes: &[String], page: Page) -> Vec<Findable> {
     let content = &launch.content;
     let blocks = &content.blocks;
-    let biome_name = |name: &str| {
-        let local = name.strip_prefix("tag:").unwrap_or(name);
-        locale.get_or(&def_key("biome", local), &title_from_id(local)).to_owned()
-    };
+    let biome_name = |name: &str| biome_words(locale, name);
     // Bosses have their own page (`Page::Bosses`), whatever their kind.
     let creatures = |kinds: &[Kind], bosses: bool| -> Vec<Findable> {
         let registry = &content.creatures;
@@ -108,7 +116,7 @@ pub fn findables(locale: &Locale, launch: &Launch, biomes: &[String], page: Page
             .filter(|creature| kinds.contains(&creature.def.kind) && creature.def.boss == bosses)
             .map(|creature| {
                 let def = &creature.def;
-                let home = def.habitat.biomes.iter().max_by(|a, b| a.1.total_cmp(&b.1)).map(|(biome, _)| biome_name(biome));
+                let home = creature_home(locale, def);
                 let hint = match &home {
                     Some(home) => locale.format("journal.hint.lives_in", &[("biome", home)]),
                     None => locale.get(&format!("journal.hint.{}", page_name(page))).to_owned(),
