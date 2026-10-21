@@ -5962,8 +5962,9 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let held = in_hand(world);
             let cook = content.actions.expect("base:cook");
             // Another stick picked up since phase 1 would stack on the one in hand and repeat
-            // train 174: before any press, back to phase 1 to clear it.
-            if plan.asked.is_none() && holding(world, &name(plan.stick)).0 != 1 {
+            // train 174: before any press, back to phase 1 to clear it. None left is no such
+            // case (it may be the brand already, checked below), and phase 1 gives none.
+            if plan.asked.is_none() && holding(world, &name(plan.stick)).0 > 1 {
                 mouse(world, MouseButton::Right, false);
                 gate.phase = 0;
                 gate.advance(now);
