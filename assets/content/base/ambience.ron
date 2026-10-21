@@ -46,7 +46,12 @@
 // within 192), settlement_edge (blocks outside the nearest settlement's bounds, the ground
 // its buildings stand on and six blocks round, 0 within, 10000 with none), settlement_people
 // (how many live there: its size), sheltered (how much a roof overhead muffles the open
-// rain), the groups below, and the roof patters.
+// rain), home (how far up `home`'s ladder the player stands), the groups below, and the
+// roof patters.
+//
+// home: the home ladder's effects (effects.ron), lowest first: the `home` axis is 0 away
+//   from home, 1 holding the first, 2 the second, and so on, by the highest held. Each
+//   must be an effect, or the game does not start; a later package's list replaces it.
 //
 // shelter: how indoors is told and heard. `walls`: blocks from the eye a wall may be and
 //   count; `roof`: blocks above it a roof may be for the `roof` axis; `muffle`: Hz an outdoor
@@ -59,6 +64,9 @@
     // the rain drums on the roof, and the hearth crackles clear (fire layers never duck by
     // shelter).
     shelter: (walls: 6, roof: 8, muffle: 700, thunder: 0.5),
+    // The home ladder: a camp, a lit hearth, roofed and walled (Snug), then the Farm age's
+    // homes, each cosier than the last.
+    home: ["camp", "hearthside", "snug", "homely", "cosy", "heart_of_the_home"],
     groups: [
         // Walls that let the wind through, as the home judges a room's walls (`shelter`:
         // a `shelter:draughty` block such as wattle or hide, or earth, gravel, sand and any
@@ -80,11 +88,16 @@
         (name: "wood", tags: ["log"], range: (5, 60)),
         // Boards: a timber floor, walls and roof (`planks`), as a home is built of them.
         (name: "timber", tags: ["planks"], range: (20, 200)),
-        // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a
-        // kiln is stone to the step. One within five blocks is a fire fully heard; by ten
-        // blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth or a
-        // Crucible Kiln (a structure's core) is heard only while its fire burns.
-        (name: "fire", tags: ["campfire", "hearth", "pit_kiln", "crucible"], range: (3, 10), lit: true),
+        // A Crucible Kiln firing (its core, heard only while its fire burns): before the
+        // fire, so it roars as a kiln, not a hearth. Fully within five blocks.
+        (name: "kiln", tags: ["crucible"], range: (3, 10), lit: true),
+        // A charcoal clamp smouldering (its flue, `clamp_burning`): logs charring under the soil.
+        (name: "clamp", tags: ["clamp_burning"], range: (1, 4)),
+        // A fire to sit by: a campfire, a hearth, a pit kiln. Before rock, as a hearthstone
+        // or a kiln is stone to the step. One within five blocks is a fire fully heard; by
+        // ten blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth
+        // (a structure's core) is heard only while its fire burns.
+        (name: "fire", tags: ["campfire", "hearth", "pit_kiln"], range: (3, 10), lit: true),
         // Lava and falling water sound like water to the step, so they come first.
         (name: "lava", tags: ["lava"], range: (4, 80)),
         // A pot on the boil (`simmering`): one within five blocks is full.
@@ -294,11 +307,33 @@
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},
         ),
+        // The player's own lit hearth, as their home grows round it: a bed of embers glowing
+        // under the flames, the coals ticking as they settle. Faint by a bare hearthstone,
+        // fuller with each step up the ladder, full in the Heart of the Home.
+        (
+            name: "embers", sound: Embers, volume: 0.22, fade: 4,
+            when: {"fire": (min: 0.6, fade: 0.55), "home": (min: 6, fade: 4.5)},
+        ),
+        // A kiln firing: a deep roar shut in the brick, the draught howling in its flue.
+        (
+            name: "kiln_roar", sound: Kiln, volume: 0.32, fade: 2,
+            when: {"kiln": (min: 0.6, fade: 0.55)},
+        ),
+        // An earth clamp burning: a low, close hiss of the logs charring under the soil.
+        (
+            name: "clamp_hiss", sound: Smoulder, volume: 0.18, fade: 2,
+            when: {"clamp": (min: 0.3, fade: 0.25)},
+        ),
         // By the hearth on a stormy night: the wind moaning low over the chimney, louder
         // in the gusts.
         (
             name: "flue", sound: Flue, volume: 0.14, fade: 4,
             when: {"fire": (min: 0.6, fade: 0.55), "shelter": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 6), "sun": (max: 0.05, fade: 0.15)},
+        ),
+        // The same moan over a lit kiln's stack, heard from shelter by it.
+        (
+            name: "kiln_flue", sound: Flue, volume: 0.14, fade: 4,
+            when: {"kiln": (min: 0.6, fade: 0.55), "shelter": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 6), "sun": (max: 0.05, fade: 0.15)},
         ),
         // Thatch about to catch: a soft, close sizzle, the warning before the flame (with
         // `smoulder_crackle`'s spits). Only while the server says it smoulders.
@@ -508,6 +543,19 @@
             pitch: (0.9, 1.15), reach: 6,
             when: {"fire": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2)},
         ),
+        // Rain into a lit kiln's open top: the same hiss, from the kiln, by its own sky.
+        (
+            name: "kiln_sizzle", sound: Sizzle, volume: 0.24, at: OpenBlock("kiln"), per_minute: 6, cooldown: 4,
+            pitch: (0.8, 1.0), reach: 6,
+            when: {"kiln": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2)},
+        ),
+        // The soil of a burning clamp settling as the logs char: a few fine grains ticking
+        // down.
+        (
+            name: "clamp_settle", sound: Grit, volume: 0.2, at: Block("clamp"), per_minute: 3, cooldown: 8,
+            pitch: (0.7, 0.9), reach: 5,
+            when: {"clamp": (min: 0.3, fade: 0.25)},
+        ),
         // A log settling in a fire now and then: a soft fall, sparks and a hiss, so a hearth
         // sat by for a while is never one loop.
         (
@@ -565,6 +613,18 @@
             when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
             duck: {"rain": 0.7},
         ),
+        // The smith working the bellows between heats.
+        (
+            name: "bellows", sound: Bellows, volume: 0.22, at: Building(buildings: ["smithy"]), per_minute: 1.2, cooldown: 15,
+            pitch: (0.95, 1.05), reach: 12,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+        ),
+        // Flour ground by hand at the bakery and the granary.
+        (
+            name: "quern", sound: Quern, volume: 0.22, at: Building(buildings: ["bakery", "granary"]), per_minute: 1.5, cooldown: 12,
+            pitch: (0.95, 1.05), reach: 10,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+        ),
         // The mill wheel turning in its race all day, and the woodyard splitting logs.
         (
             name: "mill_wheel", sound: Mill, volume: 0.26, at: Building(buildings: ["mill"]), per_minute: 10, cooldown: 3.5,
@@ -576,6 +636,39 @@
             pitch: (0.92, 1.08), reach: 16,
             when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
             duck: {"rain": 0.8},
+        ),
+        // The tanner scraping hides on the beam, the smokehouse's fire snapping under its
+        // racks, and boats knocking at the boathouse's jetty.
+        (
+            name: "tannery", sound: Scrape, volume: 0.22, at: Building(buildings: ["tannery"]), per_minute: 1.5, cooldown: 12,
+            pitch: (0.92, 1.08), reach: 10,
+            when: {"settlement_edge": (max: 10, fade: 40), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.6},
+        ),
+        (
+            name: "smokehouse", sound: Snap, volume: 0.2, at: Building(buildings: ["smokehouse"]), per_minute: 3, cooldown: 6,
+            pitch: (0.8, 0.95), reach: 8,
+            when: {"settlement_edge": (max: 10, fade: 40), "depth": (max: 2, fade: 4)},
+        ),
+        (
+            name: "moorings", sound: Hull, volume: 0.24, at: Building(buildings: ["boathouse"]), per_minute: 2, cooldown: 10,
+            pitch: (0.9, 1.1), reach: 12,
+            when: {"settlement_edge": (max: 10, fade: 40), "depth": (max: 2, fade: 4)},
+        ),
+        // Trade at the market's stalls by day, busier the bigger the place: a village's
+        // stalls now and then, a town's market all day (from forty-five). Only from stalls,
+        // which a hamlet never has, so its trader is quiet however many live there.
+        (
+            name: "market", sound: Coins, volume: 0.22, at: Building(buildings: ["stall"]), per_minute: 1, cooldown: 12,
+            pitch: (0.92, 1.08), reach: 10,
+            when: {"settlement_edge": (max: 6, fade: 30), "settlement_people": (min: 22, fade: 6), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.7},
+        ),
+        (
+            name: "market_busy", sound: Coins, volume: 0.2, at: Building(buildings: ["stall"]), per_minute: 3, cooldown: 5,
+            pitch: (0.95, 1.12), reach: 10,
+            when: {"settlement_edge": (max: 6, fade: 30), "settlement_people": (min: 55, fade: 10), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
+            duck: {"rain": 0.7},
         ),
         // The shrine's bell at dawn and again at dusk, heard across the whole place and a
         // way beyond it. Dawn and dusk last a minute or so: rung soon in it, and only once,

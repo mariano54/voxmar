@@ -582,7 +582,7 @@ steps! {
     /// a lit room's window glows, and a campfire lights the ground around it warm.
     Door,
     /// A stool by a campfire, right-clicked with nothing to place in hand, is sat on: the
-    /// eye drops, the server says so, and By the Fire comes on (shot `seat-fire`); a step
+    /// eye drops, the server says so, and Fireside comes on (shot `seat-fire`); a step
     /// forward stands the player up, the eye back where it was.
     Seat,
     /// Walking forward with jump never pressed steps up a slab, a stair, a block and a slab
@@ -4945,18 +4945,23 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let (level, clay, straw, _) = tempered_bricks(world);
             if clay == 0 || straw == 0 {
                 gate.check("craft: tempered kiln bricks", Err("no recipe makes tempered kiln bricks of fired clay and straw".to_owned()));
-                gate.next(Step::Weather, now);
+                end_bricks(world, gate, now);
             } else if world.resource::<LocalPlayer>().station != Some(gate.brick_table) {
-                // The table set over the head, opened as a right click opens it.
+                // The table set over the head, opened as a right click opens it
+                // (`interact.rs`): the use proposed once the client has the table, and the
+                // grid opened here, since the server says nothing back when a table opens.
                 let client = world.resource::<ClientWorld>();
-                if client.block(gate.brick_table).is_some_and(|b| Some(b) == client.registry.id("base:crafting_table")) && gate.frames % 30 == 0 {
+                let there = client.block(gate.brick_table).map(|b| client.registry.def(b).name.clone());
+                if there.as_deref() == Some("base:crafting_table") {
                     let actions = world.resource::<crate::Actions>().0.clone();
                     let target = voxmar_engine::action::ActionTarget::Block { block: gate.brick_table, face: voxmar_engine::coords::Face::NegY };
                     world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:use_table"), target);
-                }
-                if gate.server_in_phase() > 5.0 {
-                    gate.check("craft: tempered kiln bricks", Err("the crafting table set over the head never opened".to_owned()));
-                    gate.next(Step::Weather, now);
+                    world.resource_mut::<LocalPlayer>().station = Some(gate.brick_table);
+                    world.resource_mut::<UiState>().inventory_open = true;
+                } else if gate.server_in_phase() > 5.0 {
+                    let feet = world.resource::<LocalPlayer>().position;
+                    gate.check("craft: tempered kiln bricks", Err(format!("the crafting table set at {} over the head (feet at {feet:.2}) never reached the client: it shows {}", gate.brick_table, there.as_deref().unwrap_or("nothing loaded"))));
+                    end_bricks(world, gate, now);
                 }
             } else if holding(world, "base:fired_clay").0 >= clay && holding(world, "base:straw").0 >= straw && skill_level(world, "core:crafting").0 >= level {
                 gate.count_before = holding(world, "base:tempered_kiln_bricks").0;
@@ -4966,7 +4971,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft: tempered kiln bricks", Err(format!("{} of {clay} fired clay, {} of {straw} straw, or Crafting {level}, never arrived", holding(world, "base:fired_clay").0, holding(world, "base:straw").0)));
-                gate.next(Step::Weather, now);
+                end_bricks(world, gate, now);
             }
         }
         13 => {
@@ -4976,18 +4981,31 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let done = if made >= count {
                 Some(if made == count { Ok(said(made)) } else { Err(format!("{}, not the recipe's {count}", said(made))) })
             } else {
-                (gate.server_in_phase() > 5.0).then(|| Err(format!("{}, not the recipe's {count}", said(made))))
+                (gate.server_in_phase() > 5.0).then(|| {
+                    // What the server said no to (the table's use, a craft), and what the grid
+                    // holds, for a run that fails here to tell why.
+                    let showing: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
+                    let grid = world.resource::<LocalPlayer>().inventory.grid();
+                    Err(format!("{}, not the recipe's {count}; refusals {showing:?}, the grid {grid:?}", said(made)))
+                })
             };
             if let Some(result) = done {
                 gate.check("craft: tempered kiln bricks", result);
-                let table = gate.brick_table;
-                world.resource::<Net>().command(&format!("setblock {} {} {} air", table.x, table.y, table.z));
-                world.resource_mut::<UiState>().inventory_open = false;
-                gate.next(Step::Weather, now);
+                end_bricks(world, gate, now);
             }
         }
         _ => {}
     }
+}
+
+/// The tempered bricks done with, or failed: the table over the head taken away, the grid
+/// shut and the station let go, on to the weather.
+fn end_bricks(world: &mut World, gate: &mut Gate, now: f32) {
+    let table = gate.brick_table;
+    world.resource::<Net>().command(&format!("setblock {} {} {} air", table.x, table.y, table.z));
+    world.resource_mut::<UiState>().inventory_open = false;
+    world.resource_mut::<LocalPlayer>().station = None;
+    gate.next(Step::Weather, now);
 }
 
 /// The tempered kiln bricks' recipe, from the loaded data: the Crafting level it asks, the
@@ -9265,7 +9283,7 @@ fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
-/// Server seconds the seat step waits on each answer (sat, By the Fire, stood up), with
+/// Server seconds the seat step waits on each answer (sat, Fireside, stood up), with
 /// at least `UNANSWERED_SWINGS` clicks or paced looks in them.
 const SEAT_WAIT: f32 = 8.0;
 
@@ -9355,7 +9373,7 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.tap(world, aimed && empty_handed, now);
             }
         }
-        // Sat by the fire: the eye drops below standing, and By the Fire comes on.
+        // Sat by the fire: the eye drops below standing, and Fireside comes on.
         2 => {
             let (eye, standing) = (world.resource::<LocalPlayer>().eye().y, standing_eye(world));
             let lower = eye < standing - 0.25;
@@ -9363,12 +9381,12 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
                 if gate.shot(world, "seat-fire").is_none() {
                     return;
                 }
-                gate.check("seat: by the fire", Ok(format!("sat on a stool under a roof two up, by a campfire: the eye dropped {:.2} below standing there, and By the Fire came on", standing - eye)));
+                gate.check("seat: by the fire", Ok(format!("sat on a stool under a roof two up, by a campfire: the eye dropped {:.2} below standing there, and Fireside came on", standing - eye)));
                 gate.check("seat: at the table", Ok("sat with a table beside the stool, At the Table came on".into()));
                 gate.check("seat: reading nook", Ok("sat with a bookshelf beside the stool and a window over it, Reading Nook came on".into()));
                 gate.advance(now);
             } else if gate.waited_out(SEAT_WAIT) {
-                gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, By the Fire {}, At the Table {}, Reading Nook {}", fireside(world), at_table(world), nook(world))));
+                gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, Fireside {}, At the Table {}, Reading Nook {}", fireside(world), at_table(world), nook(world))));
                 leave(world, gate);
             }
         }
@@ -12708,13 +12726,13 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// furnishings (blocks_furnishings.ron), in a facing or two. A piece that is not solid (a
 /// window seat or a settle, sat in as every seat is) passes stopping nothing; one that is
 /// not solid and no seat is a mistake.
-const PIECES: [&str; 41] = [
+const PIECES: [&str; 45] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
     "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing", "thatch_corner_east", "birch_shingles_inner_corner", "oak_fence",
     "birch_fence_corner_east", "dark_oak_fence_gate", "oak_ladder", "birch_hatch",
     "oak_hatch_open_east", "birch_stair_cupboard_east", "oak_window_seat", "dark_oak_sill_west", "oak_pantry_shelf",
-    "birch_settle", "oak_woodpile_east", "dark_oak_peg_rail", "oak_blanket_chest_south", "birch_washstand", "window_box_east",
+    "birch_settle", "oak_woodpile_east", "dark_oak_peg_rail", "oak_blanket_chest_south", "birch_washstand", "window_box_east", "dark_oak_dresser", "oak_pot_crane_west", "birch_rocking_chair_east", "oak_cradle_south",
 ];
 /// How many pieces the player judges from one spot before the middle one: three, so the
 /// crosshair turned to a piece beside it reaches it before crossing a neighbour.
