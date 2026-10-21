@@ -4945,7 +4945,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let (level, clay, straw, _) = tempered_bricks(world);
             if clay == 0 || straw == 0 {
                 gate.check("craft: tempered kiln bricks", Err("no recipe makes tempered kiln bricks of fired clay and straw".to_owned()));
-                gate.next(Step::Weather, now);
+                end_bricks(world, gate, now);
             } else if world.resource::<LocalPlayer>().station != Some(gate.brick_table) {
                 // The table set over the head, opened as a right click opens it
                 // (`interact.rs`): the use proposed once the client has the table, and the
@@ -4961,7 +4961,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 } else if gate.server_in_phase() > 5.0 {
                     let feet = world.resource::<LocalPlayer>().position;
                     gate.check("craft: tempered kiln bricks", Err(format!("the crafting table set at {} over the head (feet at {feet:.2}) never reached the client: it shows {}", gate.brick_table, there.as_deref().unwrap_or("nothing loaded"))));
-                    gate.next(Step::Weather, now);
+                    end_bricks(world, gate, now);
                 }
             } else if holding(world, "base:fired_clay").0 >= clay && holding(world, "base:straw").0 >= straw && skill_level(world, "core:crafting").0 >= level {
                 gate.count_before = holding(world, "base:tempered_kiln_bricks").0;
@@ -4971,7 +4971,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft: tempered kiln bricks", Err(format!("{} of {clay} fired clay, {} of {straw} straw, or Crafting {level}, never arrived", holding(world, "base:fired_clay").0, holding(world, "base:straw").0)));
-                gate.next(Step::Weather, now);
+                end_bricks(world, gate, now);
             }
         }
         13 => {
@@ -4991,15 +4991,21 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             };
             if let Some(result) = done {
                 gate.check("craft: tempered kiln bricks", result);
-                let table = gate.brick_table;
-                world.resource::<Net>().command(&format!("setblock {} {} {} air", table.x, table.y, table.z));
-                world.resource_mut::<UiState>().inventory_open = false;
-                world.resource_mut::<LocalPlayer>().station = None;
-                gate.next(Step::Weather, now);
+                end_bricks(world, gate, now);
             }
         }
         _ => {}
     }
+}
+
+/// The tempered bricks done with, or failed: the table over the head taken away, the grid
+/// shut and the station let go, on to the weather.
+fn end_bricks(world: &mut World, gate: &mut Gate, now: f32) {
+    let table = gate.brick_table;
+    world.resource::<Net>().command(&format!("setblock {} {} {} air", table.x, table.y, table.z));
+    world.resource_mut::<UiState>().inventory_open = false;
+    world.resource_mut::<LocalPlayer>().station = None;
+    gate.next(Step::Weather, now);
 }
 
 /// The tempered kiln bricks' recipe, from the loaded data: the Crafting level it asks, the
