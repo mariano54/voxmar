@@ -7108,7 +7108,13 @@ fn stacks_a_machine_has_no_slot_for_after_a_change_fall_out_where_it_stands() {
         let lying = c.items.values().filter(|i| i.stack.item == cobblestone).map(|i| i.stack.count as u32).sum::<u32>();
         lying + held(c).saturating_sub(held_at_join)
     };
-    client.pump_until(|c| spilled(c) == 3 * 64);
+    // They fell out as the server started, so are there by the time the chest is read. The
+    // wait is by the server's clock, well inside a dropped stack's life (`dropped::LIFETIME`):
+    // one by the wall's could outlast them (half an hour of the server's, 90 s at the tests'
+    // speed) and then only time out, saying nothing of what the player saw.
+    client.pump_ticks(10 * TICKS_PER_SECOND as u64, |c| spilled(c) == 3 * 64);
+    let lying: Vec<_> = client.items.values().filter(|i| i.stack.item == cobblestone).map(|i| (i.stack.count, i.position)).collect();
+    assert_eq!(spilled(&client), 3 * 64, "lying {lying:?}, held {} ({held_at_join} as they came in), tick {}", held(&client), client.server_tick);
     drop(client);
     std::fs::remove_dir_all(&dir).unwrap();
 }
