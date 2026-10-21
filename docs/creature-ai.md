@@ -149,8 +149,9 @@ back off, or to creep closer behind it. A blow skips the double take.
   taking over in that same decision. A warning only tells a hunt before it comes, and
   never changes whom a hunter goes for or when: it warns the one its hunt would go for (the
   nearest it would hunt, as far off, kept, frightened or on an errand as much as not) if
-  it sees them; one it does not see it has not noticed (unless they are close, hurt it or
-  hold its food), so it leaves them be. One that only defends itself (a badger, a bear)
+  it sees them, and goes unwarned for one it has noticed but cannot see now (one close,
+  its keeper, one who hurt it or holds its food, or one it saw within its `keep`); one it
+  does not see and has not noticed it leaves be. One that only defends itself (a badger, a bear)
   warns those it sees (in its field of view with a clear line from its eyes, the same
   `in_view` look it notices by) within its `radius`, and then defends
   its ground. No warning goes to a player holding the food that tempts it unless it hunts

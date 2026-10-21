@@ -603,12 +603,14 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     let taking = want.target.filter(|p| {
         !mind.recalls(Memory::HurtBy(p.id)) && mind.noticed.iter().any(|n| n.0 == p.id && n.2 < def.senses.react)
     });
-    if let Some(p) = taking {
-        return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
-    }
+    // A decision spent on anything but its warning, a double take too, runs the warning's
+    // lapse.
     let warns = creature.modules[index].0.name() == "warn";
     if !warns {
         lapse_warning(mind, dt);
+    }
+    if let Some(p) = taking {
+        return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
     }
     let ctx = Ctx { creature, mind: &mind.clone(), at, lively, sight };
     let mut decision = creature.modules[index].0.act(&ctx, mind, want.target, fresh);
@@ -729,6 +731,21 @@ pub(super) mod tests {
         mind.hurt(&wolf, Some(1), 1.0);
         let struck = think(&wolf, &mut mind, &situation(&far));
         assert!(struck.goal.is_some(), "struck, it stood and looked: {struck:?}");
+    }
+
+    /// A double take spent on anyone but the one it warns runs its warning's lapse, as any
+    /// other decision does: a look at one unseen beside it does not hold a warning open.
+    #[test]
+    fn a_double_take_runs_a_warnings_lapse() {
+        let wolf = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, senses: (react: 0.6), attack: (damage: (1, 3), reach: 1.0), warn: (near: 1.5, seconds: 1.0), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.warning = Some(Warning { seconds: 0.4, lapse: 0.0 });
+        let close = [Seen { in_view: false, ..player(Vec3::new(2.5, 0.0, 0.0)) }];
+        let decision = think(&wolf, &mut mind, &situation(&close));
+        assert_eq!((decision.pose, doing(&wolf, &mind)), (Pose::Alert, "hunt"), "a look at the one beside it");
+        assert!(mind.warning.is_some_and(|w| (w.lapse - 0.2).abs() < 1e-4), "the look held the warning: {:?}", mind.warning);
     }
 
     #[test]
@@ -867,6 +884,14 @@ pub(super) mod tests {
         }
         let decision = think(&wolf, &mut mind, &situation(&hidden));
         assert_eq!((mind.attacker(), doing(&wolf, &mind), decision.goal), (Some(2), "hunt", Some(hidden[1].position)), "the warned one stayed: it goes for them, not the unseen one");
+        // One it has noticed (seen once) and then cannot see, within `keep`, it goes for
+        // unwarned: a warning goes only to one seen.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let _ = think(&wolf, &mut mind, &situation(&at));
+        assert_eq!(doing(&wolf, &mind), "warn", "seen, warned");
+        let gone = [Seen { in_view: false, ..at[0] }];
+        let decision = think(&wolf, &mut mind, &situation(&gone));
+        assert_eq!((doing(&wolf, &mind), decision.goal, decision.pose), ("hunt", Some(gone[0].position), Pose::Idle), "noticed, out of view: hunted unwarned");
         let mut mind = Mind::new(&wolf.def.temperament, 2);
         let _ = think(&wolf, &mut mind, &Situation { kept: true, ..situation(&at) });
         assert_eq!(doing(&wolf, &mind), "warn", "kept, it hunts as before, with its warning");
