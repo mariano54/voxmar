@@ -5899,19 +5899,38 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             net.command(&format!("give {} 1", name(plan.stick)));
             gate.advance(now);
         }
-        // The stick in hand and the fire there: held into the fire until it catches.
+        // The one stick in hand and the fire there: held into the fire until it catches. A
+        // stick picked up meanwhile (one lying where the last step was) stacks on it, and of
+        // two in hand one catches and the brand goes where it fits, the other left in hand
+        // (train 174): the sticks are cleared and the one given again.
         1 => {
             let Some(plan) = gate.firebrand else { return };
             let burning = world.resource::<ClientWorld>().block(fire_at) == Some(plan.fire);
-            let (_, slot) = holding(world, &name(plan.stick));
-            if let (true, Some(slot)) = (burning, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
+            let (sticks, slot) = holding(world, &name(plan.stick));
+            if sticks > 1 && now - gate.tap_at >= TAP_EVERY {
+                // Where the others came from, so a stick the server made twice shows here
+                // rather than being cleared away unseen: slots holding them, sticks flying to
+                // a player (picked up), and those lying near.
+                let slots: Vec<(usize, u8)> = world.resource::<LocalPlayer>().inventory.slots.iter().enumerate().filter_map(|(i, s)| s.filter(|s| s.item == plan.stick).map(|s| (i, s.count))).collect();
+                let drops = world.resource::<crate::drops::Drops>();
+                let feet = world.resource::<LocalPlayer>().position;
+                let picked: Vec<String> = drops.picked_up().filter(|(_, s, _)| s.item == plan.stick).map(|(id, s, from)| format!("#{id} {}x from {from:.1}", s.count)).collect();
+                let lying = drops.lying().filter(|(_, s, at)| s.item == plan.stick && at.distance(feet) < 8.0).count();
+                info!("gate: firebrand: {sticks} {} carried after the clear and give, in slots {slots:?}; picked up {picked:?}; {lying} lying within 8 blocks of {feet:.1}; cleared and one given again", name(plan.stick));
+                let net = world.resource::<Net>();
+                net.command(&format!("clear {}", name(plan.stick)));
+                net.command(&format!("give {} 1", name(plan.stick)));
+                gate.tap_at = now;
+                gate.taps += 1;
+            }
+            if let (true, 1, Some(slot)) = (burning, sticks, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
                 world.resource_mut::<LocalPlayer>().selected = slot;
                 aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
                 let proposals = world.resource::<Net>().proposals();
                 gate.firebrand = Some(BrandPlan { proposals, asked: None, ..plan });
                 gate.advance(now);
             } else if waited {
-                fail(world, gate, "firebrand: lit", format!("the {} ({burning}) or a {} in the hotbar ({slot:?}) never came in {BRAND_WAIT} server seconds", name(plan.fire), name(plan.stick)));
+                fail(world, gate, "firebrand: lit", format!("the {} ({burning}) or one {} in the hotbar ({sticks} in {slot:?}) never came in {BRAND_WAIT} server seconds", name(plan.fire), name(plan.stick)));
             }
         }
         // Clicked as a player does, once the crosshair is on the fire with the stick in hand
@@ -5942,8 +5961,9 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.advance(now);
             } else if let Some(asked) = plan.asked {
                 if gate.server_in_phase() - asked > BRAND_WAIT {
-                    let held = held.map(|s| name(s.item));
-                    fail(world, gate, "firebrand: lit", format!("the base:cook of the {} at the {} (click {}) left {held:?} in hand {BRAND_WAIT} server seconds on", name(plan.stick), name(plan.fire), gate.taps));
+                    let held = held.map(|s| (name(s.item), s.count));
+                    let (brands, at) = holding(world, &name(plan.brand));
+                    fail(world, gate, "firebrand: lit", format!("the base:cook of the {} at the {} (click {}) left {held:?} in hand {BRAND_WAIT} server seconds on ({brands} {} in {at:?})", name(plan.stick), name(plan.fire), gate.taps, name(plan.brand)));
                 }
             } else if gate.waited_both(BRAND_WAIT + 5.0, now) {
                 // By both clocks, not by clicks: one never aimed at the fire clicks none.

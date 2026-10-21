@@ -960,26 +960,40 @@ mod tests {
     }
 
     /// A stick held to a campfire is held in it (`base:cook`), as the gate's firebrand step
-    /// does: what the press proposes.
+    /// does: what one press sends, the hotbar slot in hand and then the cook, and letting go
+    /// at once sends nothing more (a release cancels only mining), whether held on or not.
     #[test]
     fn a_stick_held_to_a_campfire_is_held_in_it() {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
-        let (mut app, block, server_side) = app(content.actions.clone());
-        let id = |name: &str| content.blocks.expect(name);
-        app.world_mut().resource_mut::<ClientWorld>().set_block(block, id("base:campfire"));
-        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosX, distance: 2.0 });
-        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
-        player.inventory.slots[3] = Some(voxmar_engine::inventory::ItemStack::new(id("base:stick"), 1));
-        player.selected = 3;
-        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
-        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
-        for _ in 0..20 {
+        for held_on in [true, false] {
+            let (mut app, block, server_side) = app(content.actions.clone());
+            let id = |name: &str| content.blocks.expect(name);
+            app.world_mut().resource_mut::<ClientWorld>().set_block(block, id("base:campfire"));
+            app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosX, distance: 2.0 });
+            let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+            player.inventory.slots[3] = Some(voxmar_engine::inventory::ItemStack::new(id("base:stick"), 1));
+            player.selected = 3;
+            app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+            app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
             app.update();
+            for _ in 0..100 {
+                let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+                mouse.clear();
+                if !held_on {
+                    mouse.release(MouseButton::Right);
+                }
+                app.update();
+            }
+            let sent: Vec<String> = std::iter::from_fn(|| server_side.try_recv().ok().flatten())
+                .filter_map(|m| match m {
+                    voxmar_protocol::ClientMessage::Propose { action, .. } => Some(content.actions.get(action).map_or_else(|| format!("{action:?}"), |a| a.name.clone())),
+                    voxmar_protocol::ClientMessage::Input(input) => Some(format!("slot {}", input.selected_slot)),
+                    voxmar_protocol::ClientMessage::Cancel => Some("cancel".into()),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(sent, ["slot 3", "base:cook"], "held on: {held_on}");
         }
-        let proposed: Vec<String> = std::iter::from_fn(|| server_side.try_recv().ok().flatten())
-            .filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(content.actions.get(action).map_or_else(|| format!("{action:?}"), |a| a.name.clone())), _ => None })
-            .collect();
-        assert_eq!(proposed, ["base:cook"]);
     }
 
     /// A log held to a chopping block with an axe about splits on the press; the button held

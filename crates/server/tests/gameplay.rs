@@ -2492,22 +2492,38 @@ fn the_quern_spindle_and_loom_grind_spin_and_weave() {
 }
 
 /// A stick held in a campfire a player set down comes back a firebrand in the hand, as the
-/// gate's firebrand step does it: the cook goes through the server's own path.
+/// gate's firebrand step does it: in its sealed stone room at midnight, the stick in a
+/// hotbar slot after another item, and what the client sends for one press let go at once
+/// (its hotbar slot, then the cook; a release sends nothing for a cook). Two sticks in hand
+/// cook one: the brand goes where it fits and the other stick stays in hand, which is what
+/// train 174's gate saw.
 #[test]
 fn a_stick_held_in_a_campfire_comes_back_a_firebrand() {
     let mut client = Client::join();
-    let fire = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
-    let (campfire, stick, brand) = (client.content.blocks.expect("base:campfire"), client.content.blocks.expect("base:stick"), client.content.blocks.expect("base:firebrand"));
+    let at = client.position.floor().as_ivec3() + IVec3::new(6, 0, 14);
+    let fire = at + IVec3::new(2, 0, 0);
+    let (stick, brand) = (client.content.blocks.expect("base:stick"), client.content.blocks.expect("base:firebrand"));
     client.clear();
-    client.ok("/gamemode survival");
-    client.ok("/time set midnight");
-    client.ok("/setblock ~2 ~ ~ campfire");
-    client.ok("/give stick 1");
-    client.pump_until(|c| c.world.block(fire) == Some(campfire) && c.inventory.get(0).is_some_and(|s| s.item == stick));
-    client.send_position(client.position, false);
-    client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
-    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == brand) || c.chat.iter().any(|(_, t)| !t.is_empty()));
-    assert_eq!(client.inventory.get(0).map(|s| client.content.blocks.def(s.item).name.clone()).as_deref(), Some("base:firebrand"), "said: {:?}", client.chat);
+    for line in ["/gamemode survival", "/time set midnight", "/creatures disperse", "/give dirt 1"] {
+        client.ok(line);
+    }
+    client.ok(&format!("/fill {} {} {} {} {} {} stone", at.x - 3, at.y - 1, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
+    client.ok(&format!("/fill {} {} {} {} {} {} air", at.x - 2, at.y, at.z - 2, at.x + 2, at.y + 4, at.z + 2));
+    client.ok(&format!("/setblock {} {} {} campfire", fire.x, fire.y, fire.z));
+    client.tp(Vec3::new(at.x as f32 + 0.5, at.y as f32, at.z as f32 + 0.5));
+    let named = |c: &Client, slot: usize| c.inventory.get(slot).map(|s| c.content.blocks.def(s.item).name.clone());
+    for (sticks, hand_after) in [(1, "base:firebrand"), (2, "base:stick")] {
+        client.ok("/clear stick");
+        client.ok("/clear firebrand");
+        client.ok(&format!("/give stick {sticks}"));
+        client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == stick && s.count == sticks) && !c.inventory.slots.iter().flatten().any(|s| s.item == brand));
+        let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == stick)).unwrap();
+        assert_eq!(slot, 1, "the stick after the dirt");
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+        client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::NegX });
+        client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == brand) || c.chat.iter().any(|(_, t)| !t.is_empty()));
+        assert_eq!(named(&client, slot).as_deref(), Some(hand_after), "{sticks} sticks in hand; said: {:?}", client.chat);
+    }
 }
 
 /// The First Night contract uses real grid and cooking events, and both kinds of
