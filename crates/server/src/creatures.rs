@@ -6333,6 +6333,30 @@ mod fight_tests {
         assert!((ran - said).abs() < 0.08, "hurt to {share:.2} of its health it ran {ran:.2} of the ground, not {said:.2} ({limped:.1} of {whole:.1} blocks)");
     }
 
+    /// `/creatures hold` holds a creature still for a minute even in the middle of winding
+    /// up a blow at a player: its wind-up is called off, so it neither walks on after them
+    /// (`tracking_drive`) nor lands the blow.
+    #[test]
+    fn a_hold_calls_off_a_wind_up() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 48);
+        let bear = put(&mut server, "base:brown_bear", c.as_vec3() + Vec3::new(5.5, 0.0, 0.5), -Vec3::X);
+        let player = join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        server.players.get_mut(&player).unwrap().admin = true;
+        server.wind_up(bear, player);
+        assert!(server.creatures.live[&bear].tracking.is_some(), "the bear never wound up");
+        server.command(player, "creatures hold");
+        let (from, health) = (server.creatures.live[&bear].body.position, server.players[&player].health);
+        for _ in 0..3 * TICKS_PER_SECOND {
+            server.tick += 1;
+            server.tick_creatures();
+            server.tick_fights();
+        }
+        let moved = server.creatures.live[&bear].body.position.with_y(0.0).distance(from.with_y(0.0));
+        assert!(moved < 0.1, "the held bear moved {moved:.2} blocks");
+        assert_eq!(server.players[&player].health, health, "the held bear's blow landed");
+    }
+
     /// A game bird sits tight (`creature::Flush`): a player walking up to it in the open is
     /// let come to its `hold`, the bird crouched where it was; within it, it bursts away
     /// faster than it can run.
