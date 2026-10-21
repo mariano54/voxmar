@@ -194,8 +194,12 @@ you wake after dying until a hearth gives you a home: right click it to sleep
 to twelve and left, it fires them in twelve seconds while the player does something else
 (`stations.ron`, docs/stations.md), and fired clay is what pots, vials and kiln bricks are made
 of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
-a crucible (kiln bricks round a clay pot) ringed with kiln bricks, with a pillar on each
-corner. A crucible smelts only in a standing kiln with an unexpired paid fire:
+a crucible (kiln bricks round a clay pot) ringed with tempered kiln bricks, with a pillar
+on each corner. Tempered kiln bricks are four fired clay and a straw (two, as plain bricks
+are); straw comes of grain: one from a wild wheat or rice tuft picked, one or two from a
+ripe sown plant (wheat, rye or rice). Straw is fibre too (thatch), three
+twist into two twine, and nine bind into a hay bale, which comes apart into the nine when
+broken. A crucible smelts only in a standing kiln with an unexpired paid fire:
 copper ore into ingots, and three copper ingots held with a tin ore carried into four
 bronze (a station recipe may take several of what is held, `uses`, and other items
 besides, `with`, and make several, `count`), all Engineering, never burnt (`stop_burning: 0`). To light a cold kiln,

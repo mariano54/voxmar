@@ -333,13 +333,21 @@ mod tests {
         server.light(1, core);
         assert!(!server.lit.contains_key(&core), "a loose core was lit");
         assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 24, "a loose core consumed fuel");
-        let brick = server.content.blocks.expect("base:kiln_bricks");
-        for x in -1..=1 { for z in -1..=1 {
-            server.set_block(core + IVec3::new(x, 0, z), brick);
-        }}
-        for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
-        server.set_block(core, server.content.blocks.expect("base:crucible"));
-        server.light(1, core);
+        // Plain kiln bricks make the crucible but crack in its kiln: a ring of them is no
+        // kiln, and takes no fuel. Bricks tempered with straw are.
+        for name in ["base:kiln_bricks", "base:tempered_kiln_bricks"] {
+            let brick = server.content.blocks.expect(name);
+            for x in -1..=1 { for z in -1..=1 {
+                server.set_block(core + IVec3::new(x, 0, z), brick);
+            }}
+            for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
+            server.set_block(core, server.content.blocks.expect("base:crucible"));
+            server.light(1, core);
+            if name == "base:kiln_bricks" {
+                assert!(!server.lit.contains_key(&core), "a ring of plain kiln bricks was lit");
+                assert_eq!(server.players[&1].inventory.get(0).unwrap().count, 24, "a ring of plain kiln bricks consumed fuel");
+            }
+        }
         let until = server.lit[&core].until;
         assert_eq!(until - server.tick, (24.0 * server.content.machines.burn_seconds(coal).unwrap() * TICKS_PER_SECOND as f32) as u64);
         server.players.get_mut(&1).unwrap().position = core.as_vec3() + Vec3::new(0.5, 0.0, 3.5);
@@ -527,7 +535,7 @@ mod tests {
         let column = ColumnPos::of_block(server.spawn.floor().as_ivec3());
         let core = column.origin() + IVec3::new(31, server.spawn.y as i32 + 4, 8);
         server.load_area(core - IVec3::splat(2), core + IVec3::splat(2));
-        let (brick, crucible, coal) = (server.content.blocks.expect("base:kiln_bricks"), server.content.blocks.expect("base:crucible"), server.content.blocks.expect("base:coal_ore"));
+        let (brick, crucible, coal) = (server.content.blocks.expect("base:tempered_kiln_bricks"), server.content.blocks.expect("base:crucible"), server.content.blocks.expect("base:coal_ore"));
         for x in -1..=1 { for z in -1..=1 {
             server.set_block(core + IVec3::new(x, 0, z), brick);
         }}
@@ -628,7 +636,7 @@ mod tests {
         player(&mut server);
         let core = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 4, 8);
         let blocks = server.content.blocks.clone();
-        let brick = blocks.expect("base:kiln_bricks");
+        let brick = blocks.expect("base:tempered_kiln_bricks");
         for x in -1..=1 { for z in -1..=1 { server.set_block(core + IVec3::new(x, 0, z), brick); }}
         for x in [-1, 1] { for z in [-1, 1] { server.set_block(core + IVec3::new(x, 1, z), brick); }}
         server.set_block(core, blocks.expect("base:crucible"));
