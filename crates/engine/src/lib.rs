@@ -28,6 +28,7 @@ pub mod fishing;
 pub mod fluid;
 pub mod genes;
 pub mod inventory;
+pub mod jobs;
 pub mod journal;
 pub mod lang;
 pub mod level;

@@ -710,8 +710,8 @@ mod tests {
     }
 
     /// No first-party language file (strings, readings or pins) gives a key twice: the
-    /// game refuses such a file, and a key added again by mistake would otherwise hide the
-    /// first one's text.
+    /// game keeps the first and reports the repeat, and a key added again by mistake would
+    /// otherwise say the wrong words where the second was meant.
     #[test]
     fn no_language_file_gives_a_key_twice() {
         let mut files = Vec::new();
@@ -730,7 +730,11 @@ mod tests {
             .iter()
             .filter_map(|path| {
                 let source = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-                voxmar_engine::lang::parse_map::<ron::Value>(&source).err().map(|e| format!("{}: {e}", path.display()))
+                match voxmar_engine::lang::parse_map::<ron::Value>(&source) {
+                    Ok((_, again)) if again.is_empty() => None,
+                    Ok((_, again)) => Some(format!("{}: given twice: {again:?}", path.display())),
+                    Err(e) => Some(format!("{}: {e}", path.display())),
+                }
             })
             .collect();
         assert!(wrong.is_empty(), "{}", wrong.join("\n"));

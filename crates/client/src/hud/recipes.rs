@@ -503,11 +503,12 @@ fn draw(
                 card.spawn(shadowed(font, "→", LARGE, GOLD));
                 // A fixed count sits on the slot's corner, as in the inventory; a range of
                 // amounts is too wide for that and goes with the name instead.
-                let (low, high) = entry.count;
-                let count = (high > 1 && low == high).then(|| format!("{high}"));
-                // Burnt food looked up shows the cooking it is left from, burnt.
+                // Burnt food looked up shows the cooking it is left from, burnt: always one,
+                // whatever the dish makes.
                 let burnt = !lookup.uses && matches!(&entry.method, Method::Cook { burnt: Some(b), .. } if content.blocks.item_of(*b) == lookup.item && entry.output != lookup.item);
                 let output = if burnt { lookup.item } else { entry.output };
+                let (low, high) = if burnt { (1, 1) } else { entry.count };
+                let count = (high > 1 && low == high).then(|| format!("{high}"));
                 item_cell(card, font, &images, Some(output), count);
                 let title = if low == high { name(output) } else { locale.format("recipes.amount", &[("item", &name(output)), ("low", &low), ("high", &high)]) };
                 // How, in words.
@@ -637,7 +638,7 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
         Method::Found { tool: Some(tool), .. } => {
             item_cell(card, font, images, Some(*tool), None);
         }
-        Method::Burn { from, .. } => {
+        Method::Burn { from, .. } | Method::Smoulder { from, .. } => {
             item_cell(card, font, images, Some(*from), None);
         }
         Method::Drop { .. } | Method::Catch { .. } | Method::Trade { wants: None, .. } | Method::Reward { .. } | Method::Found { tool: None, .. } => {}
@@ -743,8 +744,14 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
         Method::Burn { from, relit: false, .. } => vec![(locale.format("recipes.burnt_out", &[("item", &block(*from))]), MUTED)],
         Method::Burn { from, relit: true, fuel: None } => vec![(locale.format("recipes.relit", &[("item", &block(*from))]), MUTED)],
         Method::Burn { from, relit: true, fuel: Some(tag) } => {
-            let fuel = content.blocks.tagged(tag).next().map_or_else(|| tag.clone(), block);
+            // Named as the kind of thing it takes (`tag.fat`), never one item of many.
+            let fuel = locale.get_or(&format!("tag.{tag}"), &voxmar_engine::lang::title_from_id(tag)).to_owned();
             vec![(locale.format("recipes.relit.with", &[("item", &block(*from)), ("fuel", &fuel)]), MUTED)]
+        }
+        Method::Smoulder { structure, from, early } => {
+            let key = if *early { "recipes.smoulder.early" } else { "recipes.smoulder" };
+            let structure = locale.get_or(&voxmar_engine::lang::def_key("multiblock", structure), &voxmar_engine::lang::title_from_id(structure)).to_owned();
+            vec![(locale.format(key, &[("item", &block(*from)), ("structure", &structure)]), MUTED)]
         }
         Method::Found { tool, skill, level: at } => {
             let tool = tool.map(|tool| (locale.format("recipes.found.tool", &[("tool", &block(tool))]), SOFT));

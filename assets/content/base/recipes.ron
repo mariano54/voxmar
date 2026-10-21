@@ -69,6 +69,13 @@
         (pattern: [["copper_ingot"], ["stick"], ["stick"]], output: "copper_shovel", skill: "core:engineering", level: 5, xp: 16),
         (pattern: [["copper_ingot", "copper_ingot"], ["", "stick"], ["", "stick"]], output: "copper_hoe", skill: "core:engineering", level: 5, xp: 16),
         (pattern: [["copper_ingot"], ["stick"]], output: "copper_knife", skill: "core:engineering", level: 5, xp: 16),
+        // Bronze tools (tier 3, twice copper's life and faster), Engineering 12: the first
+        // thing the Crucible Kiln's bronze is for.
+        (pattern: [["bronze_ingot", "bronze_ingot", "bronze_ingot"], ["", "stick", ""], ["", "stick", ""]], output: "bronze_pickaxe", skill: "core:engineering", level: 12, xp: 24),
+        (pattern: [["bronze_ingot", "bronze_ingot"], ["bronze_ingot", "stick"], ["", "stick"]], output: "bronze_axe", skill: "core:engineering", level: 12, xp: 24),
+        (pattern: [["bronze_ingot"], ["stick"], ["stick"]], output: "bronze_shovel", skill: "core:engineering", level: 12, xp: 24),
+        (pattern: [["bronze_ingot", "bronze_ingot"], ["", "stick"], ["", "stick"]], output: "bronze_hoe", skill: "core:engineering", level: 12, xp: 24),
+        (pattern: [["bronze_ingot"], ["stick"]], output: "bronze_knife", skill: "core:engineering", level: 12, xp: 24),
         // Iron tools (tier 4), Engineering 15.
         (pattern: [["iron_ingot", "iron_ingot", "iron_ingot"], ["", "stick", ""], ["", "stick", ""]], output: "iron_pickaxe", skill: "core:engineering", level: 15, xp: 32),
         (pattern: [["iron_ingot", "iron_ingot"], ["iron_ingot", "stick"], ["", "stick"]], output: "iron_axe", skill: "core:engineering", level: 15, xp: 32),

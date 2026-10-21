@@ -1018,6 +1018,7 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             Method::Reward { .. } => add(locale.get("tooltip.from.quest").to_owned()),
             Method::Burn { relit: false, .. } => add(locale.get("tooltip.from.burn").to_owned()),
             Method::Burn { relit: true, .. } => add(locale.get("tooltip.from.relit").to_owned()),
+            Method::Smoulder { .. } => add(locale.get("tooltip.from.smoulder").to_owned()),
             Method::Found { .. } => add(locale.get("tooltip.from.found").to_owned()),
         }
     }
@@ -1291,14 +1292,35 @@ fn tooltip(
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
     mut japanese: Local<Option<Locale>>,
-    (viewer, forced, places, viewer_items): (
+    (viewer, forced, places, viewer_items, (texts, parents, cameras)): (
         Res<super::recipes::RecipeViewer>,
         Option<Res<HoverSlot>>,
         Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>,
         Query<(&super::recipes::ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
+        (
+            Query<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), (With<Text>, Without<Tooltip>)>,
+            Query<&ChildOf>,
+            Query<&Camera, With<Camera3d>>,
+        ),
     ),
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
+    // Where a pinned tip may not go: over the words of the screen under it (its own aside),
+    // on the view the interface is laid out on.
+    let pinned = forced.as_ref().map(|f| f.0);
+    let words: Vec<Rect> = if pinned.is_some() {
+        texts
+            .iter()
+            .filter(|(text, node, _, visible)| visible.get() && node.size().min_element() > 0.0 && parents.get(*text).ok().is_none_or(|p| p.parent() != entity))
+            .map(|(_, node, transform, _)| {
+                let scale = node.inverse_scale_factor();
+                Rect::from_center_size(transform.translation * scale, node.size() * scale)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let view = crate::ui::view_size(&window, &cameras).map(|view| view / scale.0);
     let browsing = ui.recipes_open || ui.quests_open;
     let pointed = hovered(&slots).or(forced.as_ref().map(|f| f.0)).filter(|_| !browsing && ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none());
     // An empty worn slot says what goes in it.
@@ -1321,7 +1343,7 @@ fn tooltip(
             lines.spawn((text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED), tip_line()));
         });
         visibility.set_if_neq(Visibility::Inherited);
-        place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
+        place_tip(&mut node, computed, window.single().ok(), scale.0, pinned, &places, &words, view);
         return;
     };
     // Shift shows how the name reads: in Japanese, the kana over the name; in another
@@ -1377,13 +1399,24 @@ fn tooltip(
         });
     }
     visibility.set_if_neq(Visibility::Inherited);
-    place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
+    place_tip(&mut node, computed, window.single().ok(), scale.0, pinned, &places, &words, view);
 }
 
 /// Puts the tooltip up and to the right of the pointer, kept on screen; without a pointer,
-/// beside the slot a screenshot names. The pointer is in the window's points, the
-/// interface laid out at its own scale.
-fn place_tip(node: &mut Node, computed: &ComputedNode, window: Option<&Window>, scale: f32, forced: Option<usize>, places: &Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>) {
+/// beside the slot a screenshot names, at the nearest place there that covers none of
+/// `words` (the screen's texts under it) within the `view`. The pointer is in the window's
+/// points, the interface laid out at its own scale.
+#[allow(clippy::too_many_arguments)]
+fn place_tip(
+    node: &mut Node,
+    computed: &ComputedNode,
+    window: Option<&Window>,
+    scale: f32,
+    forced: Option<usize>,
+    places: &Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>,
+    words: &[Rect],
+    view: Option<Vec2>,
+) {
     let size = computed.size() * computed.inverse_scale_factor();
     if let Some(window) = window
         && let Some(at) = window.cursor_position()
@@ -1395,16 +1428,62 @@ fn place_tip(node: &mut Node, computed: &ComputedNode, window: Option<&Window>, 
         && let Some((_, cell, place)) = places.iter().find(|(s, ..)| s.0 == slot)
     {
         let at = (place.translation + cell.size() / 2.0) * cell.inverse_scale_factor();
-        node.left = Val::Px(at.x + 2.0 * PX);
-        node.top = Val::Px((at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
+        let first = Vec2::new(at.x + 2.0 * PX, (at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
+        let spot = view.and_then(|view| clear_spot(first, size, view, words)).unwrap_or(first);
+        node.left = Val::Px(spot.x);
+        node.top = Val::Px(spot.y);
     }
 }
+
+/// The top left nearest `first` where a tip of `size` lies wholly within the `view` and
+/// over none of `words`, on a grid of `TIP_STEP`; none where nowhere is clear.
+fn clear_spot(first: Vec2, size: Vec2, view: Vec2, words: &[Rect]) -> Option<Vec2> {
+    let (low, high) = (Vec2::splat(2.0 * PX), view - size - 2.0 * PX);
+    if high.cmplt(low).any() {
+        return None;
+    }
+    let clear = |at: Vec2| {
+        let tip = Rect::from_corners(at, at + size);
+        words.iter().all(|word| {
+            let both = tip.intersect(*word);
+            both.width() <= 0.0 || both.height() <= 0.0
+        })
+    };
+    let steps = ((high - low) / TIP_STEP).floor().as_uvec2();
+    (0..=steps.x)
+        .flat_map(|i| (0..=steps.y).map(move |j| low + Vec2::new(i as f32, j as f32) * TIP_STEP))
+        .chain(std::iter::once(first.clamp(low, high)))
+        .filter(|&at| clear(at))
+        .min_by(|a, b| a.distance_squared(first).total_cmp(&b.distance_squared(first)))
+}
+
+/// How finely a pinned tip looks for a clear place, in interface pixels.
+const TIP_STEP: f32 = 4.0 * PX;
 
 #[cfg(test)]
 mod tests {
     use voxmar_engine::block::BlockId;
 
     use super::*;
+
+    /// A pinned tip goes where it first would when nothing is under it; over words, to the
+    /// nearest place that covers none (a tool's tip by the catalogue ran into its search
+    /// line, then, flipped, into the pack's counts and the Craft label); within the view;
+    /// nowhere where every place covers some.
+    #[test]
+    fn a_pinned_tip_lies_over_no_words() {
+        let (view, size) = (Vec2::new(1706.0, 960.0), Vec2::new(360.0, 300.0));
+        let first = Vec2::new(1017.0, 300.0);
+        assert_eq!(clear_spot(first, size, view, &[]), Some(first));
+        let words = [Rect::new(1300.0, 40.0, 1600.0, 60.0), Rect::new(600.0, 200.0, 1000.0, 700.0), Rect::new(1100.0, 400.0, 1200.0, 420.0)];
+        let spot = clear_spot(first, size, view, &words).expect("somewhere clear");
+        let tip = Rect::from_corners(spot, spot + size);
+        assert!(words.iter().all(|w| tip.intersect(*w).is_empty()), "{tip:?} covers a word");
+        assert!(tip.min.cmpge(Vec2::splat(2.0 * PX)).all() && tip.max.cmple(view - 2.0 * PX).all(), "{tip:?} off the view");
+        assert!(spot.distance(first) < 200.0, "{spot} is not near {first}");
+        assert_eq!(clear_spot(first, size, view, &[Rect::new(0.0, 0.0, 1706.0, 960.0)]), None);
+        assert_eq!(clear_spot(first, Vec2::new(2000.0, 10.0), view, &[]), None, "wider than the view");
+    }
 
     #[test]
     fn the_interface_style_comes_from_data_and_a_later_package_changes_it() {

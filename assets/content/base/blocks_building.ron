@@ -71,7 +71,9 @@
             // a creature takes it as two high and only a boss or a wild fighter on a chase
             // climbs it; a home's survey looks past it). The gate shut is one too; a right
             // click swings it open (`swaps`, as a door), and open it stops nobody.
-            (name: "{name}_fence", render: Model, shape: "fence", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "wood", "building", "fuel"]),
+            // `plain_fence` is the straight length alone, not the corner or the gate, for a quest
+            // that asks for so many fences beside a gate.
+            (name: "{name}_fence", render: Model, shape: "fence", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "plain_fence", "wood", "building", "fuel"]),
             (name: "{name}_fence_corner", render: Model, shape: "fence_corner", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "wood", "building", "fuel"]),
             (
                 name: "{name}_fence_gate", render: Model, shape: "fence_gate", facing: true, sound: Wood, textures: All("furniture_grain"),
