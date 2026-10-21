@@ -115,6 +115,13 @@ pub struct RecipeBook {
     unlaid: std::collections::HashSet<BlockId>,
 }
 
+/// The item a way that takes any of `accepts` shows going in: the first a player can come
+/// by, not one only the creative catalogue has (a hollow root no one can break loose).
+fn shown_input(blocks: &crate::block::BlockRegistry, accepts: &[BlockId]) -> Option<BlockId> {
+    let items = accepts.iter().map(|&b| blocks.item_of(b));
+    items.clone().find(|&item| !blocks.def(item).has_tag(CREATIVE_ONLY)).or_else(|| items.clone().next())
+}
+
 /// The block `id` is held as: itself, or for one of its placed forms (another look, a
 /// facing, upside down, against a wall) the block that form is of. A plant merged into
 /// another item stays itself, as it is its own way to that item.
@@ -190,7 +197,7 @@ impl RecipeBook {
         // takes its kind.
         for (id, process) in content.machines.processes() {
             let machines: Vec<BlockId> = content.machines.iter().filter(|m| m.processes.contains(&id)).map(|m| m.block).collect();
-            let inputs: Vec<(BlockId, u8)> = process.inputs.iter().filter_map(|(accepts, n)| Some((blocks.item_of(*accepts.first()?), *n))).collect();
+            let inputs: Vec<(BlockId, u8)> = process.inputs.iter().filter_map(|(accepts, n)| Some((shown_input(blocks, accepts)?, *n))).collect();
             let made = process.outputs.iter().map(|&(item, n)| (item, n, 1.0)).chain(process.byproducts.iter().copied());
             for (item, n, chance) in made {
                 let method = Method::Process { machines: machines.clone(), inputs: inputs.clone(), tier: process.tier, chance };
@@ -201,8 +208,8 @@ impl RecipeBook {
         // Home stations: each work, left in the station's empty block.
         for station in &content.stations.stations {
             for work in &station.works {
-                let Some(&input) = work.accepts.first() else { continue };
-                let method = Method::Work { station: station.empty, input: blocks.item_of(input), takes: work.takes, skill: work.skill, level: work.level };
+                let Some(input) = shown_input(blocks, &work.accepts) else { continue };
+                let method = Method::Work { station: station.empty, input, takes: work.takes, skill: work.skill, level: work.level };
                 let uses = work.accepts.iter().copied().chain(method.stations(blocks)).collect();
                 book.add(blocks, Entry { method, output: work.output, count: (work.gives, work.gives) }, uses);
             }
