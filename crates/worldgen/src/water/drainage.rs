@@ -1311,7 +1311,9 @@ mod tests {
 
     #[test]
     fn total_order_matches_total_cmp() {
-        let values = [f32::NEG_INFINITY, -1e9, -64.5, -1.0, -f32::MIN_POSITIVE, -0.0, 0.0, f32::MIN_POSITIVE, 0.5, 63.0, 63.000004, 1e9, f32::INFINITY];
+        // NaNs of both signs and subnormals too, where total_cmp's order is its own.
+        let subnormal = f32::from_bits(1);
+        let values = [-f32::NAN, f32::NEG_INFINITY, -1e9, -64.5, -1.0, -f32::MIN_POSITIVE, -1e-40, -subnormal, -0.0, 0.0, subnormal, 1e-40, f32::MIN_POSITIVE, 0.5, 63.0, 63.000004, 1e9, f32::INFINITY, f32::NAN];
         for a in values {
             for b in values {
                 assert_eq!(total_order(a).cmp(&total_order(b)), a.total_cmp(&b), "{a} against {b}");
