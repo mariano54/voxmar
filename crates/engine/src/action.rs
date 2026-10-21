@@ -842,7 +842,9 @@ impl ActionDef {
                 let solid = ctx.actor_held().is_some_and(|b| ctx.info(b).solid);
                 let cell = placement_cell(ctx, block, face);
                 let upper = ctx.actor_held().and_then(|b| ctx.info(b).upper).is_some_and(|up| ctx.info(up).solid);
-                (!solid || !ctx.occupied(cell)) && (!upper || !ctx.occupied(cell + IVec3::Y))
+                // A player or a creature standing there keeps a solid block out.
+                let taken = |p: IVec3| ctx.occupied(p) || ctx.creature_in(p);
+                (!solid || !taken(cell)) && (!upper || !taken(cell + IVec3::Y))
             }
             Requirement::Supported => {
                 let (block, face) = block_target()?;

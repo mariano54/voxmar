@@ -152,7 +152,8 @@ impl Server {
                 for onto in [true, false] {
                     for cell in state.bin.iter_mut() {
                         let room = match cell {
-                            Some(s) if onto && s.item == stack.item => most.saturating_sub(s.count),
+                            // Worn stacks never merge.
+                            Some(s) if onto && s.item == stack.item && s.wear == 0 && stack.wear == 0 => most.saturating_sub(s.count),
                             None if !onto => most,
                             _ => 0,
                         };
@@ -162,7 +163,7 @@ impl Server {
                         }
                         match cell {
                             Some(s) => s.count += put,
-                            None => *cell = Some(ItemStack { item: stack.item, count: put }),
+                            None => *cell = Some(ItemStack { count: put, ..stack }),
                         }
                         stack.count -= put;
                     }
@@ -427,7 +428,7 @@ mod tests {
         let stone = id(&server, "base:cobblestone");
         let full = voxmar_engine::inventory::max_stack(stone);
         for _ in 0..18 {
-            assert_eq!(server.factory.put(AT, ItemStack { item: stone, count: full }, &machines), None);
+            assert_eq!(server.factory.put(AT, ItemStack::new(stone, full), &machines), None);
         }
         let saved = server.saved_machines();
         server.factory.remove(AT).unwrap();
@@ -447,7 +448,7 @@ mod tests {
             server.factory.insert(AT, barrel, &machines);
         }
         let item = id(server, name);
-        assert_eq!(server.factory.put(AT, ItemStack { item, count }, &machines), None);
+        assert_eq!(server.factory.put(AT, ItemStack::new(item, count), &machines), None);
         server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(8.5, (FLOOR + 1) as f32, 8.5));
     }
 
@@ -482,7 +483,7 @@ mod tests {
         let stone = id(&server, "base:cobblestone");
         let room = server.factory.get(AT).unwrap().1.bin.len();
         for _ in 1..room {
-            assert_eq!(server.factory.put(AT, ItemStack { item: stone, count: 64 }, &machines), None);
+            assert_eq!(server.factory.put(AT, ItemStack::new(stone, 64), &machines), None);
         }
         give(&mut server, 12, "base:oak_planks", 20);
         act(&mut server, "base:put_away", ActionTarget::None);

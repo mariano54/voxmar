@@ -322,8 +322,12 @@ impl Server {
     /// Tells the player why, for a refusal their client could not foresee: it sees no other
     /// player's or creature's body, so it lets clay to a panel someone leans on through.
     fn unforeseen(&self, agent: PlayerId, why: Rejection) {
-        if why == Rejection::Unmet(Requirement::CoatClear) {
-            self.refuse(agent, Words::key("refusal.someone_there"));
+        // Someone in the way, whom the client may not see: a player or creature in the cell
+        // a block is placed into, a door swung shut on, or a panel daubed.
+        if let Rejection::Unmet(need @ (Requirement::CoatClear | Requirement::Swaps | Requirement::Unobstructed)) = why
+            && let Some(say) = self.content.refusals.says(need)
+        {
+            self.refuse(agent, Words::key(say));
         }
     }
 

@@ -1136,8 +1136,9 @@ fn a_village_rug_gives_nothing_but_a_players_comes_back_whole_across_restarts() 
 }
 
 #[test]
-fn a_players_door_or_curtain_opened_still_gives_itself_back() {
-    swapped_furnishing_gives_itself_back("door", "wooden_door", "wooden_door_open");
+fn a_players_curtain_drawn_back_still_gives_itself_back() {
+    // A curtain is a furnishing, which gives nothing unless a player set it (a door drops
+    // itself either way, so it could not show the mark lost).
     swapped_furnishing_gives_itself_back("curtain", "red_curtain", "red_curtain_open");
 }
 

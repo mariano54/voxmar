@@ -10,8 +10,9 @@
         "core:mine": (shown: Some(Breaking)),
         // A small puff of the block's own dust round its foot as it settles.
         "core:place": (effect: Some("settle")),
-        // Clay pressed onto a wall or the ground: the same puff as it takes.
-        "base:coat": (effect: Some("settle")),
+        // Clay pressed onto a wall or the ground: the same puff as it takes, once the server
+        // has turned the block (refused, with someone leaning on it, it shows nothing).
+        "base:coat": (effect: Some("settle"), confirmed: true),
         // Food bitten: crumbs of it falling from the mouth, a bite at a time.
         "core:eat": (effect: Some("crumbs")),
         // Something made at the grid: a glint over what it made.
@@ -49,6 +50,8 @@
         "core:respawn": (none: true),
         "base:open": (none: true),
         "base:open_store": (none: true),
+        // Putting the pack away at home: the lid is heard, nothing flies.
+        "base:put_away": (none: true),
         "base:fish": (none: true),
         "base:tend": (none: true),
         "base:inspect": (none: true),

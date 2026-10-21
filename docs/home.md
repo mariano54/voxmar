@@ -132,8 +132,8 @@ bunches); two bunches and a jar, basket or crate make it. Its farming level coun
 is felt, sowing the kitchen garden at the door (a crop a level early) and harvesting it, and
 its alchemy level at the bench.
 Soft furnishings keep the draught off: a rug underfoot and cloth hung on a wall or at a window
-(`drape`: a wall hanging, two cloths over two sticks, Crafting 4, any dye, or a curtain) under the home's roof, 1°
-warmer; two rugs are not enough
+(`drape`: a wall hanging, two cloths over two sticks, Crafting 4, any dye, or a curtain)
+under the home's roof, 1° warmer; two rugs are not enough
 (`a_rug_and_a_hanging_under_a_roof_are_soft_furnishings`, the server's
 `a_rug_and_a_hanging_make_soft_furnishings`, the gate's walls step: "home: soft furnishings").
 The dooryard is the Farm age's too, the home's outside (home audit 2, item 10: outdoor decor
@@ -650,7 +650,12 @@ to one a player or a creature leans into is refused with placing's words ("Someo
 `CoatClear`, refusals.ron), as placing a block on them and shutting a door on them are. The
 dauber's client sees no other body, so the server sends those words itself; and `coat` keeps
 the cell clear whatever action asks for it. Once they step off, the same clay daubs it (test
-`a_panel_someone_leans_on_is_not_daubed_around_them`).
+`a_panel_someone_leans_on_is_not_daubed_around_them`). The same goes for a block placed or a
+door shut on someone the client cannot see: the server says why with refusals.ron's words
+for `Unobstructed` and `Swaps` (`Server::unforeseen`), and placing a solid block keeps out a
+creature as well as a player. The clay's puff (action_fx.ron `confirmed`) waits for the
+server to turn the panel, so a refused daub shows nothing (fx.rs
+`a_confirmed_burst_waits_for_its_block`).
 
 ## Curing hides
 
