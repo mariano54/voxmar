@@ -466,7 +466,7 @@
     "quest.base.many_kinds": ("Many Kinds of Fish", "さまざまな魚"),
     "quest.base.many_kinds.why": ("Rivers, lakes and the sea bite differently: minnows anywhere, sardines in the sea, perch in lakes from Fishing 10. Land two different kinds. Cook six of your catch: the best fish are worth a fire.", "川、湖、海では釣れるものが違う。ミノーはどこでも、イワシは海、パーチは釣りレベル10から湖で釣れる。2種類釣り上げよう。釣った魚を6匹焼こう。いい魚は火にかける価値がある。"),
     "quest.base.salt_and_sardines": ("Salt and Sardines", "塩とイワシ"),
-    "quest.base.salt_and_sardines.why": ("Sardines bite only in salt water: cast into the sea, not a river or a lake. Take your rod to the coast, land four sardines and roast them at a fire: a sardine heals as well as a minnow.", "イワシは塩水でしか食いつかない。川や湖ではなく海に投げよう。釣り竿を持って海辺へ行き、イワシを4匹釣って火で焼こう。イワシはミノーと同じだけ回復する。"),
+    "quest.base.salt_and_sardines.why": ("Sardines bite only in salt water: cast into the sea, not a river or a lake. Take your rod to the coast, land four sardines and roast them at a fire (Cooking 5): a sardine heals as well as a minnow.", "イワシは塩水でしか食いつかない。川や湖ではなく海に投げよう。釣り竿を持って海辺へ行き、イワシを4匹釣って火で焼こう（料理レベル5）。イワシはミノーと同じだけ回復する。"),
     "quest.base.still_water_perch": ("Still Water Perch", "静かな水のパーチ"),
     "quest.base.still_water_perch.why": ("Perch keep to fresh water, rivers, lakes and ponds, and bite from Fishing 10. Reach Fishing 10 and land three. The fishers send bread home with you for your trouble.", "パーチは川、湖、池などの淡水にいて、釣りレベル10から食いつく。釣りレベル10になって3匹釣り上げよう。漁師からお礼にパンがもらえる。"),
     "quest.base.cold_water_trout": ("Cold Water Trout", "冷たい水のマス"),

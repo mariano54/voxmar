@@ -1403,7 +1403,7 @@
     "quest.base.many_kinds": "さまざまな魚",
     "quest.base.many_kinds.why": "川、湖、海では釣れるものが違う。ミノーはどこでも、イワシは海、パーチは釣りレベル10から湖で釣れる。2種類釣り上げよう。釣った魚を6匹焼こう。いい魚は火にかける価値がある。",
     "quest.base.salt_and_sardines": "塩とイワシ",
-    "quest.base.salt_and_sardines.why": "イワシは塩水でしか食いつかない。川や湖ではなく海に投げよう。釣り竿を持って海辺へ行き、イワシを4匹釣って火で焼こう。イワシはミノーと同じだけ回復する。",
+    "quest.base.salt_and_sardines.why": "イワシは塩水でしか食いつかない。川や湖ではなく海に投げよう。釣り竿を持って海辺へ行き、イワシを4匹釣って火で焼こう（料理レベル5）。イワシはミノーと同じだけ回復する。",
     "quest.base.still_water_perch": "静かな水のパーチ",
     "quest.base.still_water_perch.why": "パーチは川、湖、池などの淡水にいて、釣りレベル10から食いつく。釣りレベル10になって3匹釣り上げよう。漁師からお礼にパンがもらえる。",
     "quest.base.cold_water_trout": "冷たい水のマス",

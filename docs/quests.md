@@ -441,7 +441,7 @@ names cooked fish alone:
 
 | Quest | After | Teaches | Pays |
 |---|---|---|---|
-| Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
+| Salt and Sardines | Patient Angler, Camp Cook | Sardines bite only in the sea: four caught and cooked (Cooking 5) | Fishing 80, 2 bread |
 | Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, 2 bread |
 | Cold Water Trout | Still Water Perch, A Hearty Stew | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked (Cooking 15) | Fishing 120, 4 bread |
 | Three Waters | Salt and Sardines, Still Water Perch | A fourth kind past minnow, sardine and perch: a trout or a cod | Fishing 150, 4 bread |
@@ -457,10 +457,10 @@ cloth and dyes. Each pays in bread:
 
 | Quest | After | Teaches | Pays |
 |---|---|---|---|
-| Fang and Stick | The Farm Age | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
+| Fang and Stick | Earthenware | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
 | Lanterns of Cloth | A Rug Underfoot | Paper lanterns (Crafting 6): two made and set down at home, each a light | Crafting 60, 2 bread |
 | A Dooryard | Lanterns of Cloth | An awning and bunting made, then the Dooryard felt (an awning and two yard things under open sky) | Crafting 100, 4 bread |
-| Five Colours | A Rug Underfoot | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
+| Five Colours | A Rug Underfoot, A Kiln Load | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
 
 ## About camp in the Nomad book (Oct 20)
 

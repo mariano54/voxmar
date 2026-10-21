@@ -415,12 +415,14 @@ pub struct Situation<'a> {
 }
 
 /// What a player is sure to have to bring an effect on with (`EffectRegistry::can_feel`):
-/// what they have, each with how many, whether they have a home, and the quests they have
-/// done (full names).
+/// what they have, each with how many, whether they have a home, the quests they have done
+/// (full names), and where the content wears each item.
 pub struct Means<'a> {
     pub items: &'a [(BlockId, u32)],
     pub home: bool,
     pub done: &'a [String],
+    /// Where each item is worn (`Content::worn_slots`).
+    pub worn: &'a [Option<u8>],
 }
 
 /// How many blocks with each tag lie around a home: the tags are those effects ask of it
@@ -976,7 +978,7 @@ impl EffectRegistry {
             if !helds.contains(&held) {
                 helds.push(held);
             }
-            let worn = self.worn_by(id, blocks.def(id));
+            let worn = self.worn_by(means.worn.get(id.0 as usize).copied().flatten().map(usize::from), blocks.def(id));
             if !worns.contains(&worn) {
                 worns.push(worn);
             }
@@ -1092,10 +1094,11 @@ impl EffectRegistry {
         self.held_tags.iter().filter(|tag| item.has_tag(tag)).cloned().collect()
     }
 
-    /// What effects ask (`Wearing`) of what is worn: only the charm slot's (`charm`), so one
-    /// charm's effect at a time, whatever else a pack tags. Nothing for what is no charm.
-    pub fn worn_by(&self, id: BlockId, item: &crate::block::BlockDef) -> Vec<String> {
-        if crate::inventory::worn_slot(id) != Some(crate::combat::Slot::Charm.index()) {
+    /// What effects ask (`Wearing`) of `item` worn in `slot` (a `combat::Slot` index): only
+    /// the charm slot's, so one charm's effect at a time, whatever else a pack tags. Nothing
+    /// for what is worn elsewhere, or not at all.
+    pub fn worn_by(&self, slot: Option<usize>, item: &crate::block::BlockDef) -> Vec<String> {
+        if slot != Some(crate::combat::Slot::Charm.index()) {
             return Vec::new();
         }
         self.worn_tags.iter().filter(|tag| item.has_tag(tag)).cloned().collect()

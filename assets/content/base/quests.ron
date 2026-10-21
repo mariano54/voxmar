@@ -325,7 +325,7 @@
             name: "a_haunch_for_the_pot", age: "farm", branch: "hunter", title: "A Haunch for the Pot",
             why: "Big game feeds a house for days, but only cooked. Roast a haunch at the campfire or the stove: mutton once your Cooking is 5, pork at 8, beef at 12, venison at 15. Cook one.",
             tasks: [[Cook("cooked_mutton", 1)], [Cook("cooked_pork", 1)], [Cook("cooked_beef", 1)], [Cook("cooked_venison", 1)]],
-            after: ["bigger_game"],
+            after: ["bigger_game", "camp_cook"],
             rewards: [Xp("cooking", 80.0), Xp("hunter", 40.0)],
         ),
         (
@@ -427,9 +427,9 @@
         // Side quests along the water: each teaches where or how a fish bites, or what it is for.
         (
             name: "salt_and_sardines", age: "farm", branch: "fishing", title: "Salt and Sardines",
-            why: "Sardines bite only in salt water: cast into the sea, not a river or a lake. Take your rod to the coast, land four sardines and roast them at a fire: a sardine heals as well as a minnow.",
+            why: "Sardines bite only in salt water: cast into the sea, not a river or a lake. Take your rod to the coast, land four sardines and roast them at a fire (Cooking 5): a sardine heals as well as a minnow.",
             tasks: [[Catch("raw_sardine", 4), Cook("cooked_sardine", 4)]],
-            after: ["patient_angler"],
+            after: ["patient_angler", "camp_cook"],
             side: true,
             rewards: [Xp("fishing", 80.0), Item("bread", 2)],
         ),
@@ -735,7 +735,7 @@
             side: true,
             why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12): the bees move in, and you carry home a skep of bees. Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
-            after: ["herb_garden", "food_enough"],
+            after: ["herb_garden", "food_enough", "the_potter"],
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
         ),
         (
@@ -875,7 +875,7 @@
             name: "fang_and_stick", age: "farm", branch: "crafting", title: "Fang and Stick",
             why: "A trophy can be a tool. Wolves, lynx and bears drop a fang now and then; lash one to a stick and it is a fang dagger (Crafting 10), quick in the hand. Make one.",
             tasks: [[Craft("fang_dagger", 1)]],
-            after: ["the_farm_age"],
+            after: ["earthenware"],
             side: true,
             rewards: [Xp("crafting", 60.0), Item("bread", 2)],
         ),
@@ -899,7 +899,7 @@
             name: "five_colours", age: "farm", branch: "crafting", title: "Five Colours",
             why: "Every flower dyes a cloth its own colour: look a cloth up in the recipe book to see which. Wind flags take five, indigo, white, red, green and amber, tied on one twine (Crafting 9). Dye all five and make the flags.",
             tasks: [[Craft("indigo_cloth", 1), Craft("white_cloth", 1), Craft("red_cloth", 1), Craft("green_cloth", 1), Craft("amber_cloth", 1), Craft("wind_flags", 1)], [Cook("indigo_cloth", 1), Cook("white_cloth", 1), Cook("red_cloth", 1), Cook("green_cloth", 1), Cook("amber_cloth", 1), Craft("wind_flags", 1)]],
-            after: ["a_rug_underfoot"],
+            after: ["a_rug_underfoot", "a_kiln_load"],
             side: true,
             rewards: [Xp("crafting", 120.0), Item("bread", 4)],
         ),
