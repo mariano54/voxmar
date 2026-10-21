@@ -2009,6 +2009,7 @@ mod tests {
             ("base:sleep", "oak_bed", Some("bed_frame")),
             ("base:sit", "birch_stool", Some("wooden_seat")),
             ("base:sit", "oak_settle", Some("wooden_seat")),
+            ("base:sit", "birch_rocking_chair", Some("rocking_chair")),
             ("base:sit", "red_cushion", None),
             ("base:sit", "oak_window_seat", Some("cushioned_seat")),
         ] {
@@ -2179,6 +2180,8 @@ mod tests {
             ("base:half_timber", "timber"),
             ("base:chimney_stack", "stone_brick"),
             ("base:chimney_pot", "terracotta"),
+            ("base:birch_rocking_chair", "rocking_chair"),
+            ("base:oak_cradle", "cradle"),
         ] {
             let found = recorded.material_of(blocks, blocks.id(block).unwrap()).map(|m| recorded.materials[m].name.as_str());
             assert_eq!(found, Some(material), "{block}");
