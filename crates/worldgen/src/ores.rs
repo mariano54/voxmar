@@ -855,7 +855,7 @@ mod tests {
     #[test]
     fn ore_lies_in_veins_under_its_samples() {
         let registry = registry();
-        let world = Overworld::new(42, registry.clone());
+        let world = crate::tests::shared_world(42);
         let first = ColumnPos::of_block(world.spawn_point()).offset(-4, -4);
         let (ores, samples) = census(&world, &registry, first, 8);
         let (min, max) = (first.origin().xz(), first.origin().xz() + 8 * CHUNK_SIZE - 1);
@@ -884,8 +884,7 @@ mod tests {
     /// samples of different veins different ones, and a cell with no sample none.
     #[test]
     fn a_sample_names_its_vein() {
-        let registry = registry();
-        let world = Overworld::new(42, registry.clone());
+        let world = crate::tests::shared_world(42);
         let first = ColumnPos::of_block(world.spawn_point()).offset(-4, -4);
         let (min, max) = (first.origin().xz(), first.origin().xz() + 8 * CHUNK_SIZE - 1);
         let ores = &world.terrain.ores;
@@ -911,7 +910,7 @@ mod tests {
     #[test]
     fn locate_finds_samples() {
         let registry = registry();
-        let world = Overworld::new(42, registry.clone());
+        let world = crate::tests::shared_world(42);
         let spawn = world.spawn_point();
         let (at, block) = world.locate_ore(None, spawn.xz(), 800).expect("a sample of ore within 800 blocks of spawn");
         let column = world.generate(ColumnPos::of_block(at));

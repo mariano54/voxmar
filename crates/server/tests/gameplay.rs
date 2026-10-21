@@ -4098,7 +4098,9 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     // Waiting for any of the settlement's people, not for those at the bed: the dead one
     // may have lived alone.
     let gone = |c: &Client| villagers(c).iter().all(|v| v.seed != victim.seed);
-    // A restart (dropping the server saves the world).
+    // A restart (dropping the server saves the world), from the bed as the first was: the
+    // kill may have moved the player, and a crossing on the way could bring in a newcomer.
+    client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
     drop(client);
     assert!(dir.join("villagers.ron").is_file());
     let mut client = Client::join_with(config());
@@ -5985,8 +5987,6 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     let mut client = Client::join();
     let (bow, arrow) = (client.content.blocks.expect("base:short_bow"), client.content.blocks.expect("base:arrow"));
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
-    // Bees sting only those who can be hurt: no creative here.
-    client.ok("/gamemode survival");
     client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
     client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
     client.ok("/clear");
@@ -6006,6 +6006,10 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
     let yaw = yaw_toward(client.position, at);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+    // Bees sting only those who can be hurt, so no creative from here; till now creative, so
+    // the bear summoned at the player's feet began no fight (a blow wound up walks a held
+    // bear after the player, off from beside the nest).
+    client.ok("/gamemode survival");
     client.wait_server_asked(1);
     let stung = |c: &Client| c.chat.iter().any(|(_, line)| line.starts_with("Stung!"));
     client.chat.clear();
