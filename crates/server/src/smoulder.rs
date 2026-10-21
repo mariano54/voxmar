@@ -767,6 +767,39 @@ mod tests {
         assert_eq!(opened, [("multiblock.smoulder_opened".to_owned(), Some(voxmar_engine::lang::Words::text(count)), Some(voxmar_engine::lang::Words::Block(wood)))], "told it was opened after all");
     }
 
+    /// A kiln gone cold and a clamp done in loaded land while whoever lit them is away are
+    /// kept for them, and told as they come on.
+    #[test]
+    fn news_of_a_kiln_or_clamp_loaded_waits_for_its_lighter_away() {
+        let (mut server, client) = heard("base:torch");
+        sky(&mut server, "clear");
+        build(&mut server);
+        light(&mut server);
+        let name = server.players[&1].name.clone();
+        let kiln = server.content.multiblocks.iter().find(|m| !m.home && !m.fuels.is_empty()).expect("a fuelled kiln").name.clone();
+        let here = IVec3::new(4, FLOOR + 1, 20);
+        server.tell_fires_out();
+        let until = server.tick + 40;
+        server.lit.insert(here, crate::hearth::Lit { position: here.to_array(), structure: kiln, until, owner: Some(crate::player_key(&name)) });
+        while client.try_recv().is_ok_and(|m| m.is_some()) {}
+        let away = server.players.remove(&1).expect("the lighter");
+        server.tick += 60;
+        server.tell_fires_out();
+        server.day += burn_ticks(&server) + 1.0;
+        server.tend_smoulders();
+        assert!(server.smoulders.is_empty(), "charred where it stands, loaded");
+        assert_eq!(server.news_waiting.len(), 2, "both kept: {:?}", server.news_waiting);
+        server.players.insert(1, away);
+        server.tell_waiting(1);
+        let mut keys = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            if let voxmar_protocol::ServerMessage::Fired { words: voxmar_engine::lang::Words::Key(key, _) } = message {
+                keys.push(key);
+            }
+        }
+        assert_eq!(keys, ["multiblock.fire_out", "multiblock.smoulder_done"], "told in the order they came");
+    }
+
     /// News waits for a player away, the newest few, and only theirs is told them.
     #[test]
     fn news_for_a_player_away_keeps_the_newest_and_is_theirs() {
