@@ -433,6 +433,9 @@ steps! {
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
+    /// A pit kiln in the creatures pad, clay in hand: a right click loads it, the server
+    /// sends back the firing kiln, and twelve seconds on the fired one.
+    Kiln,
     /// A wheat held to quern stones and right-clicked grinds into flour (cooking.ron's
     /// stations: the Farm age's quern, spindle and loom work what is held, as a fire does).
     Quern,
@@ -792,6 +795,8 @@ struct Gate {
     /// The crucible of the kiln the workshop builds and lights, and when (server seconds)
     /// it was first lit.
     kiln: IVec3,
+    /// The crafting table the tempered kiln bricks are made at, set over the head.
+    brick_table: IVec3,
     kiln_since: f32,
     /// Where the shapes step sets its row of shaped blocks: in the air before the player.
     shapes_row: IVec3,
@@ -950,6 +955,10 @@ struct Gate {
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
+    /// Where the kiln step found the player, to put them back.
+    kiln_from: Vec3,
+    /// Server seconds from loading the Kiln step's pit kiln to seeing it fired.
+    kiln_fired: f32,
     /// The Cook step's hearth or stove has raw rabbit selected and is being clicked.
     cook_started: bool,
     /// The campfire the weather step dries the player by, while it stands, and what the
@@ -1156,6 +1165,7 @@ impl Gate {
             fell: Vec3::ZERO,
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
+            brick_table: IVec3::ZERO,
             kiln_since: 0.0,
             shapes_row: IVec3::ZERO,
             pieces_open: 0,
@@ -1231,6 +1241,8 @@ impl Gate {
             fit_layout: ((Step::Load, 0), 0, false, 0, false, 0),
             font: None,
             food_moved: false,
+            kiln_from: Vec3::ZERO,
+            kiln_fired: 0.0,
             cook_started: false,
             dry_fire: None,
             rain_roof: None,
@@ -1862,6 +1874,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Kindle | Step::Blaze => STEP_LIMIT + 10.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
+        Step::Kiln => STEP_LIMIT,
         Step::Quern => STEP_LIMIT,
         // The roof and the night, then three steps in or out, each waited on.
         Step::HomeMotif => STEP_LIMIT + 3.0 * QUEST_WAIT,
@@ -2204,6 +2217,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::ShotCancel => shot_cancel(world, gate),
         Step::Others => others(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
+        Step::Kiln => kiln(world, gate, now),
         Step::Quern => quern(world, gate, now),
         Step::HomeMotif => home_motif(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
@@ -3681,12 +3695,12 @@ fn workshop(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let net = world.resource::<Net>();
                 for line in [
                     format!("fill {} {} air", at(-1, 0, -1), at(1, 1, 1)),
-                    format!("fill {} {} kiln_bricks", at(-1, 0, -1), at(1, 0, 1)),
+                    format!("fill {} {} tempered_kiln_bricks", at(-1, 0, -1), at(1, 0, 1)),
                     format!("setblock {} crucible", at(0, 0, 0)),
-                    format!("setblock {} kiln_bricks", at(-1, 1, -1)),
-                    format!("setblock {} kiln_bricks", at(1, 1, -1)),
-                    format!("setblock {} kiln_bricks", at(-1, 1, 1)),
-                    format!("setblock {} kiln_bricks", at(1, 1, 1)),
+                    format!("setblock {} tempered_kiln_bricks", at(-1, 1, -1)),
+                    format!("setblock {} tempered_kiln_bricks", at(1, 1, -1)),
+                    format!("setblock {} tempered_kiln_bricks", at(-1, 1, 1)),
+                    format!("setblock {} tempered_kiln_bricks", at(1, 1, 1)),
                     "clear".to_owned(),
                     "give coal_ore 24".to_owned(),
                 ] {
@@ -4930,14 +4944,100 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if made >= count {
                 let result = if made == count { Ok(format!("{clay} fired clay made {made} kiln bricks")) } else { Err(format!("{clay} fired clay made {made} kiln bricks, not the recipe's {count}")) };
                 gate.check("craft: kiln bricks", result);
-                gate.next(Step::Weather, now);
+                // Straw from the field and fired clay for the bricks the Crucible Kiln is
+                // built of, and a crafting table over the head to make them at (five cells
+                // want the three by three grid).
+                let (level, clay, straw, _) = tempered_bricks(world);
+                let table = world.resource::<LocalPlayer>().position.floor().as_ivec3() + IVec3::Y * 2;
+                let net = world.resource::<Net>();
+                net.command(&format!("skill crafting {level}"));
+                net.command(&format!("give fired_clay {clay}"));
+                net.command(&format!("give straw {straw}"));
+                net.command(&format!("setblock {} {} {} crafting_table", table.x, table.y, table.z));
+                gate.brick_table = table;
+                gate.advance(now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft: kiln bricks", Err(format!("{clay} fired clay made {made} kiln bricks, not the recipe's {count}")));
                 gate.next(Step::Weather, now);
             }
         }
+        // Fired clay with straw in the grid make tempered kiln bricks (the Crucible Kiln's),
+        // two for four as plain ones are.
+        12 => {
+            let (level, clay, straw, _) = tempered_bricks(world);
+            if clay == 0 || straw == 0 {
+                gate.check("craft: tempered kiln bricks", Err("no recipe makes tempered kiln bricks of fired clay and straw".to_owned()));
+                end_bricks(world, gate, now);
+            } else if world.resource::<LocalPlayer>().station != Some(gate.brick_table) {
+                // The table set over the head, opened as a right click opens it
+                // (`interact.rs`): the use proposed once the client has the table, and the
+                // grid opened here, since the server says nothing back when a table opens.
+                let client = world.resource::<ClientWorld>();
+                let there = client.block(gate.brick_table).map(|b| client.registry.def(b).name.clone());
+                if there.as_deref() == Some("base:crafting_table") {
+                    let actions = world.resource::<crate::Actions>().0.clone();
+                    let target = voxmar_engine::action::ActionTarget::Block { block: gate.brick_table, face: voxmar_engine::coords::Face::NegY };
+                    world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:use_table"), target);
+                    world.resource_mut::<LocalPlayer>().station = Some(gate.brick_table);
+                    world.resource_mut::<UiState>().inventory_open = true;
+                } else if gate.server_in_phase() > 5.0 {
+                    let feet = world.resource::<LocalPlayer>().position;
+                    gate.check("craft: tempered kiln bricks", Err(format!("the crafting table set at {} over the head (feet at {feet:.2}) never reached the client: it shows {}", gate.brick_table, there.as_deref().unwrap_or("nothing loaded"))));
+                    end_bricks(world, gate, now);
+                }
+            } else if holding(world, "base:fired_clay").0 >= clay && holding(world, "base:straw").0 >= straw && skill_level(world, "core:crafting").0 >= level {
+                gate.count_before = holding(world, "base:tempered_kiln_bricks").0;
+                let items = std::iter::repeat_n("base:fired_clay", clay as usize).chain(std::iter::repeat_n("base:straw", straw as usize));
+                let cells: Vec<(usize, &str)> = [0, 1, 3, 4, 2, 5, 6, 7, 8].into_iter().zip(items).collect();
+                lay_and_craft(world, &cells);
+                gate.advance(now);
+            } else if gate.server_in_phase() > 5.0 {
+                gate.check("craft: tempered kiln bricks", Err(format!("{} of {clay} fired clay, {} of {straw} straw, or Crafting {level}, never arrived", holding(world, "base:fired_clay").0, holding(world, "base:straw").0)));
+                end_bricks(world, gate, now);
+            }
+        }
+        13 => {
+            let (_, clay, straw, count) = tempered_bricks(world);
+            let made = holding(world, "base:tempered_kiln_bricks").0.saturating_sub(gate.count_before);
+            let said = |made: u32| format!("{clay} fired clay and {straw} straw made {made} tempered kiln bricks");
+            let done = if made >= count {
+                Some(if made == count { Ok(said(made)) } else { Err(format!("{}, not the recipe's {count}", said(made))) })
+            } else {
+                (gate.server_in_phase() > 5.0).then(|| {
+                    // What the server said no to (the table's use, a craft), and what the grid
+                    // holds, for a run that fails here to tell why.
+                    let showing: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
+                    let grid = world.resource::<LocalPlayer>().inventory.grid();
+                    Err(format!("{}, not the recipe's {count}; refusals {showing:?}, the grid {grid:?}", said(made)))
+                })
+            };
+            if let Some(result) = done {
+                gate.check("craft: tempered kiln bricks", result);
+                end_bricks(world, gate, now);
+            }
+        }
         _ => {}
     }
+}
+
+/// The tempered bricks done with, or failed: the table over the head taken away, the grid
+/// shut and the station let go, on to the weather.
+fn end_bricks(world: &mut World, gate: &mut Gate, now: f32) {
+    let table = gate.brick_table;
+    world.resource::<Net>().command(&format!("setblock {} {} {} air", table.x, table.y, table.z));
+    world.resource_mut::<UiState>().inventory_open = false;
+    world.resource_mut::<LocalPlayer>().station = None;
+    gate.next(Step::Weather, now);
+}
+
+/// The tempered kiln bricks' recipe, from the loaded data: the Crafting level it asks, the
+/// fired clay and straw it takes and the bricks it makes.
+fn tempered_bricks(world: &World) -> (u8, u32, u32, u32) {
+    let content = &world.resource::<crate::session::Launch>().content;
+    let (bricks, clay, straw) = (content.blocks.id("base:tempered_kiln_bricks"), content.blocks.id("base:fired_clay"), content.blocks.id("base:straw"));
+    let recipe = content.recipes.iter().find(|r| Some(r.output) == bricks && r.cells().iter().flatten().all(|&c| Some(c) == clay || Some(c) == straw));
+    let takes = |recipe: &voxmar_engine::craft::Recipe, item| recipe.cells().iter().flatten().filter(|&&c| Some(c) == item).count() as u32;
+    recipe.map_or((0, 0, 0, 0), |r| (r.level, takes(r, clay), takes(r, straw), r.count as u32))
 }
 
 /// The kiln bricks' recipe, from the loaded data: the Crafting level it asks, the fired
@@ -18098,11 +18198,114 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         10 => {
             chimney_watch(world, gate, now, pot);
             if gate.chimney_since.is_none() {
-                gate.next(Step::Quern, now);
+                gate.next(Step::Kiln, now);
             }
         }
         _ => {}
     }
+}
+
+/// Where the kiln step sets its pit kiln, from the test ground's middle: inside the creatures
+/// pad (stone underfoot, air above), north-west of the Cook step's fire, stove and chimney,
+/// clear of them all; and where it stands, south of the kiln.
+const KILN_AT: IVec3 = IVec3::new(-4, 0, 18);
+const KILN_STAND: Vec3 = Vec3::new(-3.5, 0.0, 16.0);
+
+/// A pit kiln set down and clay in hand: a right click loads it (stations.ron), the block
+/// the server sends back is the firing kiln, and twelve server seconds on the fired one.
+/// The player is put back where the Cook step left them, for the home motif's walk.
+fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
+    let at = gate.feet + KILN_AT;
+    let shows = |world: &World, name: &str| {
+        let client = world.resource::<ClientWorld>();
+        client.registry.id(name).is_some_and(|b| client.block(at) == Some(b))
+    };
+    match gate.phase {
+        0 => {
+            // Room in the hotbar for the clay given and the fired clay taken.
+            if !hotbar_room(world, gate) {
+                if gate.server_in_phase() > 10.0 {
+                    gate.check("pit kiln", Err(format!("no room in the hotbar ({HOTBAR_ROOM} slots) after clearing the inventory")));
+                    end_kiln(world, gate, now);
+                }
+                return;
+            }
+            gate.kiln_from = world.resource::<LocalPlayer>().position;
+            let stand = gate.feet.as_vec3() + KILN_STAND;
+            let net = world.resource::<Net>();
+            for line in [
+                // Stone underfoot from the stand to the kiln, air above, whatever earlier
+                // steps left there.
+                format!("fill {} {} {} {} {} {} stone", at.x, at.y - 1, at.z - 2, at.x + 1, at.y - 1, at.z),
+                format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z - 2, at.x + 1, at.y + 2, at.z),
+                format!("setblock {} {} {} pit_kiln", at.x, at.y, at.z),
+                "clear clay".to_owned(),
+                "clear fired_clay".to_owned(),
+                "give clay 12".to_owned(),
+                format!("tp {} {} {}", stand.x, stand.y, stand.z),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        1 => {
+            if shows(world, "base:pit_kiln") && select(world, "base:clay") {
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("pit kiln", Err("the pit kiln or clay in hand never came in 10 server seconds".into()));
+                end_kiln(world, gate, now);
+            }
+        }
+        2 => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            if shows(world, "base:pit_kiln_firing") {
+                mouse(world, MouseButton::Right, false);
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("pit kiln", Err(format!("right clicks on the pit kiln at {at} with clay in hand never loaded it in 10 server seconds")));
+                end_kiln(world, gate, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        3 => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            if shows(world, "base:pit_kiln_fired") && drawn(world, at) && gate.shot(world, "pit_kiln").is_some() {
+                gate.kiln_fired = gate.server_in_phase();
+                gate.advance(now);
+            } else if gate.server_in_phase() > 15.0 {
+                gate.check("pit kiln", Err(format!("the loaded pit kiln at {at} never showed fired in 15 server seconds")));
+                end_kiln(world, gate, now);
+            }
+        }
+        // Taken as a player takes it: a right click on the fired kiln, which empties it.
+        _ => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            let fired = carried_of(world, "base:fired_clay");
+            if shows(world, "base:pit_kiln") && fired == 12 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("pit kiln", Ok(format!("clay loaded into the pit kiln: the server sent back the firing kiln, then the fired one {:.1} server seconds on; a right click took the 12 fired clay", gate.kiln_fired)));
+                end_kiln(world, gate, now);
+            } else if gate.server_in_phase() > 10.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("pit kiln", Err(format!("right clicks on the fired pit kiln at {at} left {fired} fired clay in hand, not 12, in 10 server seconds")));
+                end_kiln(world, gate, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+    }
+}
+
+fn end_kiln(world: &mut World, gate: &mut Gate, now: f32) {
+    let (at, back) = (gate.feet + KILN_AT, gate.kiln_from);
+    let net = world.resource::<Net>();
+    net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    net.command("clear clay");
+    net.command("clear fired_clay");
+    net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
+    gate.next(Step::Quern, now);
 }
 
 /// Where the quern step sets its quern stones, from the test ground's middle: inside the

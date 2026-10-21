@@ -26,7 +26,8 @@
             key: {'s': "tag:stone", 'H': "hearthstone", 'C': "chimney"},
             core: 'H',
         ),
-        // The Crucible Kiln, the Farm age's gate: a crucible ringed with kiln bricks, with a
+        // The Crucible Kiln, the Farm age's gate: a crucible ringed with straw-tempered kiln
+        // bricks (plain ones crack in its heat, so the field's straw is part of it), with a
         // brick pillar on each corner to hold the heat. Lit, it smelts copper and tin and
         // makes bronze (cooking.ron's `crucible` station), and the Bronze age opens.
         (
@@ -34,12 +35,12 @@
             // Progression design's two implemented fuel routes; burn times are shared
             // with machines.ron. Hold the whole stack and light the standing core.
             fuels: [("charcoal", 32), ("coal_ore", 24)], heat: 3,
-            hint: "The kiln needs kiln bricks all round the crucible and a pillar of kiln bricks on each corner.",
+            hint: "The kiln needs tempered kiln bricks all round the crucible and a pillar of them on each corner. Tempered bricks take straw from a grain harvest.",
             layers: [
                 ["kkk", "kCk", "kkk"],
                 ["k.k", "...", "k.k"],
             ],
-            key: {'k': "kiln_bricks", 'C': "crucible"},
+            key: {'k': "tempered_kiln_bricks", 'C': "crucible"},
             core: 'C',
         ),
         // A charcoal clamp: nine firewood laid three by three, walled and roofed with earth,

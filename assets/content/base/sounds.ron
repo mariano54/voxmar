@@ -170,6 +170,9 @@
                 (name: "stir", with: ["cooking_pot"], sounds: ["sounds/work/stir_1.ogg", "sounds/work/stir_2.ogg"], volume: 0.7),
                 // Greens forked onto the heap: a wet flump and a damp rustle.
                 (name: "heap", with: ["compost_heap"], sounds: ["sounds/work/heap_1.ogg", "sounds/work/heap_2.ogg"], volume: 0.7),
+                // Clay or cobble loaded into a pit kiln: a knock into the embers and a breath of
+                // flame.
+                (name: "fire_in_kiln", with: ["pit_kiln"], sounds: ["sounds/work/kiln_load_1.ogg", "sounds/work/kiln_load_2.ogg"], volume: 0.9),
             ],
         ),
         // Taking a catch from a sprung trap (traps.ron): a pouch drawn open and shut.
@@ -244,9 +247,6 @@
                 (tags: ["charcoal"], sounds: ["sounds/work/charcoal_1.ogg", "sounds/work/charcoal_2.ogg"], volume: 0.8),
             ],
             ways: [
-                // Clay or cobble set into a pit kiln: a knock into the embers and a breath of
-                // flame.
-                (name: "fire_in_kiln", with: ["tag:pit_kiln"], sounds: ["sounds/work/kiln_load_1.ogg", "sounds/work/kiln_load_2.ogg"], volume: 0.9),
                 // Ore tipped into the hot crucible: a rattle on clay and a deep hiss.
                 (name: "smelt", with: ["tag:crucible"], sounds: ["sounds/work/smelt_1.ogg", "sounds/work/smelt_2.ogg"], volume: 0.9),
                 // The Farm age's hand stations, through their work: a quern's

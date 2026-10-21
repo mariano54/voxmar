@@ -1950,7 +1950,7 @@ mod tests {
         }
         assert_eq!(way("base:light", &["hearthstone"]), Some("kindle_hearth".into()));
         assert_eq!(way("base:light", &["crucible", "charcoal"]), Some("kindle_kiln".into()));
-        assert_eq!(way("base:cook", &["pit_kiln", "clay"]), Some("fire_in_kiln".into()));
+        assert_eq!(way("base:use_station", &["pit_kiln"]), Some("fire_in_kiln".into()));
         assert_eq!(way("base:cook", &["crucible", "copper_ore"]), Some("smelt".into()));
         assert_eq!(way("base:cook", &["campfire", "raw_beef"]), None);
         // The Farm age's hand stations are heard at their work, never as food on a fire,
