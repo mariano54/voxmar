@@ -106,6 +106,20 @@ pub struct Seen {
     /// that hides them (the server's look). Out of it, it notices them only close by
     /// (`Senses::close`) or once they hurt it.
     pub in_view: bool,
+    /// Holding a fire (an item tagged `fire`: a torch), which a creature afraid of fire
+    /// (`creature::Fire`) gives ground from.
+    pub fire: bool,
+    /// Standing in a lit fire's ward at night (`Situation::ward`), where those afraid of
+    /// fire go for no one unprovoked. Set only for kinds that keep out of wards.
+    pub warded: bool,
+}
+
+/// A lit fire's ward at night (`BlockDef::ward`, `MultiblockDef::ward`): `radius` blocks
+/// round `at`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ward {
+    pub at: Vec3,
+    pub radius: f32,
 }
 
 /// Where someone with a routine (villagers) is to be now, as the server's schedule and
@@ -156,6 +170,9 @@ pub struct Situation<'a> {
     pub kept: bool,
     /// Where its routine sends it now, for those that have one.
     pub errand: Option<Errand>,
+    /// The lit fire's ward it stands in, at night, for kinds that keep out of wards
+    /// (`creature::Fire::ward`).
+    pub ward: Option<Ward>,
     /// Seconds since the last decision.
     pub dt: f32,
     /// The seed for this decision's random choices.
@@ -304,6 +321,10 @@ pub struct Mind {
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
     /// near, how far it likes to stray).
     pub seed: u64,
+    /// Seconds it has run flat out lately (`creature::Tires`), back down as it rests.
+    pub sprinted: f32,
+    /// Seconds left of running winded (`creature::Tires::rest`), slowed.
+    pub winded: f32,
 }
 
 impl Mind {
@@ -325,6 +346,8 @@ impl Mind {
             seed,
             zig: 1.0,
             startled_at: None,
+            sprinted: 0.0,
+            winded: 0.0,
             held_off: None,
             noticed: Vec::new(),
         }
@@ -574,6 +597,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         let pose = modules::resting_pose(&ctx);
         mind.doing = None;
         lapse_warning(mind, dt);
+        rest(mind, dt);
         return Decision { pose, ..Default::default() };
     };
     let band: Vec<&(usize, Band, Want)> = wants.iter().filter(|w| w.1 == top).collect();
@@ -610,6 +634,10 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     if !warns {
         lapse_warning(mind, dt);
     }
+    // Not running, it gets its wind back (`Tires`).
+    if creature.modules[index].0.name() != "flee" {
+        rest(mind, dt);
+    }
     let ctx = Ctx { creature, mind: &mind.clone(), at, lively, sight };
     let mut decision = creature.modules[index].0.act(&ctx, mind, want.target, fresh);
     // Provoked by its warning, it goes for them in this same decision.
@@ -620,6 +648,13 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     decision.speed *= mind.personality.pace();
     decision.target = want.target.map(|p| p.id);
     decision
+}
+
+/// Not fleeing, it gets its wind back (`creature::Tires`): its sprint and any time it had
+/// left winded run down a second for a second.
+fn rest(mind: &mut Mind, dt: f32) {
+    mind.sprinted = (mind.sprinted - dt).max(0.0);
+    mind.winded = (mind.winded - dt).max(0.0);
 }
 
 /// Doing anything but warn, a warning lapses (`WARN_LAPSE`).
@@ -648,11 +683,11 @@ pub(super) mod tests {
     pub(super) const BODY: &str = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
 
     pub(super) fn situation<'a>(players: &'a [Seen]) -> Situation<'a> {
-        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, scale: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 }
+        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, scale: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, ward: None, dt: 0.2, seed: 7 }
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
-        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true }
+        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true, fire: false, warded: false }
     }
 
     fn doing<'a>(creature: &'a Creature, mind: &Mind) -> &'a str {
@@ -1002,6 +1037,175 @@ pub(super) mod tests {
             (format!("{defends}, warn: (radius: 5.0, near: 1.5, seconds: 0.6, stance: (rear: 1.5))"), "stance 0 to 1"),
         ] {
             let built = build(&creature);
+            assert!(built.as_ref().is_err_and(|e| e.contains(refused)), "{creature}: {built:?}");
+        }
+    }
+
+    /// A torch held at one afraid of fire (`creature::Fire`) backs it off, facing the flame,
+    /// its warning let lapse; at night it walks out of a lit fire's ward and goes for no one
+    /// inside one. Provoked, kept, on an errand or bolder than its kind, fire holds it back
+    /// no more.
+    #[test]
+    fn fire_keeps_the_wild_back() {
+        let wolf = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (near: 2.0, seconds: 1.0, stance: (nod: 0.4)), fire: (fear: 1.0, give: 4.0), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let torch = [Seen { fire: true, ..player(Vec3::new(3.0, 0.0, 0.0)) }];
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.warning = Some(Warning { seconds: 0.6, lapse: 0.0 });
+        for _ in 0..4 {
+            let decision = think(&wolf, &mut mind, &situation(&torch));
+            assert_eq!((doing(&wolf, &mind), decision.face, decision.pose), ("fire", Some(torch[0].position), Pose::Warning), "backing off, facing the flame");
+            assert!(decision.goal.is_some_and(|g| g.x < -1.0), "away from it: {:?}", decision.goal);
+        }
+        assert_eq!((mind.warning, mind.attacker()), (None, None), "its warning lapsed, unprovoked");
+        // Past `give` (and the slack once backing off) it warns, but while the torch is held
+        // at it, it never comes, however long; put away, it does.
+        let off = [Seen { fire: true, ..player(Vec3::new(5.5, 0.0, 0.0)) }];
+        for _ in 0..20 {
+            let _ = think(&wolf, &mut mind, &situation(&off));
+            assert_eq!((doing(&wolf, &mind), mind.attacker()), ("warn", None), "held off by the torch");
+        }
+        let _ = think(&wolf, &mut mind, &situation(&[Seen { fire: false, ..off[0] }]));
+        assert_eq!((doing(&wolf, &mind), mind.attacker()), ("hunt", Some(1)), "the torch put away, its warning ran out long since");
+        // A torch from one it has not noticed (unseen, past its `close`), or in a creative
+        // player's hand, is no flame to it.
+        let behind = Seen { in_view: false, position: Vec3::new(3.5, 0.0, 0.0), ..torch[0] };
+        for unseen in [behind, Seen { creative: true, ..torch[0] }] {
+            let mut mind = Mind::new(&wolf.def.temperament, 2);
+            let _ = think(&wolf, &mut mind, &situation(&[unseen]));
+            assert_ne!(doing(&wolf, &mind), "fire", "{unseen:?}");
+        }
+        // Noticed, it backs from the flame though it turns from it, and never hunts them.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let _ = think(&wolf, &mut mind, &situation(&[Seen { in_view: true, ..behind }]));
+        for _ in 0..10 {
+            let _ = think(&wolf, &mut mind, &situation(&[behind]));
+            assert_eq!(doing(&wolf, &mind), "fire", "turned from the flame, it still backs from it");
+        }
+        let away = [Seen { position: Vec3::new(6.0, 0.0, 0.0), ..behind }];
+        for _ in 0..10 {
+            let _ = think(&wolf, &mut mind, &situation(&away));
+            assert_ne!(doing(&wolf, &mind), "hunt", "unseen past the torch, it does not go for them");
+        }
+        // Struck, it fights; kept, or on an errand, fire is nothing to it; nor to a bold one.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.hurt(&wolf, Some(1), 0.9);
+        let _ = think(&wolf, &mut mind, &situation(&torch));
+        assert_eq!(doing(&wolf, &mind), "hunt", "provoked: the torch does not hold it");
+        let errand = Errand { to: Vec3::new(-5.0, 0.0, 0.0), last: true, pose: Pose::Idle, face: None, chase: None, pace: 1.0, steady: false };
+        for at in [Situation { kept: true, ..situation(&torch) }, Situation { errand: Some(errand), ..situation(&torch) }] {
+            let mut mind = Mind::new(&wolf.def.temperament, 2);
+            let _ = think(&wolf, &mut mind, &at);
+            assert_ne!(doing(&wolf, &mind), "fire", "kept {} errand {:?}", at.kept, at.errand);
+        }
+        let bold = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (near: 2.0, seconds: 1.0), fire: (fear: 0.0, give: 4.0), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let mut mind = Mind::new(&bold.def.temperament, 2);
+        let _ = think(&bold, &mut mind, &situation(&torch));
+        assert_eq!(doing(&bold, &mind), "warn", "one of the bold: it stands its ground");
+        // Its kind's `fear` is the share that give ground, each by its own roll.
+        let half = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (near: 2.0, seconds: 1.0), fire: (fear: 0.5, give: 4.0), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let gave = (0..400u64)
+            .filter(|&seed| {
+                let mut mind = Mind::new(&half.def.temperament, seed);
+                let _ = think(&half, &mut mind, &situation(&torch));
+                doing(&half, &mind) == "fire"
+            })
+            .count();
+        assert!((160..=240).contains(&gave), "{gave} of 400 gave ground at fear 0.5");
+
+        // At night, in a lit fire's ward, it walks out, past the ward's edge.
+        let ward = Ward { at: Vec3::new(-2.0, 0.0, 0.0), radius: 8.0 };
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let decision = think(&wolf, &mut mind, &Situation { ward: Some(ward), ..situation(&[]) });
+        assert_eq!(doing(&wolf, &mind), "fire");
+        assert!(decision.goal.is_some_and(|g| g.distance(ward.at) > ward.radius), "out of the light: {:?}", decision.goal);
+        let unwarded = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), fire: (fear: 1.0, give: 4.0, ward: false), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let mut mind = Mind::new(&unwarded.def.temperament, 2);
+        let _ = think(&unwarded, &mut mind, &Situation { ward: Some(ward), ..situation(&[]) });
+        assert_ne!(doing(&unwarded, &mind), "fire", "`ward: false`: it pays the light no heed");
+        // One in a ward it neither warns nor hunts, though in sight and in reach.
+        let inside = [Seen { warded: true, ..player(Vec3::new(6.0, 0.0, 0.0)) }];
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let _ = think(&wolf, &mut mind, &situation(&inside));
+        assert!(!["warn", "hunt"].contains(&doing(&wolf, &mind)), "{}", doing(&wolf, &mind));
+        let badger = species(&format!(
+            "(creatures: [(name: \"badger\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (radius: 5.0, near: 1.5, seconds: 1.0), fire: (fear: 1.0, give: 3.0), behaviours: [(do: Defend)])])"
+        ));
+        let near = [Seen { warded: true, ..player(Vec3::new(2.5, 0.0, 0.0)) }];
+        let mut mind = Mind::new(&badger.def.temperament, 2);
+        let _ = think(&badger, &mut mind, &situation(&near));
+        assert_ne!(doing(&badger, &mind), "warn", "a defender warns no one in the light");
+        let _ = think(&badger, &mut mind, &situation(&[Seen { warded: false, ..near[0] }]));
+        assert_eq!(doing(&badger, &mind), "warn", "out of it, as ever");
+    }
+
+    /// Prey that tires (`creature::Tires`) runs flat out its `after` seconds, then winded at
+    /// its `pace` for `rest` seconds, then flat out again; kept, it runs as ever. Bad
+    /// numbers are refused on load.
+    #[test]
+    fn prey_that_tires_runs_winded_after_a_sprint() {
+        let rabbit = species(&format!(
+            "(creatures: [(name: \"rabbit\", health: 3, {BODY}, movement: (walk: 2.0, run: 7.0), tires: (after: 1.0, pace: 0.5, rest: 2.0), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 10.0))])])"
+        ));
+        let near = [player(Vec3::new(2.0, 0.0, 0.0))];
+        let speeds = |at: &Situation| {
+            let mut mind = Mind::new(&rabbit.def.temperament, 2);
+            let full = 7.0 * mind.personality.pace();
+            (0..20)
+                .map(|_| {
+                    let decision = think(&rabbit, &mut mind, at);
+                    assert_eq!(doing(&rabbit, &mind), "flee");
+                    (decision.speed / full * 100.0).round() as u32
+                })
+                .collect::<Vec<_>>()
+        };
+        // Thinking every 0.2 s: five flat out, ten winded, then flat out again.
+        let ran = speeds(&situation(&near));
+        assert_eq!(ran, [[100; 5].as_slice(), &[50; 10], &[100; 5]].concat(), "{ran:?}");
+        assert_eq!(speeds(&Situation { kept: true, ..situation(&near) }), [100; 20], "kept, it is not run down");
+        // Hurt, it limps: one with `hurt: 0.5` at half its health runs 0.75 as fast, winded too.
+        let limping = species(&format!(
+            "(creatures: [(name: \"rabbit\", health: 3, {BODY}, movement: (walk: 2.0, run: 7.0), tires: (after: 1.0, pace: 0.5, rest: 2.0, hurt: 0.5), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 10.0))])])"
+        ));
+        let mut mind = Mind::new(&limping.def.temperament, 2);
+        let full = 7.0 * mind.personality.pace();
+        let ran: Vec<u32> = (0..10).map(|_| (think(&limping, &mut mind, &Situation { health: 0.5, ..situation(&near) }).speed / full * 1000.0).round() as u32).collect();
+        assert_eq!(ran, [[750; 5].as_slice(), &[375; 5]].concat(), "{ran:?}");
+
+        let build = |tires: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, tires: {tires})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("(after: 3.0, pace: 0.5, rest: 4.0)"), Ok(()));
+        for bad in ["(after: 3.0, pace: 0.5, rest: 4.0, hurt: 1.0)", "(after: 0.5, pace: 0.5, rest: 4.0)", "(after: 3.0, pace: 1.0, rest: 4.0)", "(after: 3.0, pace: 0.1, rest: 4.0)", "(after: 3.0, pace: 0.5, rest: 40.0)"] {
+            assert!(build(bad).is_err_and(|e| e.contains("`tires` needs")), "{bad}");
+        }
+    }
+
+    #[test]
+    fn fire_out_of_range_is_refused() {
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("fire: (fear: 0.8, give: 4.0)"), Ok(()));
+        assert_eq!(build("fire: (fear: 0.0, give: 2.0, ward: false)"), Ok(()));
+        for (creature, refused) in [
+            ("boss: true, attack: (damage: (1, 2)), fire: (fear: 0.8, give: 4.0)", "keeps neither back"),
+            ("supernatural: true, fire: (fear: 0.8, give: 4.0)", "keeps neither back"),
+            ("fire: (fear: 1.5, give: 4.0)", "fear 0 to 1"),
+            ("fire: (fear: -0.1, give: 4.0)", "fear 0 to 1"),
+            ("fire: (fear: 0.8, give: 1.0)", "give 2 to 8"),
+            ("fire: (fear: 0.8, give: 12.0)", "give 2 to 8"),
+        ] {
+            let built = build(creature);
             assert!(built.as_ref().is_err_and(|e| e.contains(refused)), "{creature}: {built:?}");
         }
     }
