@@ -8858,8 +8858,15 @@ impl Fresh {
     /// Sets down what is in hand on top of `ground`, which must be in reach.
     fn place(&mut self, item: &str, ground: IVec3) -> IVec3 {
         self.hold(item);
-        self.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
         let cell = ground + IVec3::Y;
+        // A creature standing there keeps a block out (`Unobstructed`): set it down once the
+        // creature has wandered off the cell, as the server shows it.
+        let on_it = |c: &Client| c.creatures.values().any(|v| (v.position.xz() - (cell.as_vec3() + 0.5).xz()).abs().max_element() < 1.0 && (v.position.y - cell.y as f32).abs() < 2.0);
+        if on_it(&self.c) {
+            let off = self.waited(5.0, |c| !on_it(c));
+            assert!(off, "placing {item} on {ground}: a creature stood on the cell for 5 server seconds");
+        }
+        self.propose("core:place", ActionTarget::Block { block: ground, face: Face::PosY });
         let refused = self.c.refused.len();
         let placed = self.waited(5.0, |c| c.world.block(cell).is_some_and(|b| b != BlockId::AIR));
         assert!(

@@ -22,8 +22,7 @@ impl Server {
             .iter()
             .filter(|&(&other, p)| other != id && p.joined)
             .filter_map(|(&other, p)| {
-                let hearth = p.home.filter(|&at| !p.kindled || self.lit.contains_key(&(at - voxmar_engine::glam::Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3()))?;
-                let anchor = hearth.floor().as_ivec3();
+                let anchor = p.hearth_spot(&self.lit)?.floor().as_ivec3();
                 self.in_home_box(anchor, at).then_some((other, anchor))
             })
             .min_by_key(|&(other, _)| other)?;
@@ -33,21 +32,18 @@ impl Server {
 
 #[cfg(test)]
 mod tests {
-
     use std::sync::Arc;
     use std::time::Instant;
 
     use voxmar_engine::action::ActionTarget;
-    use voxmar_engine::coords::Face;
-
     use voxmar_engine::block::BlockId;
-    use voxmar_engine::coords::ColumnPos;
+    use voxmar_engine::coords::{ColumnPos, Face};
     use voxmar_engine::glam::{IVec3, Vec3};
     use voxmar_engine::world::Column;
 
     use crate::Server;
-        use crate::process::Process;
     use crate::player::Player;
+    use crate::process::Process;
 
     const FLOOR: i32 = 199;
     /// The host's hearthstone, their home just above it (as lighting it sets).

@@ -183,7 +183,7 @@
         // fire to sit by (`campfire`: a campfire, the hearth, the stove; a torch is no
         // fireside), and that fire the home's own (`HomeHas`), not a neighbour's through a wall. The day's work done, the home is where to be. A time of day, not a step
         // to build toward: `ladder: "night"` keeps it out of `/home`'s steps.
-        (name: "evening_in", kind: Buff, title: "Evening in", description: "In by your own fire after dark: you heal a fifth faster here, and are 2° warmer.", announce: true, ladder: "night",
+        (name: "evening_in", kind: Buff, title: "Evening in", description: "In by a lit hearth after dark: you heal a fifth faster here, and are 2° warmer.", announce: true, ladder: "night",
             when: Some(All([Night, AtHome, Indoors, HomeHas("campfire", 1), Near("campfire", 4)])),
             replaces: [], modifiers: (heal: 1.2, home_warmth: 2.0)),
         (name: "kitchen_garden", kind: Buff, title: "Kitchen garden", description: "Greens growing by the door: meals heal a tenth more here.", announce: true,

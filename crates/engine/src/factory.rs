@@ -104,10 +104,11 @@ pub struct MachineState {
 }
 
 impl MachineState {
-    /// How many stacks it has room for as a bin of `machine`: its own slots, or what a home
-    /// grew it to, up to a store screen's.
+    /// How many stacks it has room for as a bin of `machine`: its own slots, or, a store,
+    /// what a home grew it to, up to a store screen's (a package that made it no store
+    /// leaves it only its own).
     pub fn bin_room(&self, machine: &crate::machine::Machine) -> usize {
-        machine.bin_slots().max(self.grown.min(crate::inventory::STORE_SLOTS))
+        if machine.is_store() { machine.bin_slots().max(self.grown.min(crate::inventory::STORE_SLOTS)) } else { machine.bin_slots() }
     }
 }
 
