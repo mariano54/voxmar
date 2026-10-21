@@ -44,7 +44,7 @@ impl Server {
         // lying as long as a grave).
         let rest = (stack.count > 1).then(|| ItemStack { count: stack.count - 1, ..stack });
         stack.count = 1;
-        let worn = wear_down(&mut stack, uses, total, tools.wear().warn);
+        let worn = wear_down(&mut stack, uses, total, tools.wear().warn_at(total));
         let now = match worn {
             Worn::Broke => tools.head(item).map(|head| ItemStack::new(head, 1)),
             _ => Some(stack),
@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(wear(&server), Some(3), "grass breaks at a touch");
         assert_eq!(told(&client), (0, 0));
         // Down to a tenth left, it warns once.
-        let warn_at = (uses as f32 * server.content.tools.wear().warn).ceil() as u16;
+        let warn_at = server.content.tools.wear().warn_at(uses);
         server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - warn_at - 1;
         let stone = put(&mut server, "base:stone");
         server.wear_on_block(1, stone, false, server.tool_in_hand(1));
@@ -293,6 +293,21 @@ mod tests {
         assert_eq!((slots[0], slots[7], slots[8]), (Some(ItemStack::new(club, 1)), Some(ItemStack::new(tusk, 1)), None));
     }
 
+    /// A first tool warns with uses enough left to walk back and mend it: a flint one, of
+    /// fifty, creaks with ten left, not the five a tenth would leave; a long-lived one still
+    /// warns at a tenth of its uses.
+    #[test]
+    fn a_flint_tool_warns_with_uses_enough_left_to_mend_it() {
+        for (tool, left) in [("base:flint_pickaxe", 10), ("base:iron_pickaxe", 60)] {
+            let (mut server, client) = holding(tool, 0);
+            let uses = server.content.tools.uses(server.content.blocks.expect(tool));
+            server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - left - 1;
+            let stone = put(&mut server, "base:stone");
+            server.wear_on_block(1, stone, false, server.tool_in_hand(1));
+            assert_eq!(told(&client), (1, 0), "{tool}: warned crossing {left} of {uses} left");
+        }
+    }
+
     /// Nearly worn out, a tool says in words how it is mended, by what and where, as its
     /// tooltip does: the player learns it the first time it matters, before it breaks.
     #[test]
@@ -312,7 +327,7 @@ mod tests {
             let item = server.content.blocks.expect(tool);
             let uses = server.content.tools.uses(item);
             assert_eq!(server.content.tools.mend_near(item), near, "{tool}");
-            let warn_at = (uses as f32 * server.content.tools.wear().warn).ceil() as u16;
+            let warn_at = server.content.tools.wear().warn_at(uses);
             server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - warn_at - 2;
             let stone = put(&mut server, "base:stone");
             server.wear_on_block(1, stone, false, server.tool_in_hand(1));

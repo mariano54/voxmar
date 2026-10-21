@@ -53,6 +53,10 @@ pub struct WearDef {
     pub weapon_skill: String,
     /// The share of its uses left at which a tool warns it is nearly worn out.
     pub warn: f32,
+    /// The fewest uses left a tool warns at, whatever its share (a first tool of few uses
+    /// warns with enough left to take it back and mend it); 0 for none.
+    #[serde(default)]
+    pub warn_uses: u16,
     /// The share of its uses mending gives back.
     pub mend: f32,
     /// The tag of the block mending is done by, unless an item names its own (`mend_near:TAG`).
@@ -73,14 +77,23 @@ pub struct Wear {
     pub save_per_level: f32,
     pub weapon_skill: Option<SkillId>,
     pub warn: f32,
+    pub warn_uses: u16,
     pub mend: f32,
     pub mend_near: String,
     pub spare: bool,
 }
 
+impl Wear {
+    /// The uses left at which a tool of `uses` warns: `warn` of them, or `warn_uses` if
+    /// more, short of the whole.
+    pub fn warn_at(&self, uses: u16) -> u16 {
+        ((uses as f32 * self.warn).ceil() as u16).max(self.warn_uses).min(uses.saturating_sub(1))
+    }
+}
+
 impl Default for Wear {
     fn default() -> Self {
-        Self { suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.0, weapon_skill: None, warn: 0.1, mend: 0.5, mend_near: String::new(), spare: false }
+        Self { suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.0, weapon_skill: None, warn: 0.1, warn_uses: 0, mend: 0.5, mend_near: String::new(), spare: false }
     }
 }
 
@@ -98,7 +111,7 @@ pub enum Worn {
 /// Wears `stack` by `by` uses of the `uses` it has in all (0: it never wears), saying
 /// whether this use took it past the warning or broke it. A broken stack is left as it was;
 /// what it becomes is the caller's (`ToolRegistry::head`).
-pub fn wear_down(stack: &mut crate::inventory::ItemStack, by: u16, uses: u16, warn: f32) -> Worn {
+pub fn wear_down(stack: &mut crate::inventory::ItemStack, by: u16, uses: u16, warn_at: u16) -> Worn {
     if uses == 0 || by == 0 {
         return Worn::Fine;
     }
@@ -106,7 +119,6 @@ pub fn wear_down(stack: &mut crate::inventory::ItemStack, by: u16, uses: u16, wa
     let before = left(stack.wear);
     stack.wear = stack.wear.saturating_add(by).min(uses);
     let after = left(stack.wear);
-    let warn_at = (uses as f32 * warn).ceil() as u16;
     if after == 0 {
         Worn::Broke
     } else if before > warn_at && after <= warn_at {
@@ -263,7 +275,7 @@ impl ToolRegistry {
                 if blocks.ids().all(|id| !blocks.def(id).has_tag(&def.mend_near)) {
                     return Err(RegistryError(format!("tools.ron: nothing has the tag `{}` wear's mending is done by", def.mend_near)));
                 }
-                Wear { suited: def.suited, unsuited: def.unsuited, hit: def.hit, till: def.till, save_per_level: def.save_per_level, weapon_skill: Some(skill_named(&def.weapon_skill)?), warn: def.warn, mend: def.mend, mend_near: def.mend_near, spare: def.spare }
+                Wear { suited: def.suited, unsuited: def.unsuited, hit: def.hit, till: def.till, save_per_level: def.save_per_level, weapon_skill: Some(skill_named(&def.weapon_skill)?), warn: def.warn, warn_uses: def.warn_uses, mend: def.mend, mend_near: def.mend_near, spare: def.spare }
             }
         };
         let savers = kinds.iter().map(|k| k.skill.as_deref().map(skill_named).transpose()).collect::<Result<Vec<_>, _>>()?;
@@ -733,15 +745,18 @@ mod tests {
     #[test]
     fn wear_warns_once_then_breaks() {
         let mut stack = crate::inventory::ItemStack::new(BlockId(1), 1);
-        assert_eq!(wear_down(&mut stack, 5, 20, 0.1), Worn::Fine);
-        assert_eq!(wear_down(&mut stack, 12, 20, 0.1), Worn::Fine, "3 left of 20, still over a tenth");
+        assert_eq!(wear_down(&mut stack, 5, 20, 2), Worn::Fine);
+        assert_eq!(wear_down(&mut stack, 12, 20, 2), Worn::Fine, "3 left of 20, still over a tenth");
         assert_eq!(stack.wear, 17);
-        assert_eq!(wear_down(&mut stack, 1, 20, 0.1), Worn::Warned, "2 left: a tenth of 20");
-        assert_eq!(wear_down(&mut stack, 1, 20, 0.1), Worn::Fine, "warned already");
-        assert_eq!(wear_down(&mut stack, 5, 20, 0.1), Worn::Broke);
+        assert_eq!(wear_down(&mut stack, 1, 20, 2), Worn::Warned, "2 left: a tenth of 20");
+        assert_eq!(wear_down(&mut stack, 1, 20, 2), Worn::Fine, "warned already");
+        assert_eq!(wear_down(&mut stack, 5, 20, 2), Worn::Broke);
         assert_eq!(stack.wear, 20, "never past its uses");
         let mut stone = crate::inventory::ItemStack::new(BlockId(1), 64);
-        assert_eq!(wear_down(&mut stone, 3, 0, 0.1), Worn::Fine);
+        assert_eq!(wear_down(&mut stone, 3, 0, 0), Worn::Fine);
+        // At a tenth left, or `warn_uses` if more, never the whole.
+        let wear = Wear { warn_uses: 10, ..Wear::default() };
+        assert_eq!([50, 600, 5].map(|uses| wear.warn_at(uses)), [10, 60, 4]);
         assert_eq!(stone.wear, 0);
     }
 

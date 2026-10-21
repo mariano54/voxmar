@@ -5731,7 +5731,7 @@ fn tool_wear(world: &mut World, gate: &mut Gate, now: f32) {
                 return fail(world, gate, "tool wear", "no empty hotbar slot to hold the tool in".into());
             };
             world.resource_mut::<LocalPlayer>().selected = slot;
-            let (uses, warn_at) = (content.tools.uses(tool), (content.tools.uses(tool) as f32 * content.tools.wear().warn).ceil() as u16);
+            let (uses, warn_at) = (content.tools.uses(tool), content.tools.wear().warn_at(content.tools.uses(tool)));
             let worn = *world.resource::<crate::breaking::ToolsWorn>();
             gate.tool_wear = Some(WearPlan { tool, block, station, mend, head, uses, warn_at, slot, worn });
             let net = world.resource::<Net>();
