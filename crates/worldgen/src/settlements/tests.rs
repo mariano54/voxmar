@@ -3796,10 +3796,7 @@ fn every_flame_by_a_roof_is_planned() {
     assert!(roofs.len() >= 20, "only {} roof pieces at Wenworth", roofs.len());
     let flame = |b: BlockId| world.settlement_flame(b);
     let planned: rustc_hash::FxHashSet<IVec3> = world.settlement_planned(centre, &flame).into_iter().map(|r| r.0).collect();
-    let mut on_ground: rustc_hash::FxHashMap<IVec2, Vec<BlockId>> = Default::default();
-    for (p, b) in world.settlement_planned_on_ground(centre, &flame) {
-        on_ground.entry(p.xz()).or_default().push(b);
-    }
+    let on_ground: rustc_hash::FxHashMap<IVec3, BlockId> = world.settlement_planned_on_ground(centre, &flame).into_iter().collect();
     let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
     let mut at = |p: IVec3| -> BlockId {
         let pos = ColumnPos::of_block(p);
@@ -3823,7 +3820,7 @@ fn every_flame_by_a_roof_is_planned() {
                     if !flame(b) {
                         continue;
                     }
-                    if on_ground.get(&p.xz()).is_some_and(|set| set.contains(&b)) {
+                    if on_ground.get(&p) == Some(&b) {
                         over_ground += 1;
                         lit.push(p);
                     } else {
@@ -3834,6 +3831,7 @@ fn every_flame_by_a_roof_is_planned() {
         }
     }
     eprintln!("{} roof pieces, {over_ground} flames over the ground beside them", roofs.len());
+    assert!(over_ground > 0, "no flame set over the ground (a lamp's torch) by Wenworth's roofs, so this test no longer looks at one");
     assert!(unplanned.is_empty(), "flames the plan never set by Wenworth's roofs: {:?}", &unplanned[..unplanned.len().min(6)]);
     let mut blocks: rustc_hash::FxHashMap<IVec3, BlockId> = Default::default();
     for f in &lit {

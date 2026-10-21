@@ -796,8 +796,8 @@ impl Settlements {
     }
 
     /// As [`Settlements::planned`], the blocks set at a height over the ground of their
-    /// column rather than at one of their own (a lamp's torch on its post): each with its
-    /// height over the ground's top block, 0 being that block.
+    /// column rather than at one of their own (a lamp's torch on its post): each where
+    /// generation sets it, over the ground's top block as generation finds it.
     pub fn planned_on_ground(&self, world: &Overworld, centre: IVec2, keep: &dyn Fn(BlockId) -> bool) -> Option<Vec<(IVec3, BlockId)>> {
         let slot = self.slot(world, self.cell_of(centre.x, centre.y));
         let plan = slot.0.as_ref().filter(|p| p.centre == centre)?;
@@ -807,7 +807,7 @@ impl Settlements {
             .flatten()
             .filter(|v| v.ground)
             .filter_map(|v| match v.put {
-                Put::Set(b) if keep(b) => Some((v.pos, b)),
+                Put::Set(b) if keep(b) => Some((IVec3::new(v.pos.x, world.geo_area(v.pos.x, v.pos.z, 1)[0].height + v.pos.y, v.pos.z), b)),
                 _ => None,
             })
             .collect();

@@ -18938,14 +18938,10 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     let reach = generator.settlement_fire_reach() + 1;
     // No flame the plan never set within a fire's reach of its roofs: a look about each
     // roof piece, each cell once, knowing the planned flames as far out as that look goes.
-    // Those set over the ground (a lamp's torch on its post) are known by their column and
-    // block, the ground's height being the generator's to find; once found they are judged
-    // for reach with the rest.
+    // Those set over the ground (a lamp's torch on its post) stand where the generator finds
+    // that ground; once found they are judged for reach with the rest.
     let planned_at: rustc_hash::FxHashSet<IVec3> = all_flames.iter().map(|r| r.0).filter(|p| (p.xz() - at.xz()).abs().max_element() <= TOWN_REACH + reach).collect();
-    let mut on_ground: FxHashMap<IVec2, Vec<BlockId>> = FxHashMap::default();
-    for (p, b) in generator.settlement_planned_on_ground(at.xz(), &|b| generator.settlement_flame(b)) {
-        on_ground.entry(p.xz()).or_default().push(b);
-    }
+    let on_ground: FxHashMap<IVec3, BlockId> = generator.settlement_planned_on_ground(at.xz(), &|b| generator.settlement_flame(b)).into_iter().collect();
     let mut flames = flames;
     let mut looked: rustc_hash::FxHashSet<IVec3> = rustc_hash::FxHashSet::default();
     let mut unplanned: Vec<String> = Vec::new();
@@ -18958,7 +18954,7 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
                         && !planned_at.contains(&p)
                         && let Some(b) = observer.world.block(p).filter(|&b| generator.settlement_flame(b))
                     {
-                        if on_ground.get(&p.xz()).is_some_and(|set| set.contains(&b)) {
+                        if on_ground.get(&p) == Some(&b) {
                             flames.push(p);
                         } else {
                             unplanned.push(format!("{} at {p}", block(Some(b))));
