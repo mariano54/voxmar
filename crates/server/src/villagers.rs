@@ -73,6 +73,9 @@ pub struct Villagers {
     /// Who barked what to which player, until the tick they may again
     /// (`Barking::every`, `Server::bark`).
     pub(crate) barked: FxHashMap<(u32, u32, Bark), u64>,
+    /// Villagers (not guards) a player killed since the guards were last called: by
+    /// settlement, where they fell and who killed them (`call_guards`).
+    slain: Vec<(u64, Vec3, u32)>,
 }
 
 /// One of a settlement's people who died.
@@ -327,10 +330,14 @@ impl Server {
         }
     }
 
-    /// Notes the death of creature `id`, if it was someone's, as it dies.
-    pub(crate) fn villager_died(&mut self, id: u32) {
+    /// Notes the death of creature `id`, if it was someone's, as it dies: `slain`, by a
+    /// player at a place, calls the guards as a blow that wounds does.
+    pub(crate) fn villager_died(&mut self, id: u32, slain: Option<(u32, Vec3)>) {
         if let Some(&(town, i)) = self.villagers.by_creature.get(&id) {
             self.note_death(town, i, days(self.day));
+            if let Some((player, at)) = slain.filter(|_| !self.villagers.towns[&town].info.people[i].guard) {
+                self.villagers.slain.push((town, at, player));
+            }
         }
     }
 
@@ -705,8 +712,9 @@ impl Server {
         if frightened {
             let was = person.afraid_until > tick;
             person.afraid_until = tick + ticks(react.afraid);
-            person.chat = None;
-            if let Some(trip) = person.trip.as_mut().filter(|_| person.greeting.take().is_some()) {
+            // A greeting or a talk cut short: off home from where they stand.
+            let talking = person.chat.take().is_some();
+            if let Some(trip) = person.trip.as_mut().filter(|_| person.greeting.take().is_some() || talking) {
                 trip.next_spot = Some(tick);
                 trip.face = None;
             }
@@ -797,23 +805,27 @@ impl Server {
             trip.face = None;
             return false;
         }
-        if !free || t.people[i].chat_after > tick || !idle(i) {
+        if !free || !(react.chat > 0.0) || t.people[i].chat_after > tick || !idle(i) {
             return false;
         }
         let Some(me) = self.creatures.live.get(&id) else { return false };
         let (body, field) = (me.body, self.content.creatures.get(me.species).def.senses.field);
+        let mine = at + Vec3::Y * body.size.1 * 0.8;
         let near = (0..t.people.len())
             .filter(|&j| j != i && t.people[j].chat.is_none() && t.people[j].chat_after <= tick && idle(j))
             .filter_map(|j| Some((j, t.people[j].creature?)))
             .filter_map(|(j, c)| Some((j, c, self.creatures.live.get(&c)?)))
             .filter(|(_, _, c)| {
                 let p = c.body.position;
-                p.with_y(0.0).distance(at.with_y(0.0)) <= react.chat && (p.y - at.y).abs() <= react.chat && self.in_view(&body, field, head(c))
+                let theirs = self.content.creatures.get(c.species).def.senses.field;
+                p.with_y(0.0).distance(at.with_y(0.0)) <= react.chat
+                    && (p.y - at.y).abs() <= react.chat
+                    && self.in_view(&body, field, head(c))
+                    && self.in_view(&c.body, theirs, mine)
             })
             .min_by(|a, b| a.2.body.position.distance(at).total_cmp(&b.2.body.position.distance(at)))
             .map(|(j, c, live)| (j, c, live.body.position));
         let Some((j, other, there)) = near else { return false };
-        let mine = at + Vec3::Y * body.size.1 * 0.8;
         let theirs = head(&self.creatures.live[&other]);
         let people = &mut self.villagers.towns.get_mut(&town).expect("listed").people;
         for (k, with, stand, face) in [(i, other, at, theirs), (j, id, there, mine)] {
@@ -1182,12 +1194,13 @@ impl Server {
         self.block(cell).is_some_and(|b| !self.content.blocks.info(b).solid)
     }
 
-    /// Guards near a villager a player struck fight that player, but for those home after
-    /// giving up a chase.
+    /// Guards near a villager a player struck, or where one fell to them, fight that
+    /// player, but for those home after giving up a chase.
     fn call_guards(&mut self, live: &LiveDef) {
         let tick = self.tick;
         let mut calls: Vec<(u64, Vec3, u32)> = Vec::new();
         let mut alarms: Vec<(u32, u64, usize)> = Vec::new();
+        calls.append(&mut self.villagers.slain);
         for (&id, &(town, i)) in &self.villagers.by_creature {
             let Some(c) = self.creatures.live.get(&id) else { continue };
             if self.villagers.towns[&town].info.people[i].guard {
@@ -1208,10 +1221,12 @@ impl Server {
             }
         }
         for (town, at, player) in calls {
-            let guards: Vec<u32> = self.villagers.towns[&town]
+            // One slain where the town has since been let go of calls no one.
+            let Some(t) = self.villagers.towns.get(&town) else { continue };
+            let guards: Vec<u32> = t
                 .people
                 .iter()
-                .zip(&self.villagers.towns[&town].info.people)
+                .zip(&t.info.people)
                 .filter(|(p, r)| r.guard && p.calm_until <= tick)
                 .filter_map(|(p, _)| p.creature)
                 .collect();
@@ -1455,6 +1470,12 @@ mod tests {
             server.tick += 1;
             server.follow_day(ids[0], 1, 0, &live);
             assert!(server.villagers.towns[&1].people[0].chat.is_none(), "talked again within chat_every");
+            // A `chat` of 0 talks never, even side by side on one spot.
+            let mut never = react.clone();
+            never.chat = 0.0;
+            server.creatures.live.get_mut(&ids[1]).unwrap().body.position = at;
+            server.tick += ticks(react.chat_every) + 1;
+            assert!(!server.talk(ids[0], 1, 0, at, &never, true), "talked with a chat of 0");
         }
     }
 
@@ -1495,7 +1516,7 @@ mod tests {
         let barking = server.content.creatures.get(server.creatures.live[&id].species).def.barking;
         server.tick = 1_000;
         let mut ears = Vec::new();
-        for (n, off) in [(1u32, 2.0), (2, barking.greet - 1.0), (3, barking.greet + 1.0)] {
+        for (n, off) in [(1u32, 2.0), (2, barking.greet - 1.0), (3, barking.greet + 1.0), (4, barking.alarm + 1.0)] {
             let (client, connection) = voxmar_protocol::local_pair();
             let mut p = crate::player::Player::new(n, connection, at + Vec3::new(off, 0.0, 0.0), 2, server.tick, server.survival.max_health, &server.config.limits);
             p.joined = true;
@@ -1511,12 +1532,15 @@ mod tests {
         server.bark(id, Bark::Greet);
         server.bark(id, Bark::Alarm);
         assert!(barking.alarm > barking.greet + 1.0, "an alarm carries no farther than a greeting");
-        assert_eq!(heard(&ears), [vec![Bark::Greet, Bark::Alarm], vec![Bark::Greet, Bark::Alarm], vec![Bark::Alarm]], "within range once each, a greeting's range out only the alarm");
+        assert_eq!(heard(&ears), [vec![Bark::Greet, Bark::Alarm], vec![Bark::Greet, Bark::Alarm], vec![Bark::Alarm], vec![]], "within range once each, a greeting's range out only the alarm, past the alarm's nothing");
+        assert!(barking.content > 2.0 && barking.content < barking.greet - 1.0, "a content hum carries as far as a greeting");
+        server.bark(id, Bark::Content);
+        assert_eq!(heard(&ears), [vec![Bark::Content], vec![], vec![], vec![]], "a content hum past its range");
         server.tick += ticks(barking.every) - 1;
         server.bark(id, Bark::Greet);
-        assert_eq!(heard(&ears), [vec![], vec![], vec![]], "greeted again within `every`");
+        assert_eq!(heard(&ears), [vec![], vec![], vec![], vec![]], "greeted again within `every`");
         server.bark_command(at, "greet");
-        assert_eq!(heard(&ears), [vec![Bark::Greet], vec![Bark::Greet], vec![Bark::Greet]], "the command waited, or kept to the range");
+        assert_eq!(heard(&ears), [vec![Bark::Greet], vec![Bark::Greet], vec![Bark::Greet], vec![Bark::Greet]], "the command waited, or kept to the range");
         server.tick += ticks(barking.every) + 1;
         server.bark(id, Bark::Greet);
         assert_eq!(heard(&ears)[1], [Bark::Greet], "never greeted again after `every`");
@@ -1801,6 +1825,28 @@ mod tests {
         assert_eq!(server.creatures.live[&resident].health, 1);
         assert_eq!(server.villagers.by_creature.get(&resident), Some(&(1, 0)));
         assert!(server.villagers.saved().is_empty(), "dispersal must not mark a resident dead");
+    }
+
+    /// A villager a player kills in one blow calls the guards as one wounded does: they
+    /// come for whoever killed them.
+    #[test]
+    fn a_villager_killed_in_one_blow_calls_the_guards() {
+        use voxmar_engine::combat::Blow;
+        let mut server = fixture("base:villager", 2);
+        let guard = &mut server.villagers.towns.get_mut(&1).unwrap().info.people[1];
+        guard.species = "base:guard".into();
+        guard.guard = true;
+        player(&mut server);
+        server.bring_out(1, 0);
+        server.bring_out(1, 1);
+        let victim = server.villagers.towns[&1].people[0].creature.expect("out");
+        let guard = server.villagers.towns[&1].people[1].creature.expect("out");
+        let live = server.live();
+        let health = server.creatures.live[&victim].health;
+        server.hurt_creature(1, victim, health, None, Blow::Plain);
+        assert!(!server.creatures.live.contains_key(&victim), "not killed in one blow");
+        server.call_guards(&live);
+        assert_eq!(server.creatures.live[&guard].mind.attacker(), Some(1), "no guard came for the killer");
     }
 
     #[test]

@@ -467,8 +467,9 @@ go home instead; guards keep their rounds. Two neighbours out and about (no guar
 one afraid or greeting a player) within `chat` blocks who see each other stop and talk:
 both stand turned to each other for `chat_for` seconds with a contented hum, then go on
 with their day, and stop to talk again only after `chat_every`. Reaching their bed for
-the night, they sigh content once a night. A guard sent after a player who struck a villager knows who they
-are after, whatever stands between them.
+the night, they sigh content once a night. A guard sent after a player who struck a
+villager (or killed one, in one blow or many) knows who they are after, whatever stands
+between them.
 
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter
