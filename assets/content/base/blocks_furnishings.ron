@@ -91,6 +91,9 @@
             (name: "{name}_mantel_shelf", render: Model, shape: "mantel_shelf", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "mantel_shelf", "storage", "decor", "wood"],
                 shows: [(0.22, 0.875, 0.8), (0.5, 0.875, 0.8), (0.78, 0.875, 0.8)]),
             (name: "{name}_fireside_bench", render: Model, shape: "fireside_bench", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "fireside_bench", "decor", "wood"]),
+            // A plate rack on the wall, showing the four things stood on its ledge (`shows`).
+            (name: "{name}_plate_rack", render: Model, shape: "plate_rack", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "plate_rack", "storage", "decor", "wood"],
+                shows: [(0.15, 0.3125, 0.84), (0.38, 0.3125, 0.84), (0.62, 0.3125, 0.84), (0.85, 0.3125, 0.84)]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
