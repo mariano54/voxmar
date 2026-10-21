@@ -66,6 +66,14 @@
             rewards: [Xp("engineering", 20.0), Item("bread", 1)],
         ),
         (
+            name: "a_mended_edge", age: "nomad", branch: "start", title: "A Mended Edge",
+            why: "Every tool wears as you work it: a flint one lasts fifty uses, a stone one three times that, and worn out it breaks. Mend it first at a chopping block: put the worn tool and one flint in the grid within reach of the block, and a flint tool comes back half new; a stone tool, with a stone head, comes back whole. Mend a tool by your chopping block.",
+            tasks: [[Mended("any", 1)]],
+            after: ["a_chopping_block"],
+            side: true,
+            rewards: [Xp("engineering", 30.0)],
+        ),
+        (
             name: "a_coin_purse", age: "nomad", branch: "start", title: "A Coin Purse",
             why: "Coins fill a pack fast. A hide and two twine (raw hide cures on a drying rack) make a coin purse that holds a thousand coins in one slot; right-click it to tip them out again. Make one.",
             tasks: [[Craft("coin_purse", 1)]],

@@ -509,6 +509,8 @@
     "quest.base.full_stone_kit.why": ("A stone tool works twice as fast as a flint one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one stone head over two sticks), hoe and knife.", "石の道具は火打ち石の道具の2倍速く、少しだけ多く見つかる。ひと揃い持とう：ツルハシ、斧、シャベル（石の刃1個の下に棒2本）、くわ、ナイフ。"),
     "quest.base.flint_first": ("Flint First", "まずは火打ち石"),
     "quest.base.flint_first.why": ("Before stone, flint. Two flint over two sticks make a flint pickaxe, which breaks stone and the hard rock that stone heads come from. One stick over another makes a digging stick, a shovel for dirt and sand. Make both.", "石の前に火打ち石。火打ち石2つを棒2本の上に置くと火打ち石のつるはしになり、石や、石の刃のもとになる硬い岩を砕ける。棒を縦に2本並べると掘り棒になり、土や砂を掘るシャベルになる。両方作ろう。"),
+    "quest.base.a_mended_edge": ("A Mended Edge", "刃を繕う"),
+    "quest.base.a_mended_edge.why": ("Every tool wears as you work it: a flint one lasts fifty uses, a stone one three times that, and worn out it breaks. Mend it first at a chopping block: put the worn tool and one flint in the grid within reach of the block, and a flint tool comes back half new; a stone tool, with a stone head, comes back whole. Mend a tool by your chopping block.", "道具は使うほどすり減る。火打ち石の道具は50回、石の道具はその3倍もち、使い切ると壊れる。壊れる前に薪割り台で繕おう。台の届く所で、すり減った道具と火打ち石1つを作業枠に置くと、火打ち石の道具は半分よみがえる。石の道具は石の刃1つで新品に戻る。薪割り台のそばで道具を1つ繕おう。"),
     "quest.base.a_coin_purse": ("A Coin Purse", "財布"),
     "quest.base.a_coin_purse.why": ("Coins fill a pack fast. A hide and two twine (raw hide cures on a drying rack) make a coin purse that holds a thousand coins in one slot; right-click it to tip them out again. Make one.", "硬貨はすぐに荷物をいっぱいにする。なめし皮1枚とひも2本で財布ができ(生皮は干し台でなめせる)、1つの枠に硬貨を千枚入れられる。右クリックすればまた取り出せる。1つ作ろう。"),
     "quest.base.steps_and_slabs": ("Steps and Slabs", "段と板"),
