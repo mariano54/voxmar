@@ -99,7 +99,8 @@ Built now (`engine::creature::brain::modules`):
 | curious | social | comes to look from a distance, backs off if you come closer |
 | warn | danger | every creature whose kind has a `warn`: stands its ground and warns a player before it attacks them (its stance and `warn` sound): a hunter those it would hunt, one that only defends itself those it sees within its radius, never one holding its food unless it hunts; goes for one who stays its seconds or comes within `near`, as if struck; lets be one who backs off first (see "Warnings" below) |
 | fire | danger | every creature whose kind has a `fire`: backs away from a player holding a fire at it (a torch), facing them, if it is one of its kind's `fear` share; at night walks out of a lit fire's ward; not once provoked, kept or on an errand (see "Fire" below) |
-| hide | danger | every creature whose kind has a `flush`: crouches still while a noticed player is beyond its `hold`; not once they flushed it, it is hurt, its kin are alarmed, they hold its favourite food, or it is kept or on an errand (see "Flush" below) |
+| hide | danger | every creature whose kind has a `flush`: crouches still while a noticed player is beyond its `hold` and within the distance it would otherwise flee at; not once they flushed it, it is hurt, its kin are alarmed, they hold its favourite food, or it is kept or on an errand (see "Flush" below) |
+| scavenge | drive | every creature whose kind has a `scavenge`: slinks in, crouched, to food it takes lying on the ground while no noticed player is within its `shy` of it or the food, snatches a piece, runs home and eats it; not once hurt or afraid, kept or on an errand (see "Scavenging" below) |
 | return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
 
 Planned (from the deep dive's library): cache food, drink, sleep, bask, seek shade, huddle,
@@ -199,11 +200,14 @@ afresh after the look, so prey that looks and then runs still raises the alarm t
   `a_player_by_a_lit_hearth_is_let_be_at_night`; `wards_out_of_range_are_refused`.
 - **Flush** (Oct 21): a game bird whose kind has `flush` (creatures.ron) sits tight: a
   player it has noticed beyond its `hold` it lets be, crouched still (the `hide` module),
-  and a player within its `hold` it bursts away from (`Flee` takes `hold` as its distance)
-  at `burst` times its run for its first `seconds`, raising the alarm so its kin burst
+  as far out as it would otherwise flee at (its `Flee` radius by its fear); one further
+  off it does not hide from, and lives its day. A player within its `hold` it bursts away
+  from (`Flee` takes `hold` as its distance) at `burst` times its run for its first
+  `seconds`, raising the alarm so its kin burst
   with it. Flushed, it recalls being scared by them (`Memory::ScaredBy`, 10 s) and runs on
   at its kind's distance rather than settle again at the edge of its hold. Hurt, it flees
-  as any prey; kept or on an errand it sits tight for no one. A stalker who keeps coming
+  as any prey, with no burst, and from whoever hurt it at its kind's distance while it
+  recalls them; kept or on an errand it sits tight for no one. A stalker who keeps coming
   gets close, and is startled at the last. Refused at load: hold outside 1 to 6 blocks,
   burst outside 1 to 2.5, seconds outside 0.2 to 3, or a flush on a boss, a supernatural
   kind or one that attacks. Base game: pheasant (hold 3, burst 1.8, 1.2 s), quail (2.5,
@@ -211,6 +215,26 @@ afresh after the look, so prey that looks and then runs still raises the alarm t
   `a_game_bird_sits_tight_then_bursts_away` and the server's of the same name (each bird,
   walked up to in the open, crouches unmoved to half a block outside its hold, and one
   step in it is fleeing faster than its run; with no burst it is not).
+- **Scavenging** (Oct 21): a creature whose kind has `scavenge` (creatures.ron) steals
+  food left lying. The server finds the nearest stack it `takes` (items or `tag:`s) within
+  its `reach` across the ground and 3 up or down that anyone may pick up and that it
+  senses, as it does a player: in its sight and look (`in_view`), or within its `close`
+  by smell (`Items::scrap_near`). Stuck short of it two seconds (a fence, a wall between)
+  it leaves food there be for 30 s (`Live::no_scrap`), as a chase with no way is given
+  up. While no player it has noticed is within its `shy` of it or of
+  the food, it slinks in at a walk, crouched, and within 1.3 blocks snatches one piece
+  (`Items::snatch`, `Live::carrying`), then runs home and eats it there. Killed first, it
+  drops what it carried with its loot. Hurt or afraid it thinks only of its hide; kept or on
+  an errand it lets food lie; wild ones are never saved, so a piece carried out of the
+  loaded world is gone with it. A hunter who leaves a kill lying and walks off may come
+  back to less. Refused at load: no `takes`, takes naming nothing that is an item, reach
+  outside 4 to 24, shy outside 2 to 12 or not under its reach, or a boss or supernatural
+  kind. Base game: fox, arctic fox and fennec fox (`tag:meat`, reach 16, shy 6). Tests:
+  the brain's `a_fox_steals_meat_left_lying` and the server's of the same name (a fox
+  takes one piece of three lying 9 blocks off with the player 20 blocks from it, and
+  drops it killed; with the player 3 blocks from the meat it does not), and
+  `a_fox_gives_up_on_meat_it_cannot_reach` (meat shut in a stone hut it never goes for;
+  meat in a fence ring it tries for, gives up, and leaves be).
 - **Winded** (Oct 21): a creature whose kind has `tires` (creatures.ron) runs flat out
   from a threat for its `after` seconds, then winded at its `pace` of its run for `rest`
   seconds, then flat out again; time not spent fleeing gets its wind back a second for a

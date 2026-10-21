@@ -180,7 +180,13 @@ impl Player {
     /// hearths kept their fire is home until it is lit again for them (`kindle_home`).
     /// Respawn, `/home`, the HUD, home effects and stores and wanderers all ask here.
     pub fn home_spot(&self, lit: &rustc_hash::FxHashMap<voxmar_engine::glam::IVec3, crate::hearth::Lit>) -> Option<Vec3> {
-        self.home.filter(|&at| !self.kindled || lit.contains_key(&(at - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3())).or(self.bed)
+        self.hearth_spot(lit).or(self.bed)
+    }
+
+    /// Their hearth while it is lit (or before they ever kindled one): the home a guest can
+    /// share (guests.rs), as a bed alone is not.
+    pub fn hearth_spot(&self, lit: &rustc_hash::FxHashMap<voxmar_engine::glam::IVec3, crate::hearth::Lit>) -> Option<Vec3> {
+        self.home.filter(|&at| !self.kindled || lit.contains_key(&(at - Vec3::new(0.5, 1.0, 0.5)).round().as_ivec3()))
     }
 
     /// The block home stands on (`home_spot`), as `Vitals::home` tells it.
