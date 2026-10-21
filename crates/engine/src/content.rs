@@ -1051,6 +1051,29 @@ mod tests {
             *self.stock.entry(item).or_default() -= k;
         }
 
+        /// Whether the line can bring `effect` on by now, by the server's rule
+        /// (`EffectRegistry::can_feel`), with what it has made and holds, its home if built,
+        /// and the quests `done`.
+        fn can_feel(&self, effect: crate::effect::EffectId, done: &[String]) -> bool {
+            let blocks = &self.content.blocks;
+            let mut tags: Vec<(String, u32)> = Vec::new();
+            let mut foods: Vec<Vec<String>> = Vec::new();
+            for (&id, &n) in self.made.iter().chain(&self.stock).filter(|&(_, &n)| n > 0) {
+                // A thing made and kept counts once, the more of made and held: what went
+                // into something else counts too, as Placed does.
+                let n = n.max(self.made.get(&id).copied().unwrap_or(0)).max(self.stock.get(&id).copied().unwrap_or(0));
+                foods.push(blocks.def(id).tags.clone());
+                for tag in &blocks.def(id).tags {
+                    match tags.iter_mut().find(|(t, _)| t == tag) {
+                        Some((_, count)) => *count = (*count).max(n),
+                        None => tags.push((tag.clone(), n)),
+                    }
+                }
+            }
+            let home = self.built.iter().any(|name| self.content.multiblocks.get(name).is_some_and(|m| m.home));
+            self.content.effects.can_feel(effect, &crate::effect::Means { tags: &tags, foods: &foods, home, done })
+        }
+
         /// Puts down a station with `tag` once (the easiest block with it that is made), if
         /// any block with it is made at all.
         fn station(&mut self, tag: &str) {
@@ -1208,11 +1231,34 @@ mod tests {
         assert_eq!(placed, [ring], "The Kiln Ring sets down the kiln's {ring} bricks");
     }
 
+    /// The walk's `Felt` goals are judged by the server's own rule: Fireside wants a seat by a
+    /// fire, Hearty cooked meat eaten, an evening in a home with a campfire after dark.
+    #[test]
+    fn a_feeling_is_had_only_with_what_brings_it_on() {
+        use crate::effect::Means;
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let effects = &content.effects;
+        let id = |name: &str| effects.find(name).unwrap_or_else(|| panic!("no effect {name}"));
+        let tags = |list: &[(&str, u32)]| list.iter().map(|&(t, n)| (t.to_owned(), n)).collect::<Vec<_>>();
+        let feel = |name: &str, have: &[(&str, u32)], foods: &[&[&str]], home: bool| {
+            let foods: Vec<Vec<String>> = foods.iter().map(|f| f.iter().map(|t| t.to_string()).collect()).collect();
+            effects.can_feel(id(name), &Means { tags: &tags(have), foods: &foods, home, done: &[] })
+        };
+        assert!(feel("fireside", &[("seat", 1), ("fire", 1)], &[], false), "a stool at a campfire");
+        assert!(!feel("fireside", &[("fire", 1)], &[], false), "a fire and nothing to sit on");
+        assert!(!feel("fireside", &[("seat", 1)], &[], false), "a stool and no fire");
+        assert!(feel("hearty", &[], &[&["meat", "cooked", "edible"]], false), "cooked meat eaten");
+        assert!(!feel("hearty", &[], &[&["meat", "raw"]], false), "raw meat");
+        assert!(feel("evening_in", &[("campfire", 1), ("fire", 1)], &[], true), "in by your own fire after dark");
+        assert!(!feel("evening_in", &[("campfire", 1), ("fire", 1)], &[], false), "no home to be in");
+    }
+
     /// The main quest line, walked in order, reaches every level it asks for from what it
     /// guarantees: quest rewards and the things it has the player make, all read from the
     /// content (each quest's crafts, cooks and ores; the pieces of the multiblocks it
     /// builds, its home among them; what each recipe uses up, made, mined or gathered
-    /// first; and the stations they need, the crafting table and kilns among them). Where
+    /// first; and the stations they need, the crafting table and kilns among them; and the
+    /// effects it asks to be felt, by the server's rule, with what it has made by then). Where
     /// a quest has several routes, only what every route gives counts. A level asked for before the walk has earned it is a wall: grinding
     /// throwaway crafts to go on (design drafts 100 and 102 found the chimney, Engineering 5
     /// for copper and 10 for the crucible, and the tin in bronze at Mining 10).
@@ -1260,7 +1306,8 @@ mod tests {
             let mut first_walls = None;
             for task in &quest.tasks {
                 let mut route = walk.clone();
-                for goal in task {
+                // What is to be felt, once all else the task has made is to hand.
+                for goal in task.iter().filter(|g| !matches!(g, Goal::Felt(_))).chain(task.iter().filter(|g| matches!(g, Goal::Felt(_)))) {
                     match goal {
                         Goal::CookAt(item, station, n) => {
                             // Model an actual successful food recipe at the promised station,
@@ -1351,10 +1398,16 @@ mod tests {
                             let id = route.item(item);
                             route.consume(&[id], *n, &format!("stocking {item}"));
                         }
+                        Goal::Felt(name) => {
+                            let effect = content.effects.find(name).unwrap_or_else(|| panic!("{}: no effect `{name}`", quest.name));
+                            if !route.can_feel(effect, &done) {
+                                route.walls.push(format!("{}: nothing the line has made brings on {name}", quest.name));
+                            }
+                        }
                         Goal::Visit(_) | Goal::LookUp(_) => {}
                         // A rite asks for quests done, on whatever paths: nothing made.
                         Goal::QuestsDone(..) | Goal::Capstones(..) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Mended(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Mended(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {

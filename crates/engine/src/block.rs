@@ -183,6 +183,10 @@ impl Textures {
     }
 }
 
+/// The least and most a fire's ward reaches (`BlockDef::ward`, `MultiblockDef::ward`).
+pub const WARD_LEAST: f32 = 2.0;
+pub const WARD_MOST: f32 = 24.0;
+
 /// A block definition as authored in content files.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -257,6 +261,9 @@ pub struct BlockDef {
     /// Particles it gives off while near the player: a campfire's smoke, embers and sparks,
     /// a torch's flame. Only the client draws them.
     pub particles: Vec<Emission>,
+    /// How many blocks round it its firelight keeps the wild back at night: creatures afraid
+    /// of fire (`creature::Fire`) do not come in. 0 for none, else 2 to 24.
+    pub ward: f32,
     /// Whether it comes in four facings: the block itself faces north (-z), and blocks
     /// `<name>_east`, `<name>_south` and `<name>_west` are made from it, turned (their
     /// particles too), each dropping the block itself. A wall torch faces out from its
@@ -573,6 +580,7 @@ impl Default for BlockDef {
             plant_height: 1.0,
             host: None,
             particles: Vec::new(),
+            ward: 0.0,
             facing: false,
             faces: None,
             flips: false,
@@ -913,6 +921,7 @@ pub struct BlockRegistry {
     shape_layers: Vec<Vec<u16>>,
     /// What each shape stops movement with: its boxes' unturned bounds, by shape.
     shape_collision: Vec<Vec<crate::physics::Aabb>>,
+    shape_hull: Vec<Vec<crate::physics::Aabb>>,
     /// By block, whether it is only a form another takes when placed (`placement_form`).
     placement_forms: Vec<bool>,
     /// Every block's looks: itself and its variants (shared by the variants).
@@ -1221,6 +1230,9 @@ impl BlockRegistry {
                     .ok_or_else(|| RegistryError(format!("`{}` drops unknown block `{name}`", def.name)))?,
                 None => by_name[&def.name],
             };
+            if def.ward != 0.0 && !(WARD_LEAST..=WARD_MOST).contains(&def.ward) {
+                return Err(RegistryError(format!("`{}` wards {} blocks round it: 0 for none, else {WARD_LEAST} to {WARD_MOST}", def.name, def.ward)));
+            }
             let occludes = def.render == RenderKind::Opaque || shape.is_some_and(|s| shapes[s as usize].is_full_cube());
             info.push(BlockInfo {
                 render: def.render,
@@ -1384,6 +1396,7 @@ impl BlockRegistry {
             }
         }
         let shape_collision = shapes.iter().map(|s| s.bounds.iter().map(|&(min, max)| crate::physics::Aabb { min, max }).collect()).collect();
+        let shape_hull = shapes.iter().map(|s| s.hull.iter().map(|&(min, max)| crate::physics::Aabb { min, max }).collect()).collect();
         // A coating names blocks that are, held as an item, and turns it into another.
         for def in &defs {
             let Some(coat) = &def.coat else { continue };
@@ -1396,7 +1409,7 @@ impl BlockRegistry {
                 return Err(RegistryError(format!("`{}` coats into `{}`, which is itself or coats again", def.name, coat.into)));
             }
         }
-        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, shape_collision, placement_forms, looks, fluids, renamed: FxHashMap::default() })
+        Ok(Self { defs, info, by_name, textures, shapes, shape_starts, shape_layers, shape_collision, shape_hull, placement_forms, looks, fluids, renamed: FxHashMap::default() })
     }
 
     /// A block's looks for a generator to choose from: the block itself first, then its
@@ -1607,6 +1620,17 @@ impl BlockRegistry {
         match (info.solid, info.shape) {
             (false, _) => &[],
             (true, Some(s)) => &self.shape_collision[s as usize],
+            (true, None) => &crate::physics::CUBE,
+        }
+    }
+
+    /// What a creature's blow meets of a solid block drawn as boxes at a player standing in
+    /// its cell (`Shape::hull`): the span of each run of it, gaps and all; else the whole cell.
+    pub fn hull(&self, id: BlockId) -> &[crate::physics::Aabb] {
+        let info = self.info(id);
+        match (info.solid, info.shape) {
+            (false, _) => &[],
+            (true, Some(s)) => &self.shape_hull[s as usize],
             (true, None) => &crate::physics::CUBE,
         }
     }

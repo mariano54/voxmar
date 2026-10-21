@@ -1960,8 +1960,19 @@ mod tests {
         assert_eq!(way("base:cook", &["loom_frame", "wool"]), Some("weave".into()));
         assert_eq!(way("base:cook", &["old_quern_stones", "wheat"]), None, "a village's quern works nothing");
         let gives = |item: &str| recorded.actions["base:cook"].brings.iter().find(|b| b.tags.iter().all(|t| blocks.def(id(item)).has_tag(t))).map(|b| b.tags.join("+"));
-        for (item, heard) in [("flour", "flour"), ("twine", "twine"), ("red_cloth", "cloth"), ("cooked_beef", "cooked"), ("burnt_food", "burnt")] {
+        for (item, heard) in [("flour", "flour"), ("twine", "twine"), ("red_cloth", "bolt"), ("cooked_beef", "cooked"), ("burnt_food", "burnt"), ("bread", "baked"),
+            ("fired_clay", "fired_clay"), ("copper_ingot", "ingot"), ("bronze_ingot", "ingot"), ("charcoal", "charcoal")] {
             assert_eq!(gives(item).as_deref(), Some(heard), "{item}");
+        }
+        // Cloth made into a rug, a banner, a cushion or bunting is not woven at the loom:
+        // picked up after a cook, it is not heard as the loom's cloth.
+        for item in ["red_rug", "red_banner", "red_cushion", "red_bunting", "red_awning"] {
+            assert_eq!(gives(item), None, "{item}");
+        }
+        // Clay cracked in the fire and stone from the kiln are told by no tag that dug clay or
+        // rock lacks: they keep the cook's own sound, never a fired one.
+        for item in ["clay", "stone", "granite", "basalt", "loose_stone"] {
+            assert_eq!(gives(item), None, "{item}");
         }
         // An animal tended with shears or a pail is silent on the click, and heard by the
         // wool or milk the server gives; fed, as ever. A swarm is heard by the skep of bees
@@ -1999,6 +2010,7 @@ mod tests {
             ("base:sit", "birch_stool", Some("wooden_seat")),
             ("base:sit", "oak_settle", Some("wooden_seat")),
             ("base:sit", "red_cushion", None),
+            ("base:sit", "oak_window_seat", Some("cushioned_seat")),
         ] {
             assert_eq!(way(action, &[block]), heard.map(str::to_owned), "{action} at {block}");
         }
@@ -2249,7 +2261,7 @@ mod tests {
         // and the flour, twine and cloth of the Farm age's hand stations.
         let brings = |name: &str| recorded.actions[name].brings.iter().map(|b| b.tags.join("+")).collect::<Vec<_>>();
         assert_eq!(brings("base:fish"), ["fish+raw"]);
-        assert_eq!(brings("base:cook"), ["burnt", "cooked", "flour", "twine", "cloth"]);
+        assert_eq!(brings("base:cook"), ["burnt", "cooked", "flour", "twine", "bolt", "baked", "fired_clay", "ingot", "charcoal"]);
         // Every tag a result is told by is one some item has.
         for brought in recorded.actions.values().flat_map(|sound| &sound.brings) {
             for tag in &brought.tags {
