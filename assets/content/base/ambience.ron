@@ -77,11 +77,14 @@
         (name: "wood", tags: ["log"], range: (5, 60)),
         // Boards: a timber floor, walls and roof (`planks`), as a home is built of them.
         (name: "timber", tags: ["planks"], range: (20, 200)),
-        // A fire to sit by: a campfire, a hearth, a kiln. Before rock, as a hearthstone or a
-        // kiln is stone to the step. One within five blocks is a fire fully heard; by ten
-        // blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth or a
-        // Crucible Kiln (a structure's core) is heard only while its fire burns.
-        (name: "fire", tags: ["campfire", "hearth", "pit_kiln", "crucible"], range: (3, 10), lit: true),
+        // A Crucible Kiln fired hot (a structure's core, so `lit`: heard only while its fire
+        // burns): a furnace's roar, not a wood fire's crackle. Before the fire and rock.
+        (name: "kiln", tags: ["crucible"], range: (3, 10), lit: true),
+        // A fire to sit by: a campfire, a hearth, a pit kiln. Before rock, as a hearthstone
+        // is stone to the step. One within five blocks is a fire fully heard; by ten blocks
+        // it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth (a
+        // structure's core) is heard only while its fire burns.
+        (name: "fire", tags: ["campfire", "hearth", "pit_kiln"], range: (3, 10), lit: true),
         // Lava and falling water sound like water to the step, so they come first.
         (name: "lava", tags: ["lava"], range: (4, 80)),
         // A pot on the boil (`simmering`): one within five blocks is full.
@@ -289,6 +292,12 @@
         (
             name: "fire", sound: Fire, volume: 0.3, fade: 2,
             when: {"fire": (min: 0.6, fade: 0.55)},
+        ),
+        // A Crucible Kiln fired: the deep, steady roar of the draught through its charcoal,
+        // so the Farm age's furnace is told from a hearth by ear.
+        (
+            name: "furnace", sound: Furnace, volume: 0.3, fade: 2,
+            when: {"kiln": (min: 0.6, fade: 0.55)},
         ),
         // By the hearth on a stormy night: the wind moaning low over the chimney, louder
         // in the gusts.
@@ -503,6 +512,18 @@
             name: "fire_sizzle", sound: Sizzle, volume: 0.24, at: OpenBlock("fire"), per_minute: 6, cooldown: 4,
             pitch: (0.9, 1.15), reach: 6,
             when: {"fire": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2)},
+        ),
+        // Rain on a fired kiln in the open: drops hissing on its hot walls, from the kiln.
+        (
+            name: "kiln_sizzle", sound: Sizzle, volume: 0.24, at: OpenBlock("kiln"), per_minute: 6, cooldown: 4,
+            pitch: (0.8, 1.0), reach: 6,
+            when: {"kiln": (min: 0.6, fade: 0.55), "raining": (min: 0.3, fade: 0.2)},
+        ),
+        // The fired kiln's clay walls ticking in the heat, from the kiln itself.
+        (
+            name: "kiln_tick", sound: Tick, volume: 0.22, at: Block("kiln"), per_minute: 5, cooldown: 4,
+            pitch: (0.9, 1.15), reach: 5,
+            when: {"kiln": (min: 0.25, fade: 0.2)},
         ),
         // A log settling in a fire now and then: a soft fall, sparks and a hiss, so a hearth
         // sat by for a while is never one loop.

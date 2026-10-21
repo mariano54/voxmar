@@ -159,11 +159,16 @@ pub enum Synth {
     Flue,
     /// Rain falling into a fire: drops hissing on the embers, a spit now and then.
     Sizzle,
+    /// A kiln fired hot: a deep, steady roar of air drawn through the charcoal, pulsing
+    /// slowly as it breathes, with a hot hiss over it.
+    Furnace,
+    /// Fired clay ticking as it heats: a few small, dry, bright pings of the kiln's walls.
+    Tick,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 55] = [
+    pub const ALL: [Synth; 57] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -219,6 +224,8 @@ impl Synth {
         Synth::Grunt,
         Synth::Flue,
         Synth::Sizzle,
+        Synth::Furnace,
+        Synth::Tick,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -248,6 +255,7 @@ impl Synth {
                 | Synth::Murmur
                 | Synth::Hum
                 | Synth::Flue
+                | Synth::Furnace
         )
     }
 
@@ -315,6 +323,7 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Settle => settle(&mut noise),
         Synth::Grunt => grunt(&mut noise),
         Synth::Sizzle => sizzle(&mut noise),
+        Synth::Tick => tick(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -340,6 +349,7 @@ fn render_bed(synth: Synth, noise: &mut Noise, len: usize) -> Vec<f32> {
         Synth::Lava => lava(noise, len),
         Synth::Hum => hum(noise, len),
         Synth::Flue => flue(noise, len),
+        Synth::Furnace => furnace(noise, len),
         Synth::Waterfall => waterfall(noise, len),
         Synth::Fire => fire(noise, len),
         Synth::ThatchPatter => thatch_patter(noise, len),
@@ -596,6 +606,51 @@ fn flue(noise: &mut Noise, len: usize) -> Vec<f32> {
         }
         let white = noise.next();
         out.push((a.band(white) + 0.6 * b.band(white)) * (0.1 + 0.9 * g) + rush.band(noise.next()) * 0.05 * (0.2 + g));
+    }
+    out
+}
+
+/// A kiln fired hot: brown noise roaring low through the firebox, a hollow resonance of
+/// its chamber breathing slowly as the draught draws, and a thin hot hiss over the top,
+/// with few of a wood fire's crackles (charcoal burns quiet). Deeper and steadier than a
+/// hearth, so a lit Crucible Kiln is told by ear.
+fn furnace(noise: &mut Noise, len: usize) -> Vec<f32> {
+    let draw = Drift::new(noise, 0.25);
+    let flutter = Drift::new(noise, 5.0);
+    let chamber = between(noise, 70.0, 90.0);
+    let mut roar = Svf::new(220.0, 0.5);
+    let mut body = Svf::new(chamber, 4.0);
+    let mut hiss = Svf::new(3200.0, 0.6);
+    let mut out: Vec<f32> = (0..len)
+        .map(|i| {
+            let t = i as f32 / SR;
+            let white = noise.next();
+            let (d, f) = (draw.unit(t), flutter.unit(t));
+            let level = (0.7 + 0.3 * d) * (0.9 + 0.1 * f);
+            (roar.low(white) * 0.6 + body.band(white) * 0.5) * level + hiss.band(noise.next()) * 0.025 * (0.5 + 0.5 * d)
+        })
+        .collect();
+    // A charcoal spit now and then: smaller and brighter than wood's.
+    let mut t = between(noise, 0.3, 1.5);
+    while t < len as f32 / SR {
+        let gain = between(noise, 0.05, 0.15);
+        crack(&mut out, noise, t, (0.001, 0.003), (2500.0, 5000.0), gain);
+        t += gap(noise, 1.2);
+    }
+    out
+}
+
+/// Fired clay ticking in the heat: two to five small, dry pings, each a short bright ring
+/// of a hard shell, some close together and some spread out.
+fn tick(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(1.6)];
+    let mut t = 0.01;
+    for _ in 0..2 + (noise.unit() * 4.0) as usize {
+        let pitch = between(noise, 1800.0, 3200.0);
+        let gain = between(noise, 0.4, 1.0);
+        ring(&mut out, t, pitch, &[(1.0, 1.0, 0.012), (2.3, 0.4, 0.006)], gain);
+        crack(&mut out, noise, t, (0.0008, 0.002), (4000.0, 6000.0), 0.3);
+        t += between(noise, 0.06, 0.3);
     }
     out
 }

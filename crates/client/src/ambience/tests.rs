@@ -115,6 +115,7 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "waterfall", &["river", "water"], &[("water", 0.6), ("falls", 0.9), ("flowing", 1.0), ("rock", 0.4)]),
         scene(ambience, "campfire_night", &["grassland", "temperate", "open"], &[("grass", 1.0), ("fire", 1.0), ("sun", -0.7), ("temperature", 18.0)]),
         scene(ambience, "by_the_hearth", &["forest", "temperate"], &[("fire", 1.0), ("air", 0.5), ("sky", 0.0), ("reverb", 0.1), ("shelter", 1.0), ("roof", 1.0)]),
+        scene(ambience, "by_the_kiln", &["grassland", "temperate", "open"], &[("grass", 0.6), ("kiln", 1.0), ("sun", 0.5), ("temperature", 18.0)]),
         scene(ambience, "storm_outside", &forest_tags, &[&forest[..], STORM].concat()),
         scene(ambience, "storm_by_the_hearth", &forest_tags, &[&forest[..], STORM, INDOORS, &[("fire", 1.0)]].concat()),
         scene(ambience, "quiet_peak", &["mountain"], &[("rock", 0.8), ("relief", 60.0), ("height", 150.0), ("wind", 4.0), ("temperature", 2.0)]),
@@ -136,17 +137,18 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
     (timeline, levels)
 }
 
-/// A hearth or a Crucible Kiln is heard as a fire only while it burns; a campfire or a pit
-/// kiln, always a fire, always.
+/// A hearth is heard as a fire, and a Crucible Kiln as a kiln, only while it burns; a
+/// campfire or a pit kiln, always a fire, always.
 #[test]
 fn structures_are_heard_as_fires_only_while_lit() {
     let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
     let ambience = base();
     let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
-    let fire = ambience.groups.iter().position(|g| g.name == "fire").unwrap() as u8;
-    for (name, lit_only) in [("base:hearthstone", true), ("base:crucible", true), ("base:campfire", false), ("base:pit_kiln", false)] {
+    let group = |name: &str| ambience.groups.iter().position(|g| g.name == name).unwrap() as u8;
+    let (fire, kiln) = (group("fire"), group("kiln"));
+    for (name, heard, lit_only) in [("base:hearthstone", fire, true), ("base:crucible", kiln, true), ("base:campfire", fire, false), ("base:pit_kiln", fire, false)] {
         let id = content.blocks.expect(name).0 as usize;
-        assert_eq!(kinds.group[id], Some(fire), "{name} is not heard as a fire");
+        assert_eq!(kinds.group[id], Some(heard), "{name} is not heard as its fire");
         assert_eq!(kinds.lit_only[id], lit_only, "{name}");
     }
 }
@@ -182,6 +184,8 @@ fn each_place_has_its_own_sound() {
             // A fire is heard by the fire, crackling and snapping, under the night outdoors.
             "campfire_night" => (&["fire", "fire_snap", "crickets"], &["lava", "lava_pop", "warbler"]),
             "by_the_hearth" => (&["fire", "fire_snap"], &["lava", "breeze", "rain_on_roof"]),
+            // A fired Crucible Kiln roars and ticks, never crackling like a wood fire.
+            "by_the_kiln" => (&["furnace", "kiln_tick"], &["fire", "fire_snap", "hearth_settle", "lava"]),
             "storm_outside" => (&["downpour", "storm_wind"], &["rain_on_roof", "fire"]),
             // Indoors in a storm: the rain on the roof and the hearth, the storm a murmur.
             "storm_by_the_hearth" => (&["rain_on_roof", "fire", "fire_snap"], &["downpour", "storm_wind", "dripping_trees", "leaves", "breeze"]),
