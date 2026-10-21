@@ -345,22 +345,24 @@ impl Module for Flee {
 
 /// The share of its run a fleeing creature runs at (`creature::Tires`): flat out until it
 /// has run its `after` seconds, then winded at its `pace` for `rest` seconds, and flat out
-/// again after. Each decision spent fleeing counts toward it; time spent otherwise rests it
+/// again after; and the more it is hurt the slower, by its `hurt`. Each decision spent fleeing counts toward it; time spent otherwise rests it
 /// a second for a second. Not for one that is kept or on an errand: a tame or a village's
 /// animal is not run down.
 fn winded(ctx: &Ctx, mind: &mut Mind) -> f32 {
     let Some(tires) = ctx.creature.def.tires.filter(|_| !ctx.at.kept && ctx.at.errand.is_none()) else { return 1.0 };
+    // Hurt, it limps: `hurt` slower at the last of its health, none at full.
+    let limp = 1.0 - tires.hurt * (1.0 - ctx.at.health.clamp(0.0, 1.0));
     // Winded while more than half a decision of its rest is left: as many decisions as
     // the rest holds.
     if mind.winded > ctx.at.dt * 0.5 {
         mind.winded -= ctx.at.dt;
-        return tires.pace;
+        return tires.pace * limp;
     }
     mind.sprinted += ctx.at.dt;
     if mind.sprinted >= tires.after {
         (mind.sprinted, mind.winded) = (0.0, tires.rest);
     }
-    1.0
+    limp
 }
 
 /// Holds still at a threat just beyond fleeing distance, watching it, before deciding.

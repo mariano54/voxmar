@@ -31,7 +31,8 @@
 // - `tires` is how it tires as it flees (docs/creature-ai.md, "Winded"): flat out for
 //   `after` seconds (1 to 20), then winded at `pace` of its run (0.2 to 0.9) for `rest`
 //   seconds (1 to 30), then flat out again. Set on prey faster than a sprinting player
-//   (6.1), so a chase on foot ends in a catch. Kept animals and villages' run as ever.
+//   (6.1), so a chase on foot ends in a catch; hurt, it runs up to `hurt` slower (0 to
+//   0.9, at the last of its health). Kept animals and villages' run as ever.
 // - `loot` is what it drops: always (chance 1) or by chance, more with the right tool
 //   (`tools`: the tags of what the killer holds) and, for rarer finds, with level.
 (
@@ -90,7 +91,7 @@
                 (name: "snow_rabbit", title: "Snow rabbit", when: [Shows("coat", "white")]),
             ],
             movement: (style: Hopper, walk: 2.2, run: 7.0, turn: 420.0, jump: 7.0),
-            tires: (after: 3.0, pace: 0.4, rest: 4.0),
+            tires: (after: 3.0, pace: 0.4, rest: 4.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:grassland", 1.0), ("tag:heath", 0.8), ("tag:tundra", 0.6), ("tag:forest", 0.3), ("tag:scrubland", 0.5)],
                 comfort: (temperature: (-16.0, 30.0), moisture: (0.12, 2.0)),
@@ -247,7 +248,7 @@
                 (name: "size", kind: Number(mean: 1.0, spread: 0.06, range: (0.8, 1.3), effect: Scale)),
             ],
             movement: (walk: 1.5, run: 8.5, turn: 300.0, jump: 9.5),
-            tires: (after: 3.0, pace: 0.4, rest: 5.0),
+            tires: (after: 3.0, pace: 0.4, rest: 5.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:forest", 1.0), ("tag:grassland", 0.25)],
                 comfort: (temperature: (-15.0, 26.0), moisture: (0.4, 2.2)),
@@ -496,7 +497,7 @@
                 skin: (fur: 0.11, belly: 0.35, markings: [EarTips(colour: (120, 50, 24)), TailTip(colour: (150, 62, 28), length: 0.4)]),
             ),
             movement: (style: Hopper, walk: 2.0, run: 6.5, turn: 520.0, jump: 8.0),
-            tires: (after: 2.5, pace: 0.5, rest: 4.0),
+            tires: (after: 2.5, pace: 0.5, rest: 4.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:conifer", 1.0), ("tag:broadleaf", 0.8), ("tag:forest", 0.6)],
                 comfort: (temperature: (-20.0, 26.0), moisture: (0.3, 2.2)),
@@ -837,7 +838,7 @@
                 (name: "size", kind: Number(mean: 1.0, spread: 0.06, range: (0.78, 1.3), effect: Scale)),
             ],
             movement: (style: Hopper, walk: 2.4, run: 9.0, turn: 420.0, jump: 7.5),
-            tires: (after: 2.5, pace: 0.35, rest: 5.0),
+            tires: (after: 2.5, pace: 0.35, rest: 5.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:open", 0.8), ("tag:grassland", 1.0), ("tag:tundra", 1.0), ("tag:heath", 0.8), ("tag:highland", 0.6)],
                 comfort: (temperature: (-30.0, 28.0)),
@@ -986,7 +987,7 @@
                 (name: "white_reindeer", title: "White reindeer", when: [Shows("coat", "pale"), Above("size", 1.05)]),
             ],
             movement: (walk: 1.5, run: 7.0, turn: 260.0, jump: 8.5),
-            tires: (after: 4.0, pace: 0.45, rest: 5.0),
+            tires: (after: 4.0, pace: 0.45, rest: 5.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:tundra", 1.0), ("tag:cold", 0.8), ("tag:conifer", 0.4), ("tag:frozen", 0.6)],
                 comfort: (temperature: (-40.0, 12.0)),
@@ -1047,7 +1048,7 @@
                 (name: "draught", title: "Draught horse", when: [Above("size", 1.15), Below("temper", -0.1)]),
             ],
             movement: (walk: 1.6, run: 9.5, turn: 260.0, jump: 9.0),
-            tires: (after: 4.0, pace: 0.35, rest: 6.0),
+            tires: (after: 4.0, pace: 0.35, rest: 6.0, hurt: 0.4),
             habitat: (
                 biomes: [("tag:grassland", 1.0), ("tag:savanna", 0.7), ("tag:open", 0.6), ("tag:highland", 0.5)],
                 comfort: (temperature: (-20.0, 34.0), moisture: (0.1, 1.6)),
@@ -1148,7 +1149,7 @@
                 skin: (fur: 0.06, belly: 0.4, feet: (40, 34, 30), markings: [Stripes(colour: (60, 44, 34), width: 0.04, spacing: 2.0), Blaze(colour: (242, 236, 224)), Mask(colour: (90, 64, 44))]),
             ),
             movement: (walk: 1.6, run: 10.0, turn: 360.0, jump: 10.0),
-            tires: (after: 3.0, pace: 0.35, rest: 6.0),
+            tires: (after: 3.0, pace: 0.35, rest: 6.0, hurt: 0.4),
             habitat: (
                 biomes: [("tag:savanna", 1.0), ("tag:dry", 0.6), ("tag:open", 0.4), ("tag:scrubland", 0.5)],
                 comfort: (temperature: (14.0, 42.0), moisture: (0.0, 1.2)),

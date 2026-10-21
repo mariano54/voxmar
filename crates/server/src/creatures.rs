@@ -5958,6 +5958,47 @@ mod fight_tests {
         }
     }
 
+    /// A rabbit struck to a part of its health limps (`Tires::hurt`): from the same spot and
+    /// seed, chased at a sprint, it covers in its sprint before it is winded the share of an
+    /// unhurt one's ground its data says (1 - hurt x the share of its health lost).
+    #[test]
+    fn a_hurt_rabbit_limps() {
+        const SPRINT: f32 = 6.1;
+        // Its ground run flat out, chased, and its share of health.
+        let sprint = |hurt: bool| {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 48);
+            let start = c.as_vec3() + Vec3::new(2.5, 0.0, 0.5);
+            let id = put(&mut server, "base:rabbit", start, Vec3::X);
+            let player = join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+            let rabbit = server.creatures.live.get_mut(&id).unwrap();
+            let most = rabbit.health;
+            if hurt {
+                rabbit.health = most / 2;
+            }
+            let share = rabbit.health as f32 / most as f32;
+            let winded = (0..10 * TICKS_PER_SECOND).any(|_| {
+                let (at, prey) = (server.players[&player].position, server.creatures.live[&id].body.position);
+                let gap = Vec2::new(prey.x - at.x, prey.z - at.z);
+                let step = gap.normalize_or_zero() * (SPRINT / TICKS_PER_SECOND as f32).min((gap.length() - 1.0).max(0.0));
+                server.players.get_mut(&player).unwrap().position = Vec3::new(at.x + step.x, at.y, at.z + step.y);
+                server.tick += 1;
+                server.tick_creatures();
+                server.creatures.live[&id].mind.winded > 0.0
+            });
+            assert!(winded, "hurt {hurt}: the rabbit never ran itself winded");
+            (server.creatures.live[&id].body.position.with_y(0.0).distance(start.with_y(0.0)), share)
+        };
+        let (whole, _) = sprint(false);
+        let (limped, share) = sprint(true);
+        let hurt = {
+            let server = crate::test_server();
+            server.content.creatures.get(server.content.creatures.id("base:rabbit").unwrap()).def.tires.expect("a rabbit tires").hurt
+        };
+        let (ran, said) = (limped / whole, 1.0 - hurt * (1.0 - share));
+        assert!((ran - said).abs() < 0.08, "hurt to {share:.2} of its health it ran {ran:.2} of the ground, not {said:.2} ({limped:.1} of {whole:.1} blocks)");
+    }
+
     /// At night a wolf in a campfire's ward (`BlockDef::ward`) walks out of it. Not by day,
     /// nor a kept one.
     #[test]

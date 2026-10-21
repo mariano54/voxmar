@@ -1044,13 +1044,21 @@ pub(super) mod tests {
         let ran = speeds(&situation(&near));
         assert_eq!(ran, [[100; 5].as_slice(), &[50; 10], &[100; 5]].concat(), "{ran:?}");
         assert_eq!(speeds(&Situation { kept: true, ..situation(&near) }), [100; 20], "kept, it is not run down");
+        // Hurt, it limps: one with `hurt: 0.5` at half its health runs 0.75 as fast, winded too.
+        let limping = species(&format!(
+            "(creatures: [(name: \"rabbit\", health: 3, {BODY}, movement: (walk: 2.0, run: 7.0), tires: (after: 1.0, pace: 0.5, rest: 2.0, hurt: 0.5), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 10.0))])])"
+        ));
+        let mut mind = Mind::new(&limping.def.temperament, 2);
+        let full = 7.0 * mind.personality.pace();
+        let ran: Vec<u32> = (0..10).map(|_| (think(&limping, &mut mind, &Situation { health: 0.5, ..situation(&near) }).speed / full * 1000.0).round() as u32).collect();
+        assert_eq!(ran, [[750; 5].as_slice(), &[375; 5]].concat(), "{ran:?}");
 
         let build = |tires: &str| {
             let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, tires: {tires})])")).unwrap().defs;
             CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
         };
         assert_eq!(build("(after: 3.0, pace: 0.5, rest: 4.0)"), Ok(()));
-        for bad in ["(after: 0.5, pace: 0.5, rest: 4.0)", "(after: 3.0, pace: 1.0, rest: 4.0)", "(after: 3.0, pace: 0.1, rest: 4.0)", "(after: 3.0, pace: 0.5, rest: 40.0)"] {
+        for bad in ["(after: 3.0, pace: 0.5, rest: 4.0, hurt: 1.0)", "(after: 0.5, pace: 0.5, rest: 4.0)", "(after: 3.0, pace: 1.0, rest: 4.0)", "(after: 3.0, pace: 0.1, rest: 4.0)", "(after: 3.0, pace: 0.5, rest: 40.0)"] {
             assert!(build(bad).is_err_and(|e| e.contains("`tires` needs")), "{bad}");
         }
     }

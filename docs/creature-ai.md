@@ -186,14 +186,19 @@ curse spread, aura, molt rebirth, dream walk.
   from a threat for its `after` seconds, then winded at its `pace` of its run for `rest`
   seconds, then flat out again; time not spent fleeing gets its wind back a second for a
   second (`Mind::sprinted`, `Mind::winded`). A kept animal or one on an errand runs as
-  ever. The base game sets it on the prey faster than a sprinting player (6.1 blocks a
-  second): rabbit (3 s, 0.4, 4 s), hare (2.5, 0.35, 5), red squirrel (2.5, 0.5, 4), red
-  deer (3, 0.4, 5), reindeer (4, 0.45, 5), wild horse (4, 0.35, 6) and gazelle (3, 0.35,
-  6), each averaging under a sprint over a sprint and a rest, so a first hunt on foot ends
-  in a catch: first-days.md's slowest wait was the chase for the bed's hides. Tests: the
-  brain's `prey_that_tires_runs_winded_after_a_sprint`; the server's
-  `a_sprinting_hunter_runs_down_winded_prey` (a rabbit and a red deer run down within 20 s
-  on open ground; without `tires` the rabbit is not).
+  ever. Hurt, it limps: it runs `hurt` slower at the last of its health, in proportion
+  above (a creature does not heal), so each blow a hunter lands brings the catch nearer.
+  The base game sets it on the prey faster than a sprinting player (6.1 blocks a second):
+  rabbit (3 s, 0.4, 4 s, hurt 0.5), hare (2.5, 0.35, 5, 0.5), red squirrel (2.5, 0.5, 4,
+  0.5), red deer (3, 0.4, 5, 0.5), reindeer (4, 0.45, 5, 0.5), wild horse (4, 0.35, 6,
+  0.4) and gazelle (3, 0.35, 6, 0.4), each averaging under a sprint over a sprint and a
+  rest, so a first hunt on foot ends in a catch: first-days.md's slowest wait was the chase
+  for the bed's hides. Tests: the brain's `prey_that_tires_runs_winded_after_a_sprint`;
+  the server's `a_sprinting_hunter_runs_down_winded_prey` (a rabbit and a red deer run
+  down within 20 s on open ground; without `tires` the rabbit is not) and
+  `a_hurt_rabbit_limps` (at a third of its health, from the same seed and spot, it covers
+  0.63 of an unhurt one's ground in its sprint, the data saying 0.67; 1.00 without the
+  limp).
 
 ## Roaming
 

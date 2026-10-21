@@ -279,21 +279,25 @@ impl Fire {
 /// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
 /// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
 /// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
-/// second. A kept animal or one on an errand runs as ever.
+/// second. Hurt, it limps: it runs `hurt` slower at the last of its health, in proportion
+/// above (0 for none, up to 0.9), so each blow a hunter lands brings the catch nearer. A
+/// kept animal or one on an errand runs as ever.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tires {
     pub after: f32,
     pub pace: f32,
     pub rest: f32,
+    #[serde(default)]
+    pub hurt: f32,
 }
 
 impl Tires {
     /// A real sprint first, a real slowing after, and a rest long enough to be caught in
     /// but not so long that it is caught standing.
     pub fn check(&self) -> Result<(), String> {
-        if !(1.0..=20.0).contains(&self.after) || !(0.2..=0.9).contains(&self.pace) || !(1.0..=30.0).contains(&self.rest) {
-            return Err(format!("`tires` needs after 1 to 20 seconds, pace 0.2 to 0.9 and rest 1 to 30 seconds, not {self:?}"));
+        if !(1.0..=20.0).contains(&self.after) || !(0.2..=0.9).contains(&self.pace) || !(1.0..=30.0).contains(&self.rest) || !(0.0..=0.9).contains(&self.hurt) {
+            return Err(format!("`tires` needs after 1 to 20 seconds, pace 0.2 to 0.9, rest 1 to 30 seconds and hurt 0 to 0.9, not {self:?}"));
         }
         Ok(())
     }
