@@ -2490,7 +2490,10 @@ fn the_quern_spindle_and_loom_grind_spin_and_weave() {
         client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
         assert_eq!(client.quiet(loose), 0, "a {station} the world set gave itself");
         client.ok(&format!("/give {station} 1"));
-        client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == block));
+        // Held from whichever slot it came into.
+        client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == block));
+        let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == block)).expect("given");
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
         client.propose("core:place", ActionTarget::Block { block: at - IVec3::Y, face: Face::PosY });
         // Set down facing the player: one of its facings.
         client.pump_until(|c| c.world.block(at).is_some_and(|b| c.content.blocks.def(b).name.starts_with(&format!("base:{station}"))));
