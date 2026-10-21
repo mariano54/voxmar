@@ -152,9 +152,16 @@ impl StationSeen {
     }
 }
 
-/// Whether `block` says something when looked at: a station, or a fuelled structure's core.
+/// Whether `block` says something when looked at: a station, a fuelled structure's core,
+/// or a smouldering one's.
 fn says_more(launch: &Launch, block: BlockId) -> bool {
-    launch.content.stations.of(block).is_some() || launch.content.multiblocks.with_core(block).any(|m| !m.fuels.is_empty())
+    launch.content.stations.of(block).is_some() || launch.content.multiblocks.with_core(block).any(|m| !m.fuels.is_empty()) || charring(launch, block)
+}
+
+/// Whether `block` is a structure's core smouldering (a clamp's flue, at any stage): what it
+/// holds it chars, rather than cooks.
+fn charring(launch: &Launch, block: BlockId) -> bool {
+    launch.content.multiblocks.iter().filter_map(|m| m.smoulder.as_ref()).any(|s| s.is_burning(block))
 }
 
 /// Asks the server about the station looked at: once on looking, again when its block
@@ -185,8 +192,9 @@ fn time_left(locale: &Locale, seconds: f64) -> String {
 
 /// The quiet line under a station's name: what it holds and makes, and how long it has
 /// left; a kiln's fire, or that it is cold. Nothing until the server has said.
-/// `ready` when the block itself shows its work done; `name` names an item.
-fn station_tags(locale: &Locale, name: impl Fn(BlockId) -> String, at: IVec3, ready: bool, seen: &StationSeen, now: f64) -> Vec<(String, Color)> {
+/// `ready` when the block itself shows its work done; `charring` for a smouldering
+/// structure, whose load is the wood it chars; `name` names an item.
+fn station_tags(locale: &Locale, name: impl Fn(BlockId) -> String, at: IVec3, ready: bool, charring: bool, seen: &StationSeen, now: f64) -> Vec<(String, Color)> {
     let Some((_, load, fire, told)) = seen.told.filter(|told| told.0 == at) else { return Vec::new() };
     let gone = now - told;
     let mut tags = Vec::new();
@@ -200,7 +208,8 @@ fn station_tags(locale: &Locale, name: impl Fn(BlockId) -> String, at: IVec3, re
     }
     match load {
         Some(load) => {
-            tags.push((locale.format("target.station.holds", &[("count", &load.count), ("item", &name(load.item))]), SOFT));
+            let holds = if charring { "target.station.charring" } else { "target.station.holds" };
+            tags.push((locale.format(holds, &[("count", &load.count), ("item", &name(load.item))]), if charring { GOLD } else { SOFT }));
             let left = load.seconds as f64 - gone;
             if ready || left <= 0.0 {
                 tags.push((locale.format("target.station.ready", &[("count", &load.makes), ("item", &name(load.output))]), ACCENT));
@@ -380,7 +389,7 @@ fn show(
                 Some(hit) if says_more(launch, block) => {
                     let ready = launch.content.stations.of(block).is_some_and(|(_, phase)| phase == voxmar_engine::station::Phase::Ready);
                     let name = |item: BlockId| locale.block(sight.world.registry.def(item));
-                    station_tags(&locale, name, hit.block, ready, &seen, time.elapsed_secs_f64())
+                    station_tags(&locale, name, hit.block, ready, charring(launch, block), &seen, time.elapsed_secs_f64())
                 }
                 _ => Vec::new(),
             };
@@ -512,7 +521,7 @@ mod tests {
         let name = |item: BlockId| if item == BlockId(1) { "Raw Beef".to_owned() } else { "Jerky".to_owned() };
         let at = IVec3::new(4, 60, -2);
         let mut seen = StationSeen::default();
-        let words = |seen: &StationSeen, at: IVec3, ready: bool, now: f64| station_tags(&locale, name, at, ready, seen, now).into_iter().map(|(words, _)| words).collect::<Vec<_>>();
+        let words = |seen: &StationSeen, at: IVec3, ready: bool, now: f64| station_tags(&locale, name, at, ready, false, seen, now).into_iter().map(|(words, _)| words).collect::<Vec<_>>();
         assert!(words(&seen, at, false, 0.0).is_empty(), "nothing until the server says");
         let load = StationLoad { item: BlockId(1), count: 6, output: BlockId(2), makes: 6, seconds: 360 };
         seen.tell(at, Some(load), None, 10.0);
@@ -526,6 +535,10 @@ mod tests {
         seen.tell(at, None, Some(150), 20.0);
         assert_eq!(words(&seen, at, false, 20.0), ["Burning, about 3 min left"]);
         assert_eq!(words(&seen, at, false, 200.0), ["Cold"]);
+        // A clamp looked at: the wood it chars and what it will make, counted down.
+        seen.tell(at, Some(StationLoad { item: BlockId(1), count: 9, output: BlockId(2), makes: 36, seconds: 90 }), None, 30.0);
+        let charring = station_tags(&locale, name, at, false, true, &seen, 30.0).into_iter().map(|(words, _)| words).collect::<Vec<_>>();
+        assert_eq!(charring, ["Charring 9 Raw Beef", "36 Jerky in about 2 min"]);
     }
 
     #[test]
