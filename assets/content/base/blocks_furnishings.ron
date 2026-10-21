@@ -103,6 +103,11 @@
             (name: "{name}_footstool", render: Model, shape: "footstool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "seat", "footstool", "decor", "wood"]),
             (name: "{name}_spice_rack", render: Model, shape: "spice_rack", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "shelf", "spice_rack", "storage", "decor", "wood"],
                 shows: [(0.25, 0.5625, 0.86), (0.5, 0.5625, 0.86), (0.75, 0.5625, 0.86)]),
+            // By the hearth: a candle box on the wall that keeps only candles and shows the two
+            // standing in it; a bread bin with a lid, the loaves kept under it.
+            (name: "{name}_candle_box", render: Model, shape: "candle_box", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "candle_box", "storage", "decor", "wood"],
+                shows: [(0.4, 0.4375, 0.8125), (0.6, 0.4375, 0.8125)]),
+            (name: "{name}_bread_bin", render: Model, shape: "bread_bin", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "bread_bin", "storage", "decor", "wood"]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings

@@ -45,11 +45,11 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
 Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, footstools,
-cushions and window seats; tables include desks and counters; storage is
-whatever a home keeps things in or on: chests, blanket chests, cupboards, dressers and
-wardrobes, mantel shelves, plate racks, spice racks, bedside tables, stair cupboards, window
-seats, shelves (pot shelves, pantry shelves and bookshelves too), crate stacks, barrel
-racks, jars and baskets, and a village's barrels and crates (every store a player opens
+cushions and window seats; tables include desks and counters; storage is whatever a home
+keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
+shelves, plate racks, spice racks, candle boxes, bread bins, bedside tables, stair
+cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves too), crate
+stacks, barrel racks, jars and baskets, and a village's barrels and crates (every store a player opens
 counts but the feed trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
 of a chest and a barrel by a campfire, "home: storage"); crockery is plates, bowls, jars,
