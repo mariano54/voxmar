@@ -727,6 +727,8 @@ struct Gate {
     /// The settlement's people heard greeting the player since the Settlements step came
     /// (each waits `people.react.greet_every` to greet them again).
     settlement_greeters: rustc_hash::FxHashSet<u32>,
+    /// The one of them the Greeting step stood the player beside.
+    settlement_beside: Option<u32>,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     /// The door step's ground lit by a campfire, kept to judge against it put out.
@@ -1131,6 +1133,7 @@ impl Gate {
             motif_starts: 0,
             settlement_motif_starts: None,
             settlement_greeters: Default::default(),
+            settlement_beside: None,
             window_lit: None,
             fire_lit: None,
             natural_before: Vec::new(),
@@ -12767,13 +12770,13 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// furnishings (blocks_furnishings.ron), in a facing or two. A piece that is not solid (a
 /// window seat or a settle, sat in as every seat is) passes stopping nothing; one that is
 /// not solid and no seat is a mistake.
-const PIECES: [&str; 54] = [
+const PIECES: [&str; 57] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
     "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing", "thatch_corner_east", "birch_shingles_inner_corner", "oak_fence",
     "birch_fence_corner_east", "dark_oak_fence_gate", "oak_ladder", "birch_hatch",
     "oak_hatch_open_east", "birch_stair_cupboard_east", "oak_window_seat", "dark_oak_sill_west", "oak_pantry_shelf",
-    "birch_settle", "oak_woodpile_east", "dark_oak_peg_rail", "oak_blanket_chest_south", "birch_washstand", "window_box_east", "dark_oak_dresser", "oak_pot_crane_west", "birch_rocking_chair_east", "oak_cradle_south", "dark_oak_mantel_shelf_east", "birch_fireside_bench", "oak_plate_rack_west", "oak_bedside_table_south", "birch_footstool", "dark_oak_spice_rack_east", "oak_candle_box_west", "birch_bread_bin_east", "dark_oak_candle_box",
+    "birch_settle", "oak_woodpile_east", "dark_oak_peg_rail", "oak_blanket_chest_south", "birch_washstand", "window_box_east", "dark_oak_dresser", "oak_pot_crane_west", "birch_rocking_chair_east", "oak_cradle_south", "dark_oak_mantel_shelf_east", "birch_fireside_bench", "oak_plate_rack_west", "oak_bedside_table_south", "birch_footstool", "dark_oak_spice_rack_east", "oak_candle_box_west", "birch_bread_bin_east", "dark_oak_candle_box", "oak_kindling_box_south", "birch_brace_east", "oak_brace_top",
 ];
 /// How many pieces the player judges from one spot before the middle one: three, so the
 /// crosshair turned to a piece beside it reaches it before crossing a neighbour.
@@ -19953,7 +19956,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 const GREETING_WAIT: f32 = 10.0;
 
 /// Back in the settlement the Settlements step judged, the player stands where one of its
-/// people stands who has yet to greet them, and someone there greets them unasked
+/// people stands who has yet to greet them, and that one greets them unasked
 /// (`people.react.greet`, a bark of the server's own, not `/creatures bark`). Then the
 /// player goes back to the test ground.
 fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
@@ -19984,8 +19987,8 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager && v.position.distance(feet) < 32.0)
                 .filter(|v| !gate.settlement_greeters.contains(&v.id))
                 .min_by(|a, b| a.position.distance(feet).total_cmp(&b.position.distance(feet)).then(a.id.cmp(&b.id)))
-                .map(|v| v.position);
-            let Some(to) = nearest else {
+                .map(|v| (v.id, v.position));
+            let Some((beside, to)) = nearest else {
                 if gate.server_in_phase() > SETTLEMENT_PEOPLE {
                     gate.check("settlement greeting", Err("no one of the settlement came to the player standing in its square".into()));
                     home(world);
@@ -19994,10 +19997,11 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 return;
             };
+            gate.settlement_beside = Some(beside);
             world.resource::<Net>().command(&format!("tp {} {} {}", to.x, to.y, to.z));
             gate.advance(now);
         }
-        // A greeting heard, unasked, of one of its people.
+        // A greeting heard, unasked, of the one the player stands beside.
         2 => {
             let content = world.resource::<Launch>().content.clone();
             let creatures = world.resource::<crate::creatures::Creatures>();
@@ -20005,7 +20009,7 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 .resource::<crate::creature_sounds::Heard>()
                 .barks
                 .iter()
-                .filter(|b| b.1 == crate::creature_sounds::Kind::Greet)
+                .filter(|b| b.1 == crate::creature_sounds::Kind::Greet && Some(b.0) == gate.settlement_beside)
                 .filter_map(|b| creatures.views().find(|v| v.id == b.0))
                 .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager)
                 .map(|v| content.creatures.get(v.species).def.name.clone())
@@ -20013,8 +20017,8 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             if greetings.is_empty() && gate.server_in_phase() < GREETING_WAIT {
                 return;
             }
-            let ok = greetings.first().map(|name| format!("a {name} greeted the player unasked ({} greetings)", greetings.len()));
-            gate.check("settlement greeting", ok.ok_or_else(|| format!("no one of the settlement greeted the player in {GREETING_WAIT} server seconds beside one who had yet to ({} had)", gate.settlement_greeters.len())));
+            let ok = greetings.first().map(|name| format!("the {name} the player stood beside greeted them unasked"));
+            gate.check("settlement greeting", ok.ok_or_else(|| format!("the one the player stood beside (creature {:?}, yet to greet them; {} had) did not greet them in {GREETING_WAIT} server seconds", gate.settlement_beside, gate.settlement_greeters.len())));
             home(world);
             gate.advance(now);
         }

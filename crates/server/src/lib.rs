@@ -1750,6 +1750,18 @@ mod tests {
         };
         let mut walled = Vec::new();
         let mut clamp_raised = false;
+        // The quests the lit Crucible Kiln comes after: on the way to it, every route is taught,
+        // not only one (a coal seam may be far, so charcoal's clamp must be taught too).
+        let mut kiln_line: Vec<&str> = Vec::new();
+        let mut next = vec!["base:crucible_kiln"];
+        while let Some(name) = next.pop() {
+            let q = content.quests.get(name).expect("the kiln quest and what it comes after");
+            if !kiln_line.contains(&q.name.as_str()) {
+                kiln_line.push(q.name.as_str());
+                next.extend(q.after.iter().filter(|a| !a.contains('|')).map(String::as_str));
+            }
+        }
+        let mut half_taught = Vec::new();
         for quest in content.quests.iter() {
             // The quests it surely comes after ("a|b" makes sure of neither), and itself.
             let mut before: Vec<&voxmar_engine::quest::QuestDef> = Vec::new();
@@ -1823,6 +1835,9 @@ mod tests {
                         .collect()
                 })
                 .collect();
+            if kiln_line.contains(&quest.name.as_str()) {
+                half_taught.extend(routes.iter().enumerate().filter(|(_, walls)| !walls.is_empty()).map(|(i, walls)| format!("{}: route {} walled by {}", quest.name, i + 1, walls.join(", "))));
+            }
             match routes.iter().position(Vec::is_empty) {
                 Some(route) => println!("{}: route {} of {} is taught: {:?}", quest.name, route + 1, routes.len(), quest.tasks[route]),
                 None => {
@@ -1831,6 +1846,7 @@ mod tests {
             }
         }
         assert!(walled.is_empty(), "these quests have no route whose stations the quests before them have the player make: {walled:#?}");
+        assert!(half_taught.is_empty(), "on the way to the lit kiln, these routes ask for stations no quest before has the player make: {half_taught:#?}");
         assert!(clamp_raised, "no quest has the player build a smouldering structure by a name the check knows");
     }
 

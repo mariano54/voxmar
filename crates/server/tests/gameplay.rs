@@ -4140,10 +4140,18 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     // Guards leave creative players be, as every creature does.
     client.ok("/gamemode survival");
     client.ok("/gamemode survival bystander");
+    // This checks whom the alarm calls the guards to, not a novice's fist: one that lands
+    // a third of its blows, at part strength when the clock bunches them under load, now
+    // and then hurt no one in all of its ten seconds. A practised fist lands nearly every
+    // blow and kills no grown villager in one (its max hit 8 against their 12; a sword
+    // did).
+    client.ok("/skill attack 60");
     let guards = |c: &Client| -> Vec<voxmar_protocol::CreatureView> { villagers(c).into_iter().filter(|v| species_name(c, v) == "base:guard").collect() };
     // The closest pair, with a stable tie-break: hash-map order used to pick a distant
     // worker whose guard had no way through the intervening buildings.
-    let pick = |c: &Client| villagers(c).into_iter().filter(|v| species_name(c, v) != "base:guard")
+    // Grown folk only: one the practised fist (max hit 8) cannot kill in one blow, so it is
+    // seen hurt.
+    let pick = |c: &Client| villagers(c).into_iter().filter(|v| species_name(c, v) != "base:guard" && c.content.creatures.get(v.species).def.health > 8)
         .flat_map(|v| guards(c).into_iter().map(move |g| { let d = g.position.distance(v.position); (v.clone(), g, d) }))
         .filter(|(_, _, d)| *d < 30.0)
         .min_by(|a, b| a.2.total_cmp(&b.2).then(a.0.id.cmp(&b.0.id)).then(a.1.id.cmp(&b.1.id)));
@@ -4156,10 +4164,11 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     client.ok(&format!("/tp bystander {} {} {}", at.x, at.y, at.z));
     bystander.pump_until(|c| c.teleported.is_some() && c.health > 0);
     let (blows_before, refused_before, started) = (client.damage.len(), client.refused.len(), client.server_tick);
-    strike_until(&mut client, villager.id, 10, |c| c.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health));
+    let landed = move |c: &Client| c.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health);
+    strike_until(&mut client, villager.id, 10, landed);
     let now = client.creatures.get(&villager.id).map(|v| format!("{} health {} at {:.1} {:?} ({:.1} off)", species_name(&client, v), v.health, v.position, v.pose, v.position.distance(client.position)));
     assert!(
-        client.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health),
+        landed(&client),
         "no blow landed on the villager {} in {} ticks: now {now:?}; our blows {:?}; refused {:?}; the player at {:.1}",
         villager.id,
         client.server_tick - started,

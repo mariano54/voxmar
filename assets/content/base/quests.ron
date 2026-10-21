@@ -69,8 +69,8 @@
         (
             name: "opened_too_soon", age: "farm", branch: "fuel", title: "Opened Too Soon",
             side: true,
-            why: "A clamp opened before its two hours are up gives part-burnt wood, not charcoal: still fuel for a campfire or a hearth. Charcoal tells how to build a clamp; set down a chopping block to split its firewood on, break into the clamp early, while it smoulders, and keep four part-burnt wood.",
-            tasks: [[Placed("chopping_block", 1), Have("charred_wood", 4)]],
+            why: "A clamp opened before its two hours are up gives part-burnt wood, not charcoal: still fuel for a campfire or a hearth. Charcoal tells how to build a clamp; break into one early, while it smoulders, and keep four part-burnt wood.",
+            tasks: [[Have("charred_wood", 4)]],
             after: ["an_earth_clamp"],
             rewards: [Xp("engineering", 30.0)],
         ),
@@ -78,8 +78,8 @@
         // drafts 100 and 102: the nomad path alone left both short of 5).
         (
             name: "charcoal", age: "farm", branch: "fuel", title: "Charcoal",
-            why: "Fuel before metal: coal or charcoal smelts copper and makes torches, and only they burn hot enough for the Crucible Kiln. Charcoal comes from a clamp. Hold a log and right-click a chopping block (a flint over a log, Crafting 2) with an axe in your pack: two firewood. Lay nine firewood three by three on the ground, wall them round and roof them over with earth, and put kindling (three sticks) on the roof's middle for a flue. Light the kindling from a torch: two hours on, nobody by it, the clamp leaves thirty-six charcoal. Rain down the open flue spoils some to ash, so roof it over. Or dig out a coal seam: a small black-flecked stone on the ground marks one below. Light a clamp and have sixteen charcoal, or mine twenty-four coal.",
-            tasks: [[Lit("charcoal_clamp", 1), Have("charcoal", 16)], [Mine("coal_ore", 24)]],
+            why: "Fuel before metal: coal or charcoal smelts copper and makes torches, and only they burn hot enough for the Crucible Kiln. Charcoal comes from a clamp. Set down a chopping block (a flint over a log, Crafting 2), then hold a log and right-click it with an axe in your pack: two firewood. Lay nine firewood three by three on the ground, wall them round and roof them over with earth, and put kindling (three sticks) on the roof's middle for a flue. Light the kindling from a torch: two hours on, nobody by it, the clamp leaves thirty-six charcoal. Rain down the open flue spoils some to ash, so roof it over. Or dig out a coal seam: a small black-flecked stone on the ground marks one below. Set down a chopping block, light a clamp and have sixteen charcoal, or mine twenty-four coal.",
+            tasks: [[Placed("chopping_block", 1), Lit("charcoal_clamp", 1), Have("charcoal", 16)], [Mine("coal_ore", 24)]],
             after: ["fuel_to_hand", "a_pit_kiln"],
             rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
         ),
