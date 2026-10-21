@@ -147,7 +147,7 @@ mod tests {
             let distant = fill(limit, &mut running, Kind::DistantLand);
             let meshes = fill(limit, &mut running, Kind::Meshes);
             let columns = fill(limit, &mut running, Kind::Columns);
-            assert!((1..=third).contains(&distant), "limit {limit}: {distant} distant");
+            assert_eq!(distant, third, "limit {limit}: distant land its most");
             assert!(meshes >= 1, "limit {limit}: meshing starved");
             assert!(columns >= third, "limit {limit}: generation's share");
             assert_eq!(distant + meshes + columns, limit, "limit {limit}: all of it, no more");

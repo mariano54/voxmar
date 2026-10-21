@@ -194,8 +194,20 @@ impl Site {
     }
 }
 
+/// The ground at one position, its rivers and lakes carved in and its crags to their tops,
+/// as `Overworld::height` reads it: for sampling the surface there (`Sampler::surface_on`)
+/// without working the ground out again.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ground(GeoSample);
+
+impl Ground {
+    pub fn height(&self) -> i32 {
+        self.0.height
+    }
+}
+
 /// A coarse description of the surface at one position, for distant terrain.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SurfaceSample {
     /// Height of the top ground block.
     pub height: i32,
@@ -566,6 +578,14 @@ impl Overworld {
     /// The ground at one position with its rivers and lakes, its crags to their tops.
     fn ground(&self, x: i32, z: i32) -> GeoSample {
         self.rivers.sample(self.stages(), x, z, true)
+    }
+
+    /// The ground at each of `points` (`Overworld::height` of each, and what the surface
+    /// there is sampled on), sharing the relief at the lattice corners that nearby points
+    /// read alike.
+    pub fn grounds(&self, points: impl IntoIterator<Item = (i32, i32)>) -> Vec<Ground> {
+        let mut corners = geology::Corners::default();
+        points.into_iter().map(|(x, z)| Ground(self.rivers.sample_with(self.stages(), x, z, true, &mut corners))).collect()
     }
 
     fn stages(&self) -> water::Stages<'_> {
@@ -991,13 +1011,18 @@ impl Sampler<'_> {
 
     /// What the surface looks like from far away; see [`Overworld::surface_sample`].
     pub fn surface(&self, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
-        let geo = GeoSample { height, ..self.world.ground(x, z) };
-        let site = self.site_on(&geo, x, z, slope, slope as f32);
+        self.surface_on(&Ground(self.world.ground(x, z)), x, z, height, slope)
+    }
+
+    /// [`Sampler::surface`] on the ground at (x, z) already worked out
+    /// (`Overworld::grounds`).
+    pub fn surface_on(&self, ground: &Ground, x: i32, z: i32, height: i32, slope: i32) -> SurfaceSample {
+        let geo = GeoSample { height, ..ground.0 };
+        // Distant terrain takes the colours of the cell alone: the biomes picked for it.
+        let (site, pick) = self.site_and_pick(&geo, x, z, slope, slope as f32);
         let (ground, water) = self.world.surface_blocks(&site, x, z);
         let canopy = if water.is_some() { None } else { self.world.ecology.canopy(&site, self.world.terrain.ground(ground), x, z) }
             .map(|(tree, cover)| (self.world.terrain.leaves(tree), cover));
-        // Distant terrain takes the colours of the cell alone.
-        let pick = self.pick(x, z);
         let byte = |c: [f32; 3]| c.map(|v| v.round().clamp(0.0, 255.0) as u8);
         let (climate, n) = self.climate_colors(&site, x, z);
         let [grass, foliage, water_color] = self.biome_colors(climate, n, &pick, Biomes::blend(pick.edge, site.fertility)).map(byte);
@@ -1133,6 +1158,11 @@ impl Sampler<'_> {
 
     /// The site on already sampled geology.
     fn site_on(&self, geo: &GeoSample, x: i32, z: i32, slope: i32, steepness: f32) -> Site {
+        self.site_and_pick(geo, x, z, slope, steepness).0
+    }
+
+    /// [`Sampler::site_on`], with the biomes picked for the position's cell on the way.
+    fn site_and_pick(&self, geo: &GeoSample, x: i32, z: i32, slope: i32, steepness: f32) -> (Site, Pick) {
         let _stage = stage::enter(Stage::Climate);
         let regional = self.grid.at(x, z);
         // Cooled by the height of the land, not of the towers and spires standing on it.
@@ -1183,7 +1213,7 @@ impl Sampler<'_> {
             site.biome = river;
         }
         (site.home, site.neighbour, site.edge, site.from_centre) = (pick.home, pick.neighbour, pick.edge, pick.from_centre);
-        site
+        (site, pick)
     }
 }
 
@@ -1352,6 +1382,26 @@ mod tests {
 
     fn registry() -> Arc<BlockRegistry> {
         Arc::new(crate::test_registry())
+    }
+
+    /// The ground worked out once for many points, with the lattice's corners shared, is
+    /// each point's own, and the surface sampled on it is the surface sampled alone: at
+    /// distant land's spacings from 4 to 32 blocks, near the spawn and far off.
+    #[test]
+    fn grounds_and_the_surface_on_them_are_each_points_own() {
+        let world = shared_world(1);
+        for (cell, origin) in [(4, IVec2::new(-300, -260)), (16, IVec2::new(2000, -1500)), (32, IVec2::new(-6000, 5000))] {
+            let points: Vec<(i32, i32)> = (0..12 * 12).map(|i| (origin.x + i % 12 * cell, origin.y + i / 12 * cell)).collect();
+            let grounds = world.grounds(points.iter().copied());
+            let sampler = world.sampler(origin, origin + 12 * cell);
+            for (&(x, z), ground) in points.iter().zip(&grounds) {
+                assert_eq!(*ground, Ground(world.ground(x, z)), "({x}, {z})");
+                assert_eq!(ground.height(), world.height(x, z));
+                for slope in [0, 3] {
+                    assert_eq!(sampler.surface_on(ground, x, z, ground.height(), slope), sampler.surface(x, z, ground.height(), slope), "({x}, {z}) slope {slope}");
+                }
+            }
+        }
     }
 
     /// The world of `seed` on the test registry, one for every test that only reads what it

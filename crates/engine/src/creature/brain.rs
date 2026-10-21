@@ -42,6 +42,9 @@ pub const NO_WAY: f32 = 30.0;
 pub const STRUCK_LATELY: f32 = 3.0;
 /// How long a creature that gave up a chase makes for home (`Memory::Homeward`).
 pub const HOMEWARD: f32 = 20.0;
+/// How far past a player's reach (`physics::player::REACH`, from their eyes) a boss held
+/// off keeps its body: a player down a hole it cannot reach into strikes nothing from there.
+pub const KEEP_OFF: f32 = 0.5;
 /// Seconds a creature remembers the player who hurt it (`Memory::HurtBy`).
 pub const HURT_REMEMBERED: f32 = 45.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
@@ -99,9 +102,10 @@ pub struct Seen {
     /// (the server's `blow_open`): none through a roof or a wall, so it is not close enough
     /// to strike however near.
     pub open: bool,
-    /// Whether it sees them: a clear line from its eyes to their head or middle (the
-    /// server's `in_sight`), judged only for kinds that warn (`Warn`), true for the rest.
-    pub in_sight: bool,
+    /// Whether it sees them from where it looks (`Senses::field`), with nothing between
+    /// that hides them (the server's look). Out of it, it notices them only close by
+    /// (`Senses::close`) or once they hurt it.
+    pub in_view: bool,
 }
 
 /// Where someone with a routine (villagers) is to be now, as the server's schedule and
@@ -288,6 +292,15 @@ pub struct Mind {
     /// Where it was startled with no one to blame (a snare it slipped): while it recalls
     /// the fright (`Memory::Startled`) it runs from there, not toward home.
     pub startled_at: Option<Vec3>,
+    /// The player a boss came as near as it could and still could not reach (one down a
+    /// hole too deep for it, or under a roof), and where they stood: while they stay there
+    /// it keeps off out of their reach, watching them (`KEEP_OFF`), and comes on once they
+    /// leave it. After anyone else, it holds off no longer.
+    pub held_off: Option<(u32, Vec3)>,
+    /// The players it has noticed (`Senses`), each with the seconds it keeps them in mind
+    /// out of sight (`Senses::keep`) and the seconds since it first noticed them (its double take,
+    /// `Senses::react`).
+    pub noticed: Vec<(u32, f32, f32)>,
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
     /// near, how far it likes to stray).
     pub seed: u64,
@@ -312,6 +325,8 @@ impl Mind {
             seed,
             zig: 1.0,
             startled_at: None,
+            held_off: None,
+            noticed: Vec::new(),
         }
     }
 
@@ -439,6 +454,8 @@ pub struct Decision {
     /// It raises the alarm for kin nearby.
     pub alarm: bool,
     pub pose: Pose,
+    /// The player it acts on, if any (whom it chases, flees, comes to).
+    pub target: Option<u32>,
 }
 
 /// What a module reads when it decides whether it wants to run.
@@ -522,6 +539,29 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     let lively = def.habitat.active.liveliness(at.daylight);
     let night_eyes = def.habitat.active == super::Active::Night;
     let sight = def.senses.sight * if night_eyes { 1.0 } else { 0.6 + 0.4 * at.daylight };
+    // Whom it notices (`Senses`): those it sees where it looks, those close by, those
+    // holding its food within its hearing (it smells it, wherever it looks: a sheep comes
+    // round a wall to the wheat), those who hurt it and its keeper; it keeps them in mind a
+    // while out of sight (`Senses::keep`), and senses no one else.
+    for (_, left, since) in &mut mind.noticed {
+        (*left, *since) = (*left - dt, *since + dt);
+    }
+    mind.noticed.retain(|n| n.1 > 0.0);
+    for p in at.players {
+        let d = p.position.distance(at.position);
+        let smelt = p.tempting && d < def.senses.hearing;
+        if p.friend || d <= def.senses.close || p.in_view && d < sight || smelt || mind.recalls(Memory::HurtBy(p.id)) {
+            match mind.noticed.iter_mut().find(|n| n.0 == p.id) {
+                Some(n) => n.1 = def.senses.keep,
+                None => mind.noticed.push((p.id, def.senses.keep, 0.0)),
+            }
+        }
+    }
+    // A list of its own only when it leaves someone out.
+    let known = |p: &Seen| mind.noticed.iter().any(|n| n.0 == p.id);
+    let all = at.players.iter().all(known);
+    let noticed: Vec<Seen> = if all { Vec::new() } else { at.players.iter().filter(|p| known(p)).copied().collect() };
+    let at = &Situation { players: if all { at.players } else { &noticed }, ..*at };
     let ctx = Ctx { creature, mind, at, lively, sight };
 
     let wants: Vec<(usize, Band, Want)> = creature
@@ -558,6 +598,14 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         mind.since = 0.0;
         mind.goal = None;
     }
+    // Its double take (`Senses::react`): just noticed, it stands and looks at them before
+    // it acts on them, unless they hurt it.
+    let taking = want.target.filter(|p| {
+        !mind.recalls(Memory::HurtBy(p.id)) && mind.noticed.iter().any(|n| n.0 == p.id && n.2 < def.senses.react)
+    });
+    if let Some(p) = taking {
+        return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
+    }
     let warns = creature.modules[index].0.name() == "warn";
     if !warns {
         lapse_warning(mind, dt);
@@ -570,6 +618,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         return think(creature, mind, &Situation { dt: 0.0, ..*at });
     }
     decision.speed *= mind.personality.pace();
+    decision.target = want.target.map(|p| p.id);
     decision
 }
 
@@ -603,7 +652,7 @@ pub(super) mod tests {
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
-        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_sight: true }
+        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true }
     }
 
     fn doing<'a>(creature: &'a Creature, mind: &Mind) -> &'a str {
@@ -625,6 +674,61 @@ pub(super) mod tests {
         let decision = think(&rabbit, &mut mind, &situation(&carrot));
         assert_eq!(doing(&rabbit, &mind), "tempted");
         assert!(decision.goal.unwrap().x > 4.0);
+    }
+
+    /// A player out of its view (`Seen::in_view`, judged by the server from where it
+    /// looks) is no one to a deer until close (`Senses::close`), or until they hurt it; one
+    /// in view it notices, and keeps in mind a while once it has turned away (`Senses::keep`).
+    #[test]
+    fn a_deer_notices_whom_it_sees_or_hears_close_by_and_keeps_them_in_mind() {
+        let deer = species(&format!(
+            "(creatures: [(name: \"deer\", health: 6, {BODY}, senses: (sight: 20.0, close: 3.0), temperament: (fear: 0.9), behaviours: [(do: Wander(radius: 6.0)), (do: Flee(radius: 12.0))])])"
+        ));
+        let unseen = [Seen { in_view: false, ..player(Vec3::new(8.0, 0.0, 0.0)) }];
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        let _ = think(&deer, &mut mind, &situation(&unseen));
+        assert_ne!(doing(&deer, &mind), "flee", "it ran from a player it never saw");
+        let close = [Seen { in_view: false, ..player(Vec3::new(2.5, 0.0, 0.0)) }];
+        let _ = think(&deer, &mut mind, &situation(&close));
+        assert_eq!(doing(&deer, &mind), "flee", "it never heard a player close behind it");
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        let _ = think(&deer, &mut mind, &situation(&[player(Vec3::new(8.0, 0.0, 0.0))]));
+        assert_eq!(doing(&deer, &mind), "flee", "it never saw a player before it");
+        // Turned away, it still runs from them.
+        let _ = think(&deer, &mut mind, &situation(&unseen));
+        assert_eq!(doing(&deer, &mind), "flee", "it forgot a player once it turned from them");
+        // Hurt by one it never saw, it knows them.
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        mind.hurt(&deer, Some(1), 0.5);
+        let _ = think(&deer, &mut mind, &situation(&unseen));
+        assert_ne!(mind.noticed.len(), 0, "it never noticed who hurt it");
+    }
+
+    /// A wolf with a double take (`Senses::react`) stands and looks at a player it has just
+    /// noticed, then hunts them; struck, it fights back at once.
+    #[test]
+    fn a_wolf_takes_a_look_before_it_hunts() {
+        let wolf = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, senses: (react: 0.6), attack: (damage: (1, 3)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let far = [player(Vec3::new(8.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let first = think(&wolf, &mut mind, &situation(&far));
+        assert!(first.goal.is_none() && first.face == Some(far[0].position) && first.pose == Pose::Alert, "no look first: {first:?}");
+        let (mut looked, mut chased) = (0.2, None);
+        for _ in 0..10 {
+            let decision = think(&wolf, &mut mind, &situation(&far));
+            if decision.goal.is_some() {
+                chased = Some(looked);
+                break;
+            }
+            looked += 0.2;
+        }
+        assert!(chased.is_some_and(|s| (0.6..=1.0).contains(&s)), "chased after {chased:?} s of looking");
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.hurt(&wolf, Some(1), 1.0);
+        let struck = think(&wolf, &mut mind, &situation(&far));
+        assert!(struck.goal.is_some(), "struck, it stood and looked: {struck:?}");
     }
 
     #[test]
@@ -749,12 +853,20 @@ pub(super) mod tests {
             assert_eq!((decision.goal, decision.pose), (Some(at[0].position), Pose::Idle), "and goes for them");
         }
 
-        // One it does not see it goes for unwarned, as it always did, though a farther one
-        // stands in sight; kept, it warns as it hunts, its owner aside.
-        let hidden = [Seen { in_sight: false, ..at[0] }, Seen { id: 2, position: Vec3::new(8.0, 0.0, 0.0), ..at[0] }];
+        // One it does not see, beyond close range and unhurt, it has not noticed and leaves
+        // alone: it warns the farther one who stands in sight, and goes for them alone.
+        let hidden = [Seen { in_view: false, ..at[0] }, Seen { id: 2, position: Vec3::new(8.0, 0.0, 0.0), ..at[0] }];
         let mut mind = Mind::new(&wolf.def.temperament, 2);
+        for _ in 0..5 {
+            let decision = think(&wolf, &mut mind, &situation(&hidden));
+            assert_eq!(
+                (doing(&wolf, &mind), decision.pose, decision.goal, decision.face, decision.attack, mind.attacker()),
+                ("warn", Pose::Warning, None, Some(hidden[1].position), None, None),
+                "the seen one at 8 warned, the unseen one at 6 not hunted"
+            );
+        }
         let decision = think(&wolf, &mut mind, &situation(&hidden));
-        assert_eq!((doing(&wolf, &mind), decision.goal), ("hunt", Some(hidden[0].position)), "the nearest, unseen, hunted unwarned");
+        assert_eq!((mind.attacker(), doing(&wolf, &mind), decision.goal), (Some(2), "hunt", Some(hidden[1].position)), "the warned one stayed: it goes for them, not the unseen one");
         let mut mind = Mind::new(&wolf.def.temperament, 2);
         let _ = think(&wolf, &mut mind, &Situation { kept: true, ..situation(&at) });
         assert_eq!(doing(&wolf, &mind), "warn", "kept, it hunts as before, with its warning");
@@ -825,7 +937,7 @@ pub(super) mod tests {
 
         // One decision away (out of sight) keeps the warning's clock.
         let mut mind = Mind::new(&badger.def.temperament, 3);
-        let hidden = [Seen { in_sight: false, ..at[0] }];
+        let hidden = [Seen { in_view: false, ..at[0] }];
         for _ in 0..2 {
             let _ = think(&badger, &mut mind, &situation(&at));
         }
@@ -846,7 +958,7 @@ pub(super) mod tests {
         assert_eq!(mind.attacker(), None);
 
         // Out of its sight, or tempting it, no warning; the tempted one follows the food.
-        for (seen, doing_now) in [(Seen { in_sight: false, ..at[0] }, None), (Seen { tempting: true, ..at[0] }, Some("tempted"))] {
+        for (seen, doing_now) in [(Seen { in_view: false, ..at[0] }, None), (Seen { tempting: true, ..at[0] }, Some("tempted"))] {
             let mut mind = Mind::new(&badger.def.temperament, 3);
             for _ in 0..6 {
                 let _ = think(&badger, &mut mind, &situation(&[seen]));
