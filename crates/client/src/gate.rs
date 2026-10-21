@@ -18222,6 +18222,8 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
     };
     match gate.phase {
         0 => {
+            // Where the player is put back, even if the step ends here.
+            gate.kiln_from = world.resource::<LocalPlayer>().position;
             // Room in the hotbar for the clay given and the fired clay taken.
             if !hotbar_room(world, gate) {
                 if gate.server_in_phase() > 10.0 {
@@ -18230,7 +18232,6 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 }
                 return;
             }
-            gate.kiln_from = world.resource::<LocalPlayer>().position;
             let stand = gate.feet.as_vec3() + KILN_STAND;
             let net = world.resource::<Net>();
             for line in [
@@ -18261,7 +18262,7 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
             if shows(world, "base:pit_kiln_firing") {
                 mouse(world, MouseButton::Right, false);
                 gate.advance(now);
-            } else if gate.server_in_phase() > 10.0 {
+            } else if gate.waited_out(10.0) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("pit kiln", Err(format!("right clicks on the pit kiln at {at} with clay in hand never loaded it in 10 server seconds")));
                 end_kiln(world, gate, now);
@@ -18279,7 +18280,17 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 end_kiln(world, gate, now);
             }
         }
-        KILN_TIDY => kiln_tidy(world, gate, now),
+        KILN_TIDY => {
+            // The kiln gone as the client sees it, so what it held has fallen.
+            let gone = world.resource::<ClientWorld>().block(at).is_some_and(|b| b.is_air());
+            if gone || gate.server_in_phase() > 5.0 {
+                if !gone {
+                    info!("gate: kiln: the client never showed the pit kiln at {at} gone in five server seconds");
+                }
+                gate.advance(now);
+            }
+        }
+        KILN_PICK => kiln_tidy(world, gate, now),
         // Taken as a player takes it: a right click on the fired kiln, which empties it.
         _ => {
             aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
@@ -18288,7 +18299,7 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("pit kiln", Ok(format!("clay loaded into the pit kiln: the server sent back the firing kiln, then the fired one {:.1} server seconds on; a right click took the 12 fired clay", gate.kiln_fired)));
                 end_kiln(world, gate, now);
-            } else if gate.server_in_phase() > 10.0 {
+            } else if gate.waited_out(10.0) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("pit kiln", Err(format!("right clicks on the fired pit kiln at {at} left {fired} fired clay in hand, not 12, in 10 server seconds")));
                 end_kiln(world, gate, now);
@@ -18299,8 +18310,10 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
-/// The kiln step's tidy-up phase: what the kiln held, let fall as it goes, picked up.
+/// The kiln step's tidy-up phases: the kiln seen gone (`KILN_TIDY`), then what it held, let
+/// fall as it went, picked up (`KILN_PICK`).
 const KILN_TIDY: u32 = 9;
+const KILN_PICK: u32 = KILN_TIDY + 1;
 
 /// The kiln goes, and whatever it still held (a failed load, or fired clay not taken) falls
 /// where it stood: the player stands on it to pick that up (`KILN_TIDY`), so nothing is
@@ -18315,7 +18328,7 @@ fn end_kiln(world: &mut World, gate: &mut Gate, now: f32) {
     gate.phase = KILN_TIDY;
 }
 
-/// Once nothing of the kiln's lies near it (or after five server seconds), the clay and
+/// Once nothing of the kiln's lies near it (or after five more server seconds), the clay and
 /// fired clay are cleared from the pack and the player put back where the Cook step left
 /// them.
 fn kiln_tidy(world: &mut World, gate: &mut Gate, now: f32) {
@@ -18813,7 +18826,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 }
                 gate.check("cooking pot", Ok("wheat put in a cooking pot beside the campfire, water near, set it simmering (shot `pot`)".into()));
                 gate.advance(now);
-            } else if waited {
+            } else if gate.waited_out(DRY_WAIT) {
                 mouse(world, MouseButton::Right, false);
                 let held = holding(world, "base:wheat");
                 gate.check("cooking pot", Err(format!("right clicks with wheat never set the pot simmering in {DRY_WAIT} server seconds (pot standing {stood}, wheat carried and first slot {held:?})")));
