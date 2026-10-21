@@ -50,6 +50,8 @@ pub struct VoiceDef {
     pub greet: Option<EventDef>,
     pub alarm: Option<EventDef>,
     pub content: Option<EventDef>,
+    /// Tamed by the player. Unset: its idle sound.
+    pub tamed: Option<EventDef>,
 }
 
 impl VoiceDef {
@@ -68,6 +70,7 @@ impl VoiceDef {
             Kind::Greet => self.greet.as_ref(),
             Kind::Alarm => self.alarm.as_ref(),
             Kind::Content => self.content.as_ref(),
+            Kind::Tamed => self.tamed.as_ref(),
         }
     }
 }
@@ -200,6 +203,11 @@ pub struct SpeciesDef {
     pub aether: Option<f32>,
 }
 
+/// The loudest an event or a species may be set (twice a sound's usual level), and the
+/// farthest an event may carry, in blocks: beyond them a typo deafens or fills the world.
+pub const GAIN_MOST: f32 = 2.0;
+pub const RANGE_MOST: f32 = 128.0;
+
 /// How otherworldly a supernatural species sounds when its entry does not say.
 pub const AETHER: f32 = 0.5;
 
@@ -305,11 +313,15 @@ impl Bank {
                     continue;
                 }
                 let (low, high) = def.pitch;
+                let (gain, range) = (def.gain.unwrap_or(kind.gain()), def.range.unwrap_or(kind.range()));
+                if !(0.0..=GAIN_MOST).contains(&gain) || !(1.0..=RANGE_MOST).contains(&range) {
+                    return Err(format!("{FILE}: species `{name}`: its {kind:?} has gain {gain} (0 to {GAIN_MOST}) and range {range} (1 to {RANGE_MOST} blocks)"));
+                }
                 events[kind as usize] = Some(Event {
                     clips,
-                    gain: def.gain.unwrap_or(kind.gain()).max(0.0),
+                    gain,
                     pitch: (low.min(high), low.max(high)),
-                    range: def.range.unwrap_or(kind.range()).max(1.0),
+                    range,
                     chance: def.chance.clamp(0.0, 1.0),
                 });
             }
@@ -318,7 +330,10 @@ impl Bank {
             let pitch = entry.pitch.unwrap_or_else(|| size.map_or(1.0, |size| pitch_for_size(size, height)));
             let ground = chain.iter().find_map(|(_, v)| v.ground).unwrap_or(true);
             let calls = Calls::of(&chain);
-            bank.species[id.0 as usize] = Some(Voice { events, pitch, gain: entry.gain.max(0.0), ground, calls });
+            if !(0.0..=GAIN_MOST).contains(&entry.gain) {
+                return Err(format!("{FILE}: species `{name}`: gain {} (0 to {GAIN_MOST})", entry.gain));
+            }
+            bank.species[id.0 as usize] = Some(Voice { events, pitch, gain: entry.gain, ground, calls });
         }
         Ok(bank)
     }
@@ -394,8 +409,9 @@ mod tests {
                     voices: {
                         "beast": (size: 1.0, idle: (clips: ["a.ogg", "b.ogg"]), hurt: (clips: ["h.ogg"], gain: 0.5), rest: (clips: ["r.ogg"])),
                         "small": (like: "beast", call: (clips: ["c.ogg"], range: 60.0)),
+                        "pet": (like: "small", tamed: (clips: ["t.ogg"])),
                     },
-                    species: { "rabbit": (voice: "small") },
+                    species: { "rabbit": (voice: "small"), "hare": (voice: "pet") },
                 )"#,
             )]),
             creatures,
@@ -411,6 +427,10 @@ mod tests {
         // An alert it lacks falls back to its call; a death to its hurt.
         assert_eq!(path(Kind::Alert), "content/base/c.ogg");
         assert_eq!(path(Kind::Death), "content/base/h.ogg");
+        // Tamed, it says so with its idle noise; a voice with its own tamed clips uses them.
+        assert_eq!(path(Kind::Tamed), "content/base/a.ogg");
+        let hare = bank.voice(creatures.find("hare").unwrap()).unwrap();
+        assert_eq!(bank.clips[hare.event(Kind::Tamed).unwrap().clips[0]].path, "content/base/t.ogg");
         // Nothing for grazing: grazing is not heard rather than a stand-in.
         assert!(rabbit.event(Kind::Graze).is_none());
         // A rabbit is smaller than the voice's one-block animal, so higher.
@@ -495,6 +515,18 @@ mod tests {
         assert_eq!(Part::at(0.83), Part::Night, "midnight");
         assert_eq!(Part::at(0.94), Part::Night);
         assert_eq!(Part::at(-0.5), Part::at(0.5), "any count of days");
+    }
+
+    /// A gain or range past its bounds, or not a number, fails the load rather than
+    /// deafening the player or carrying across the world.
+    #[test]
+    fn loudness_and_reach_are_bounded() {
+        let content = content();
+        let load = |event: &str, species: &str| Bank::load(&files(&[("base", &format!(r#"(voices: {{"v": (idle: (clips: ["a.ogg"]{event}))}}, species: {{"rabbit": (voice: "v"{species})}})"#))]), &content.creatures);
+        assert!(load(", gain: 2.0, range: 128.0", ", gain: 2.0").is_ok());
+        for (event, species) in [(", gain: 2.5", ""), (", gain: -0.1", ""), (", range: 500.0", ""), (", range: 0.5", ""), (", gain: NaN", ""), ("", ", gain: 3.0")] {
+            assert!(load(event, species).is_err(), "{event}{species}");
+        }
     }
 
     #[test]
