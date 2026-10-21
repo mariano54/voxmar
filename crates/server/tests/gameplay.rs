@@ -2480,19 +2480,20 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     }
     client.propose("core:craft", ActionTarget::Slot(0));
     client.chat.clear();
-    // Finished, it waits to be claimed: the chat line points to the quest screen, and the
-    // Engineering (18) is not given with it.
+    // Finished, it waits to be claimed: the chat line points to the quest screen, and its
+    // Engineering is not given with it.
+    let paid = quest_xp(&client, "base:crafting_table");
     client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table. Claim its reward in the quest book")));
     client.settle();
-    assert!(!client.earned.contains(&180), "finishing paid before it was claimed: {:?}", client.earned);
+    assert!(!client.earned.contains(&paid), "finishing paid before it was claimed: {:?}", client.earned);
     assert!(!client.claimed("base:crafting_table"));
     client.claim("base:crafting_table");
-    client.pump_until(|c| c.claimed("base:crafting_table") && c.earned.contains(&180));
+    client.pump_until(|c| c.claimed("base:crafting_table") && c.earned.contains(&paid));
     // Claiming again, or a quest not finished, pays nothing.
     client.claim("base:crafting_table");
     client.claim("base:first_ore");
     client.after_server_ticks(TICKS_PER_SECOND as u64);
-    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == 180).count(), 1, "{:?}", client.earned);
+    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == paid).count(), 1, "{:?}", client.earned);
     assert!(!client.claimed("base:first_ore"));
 }
 
@@ -2802,12 +2803,13 @@ fn looking_an_item_up_finishes_the_look_it_up_quest() {
     client.connection.send(ClientMessage::LookedUp { item: pickaxe });
     client.pump_until(|c| done(c) && c.chat.iter().any(|(_, t)| t.contains("Quest done: Look It Up")));
     client.claim("base:look_it_up");
-    client.pump_until(|c| c.earned.contains(&400));
+    let paid = quest_xp(&client, "base:look_it_up");
+    client.pump_until(|c| c.earned.contains(&paid));
     for _ in 0..20 {
         client.connection.send(ClientMessage::LookedUp { item: pickaxe });
     }
     client.wait_server(2);
-    assert_eq!(client.earned.iter().filter(|&&xp| xp == 400).count(), 1, "repeated look-ups rewarded XP again");
+    assert_eq!(client.earned.iter().filter(|&&xp| xp == paid).count(), 1, "repeated look-ups rewarded XP again");
     assert_eq!(client.chat.iter().filter(|(_, text)| text.contains("Quest done: Look It Up")).count(), 1, "the quest completed again");
 }
 
@@ -2946,12 +2948,16 @@ fn a_level_quest_waits_for_the_level_and_grants_its_experience() {
     client.ok("/skill mining 10");
     client.pump_until(|c| done(c, "zz_test:miner"));
     client.after_server_ticks(TICKS_PER_SECOND as u64);
-    assert!(!client.earned.contains(&500), "finishing paid before it was claimed: {:?}", client.earned);
+    let paid = quest_xp(&client, "zz_test:miner");
+    // The 50 Crafting it writes, paid through the book's scale.
+    let quests = &client.content.quests;
+    assert_eq!(paid, (50.0 * quests.pays().of(quests.get("zz_test:miner").unwrap()) * 10.0).round() as u32);
+    assert!(!client.earned.contains(&paid), "finishing paid before it was claimed: {:?}", client.earned);
     client.claim("zz_test:miner");
-    client.pump_until(|c| c.earned.contains(&500));
+    client.pump_until(|c| c.earned.contains(&paid));
     client.claim("zz_test:miner");
     client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
-    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == 500).count(), 1, "{:?}", client.earned);
+    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == paid).count(), 1, "{:?}", client.earned);
     drop(client);
     std::fs::remove_dir_all(&assets).unwrap();
 }
@@ -7873,18 +7879,14 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     client.propose("core:craft", ActionTarget::Slot(0));
     let (table, stick) = (client.content.blocks.expect("base:crafting_table"), client.content.blocks.expect("base:stick"));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == table));
-    // The first table also finishes the Crafting Table quest, whose reward (18 Engineering)
+    // The first table also finishes the Crafting Table quest, whose reward (its Engineering)
     // waits to be claimed: claim it, so both grants are counted exactly.
     client.pump_until(|c| c.quests.iter().any(|q| q.name == "base:crafting_table" && q.done));
     client.claim("base:crafting_table");
     client.pump_until(|c| c.claimed("base:crafting_table"));
     client.settle();
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
-    let reward = client.content.quests.get("base:crafting_table").unwrap().rewards.iter().find_map(|r| match r {
-        voxmar_engine::quest::Reward::Xp(_, xp) => Some((xp * 10.0).round() as u32),
-        _ => None,
-    });
-    assert_eq!(client.earned[earned..], [80, reward.unwrap()], "one table's Engineering, once, then the quest's reward");
+    assert_eq!(client.earned[earned..], [80, quest_xp(&client, "base:crafting_table")], "one table's Engineering, once, then the quest's reward");
 }
 
 /// A server started on a world another server holds open answers its first player: the
@@ -10703,4 +10705,17 @@ fn a_bed_far_out_in_a_town_is_someones() {
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
     client.pump_until(|c| c.refused.iter().any(|t| t.contains("belongs to someone")));
     assert!(!client.chat.iter().any(|(_, t)| t.contains("wake here")), "the bed {far:.0} blocks out in {} took as where the player wakes", town.name.0);
+}
+
+/// A quest's experience reward in tenths, as the quest book pays it: the content's own
+/// number, which carries the book's scale (`core/quests.ron` `pays`).
+fn quest_xp(client: &Client, quest: &str) -> u32 {
+    let rewards = &client.content.quests.get(quest).unwrap_or_else(|| panic!("no quest {quest}")).rewards;
+    rewards
+        .iter()
+        .find_map(|r| match r {
+            voxmar_engine::quest::Reward::Xp(_, xp) => Some((xp * 10.0).round() as u32),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{quest} pays no experience"))
 }

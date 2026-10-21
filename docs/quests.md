@@ -54,7 +54,11 @@ Goals:
 | `Felt(effect)` | whether the player has ever been under an effect, whatever gave it (`felt:<effect>`, set once by the survival tick) |
 
 Items and creatures may be `any` or `tag:TAG`. Rewards are `Xp(skill, xp)` and
-`Item(item, count)`. Titles and reasons are translated as `quest.<package>.<name>` and
+`Item(item, count)`. The experience a quest file writes is scaled as the quests load by
+`pays` in `core/quests.ron` (Oct 21, Mariano: bigger quest rewards): `xp: 2.0` doubles every
+quest's experience, and `capstone_xp: 1.5` pays a capstone half as much again, 3x in all
+(`xp` times `capstone_xp`). What the server pays, the book and tracker show, and the walks
+count is the scaled number; a later package changes either field. Titles and reasons are translated as `quest.<package>.<name>` and
 `quest.<package>.<name>.why`.
 
 ## On the server
