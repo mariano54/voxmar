@@ -356,19 +356,8 @@ const LIGHT: u64 = 0x2923024e18114411;
 /// purpose this changes with it; set `LIGHT` to the hash this test prints.
 #[test]
 fn light_is_unchanged() {
-    use rayon::prelude::*;
     let registry = registry();
-    // Every seed and column on its own core, the light mixed in seed order.
-    let regions: Vec<LitRegion> = GOLDEN[..4]
-        .par_iter()
-        .map(|&(seed, columns)| {
-            let world = Overworld::new(seed, registry.clone());
-            let centre = ColumnPos::new(columns[0].0, columns[0].1);
-            let around: Vec<Arc<Column>> = (0..9).into_par_iter().map(|k| Arc::new(world.generate(centre.offset(k as i32 % 3 - 1, k as i32 / 3 - 1)))).collect();
-            let around: [Arc<Column>; 9] = around.try_into().ok().expect("nine columns");
-            LitRegion::compute(&registry, &around)
-        })
-        .collect();
+    let regions: Vec<LitRegion> = golden_areas(&registry).iter().map(|around| LitRegion::compute(&registry, around)).collect();
     let mut hash = 0;
     for region in &regions {
         for y in 0..voxmar_engine::coords::WORLD_HEIGHT {
@@ -378,6 +367,51 @@ fn light_is_unchanged() {
         }
     }
     assert_eq!(hash, LIGHT, "lighting changed. If that is deliberate, set LIGHT to {hash:#018x}");
+}
+
+/// A 3×3 area round the first column of each of `GOLDEN`'s first four seeds, every column
+/// generated on its own core.
+fn golden_areas(registry: &Arc<BlockRegistry>) -> Vec<[Arc<Column>; 9]> {
+    use rayon::prelude::*;
+    GOLDEN[..4]
+        .par_iter()
+        .map(|&(seed, columns)| {
+            let world = Overworld::new(seed, registry.clone());
+            let centre = ColumnPos::new(columns[0].0, columns[0].1);
+            let around: Vec<Arc<Column>> = (0..9).into_par_iter().map(|k| Arc::new(world.generate(centre.offset(k as i32 % 3 - 1, k as i32 / 3 - 1)))).collect();
+            around.try_into().ok().expect("nine columns")
+        })
+        .collect()
+}
+
+/// The hash of the meshes of the centre columns of `golden_areas`, at every level of
+/// detail, as meshing makes them now.
+const MESH: u64 = 0xccb89e14dacaa092;
+
+/// Meshing stays exactly as it was: every vertex, index, grass blade and the connectivity
+/// of each chunk of the centre columns of `golden_areas`, at every level of detail. When
+/// generation or the look of blocks changes on purpose this changes with it; set `MESH`
+/// to the hash this test prints.
+#[test]
+fn mesh_is_unchanged() {
+    use voxmar_engine::mesh::LEVELS;
+    let registry = registry();
+    let mut hash = 0;
+    for around in golden_areas(&registry) {
+        let region = LitRegion::compute(&registry, &around);
+        for detail in LEVELS {
+            for cy in 0..COLUMN_CHUNKS {
+                let mesh = mesh_chunk(&registry, &region, &around[4], cy, detail);
+                for buffers in [&mesh.opaque, &mesh.cutout, &mesh.inner, &mesh.translucent, &mesh.fringe] {
+                    hash = mix(hash ^ buffers.vertices.iter().flatten().fold(0, |h, &w| mix(h ^ w as u64)));
+                    hash = mix(hash ^ buffers.indices.iter().fold(0, |h, &i| mix(h ^ i as u64)));
+                }
+                hash = mix(hash ^ mesh.blades.iter().fold(0, |h, &b| mix(h ^ b as u64)));
+                hash = mix(hash ^ format!("{:?}", mesh.connectivity).bytes().fold(0, |h, b| mix(h ^ b as u64)));
+            }
+        }
+    }
+    assert_eq!(hash, MESH, "meshing changed. If that is deliberate, set MESH to {hash:#018x}");
 }
 
 /// `cargo test --release -p voxmar_worldgen distant_tiles -- --ignored --nocapture`
