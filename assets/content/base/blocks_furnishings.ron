@@ -98,7 +98,7 @@
             // shows the two things stood on its top (`shows`); a footstool, low, its top woven
             // of rushes (a `seat`); a spice rack on the wall that keeps only herbs and shows
             // the three in it.
-            (name: "{name}_bedside_table", render: Model, shape: "bedside_table", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "table", "bedside_table", "storage", "decor", "wood"],
+            (name: "{name}_bedside_table", render: Model, shape: "bedside_table", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "bedside_table", "storage", "decor", "wood"],
                 shows: [(0.32, 0.75, 0.5), (0.68, 0.75, 0.5)]),
             (name: "{name}_footstool", render: Model, shape: "footstool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "seat", "footstool", "decor", "wood"]),
             (name: "{name}_spice_rack", render: Model, shape: "spice_rack", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "shelf", "spice_rack", "storage", "decor", "wood"],

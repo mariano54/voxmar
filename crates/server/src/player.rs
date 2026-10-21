@@ -1571,6 +1571,36 @@ mod tests {
         assert_eq!(shown(&far), Told::new(), "a player without the column is told nothing of it");
     }
 
+    /// A full shelf broken drops its things, and whoever has its column is told it shows
+    /// nothing there now.
+    #[test]
+    fn a_full_shelf_broken_is_told_empty_to_whoever_has_its_column() {
+        use voxmar_engine::coords::ColumnPos;
+        use voxmar_engine::glam::IVec3;
+        use voxmar_engine::inventory::ItemStack;
+        type Told = Vec<(ColumnPos, Vec<(IVec3, Vec<Option<BlockId>>)>)>;
+        let mut server = crate::test_server();
+        let at = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let column = ColumnPos::of_block(at);
+        let (shelf, stick) = (server.content.blocks.expect("base:oak_mantel_shelf"), server.content.blocks.expect("base:stick"));
+        server.set_block(at, shelf);
+        let spots = server.content.blocks.def(shelf).shows.len();
+        let state = server.factory.state_mut(at).expect("a shelf is a store");
+        for slot in state.bin.iter_mut().take(spots) {
+            *slot = Some(ItemStack::new(stick, 1));
+        }
+        let shown = |client: &ClientConnection| -> Told {
+            std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Shown { column, at } => Some((column, at)), _ => None }).collect()
+        };
+        let near = join(&mut server, 2, "Near");
+        server.send_shown();
+        server.stream_columns(2);
+        assert_eq!(shown(&near), [(column, vec![(at, vec![Some(stick); spots])])], "full, every spot shown");
+        server.set_block(at, BlockId::AIR);
+        server.send_shown();
+        assert_eq!(shown(&near), [(column, Vec::new())], "broken, its column shows nothing");
+    }
+
     /// A player let down lands on a post's top only where they are over it: beside it, in
     /// the empty part of its cell, they go on down to the floor under it.
     #[test]

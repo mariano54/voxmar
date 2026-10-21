@@ -45,7 +45,7 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
 Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, footstools,
-cushions and window seats; tables include desks, counters and bedside tables; storage is
+cushions and window seats; tables include desks and counters; storage is
 whatever a home keeps things in or on: chests, blanket chests, cupboards, dressers and
 wardrobes, mantel shelves, plate racks, spice racks, bedside tables, stair cupboards, window
 seats, shelves (pot shelves, pantry shelves and bookshelves too), crate stacks, barrel
