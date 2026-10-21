@@ -5496,4 +5496,3 @@ mod land_spread {
         println!("all: {}", summary(&mut all, (n * n) as usize * seeds.len()));
     }
 }
-
