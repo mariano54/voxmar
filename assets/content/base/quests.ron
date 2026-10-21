@@ -519,7 +519,7 @@
         ),
         (
             name: "a_rug_underfoot", age: "farm", branch: "home", title: "A Rug Underfoot",
-            why: "A homely home (A Homely Home) wants a rug, and wool from your flock (Wool Gathering) makes one. A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two. Two cloths side by side make three rugs (Crafting 3). Lay them on the floor; curtains, cushions and banners are made from cloth too.",
+            why: "A homely home (A Homely Home) wants a rug, and wool from your flock (Wool Gathering) makes one. A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two. Two cloths side by side make three rugs (Crafting 3). A rush mat, four rushes woven at the table (Crafting 1), is a rug too. Lay them on the floor; curtains, cushions and banners are made from cloth too.",
             tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)], [Cook("tag:cloth", 2), Craft("tag:rug", 1)]],
             after: ["a_homely_home", "wool_gathering"],
             rewards: [Xp("crafting", 180.0)],

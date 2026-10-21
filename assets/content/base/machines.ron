@@ -52,6 +52,7 @@
         (block: "{name}_barrel_rack", role: Bin(slots: 18)),
         (block: "{name}_cupboard", role: Bin(slots: 9)),
         (block: "{name}_blanket_chest", role: Bin(slots: 9)),
+        (block: "{name}_dresser", role: Bin(slots: 9)),
         (block: "{name}_wardrobe", role: Bin(slots: 18)),
         (block: "{name}_jar", role: Bin(slots: 4, holds: Some("tag:edible"))),
         (block: "{name}_basket", role: Bin(slots: 4, holds: Some("tag:forage"))),
