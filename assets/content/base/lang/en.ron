@@ -391,6 +391,8 @@
     "block.base.window_box": "Window Box",
     "block.base.{name}_dresser": "{name} Dresser",
     "block.base.{name}_pot_crane": "{name} Pot Crane",
+    "block.base.{name}_rocking_chair": "{name} Rocking Chair",
+    "block.base.{name}_cradle": "{name} Cradle",
     "block.base.rush_mat": "Rush Mat",
     "block.base.{name}_stair_cupboard": "{name} Stair Cupboard",
     "block.base.{name}_wardrobe": "{name} Wardrobe",

@@ -388,6 +388,8 @@
     "block.base.window_box": "窓辺の花箱",
     "block.base.{name}_dresser": "{name}の食器棚",
     "block.base.{name}_pot_crane": "{name}の鍋掛け",
+    "block.base.{name}_rocking_chair": "{name}の揺り椅子",
+    "block.base.{name}_cradle": "{name}のゆりかご",
     "block.base.rush_mat": "い草の敷物",
     "block.base.{name}_stair_cupboard": "{name}の階段箪笥",
     "block.base.{name}_wardrobe": "{name}の洋服だんす",

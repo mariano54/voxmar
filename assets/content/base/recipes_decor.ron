@@ -46,6 +46,10 @@
         // arm on a plank post with a clay pot hung from it; rushes woven into a mat.
         (ingredients: ["{name}_cupboard", "{name}_planks", "{name}_planks", "tag:crockery", "tag:crockery"], output: "{name}_dresser", skill: "core:construction", level: 6, xp: 5.0),
         (ingredients: ["{name}_planks", "{name}_planks", "stick", "stick", "clay_pot"], output: "{name}_pot_crane", skill: "core:construction", level: 3, xp: 3.0),
+        // By the fire: a chair set on two planks for rockers; a crib of planks on sticks,
+        // bedded with rushes.
+        (ingredients: ["{name}_chair", "{name}_planks", "{name}_planks"], output: "{name}_rocking_chair", skill: "core:construction", level: 4, xp: 4.0),
+        (ingredients: ["{name}_planks", "{name}_planks", "{name}_planks", "stick", "stick", "rush", "rush"], output: "{name}_cradle", skill: "core:construction", level: 4, xp: 4.0),
         (ingredients: ["rush", "rush", "rush", "rush"], output: "rush_mat", skill: "core:crafting", level: 1, xp: 1.0),
         // A window box: a trough of planks filled with earth, and a poppy and a dandelion planted in it.
         (ingredients: ["tag:planks", "tag:planks", "tag:planks", "dirt", "poppy", "dandelion"], output: "window_box", skill: "core:construction", level: 3, xp: 3.0),

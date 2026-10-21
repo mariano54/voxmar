@@ -225,6 +225,39 @@
             (from: (10, 9, 13.5), to: (11, 13, 14.5)),
             (from: (7, 4, 10), to: (14, 9, 16), textures: All("furniture_pot")),
         ]),
+        // A rocking chair, its back to the south: a chair's seat, legs and back on two rockers
+        // running front to back, curling up at each end, and an arm each side on a short post.
+        "rocking_chair": (boxes: [
+            (from: (3, 0, 2), to: (5, 1.5, 14), textures: All("furniture_grain")),
+            (from: (11, 0, 2), to: (13, 1.5, 14), textures: All("furniture_grain")),
+            (from: (3, 1, 0.5), to: (5, 2.5, 2), textures: All("furniture_grain")),
+            (from: (11, 1, 0.5), to: (13, 2.5, 2), textures: All("furniture_grain")),
+            (from: (3, 1, 14), to: (5, 2.5, 15.5), textures: All("furniture_grain")),
+            (from: (11, 1, 14), to: (13, 2.5, 15.5), textures: All("furniture_grain")),
+            (from: (3, 7, 3), to: (13, 9, 13)),
+            (from: (3, 1.5, 3), to: (5, 7, 5), textures: All("furniture_grain")),
+            (from: (11, 1.5, 3), to: (13, 7, 5), textures: All("furniture_grain")),
+            (from: (3, 1.5, 11), to: (5, 16, 13), textures: All("furniture_grain")),
+            (from: (11, 1.5, 11), to: (13, 16, 13), textures: All("furniture_grain")),
+            (from: (5, 10, 11), to: (11, 15, 13)),
+            (from: (3, 9, 4), to: (5, 11, 5), textures: All("furniture_grain")),
+            (from: (11, 9, 4), to: (13, 11, 5), textures: All("furniture_grain")),
+            (from: (2.5, 11, 3.5), to: (5, 12, 11)),
+            (from: (11, 11, 3.5), to: (13.5, 12, 11)),
+        ]),
+        // A cradle, its head to the south: a crib of boards on two rockers across it, a rush
+        // bed inside, a pillow at the head and a higher headboard.
+        "cradle": (boxes: [
+            (from: (1, 0, 2), to: (15, 1.5, 4), textures: All("furniture_grain")),
+            (from: (1, 0, 12), to: (15, 1.5, 14), textures: All("furniture_grain")),
+            (from: (3, 1.5, 2), to: (13, 2.5, 14)),
+            (from: (2, 1.5, 2), to: (3, 8, 14)),
+            (from: (13, 1.5, 2), to: (14, 8, 14)),
+            (from: (2, 1.5, 1), to: (14, 7, 2), textures: All("furniture_grain")),
+            (from: (2, 1.5, 14), to: (14, 10, 15), textures: All("furniture_grain")),
+            (from: (3, 2.5, 2), to: (13, 5, 14), textures: All("furniture_linen")),
+            (from: (5, 5, 10), to: (11, 6.5, 13.5), textures: All("furniture_linen")),
+        ]),
         // A rushlight holder: a foot, a post, an arm to the east and the rush burning in its
         // clip at the arm's end.
         "rushlight": (boxes: [
