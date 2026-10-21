@@ -275,9 +275,13 @@ pub struct Overworld {
     seed: u64,
 }
 
-/// Points a side of a tile of `Overworld::fields`, and the bytes those tiles may hold.
+/// Points a side of a tile of `Overworld::fields`, and the bytes those tiles may hold:
+/// room for the tiles of searches for many biomes from one place side by side (a census's
+/// fourteen reach about 70 MB), which read the same tiles at their own pace, so a smaller
+/// budget dropped tiles another search was about to read and worked them out again. Only
+/// `locate_biome` fills it.
 const FIELD_TILE: i32 = 16;
-const FIELD_BUDGET: usize = 16 << 20;
+const FIELD_BUDGET: usize = 128 << 20;
 
 /// How far around the first place found `locate_biome` looks for the biome's interior.
 const LOCATE_INSIDE: i32 = 256;
@@ -468,10 +472,13 @@ impl Overworld {
                     return false;
                 }
                 let near = self.sampler(at - 64, at + 64);
+                // A site's home and edge are its pick's, which reads no rivers: only a
+                // point the pick passes needs the site, whose rivers may lie in regions
+                // nothing else comes near.
                 (0..9 * 9).any(|i| {
                     let p = at + IVec2::new(i % 9 * 16 - 64, i / 9 * 16 - 64);
-                    let site = near.site(p.x, p.y);
-                    site.home == id && site.biome == id && site.edge >= LOCATE_DEPTH
+                    let pick = near.pick(p.x, p.y);
+                    pick.home == id && pick.edge >= LOCATE_DEPTH && near.site(p.x, p.y).biome == id
                 })
             },
         )?;
@@ -482,8 +489,11 @@ impl Overworld {
         let best = (0..steps * steps)
             .map(|i| found + IVec2::new(i % steps * 16 - LOCATE_INSIDE, i / steps * 16 - LOCATE_INSIDE))
             .filter_map(|p| {
+                if area.pick(p.x, p.y).home != id {
+                    return None;
+                }
                 let site = area.site(p.x, p.y);
-                (site.home == id && site.biome == id).then(|| (p, site.edge + if site.height > site.water { 64.0 } else { 0.0 }))
+                (site.biome == id).then(|| (p, site.edge + if site.height > site.water { 64.0 } else { 0.0 }))
             })
             .max_by(|a, b| a.1.total_cmp(&b.1));
         Some(best.map_or(found, |b| b.0))
