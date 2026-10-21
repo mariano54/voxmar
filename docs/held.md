@@ -19,6 +19,11 @@ lags a frame behind the head, and it holds the item's depth just inside the near
 wall the player stands against cannot cut it. It is queued for the camera only, so it casts no
 shadow. It takes the sky and block light at the player's eye (measured again as they move and
 every 0.2 s, and eased at 8 a second), so it is dark in a dark cave and warm beside a torch.
+A light carried (`held_light:N`: the firebrand 8, burning down in the hand; the torch 12,
+burning nothing down) lights the hand and what is around it, and keeps monsters from coming
+up near its bearer as a torch set down does; load refuses one brighter in hand than set down.
+The firebrand burns out to a charred stick, whose end on a fresh stick tips one torch, so
+the first light leads to the lasting one before there is coal.
 
 ## The empty hand
 

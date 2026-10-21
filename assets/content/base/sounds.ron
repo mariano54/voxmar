@@ -23,6 +23,9 @@
     level_up: ["sounds/level_up_1.ogg"],
     // A milestone level (every tenth, as celebrations.ron says): the grander one, instead.
     level_milestone: ["sounds/level_milestone_1.ogg"],
+    // A path's last quest finished (its capstone, `capstone: true`): a horn call answered by
+    // the trumpet, closing on a slow, warm amen. None listed, it rings as a quest.
+    capstone_done: ["sounds/capstone_done_1.ogg"],
     // Our own (tools/generate_sfx.py), made at the loudness the game expects of them.
     // An item picked up off the ground: a soft pop, when the player's Minecraft sounds are
     // off.
@@ -376,6 +379,7 @@
         "quest_claim": (jingle: true),
         "level_up": (jingle: true),
         "level_milestone": (jingle: true),
+        "capstone_done": (jingle: true),
         // A firing the player set going finished while they were away (a clamp charred
         // through, a kiln gone cold): the last embers, an earthen settle and fired ware
         // ringing once as it cools.

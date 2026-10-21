@@ -635,6 +635,21 @@ impl MachineRegistry {
                 registry.rules = rules;
             }
         }
+        // A store comes in every facing its block does: a cupboard turned east keeps things
+        // as one facing north does.
+        let turned: Vec<Machine> = blocks
+            .ids()
+            .filter(|id| !registry.by_block.contains_key(id))
+            .filter_map(|id| {
+                let base = blocks.id(blocks.def(id).facing_of()?)?;
+                let machine = registry.get(base).filter(|m| m.is_store())?;
+                Some(Machine { block: id, ..machine.clone() })
+            })
+            .collect();
+        for machine in turned {
+            registry.by_block.insert(machine.block, registry.machines.len());
+            registry.machines.push(machine);
+        }
         // Processors that do not say how many stacks they hold take the factory's default.
         let slots = registry.rules.slots.max(1);
         for machine in &mut registry.machines {
