@@ -5845,7 +5845,8 @@ impl BrandPlan {
             }
             let fire = blocks.ids().find(|&b| {
                 let def = blocks.def(b);
-                def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
+                // A fire that burns set down alone: a hearthstone waits on its ring.
+                def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && !def.has_tag("multiblock_core") && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
             });
             if let Some(fire) = fire {
                 return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand), proposals: 0, asked: None, regiven: 0 });
