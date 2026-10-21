@@ -27,7 +27,8 @@ fn made(content: &Content) -> Vec<BlockId> {
 }
 
 /// A state one swaps into and comes back as (a curtain drawn back) is the same piece: its
-/// partner's colour, family and furnishing tags, and it gives the partner back.
+/// partner's colour, family and furnishing tags (all but the one naming the state), and it
+/// gives the partner back.
 #[test]
 fn a_swap_state_keeps_its_partners_colour_and_tags() {
     let content = content();
@@ -41,7 +42,9 @@ fn a_swap_state_keeps_its_partners_colour_and_tags() {
         assert_eq!(partner.swaps.as_deref(), Some(def.name.as_str()), "{} and {} swap both ways", def.name, partner.name);
         assert_eq!(def.tint, partner.tint, "{}'s colour", def.name);
         assert_eq!(def.family, partner.family, "{}'s family", def.name);
-        assert_eq!(def.tags, partner.tags, "{}'s tags", def.name);
+        // Apart from the tag naming the state (a curtain drawn across hushes a draught).
+        let plain = |tags: &[String]| tags.iter().filter(|t| !t.ends_with("_drawn") && !t.ends_with("_open")).cloned().collect::<Vec<_>>();
+        assert_eq!(plain(&def.tags), plain(&partner.tags), "{}'s tags", def.name);
         states += 1;
     }
     assert!(states >= 12, "the twelve dyes' drawn-back curtains, at least: {states}");
@@ -51,7 +54,7 @@ fn a_swap_state_keeps_its_partners_colour_and_tags() {
 fn the_templates_make_every_family_in_full() {
     let content = content();
     let names: BTreeSet<String> = made(&content).into_iter().map(|id| content.blocks.def(id).name.clone()).collect();
-    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight", "dresser", "pot_crane", "rocking_chair", "cradle", "mantel_shelf", "fireside_bench", "plate_rack", "bedside_table", "footstool", "spice_rack", "candle_box", "bread_bin"];
+    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight", "dresser", "pot_crane", "rocking_chair", "cradle", "mantel_shelf", "fireside_bench", "plate_rack", "bedside_table", "footstool", "spice_rack", "candle_box", "bread_bin", "kindling_box"];
     let cloth = ["cloth", "rug", "banner", "wall_hanging", "curtain", "paper_lantern", "cushion", "bunting", "awning"];
     let crockery = ["plate", "bowl", "jar", "jug", "basket"];
     let woods = ["birch", "oak", "dark_oak"];
@@ -65,7 +68,7 @@ fn the_templates_make_every_family_in_full() {
             }
         }
     }
-    assert_eq!(expected.len(), 3 * 35 + 12 * 9 + 3 * 5);
+    assert_eq!(expected.len(), 3 * 36 + 12 * 9 + 3 * 5);
     let missing: Vec<_> = expected.difference(&names).collect();
     let extra: Vec<_> = names.difference(&expected).collect();
     assert!(missing.is_empty() && extra.is_empty(), "missing {missing:?}, unexpected {extra:?}");
@@ -185,7 +188,7 @@ fn a_mantel_shelf_shows_what_is_put_on_it_whichever_way_it_faces() {
         assert!(kept, "{} keeps things as {} does", blocks.def(id).name, blocks.def(base).name);
         turned += 1;
     }
-    assert!(turned >= 3 * 3 * 9, "the cupboards, chests, dressers and the shelves, racks, tables and boxes that show things, turned three ways: {turned}");
+    assert!(turned >= 3 * 3 * 10, "the cupboards, chests, dressers and the shelves, racks, tables and boxes that show things, turned three ways: {turned}");
 }
 
 /// By the hearth: a candle box on the wall keeps candles, nothing else, and shows the two
@@ -206,4 +209,20 @@ fn a_candle_box_keeps_candles_and_a_bread_bin_bread() {
     assert!(blocks.def(bin).shows.is_empty(), "a bread bin's loaves are under its lid");
     assert!(content.machines.get(bin).is_some_and(|m| m.is_store() && m.bin_slots() == 4), "a bread bin keeps four");
     assert!(keeps(bin, bread) && !keeps(bin, candle) && !keeps(bin, stick), "a bread bin keeps what is baked alone");
+}
+
+/// A kindling box by the fire keeps what burns, nothing else, and shows the two things on
+/// top of what is in it whichever way it faces.
+#[test]
+fn a_kindling_box_keeps_fuel_to_hand() {
+    let content = content();
+    let blocks = &content.blocks;
+    let (stick, charcoal, bread) = (blocks.expect("base:stick"), blocks.expect("base:charcoal"), blocks.expect("base:bread"));
+    let keeps = |id, thing| content.machines.get(id).and_then(|m| m.holds.as_ref()).is_some_and(|holds| holds.contains(&thing));
+    for name in ["base:dark_oak_kindling_box", "base:dark_oak_kindling_box_east", "base:dark_oak_kindling_box_south", "base:dark_oak_kindling_box_west"] {
+        let id = blocks.expect(name);
+        assert_eq!(blocks.def(id).shows.len(), 2, "{name} shows two");
+        assert!(content.machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() == 4), "{name} keeps four");
+        assert!(keeps(id, stick) && keeps(id, charcoal) && !keeps(id, bread), "{name} keeps what burns alone");
+    }
 }

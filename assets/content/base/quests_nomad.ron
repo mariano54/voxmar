@@ -54,7 +54,7 @@
             why: "A stone tool works twice as fast as a flint one and finds a little more. Carry the whole kit: pickaxe, axe, shovel (one stone head over two sticks), hoe and knife.",
             tasks: [[Have("stone_pickaxe", 1), Have("stone_axe", 1), Have("stone_shovel", 1), Have("stone_hoe", 1), Have("stone_knife", 1)]],
             after: ["a_sharp_edge", "a_chopping_block", "break_ground", "twine_and_thong", "timber", "stone_in_hand"],
-            rewards: [Xp("engineering", 30.0), Item("torch", 8)],
+            rewards: [Xp("engineering", 60.0), Item("torch", 8)],
         ),
         // Side quests about camp: each teaches a first tool or a way to shape what you build with.
         (
@@ -237,8 +237,8 @@
         // Food: cooking, grain and the first fields.
         (
             name: "meat_and_fire", age: "nomad", branch: "cooking", title: "Meat on the Fire",
-            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: small game or duck. Ducks live by rivers and in swamps. A higher Cooking level burns less. Six good meals will also take you to Cooking 2.",
-            tasks: [[Cook("tag:meat", 6), Level("cooking", 2)]],
+            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: small game or duck. Ducks live by rivers and in swamps. A higher Cooking level burns less. Six good meals, with what the camp has taught you, will take you to Cooking 4.",
+            tasks: [[Cook("tag:meat", 6), Level("cooking", 4)]],
             after: ["first_night"],
             rewards: [Xp("cooking", 120.0)],
         ),
@@ -420,8 +420,8 @@
         (
             name: "hard_to_put_down", age: "nomad", branch: "combat", title: "Hard to Put Down",
             capstone: true,
-            why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 3 and Hitpoints 11.",
-            tasks: [[Level("defence", 3), Level("hitpoints", 11)]],
+            why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 4 and Hitpoints 12.",
+            tasks: [[Level("defence", 4), Level("hitpoints", 12)]],
             after: ["raise_your_guard", "a_stones_throw"],
             rewards: [Xp("defence", 60.0), Xp("hitpoints", 40.0)],
         ),
@@ -438,7 +438,7 @@
             why: "The hearth needs four clay, and clay lies on the bottom of ponds and lakes. A stone shovel digs four times faster than bare hands: make one, wade in and dig four.",
             tasks: [[Craft("stone_shovel", 1), Have("clay", 4)]],
             after: ["a_pile_of_stone"],
-            rewards: [Xp("engineering", 12.0), Item("bread", 4)],
+            rewards: [Xp("engineering", 30.0), Item("bread", 4)],
         ),
         (
             name: "black_flecks", age: "nomad", branch: "mining", title: "Black Flecks",

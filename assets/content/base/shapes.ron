@@ -325,6 +325,15 @@
             (from: (1.5, 8, 2.5), to: (14.5, 9.5, 13.5)),
             (from: (7, 9.5, 7), to: (9, 10.5, 9), textures: All("furniture_grain")),
         ]),
+        // A kindling box, its front to the north: an open box on the floor, its front lower
+        // than its back, what is in it heaped on its floor (`shows`).
+        "kindling_box": (boxes: [
+            (from: (2, 0, 3), to: (14, 2, 13)),
+            (from: (2, 2, 3), to: (14, 7, 4), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+            (from: (2, 2, 12), to: (14, 9, 13)),
+            (from: (2, 2, 4), to: (3, 8, 12)),
+            (from: (13, 2, 4), to: (14, 8, 12)),
+        ]),
         // A rushlight holder: a foot, a post, an arm to the east and the rush burning in its
         // clip at the arm's end.
         "rushlight": (boxes: [
@@ -728,6 +737,18 @@
             (from: (5, 11, 0), to: (11, 16, 16)),
             (from: (5.5, 7, 9), to: (10.5, 11, 16)),
             (from: (5.5, 3, 13), to: (10.5, 7, 16)),
+        ]),
+        // A knee brace, its foot against the post behind it (south) and its head at the front
+        // of the cell's top: a timber five texels wide stepped corner to corner.
+        "brace": (boxes: [
+            (from: (5.5, 0, 13), to: (10.5, 3, 16)),
+            (from: (5.5, 2, 11), to: (10.5, 5, 14)),
+            (from: (5.5, 4, 9), to: (10.5, 7, 12)),
+            (from: (5.5, 6, 7), to: (10.5, 9, 10)),
+            (from: (5.5, 8, 5), to: (10.5, 11, 8)),
+            (from: (5.5, 10, 3), to: (10.5, 13, 6)),
+            (from: (5.5, 12, 1), to: (10.5, 15, 4)),
+            (from: (5.5, 14, 0), to: (10.5, 16, 2)),
         ]),
         // A door frame across the middle of the cell: a jamb on either side, and above them
         // a lintel. The way between is eleven sixteenths across, wider than anyone who walks.

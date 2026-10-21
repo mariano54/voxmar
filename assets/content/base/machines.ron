@@ -59,6 +59,7 @@
         (block: "{name}_spice_rack", role: Bin(slots: 3, holds: Some("tag:herb"))),
         (block: "{name}_candle_box", role: Bin(slots: 2, holds: Some("tag:candle"))),
         (block: "{name}_bread_bin", role: Bin(slots: 4, holds: Some("tag:baked"))),
+        (block: "{name}_kindling_box", role: Bin(slots: 4, holds: Some("tag:fuel"))),
         (block: "{name}_wardrobe", role: Bin(slots: 18)),
         (block: "{name}_jar", role: Bin(slots: 4, holds: Some("tag:edible"))),
         (block: "{name}_basket", role: Bin(slots: 4, holds: Some("tag:forage"))),
