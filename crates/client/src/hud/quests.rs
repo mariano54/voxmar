@@ -2945,10 +2945,6 @@ pub(crate) mod tests {
         content.blocks.id(name).unwrap_or_else(|| panic!("no {name}"))
     }
 
-    /// A way a player works comes before a chest's find, a party's gift or a quest's
-    /// reward, whatever their levels: Red Metal's pickaxe and First Bronze's bronze get their
-    /// copper first by smelting it, and A Full Charge its charcoal by cooking, not from a
-    /// chest; and so for every goal with a way to work.
     /// Candlelight comes after no hunting quest, so the tracker leads with a candle its
     /// chapter's player can make: the lard one (a wild boar drops lard), not two hides, which
     /// want a drying rack no quest before it teaches.
@@ -2963,6 +2959,10 @@ pub(crate) mod tests {
         assert!(matches!(&first.method, Method::Craft { variants, .. } if variants.iter().flatten().flatten().any(|&cell| cell == lard)), "{first:?}");
     }
 
+    /// A way a player works comes before a chest's find, a party's gift or a quest's
+    /// reward, whatever their levels: Red Metal's pickaxe and First Bronze's bronze get their
+    /// copper first by smelting it, and A Full Charge its charcoal by cooking, not from a
+    /// chest; and so for every goal with a way to work.
     #[test]
     fn a_way_to_work_comes_before_a_find() {
         let content = content();

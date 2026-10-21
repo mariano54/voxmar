@@ -145,7 +145,7 @@
         (
             name: "stone_and_clay", age: "nomad", branch: "main", title: "Stone and Clay",
             side: true,
-            why: "Gather for the hearth before you build it: about twenty-eight cobblestone (four loose stones knock together into two) and four clay from the bottom of a pond, dug with a shovel. Hold them all at once.",
+            why: "Gather for the hearth before you build it: twenty-eight cobblestone (four loose stones knock together into two) and four clay from the bottom of a pond, dug with a shovel. Hold them all at once.",
             tasks: [[Have("cobblestone", 28), Have("clay", 4)]],
             after: ["stone_in_hand"],
             rewards: [Xp("mining", 40.0)],

@@ -316,7 +316,7 @@
     "quest.base.torchlight": ("Torchlight", "たいまつの灯り"),
     "quest.base.torchlight.why": ("Light keeps monsters off and lets you work at night. A coal (or a charcoal) over a stick makes four torches: dig coal from its seam with a stone pickaxe (Coal and Cinders). Make eight. A night is a third of the day and cannot be slept away: spend it underground by torchlight digging coal, or at home cooking (Meat on the Fire) and crafting.", "灯りは魔物を遠ざけ、夜も働ける。石炭（か木炭）1個の下に棒1本で松明が4本できる。石炭は石のつるはしで層から掘る（「石炭と燃えさし」）。8本作ろう。夜は1日の3分の1あり、眠って飛ばすことはできない。松明の明かりで地下に潜って石炭を掘るか、家で料理（「火で焼く肉」）や細工をして過ごそう。"),
     "quest.base.stone_and_clay": ("Stone and Clay", "丸石と粘土"),
-    "quest.base.stone_and_clay.why": ("Gather for the hearth before you build it: about twenty-eight cobblestone (four loose stones knock together into two) and four clay from the bottom of a pond, dug with a shovel. Hold them all at once.", "炉を組む前に材料を集めよう：丸石およそ28個（ばらの石4個を打ち合わせると2個になる）と、池の底からシャベルで掘る粘土4個。全部いっしょに持とう。"),
+    "quest.base.stone_and_clay.why": ("Gather for the hearth before you build it: twenty-eight cobblestone (four loose stones knock together into two) and four clay from the bottom of a pond, dug with a shovel. Hold them all at once.", "炉を組む前に材料を集めよう：丸石28個（ばらの石4個を打ち合わせると2個になる）と、池の底からシャベルで掘る粘土4個。全部いっしょに持とう。"),
     "quest.base.light_round_the_camp": ("Light Round the Camp", "野営地を照らす"),
     "quest.base.light_round_the_camp.why": ("Monsters come up where it is dark, not where it is lit. Set four torches on the ground round the place you sleep, and the night there is safer.", "魔物は暗いところに出て、明るいところには出ない。寝る場所のまわりの地面に松明を4本立てれば、そこの夜は安全になる。"),
     "quest.base.twine_and_thong": ("Twine and Thong", "より糸"),
