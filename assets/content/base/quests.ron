@@ -219,7 +219,7 @@
             why: "Herbs cannot be sown, but a herb planter (planks round dirt, Construction 3) lets a picked herb grow back at home. Make a planter, set a herb in it, and pick it again when it returns. Pick six wild plants on your rounds as well. While a herb grows back, sow four crops by the house (A Kitchen Garden).",
             tasks: [[Craft("herb_planter", 1), Pick("any", 6)]],
             after: ["a_field_of_gold"],
-            rewards: [Xp("construction", 80.0), Xp("farming", 60.0)],
+            rewards: [Xp("construction", 110.0), Xp("farming", 60.0)],
         ),
         (
             name: "camp_cook", age: "farm", branch: "cooking", title: "Camp Cook",

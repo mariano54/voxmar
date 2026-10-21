@@ -275,7 +275,7 @@
             why: "Meat keeps if you dry it. Lash four sticks and three twine into a drying rack (Crafting 1) and stand it under open sky. Right-click it with raw meat or fish in hand to hang up to eight; go gathering, and ten minutes later it is jerky, which heals 2 and, unlike cooked food, stacks in your pack. A fire within three blocks dries it twice as fast; a roof over it stops it. Make a rack and bring home four jerky.",
             tasks: [[Craft("drying_rack", 1), Have("jerky", 4)]],
             after: ["meat_and_fire", "crafting_table"],
-            rewards: [Xp("cooking", 80.0), Xp("crafting", 20.0)],
+            rewards: [Xp("cooking", 80.0), Xp("crafting", 100.0)],
         ),
         (
             name: "trail_rations", age: "nomad", branch: "cooking", title: "Trail Rations",
@@ -454,8 +454,8 @@
         ),
         (
             name: "first_ore", age: "nomad", branch: "mining", title: "Red Metal Underfoot",
-            why: "Copper needs Mining 5 and a stone pickaxe; a flint one only scratches it. Mining grows mostly from coal: a score or so of it, with what the early quests give, takes you there. Copper lies in veins underground, mostly below sea level and richest under granite; a small copper-coloured stone lying on the ground marks a vein below it, so dig down there. Mine five; it is the start of every metal.",
-            tasks: [[Mine("copper_ore", 5)]],
+            why: "Copper needs Mining 5 and a stone pickaxe; a flint one only scratches it. Mining grows mostly from coal: eight more on top of the twelve from Coal and Cinders, with what the early quests give, takes you there. Copper lies in veins underground, mostly below sea level and richest under granite; a small copper-coloured stone lying on the ground marks a vein below it, so dig down there. Mine eight coal, then five copper; it is the start of every metal.",
+            tasks: [[Mine("coal_ore", 8), Mine("copper_ore", 5)]],
             after: ["coal_and_cinders"],
             rewards: [Xp("mining", 60.0)],
         ),

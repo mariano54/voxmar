@@ -428,13 +428,18 @@ fn the_milk_pail_opens_at_the_hunter_level_its_cheapest_milker_asks() {
     assert!(total >= need, "The Milk Pail opens with {total:.0} Hunter experience at the least, short of the {need:.0} Hunter {level} its cheapest milker asks");
 }
 
+/// Quests whose words name the level to train to first, kept so: Seed Mix (Cooking 8) and
+/// Under Lock and Key (Crafting 5) by design calls, and A Place to Pray (Construction 5)
+/// because a reward on its chain would move the Farm walk the bots play.
+const TRAIN_FIRST: [&str; 3] = ["base:seed_mix", "base:under_lock_and_key", "base:a_place_to_pray"];
+
 /// What each Nomad and Farm quest asks a skill for, against what its `after` chain surely
 /// gives: the skill's start, the highest `Level` goal before it, the chain's Xp rewards, and
 /// the cheapest make of each earlier quest (its least-giving task's crafts, cooks and mines
-/// at the lowest level that makes them). A goal whose make needs more than that is a level
-/// the books never bring the player to, unless the quest itself names the level to reach:
-/// a `Level` goal in the same task, or the level in its words ("seed mix (Cooking 8)"), is
-/// the book telling the player to train first, so it is not counted against itself.
+/// at the lowest level that makes them), plus the makes its own task asks at a lower level
+/// already in reach (First Ore's coal before its copper). A goal whose make needs more than
+/// that is a level the books never bring the player to, unless a `Level` goal in the same
+/// task tells the player to train first, or the quest is one of `TRAIN_FIRST`.
 fn shortfalls(content: &Content) -> Vec<String> {
     let skills = &content.skills;
     let local = |name: &str| name.rsplit(':').next().unwrap_or(name).to_owned();
@@ -459,12 +464,6 @@ fn shortfalls(content: &Content) -> Vec<String> {
             }
             _ => None,
         }
-    };
-    // "Cooking 8" in the quest's words, as the books write a level.
-    let named = |why: &str, name: &str, level: u8| {
-        let mut title = name.to_owned();
-        title[..1].make_ascii_uppercase();
-        why.contains(&format!("{title} {level}"))
     };
     let mut short = Vec::new();
     for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
@@ -503,9 +502,16 @@ fn shortfalls(content: &Content) -> Vec<String> {
             .map(|task| {
                 task.iter()
                     .filter_map(|g| make(g).map(|m| (g, m)))
-                    .filter(|(_, (name, level, _, _))| skill(name).is_some() && !task.iter().any(|g| matches!(g, Goal::Level(s, n) if local(s) == *name && n >= level)) && !named(&quest.why, name, *level))
+                    .filter(|(_, (name, level, _, _))| skill(name).is_some() && !task.iter().any(|g| matches!(g, Goal::Level(s, n) if local(s) == *name && n >= level)) && !TRAIN_FIRST.contains(&quest.name.as_str()))
                     .filter_map(|(g, (name, level, _, _))| {
-                        let (need, have) = (skills.xp_for(level) as f32 / 10.0, sure(&name));
+                        let sure = sure(&name);
+                        let own: f32 = task
+                            .iter()
+                            .filter_map(&make)
+                            .filter(|m| m.0 == name && m.1 < level && skills.xp_for(m.1) as f32 / 10.0 <= sure)
+                            .map(|m| m.2 * m.3 as f32)
+                            .sum();
+                        let (need, have) = (skills.xp_for(level) as f32 / 10.0, sure + own);
                         (need > have).then(|| format!("{g:?} needs {name} {level} ({need:.0} xp), the books surely give {have:.0}"))
                     })
                     .collect::<Vec<_>>()
@@ -525,8 +531,8 @@ fn every_early_goal_is_within_the_level_its_books_bring() {
     assert!(short.is_empty(), "{short:#?}");
 }
 
-/// The check catches a gap: A Side of Beef with its Cooking 12 goal and the level in its
-/// words dropped asks for a beef roast its chain never trains the player for.
+/// The check catches a gap: A Side of Beef with its Cooking 12 goal dropped asks for a beef
+/// roast its chain never trains the player for.
 #[test]
 fn a_goal_above_its_books_level_is_caught() {
     use voxmar_engine::quest::QuestRegistry;
@@ -536,8 +542,7 @@ fn a_goal_above_its_books_level_is_caught() {
     let goal = r#"Level("cooking", 12), "#;
     let at = source.find(r#"name: "a_side_of_beef""#).expect("A Side of Beef");
     let level = at + source[at..].find(goal).expect("A Side of Beef asks for Cooking 12");
-    let untrained = format!("{}{}", &source[..level], &source[level + goal.len()..]).replacen("on the way up to Cooking 12", "on the way", 1);
-    assert!(!untrained[at..].split("name:").nth(1).unwrap().contains("Cooking 12"), "A Side of Beef still names Cooking 12");
+    let untrained = format!("{}{}", &source[..level], &source[level + goal.len()..]);
     let mut content = content();
     content.quests = std::sync::Arc::new(QuestRegistry::new(vec![QuestRegistry::read("base", &untrained).unwrap(), nomad]).unwrap());
     let short = shortfalls(&content);
