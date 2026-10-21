@@ -257,12 +257,13 @@ impl Condition {
         }
     }
 
-    /// The temperatures `FeltAbove` asks anywhere in this condition.
+    /// The temperatures `FeltAbove` asks anywhere in this condition that feeling warmer
+    /// brings it on: not under a `Not`, where feeling warmer takes it away.
     fn felt_above(&self, into: &mut Vec<f32>) {
         match self {
             Condition::FeltAbove(t) => into.push(*t),
             Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.felt_above(into)),
-            Condition::Not(c) | Condition::Sheltered(c) => c.felt_above(into),
+            Condition::Sheltered(c) => c.felt_above(into),
             _ => {}
         }
     }
