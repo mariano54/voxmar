@@ -2161,6 +2161,19 @@ fn the_spawn_plans_each_square_once() {
     }
 }
 
+/// The server's first ask leaves nothing about the spawn for a later tick to find being
+/// made: the estimate, the spawn point, the squares in reach and the spawn's square.
+#[test]
+fn settling_the_spawn_makes_all_it_finds_once() {
+    let world = base_world(7);
+    let made = |world: &Overworld| [world.spawns[0].get().is_some(), world.spawns[1].get().is_some(), world.settlements.promised.get().is_some(), world.settlements.spawn.get().is_some()];
+    assert_eq!(made(&world), [false; 4], "nothing found yet");
+    assert!(world.settlements.fixed.is_some(), "the base content settles");
+    let at = world.settle_spawn();
+    assert_eq!(made(&world), [true; 4]);
+    assert_eq!(at, world.spawn_point());
+}
+
 // ---------------------------------------------------------------------------------------
 // Cultures (cultures.ron)
 

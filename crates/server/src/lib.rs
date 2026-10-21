@@ -863,9 +863,10 @@ impl Server {
         let processes = process::core_processes();
         let generator: Arc<dyn Generator> = overworld.clone();
         // Load the spawn column up front and stand on its highest ground under any tree,
-        // so trees never bury the player or hold them up on a crown (`find_ground`).
+        // so trees never bury the player or hold them up on a crown (`find_ground`). The
+        // spawn found with what settles by it, before any tick (`Overworld::settle_spawn`).
         let mut world = VoxelWorld::default();
-        let spawn_block = generator.spawn_point();
+        let spawn_block = overworld.settle_spawn();
         let spawn_column = ColumnPos::of_block(spawn_block);
         let tick = meta.time.max(FIRST_TICK);
         let wear_rules = Arc::new(wear::WearRules::load(&content.files, &content.blocks, meta.seed).expect("checked by load_content"));
