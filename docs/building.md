@@ -24,6 +24,7 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Chimney | `chimney_stack`, `chimney_pot` | a brick flue 3/4 of a block across; a clay pot with a rim | | 4 stone bricks make 2 (6); 4 fired clay round a flue make 2 (3) |
 | Stone flue, hood | `stone_flue`, `chimney_hood` | a cobble flue as the brick one; a brick skirt round a hearth narrowing to a flue | | 4 cobblestone and clay make 2 (2); 5 stone bricks make 1 (6) |
 | Jetty beam | `<timber>_jetty_beam` | a joist along the top of the cell, out past the wall, a brace stepping down to the wall | overhang towards the placer | 2 beams, a post make 2 (4) |
+| Brace | `<timber>_brace` (`_top`) | a knee brace, a timber five texels wide stepped corner to corner from its foot against the post behind it up to the front of the cell's top; turned over, it braces a beam from below | faces the placer, its foot to the wall; flips like a slab | 2 posts laid corner to corner make 4 (3) |
 | Door frame | `<timber>_door_frame` (`_top`) | jambs either side and a lintel, two blocks high; stops nothing | placed whole, as a door; faces the placer | 2 posts, a beam make 1 (3) |
 | Window frame | `<timber>_window_frame` | jambs, a sill and a lintel round an opening, one block high; stops nothing | faces the placer | 2 posts, 2 beams make 2 (3) |
 | Shuttered window | `<timber>_shuttered_window` (`_shut`) | a lattice window with two leaves on its face, standing out open, across it shut | faces the placer; a right click shuts and opens them | a lattice window and shutters make 1 (3) |

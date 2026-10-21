@@ -422,6 +422,7 @@
     "block.base.chimney_stack": "煙道",
     "block.base.chimney_pot": "煙突の壺",
     "block.base.{name}_jetty_beam": "{name}の張り出し梁",
+    "block.base.{name}_brace": "{name}の方杖",
     "block.base.{name}_door_frame": "{name}の戸枠",
     "block.base.{name}_door_frame_top": "{name}の戸枠",
     "block.base.{name}_window_frame": "{name}の窓枠",

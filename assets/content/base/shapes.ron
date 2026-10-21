@@ -738,6 +738,18 @@
             (from: (5.5, 7, 9), to: (10.5, 11, 16)),
             (from: (5.5, 3, 13), to: (10.5, 7, 16)),
         ]),
+        // A knee brace, its foot against the post behind it (south) and its head at the front
+        // of the cell's top: a timber five texels wide stepped corner to corner.
+        "brace": (boxes: [
+            (from: (5.5, 0, 13), to: (10.5, 3, 16)),
+            (from: (5.5, 2, 11), to: (10.5, 5, 14)),
+            (from: (5.5, 4, 9), to: (10.5, 7, 12)),
+            (from: (5.5, 6, 7), to: (10.5, 9, 10)),
+            (from: (5.5, 8, 5), to: (10.5, 11, 8)),
+            (from: (5.5, 10, 3), to: (10.5, 13, 6)),
+            (from: (5.5, 12, 1), to: (10.5, 15, 4)),
+            (from: (5.5, 14, 0), to: (10.5, 16, 2)),
+        ]),
         // A door frame across the middle of the cell: a jamb on either side, and above them
         // a lintel. The way between is eleven sixteenths across, wider than anyone who walks.
         "door_frame": (boxes: [

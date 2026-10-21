@@ -76,3 +76,24 @@ fn a_hip_is_where_both_slopes_are_and_a_valley_where_either_is() {
         assert!(wrong.is_empty(), "{corner} or {valley} is not made of {roof}'s two slopes at {} points, first {:?}", wrong.len(), wrong.first());
     }
 }
+
+/// A knee brace runs corner to corner between a post and the beam it carries: timber as
+/// they are, in every wood and facing, and turned over to brace a beam from below.
+#[test]
+fn a_brace_comes_in_every_wood_and_facing_and_turned_over() {
+    let content = content();
+    let blocks = &content.blocks;
+    for wood in ["oak", "birch", "dark_oak"] {
+        for turn in ["", "_east", "_south", "_west"] {
+            let up = blocks.expect(&format!("base:{wood}_brace{turn}"));
+            let down = blocks.expect(&format!("base:{wood}_brace_top{turn}"));
+            assert_eq!(blocks.flipped(up), Some(down), "{wood}_brace{turn} turns over");
+            for id in [up, down] {
+                let def = blocks.def(id);
+                assert!(def.solid && def.has_tag("timber") && def.has_tag("brace") && blocks.is_piece(id), "{} is solid timber, a piece", def.name);
+            }
+        }
+        let brace = blocks.expect(&format!("base:{wood}_brace"));
+        assert!(content.recipes.iter().any(|recipe| recipe.output == brace), "a {wood} brace is made");
+    }
+}

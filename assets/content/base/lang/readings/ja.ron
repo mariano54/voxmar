@@ -197,6 +197,7 @@
     "block.base.chimney_stack": "えんどう",
     "block.base.chimney_pot": "えんとつのつぼ",
     "block.base.{name}_jetty_beam": "{name}のはりだしばり",
+    "block.base.{name}_brace": "{name}のほうづえ",
     "block.base.{name}_door_frame": "{name}のとわく",
     "block.base.{name}_door_frame_top": "{name}のとわく",
     "block.base.{name}_window_frame": "{name}のまどわく",
