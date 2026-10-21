@@ -331,7 +331,7 @@ pub(crate) fn receive(
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air, mut cues): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>, MessageWriter<SoundCue>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
-    (mut broken, mut catches, mut done): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>, MessageWriter<crate::sfx::Done>),
+    (mut broken, mut catches, mut done, mut changed): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>, MessageWriter<crate::sfx::Done>, MessageWriter<crate::sfx::Changed>),
     mut fighting: ResMut<crate::fight::Fighting>,
     (mut stations, mut wore): (ResMut<crate::hud::target::StationSeen>, MessageWriter<crate::breaking::ToolWore>),
 ) {
@@ -410,6 +410,12 @@ pub(crate) fn receive(
                     if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
                         catches.write(crate::sfx::Catches { at: pos.as_vec3() + Vec3::splat(0.5) });
                     }
+                    // Work done nearby (a station's load ready, a skep filled): `sfx::play_work_done`.
+                    if let Some(old) = old
+                        && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
+                    {
+                        changed.write(crate::sfx::Changed { at: pos, old, new: block });
+                    }
                     world.set_block(pos, block);
                 }
             }
@@ -421,6 +427,12 @@ pub(crate) fn receive(
                         // client timer.
                         if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
                             catches.write(crate::sfx::Catches { at: pos.as_vec3() + Vec3::splat(0.5) });
+                        }
+                        // Work done nearby (a skep filled, a station's load ready).
+                        if let Some(old) = old
+                            && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
+                        {
+                            changed.write(crate::sfx::Changed { at: pos, old, new: block });
                         }
                         world.set_block(pos, block);
                     }
@@ -517,7 +529,10 @@ pub(crate) fn receive(
                 fighting.pings += 1;
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
-            ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
+            ServerMessage::Fires { lit } => {
+                world.fires = lit.into_iter().collect();
+                world.fires_told = world.fires_told.wrapping_add(1);
+            }
             ServerMessage::ToolWore { item, broke } => {
                 wore.write(crate::breaking::ToolWore { item, broke });
             }

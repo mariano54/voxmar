@@ -119,6 +119,7 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "storm_outside", &forest_tags, &[&forest[..], STORM].concat()),
         scene(ambience, "storm_by_the_hearth", &forest_tags, &[&forest[..], STORM, INDOORS, &[("fire", 1.0)]].concat()),
         scene(ambience, "quiet_peak", &["mountain"], &[("rock", 0.8), ("relief", 60.0), ("height", 150.0), ("wind", 4.0), ("temperature", 2.0)]),
+        scene(ambience, "frozen_lake_night", &["frozen", "cold", "open"], &[("ice", 0.8), ("snowpack", 0.5), ("sun", -0.6), ("temperature", -12.0)]),
     ]
 }
 
@@ -172,7 +173,7 @@ fn each_place_has_its_own_sound() {
             "forest_noon" => (&["leaves", "breeze", "warbler", "thrush"], &["meadow", "crickets", "owl", "dawn_chorus", "cave", "drip", "fire", "fire_snap"]),
             "forest_rain" => (&["downpour"], &["rain_on_roof"]),
             "meadow_noon" => (&["meadow", "breeze"], &["leaves", "crickets", "warbler"]),
-            "meadow_night" => (&["crickets", "cricket"], &["meadow", "warbler", "thrush"]),
+            "meadow_night" => (&["crickets", "cricket", "nightjar"], &["meadow", "warbler", "thrush", "ice_sing"]),
             "river" => (&["stream"], &["surf", "lake"]),
             "coast" => (&["surf"], &["stream", "lake", "frog"]),
             "lake" => (&["lake"], &["stream", "surf"]),
@@ -199,6 +200,8 @@ fn each_place_has_its_own_sound() {
             "sandstorm" => (&["sandstorm", "gusty"], &["hail", "blizzard", "meadow", "crickets"]),
             "blizzard" => (&["blizzard"], &["sandstorm", "hail", "meadow"]),
             "sleet" => (&["sleet"], &["hail", "sandstorm"]),
+            // A frozen lake at night: the ice singing, no insects or birds.
+            "frozen_lake_night" => (&["ice_sing"], &["crickets", "cricket", "nightjar", "frog", "owl"]),
             other => panic!("{other}"),
         };
         for name in must {
@@ -486,7 +489,7 @@ fn ambience_survey() {
         world
     };
     let report = |name: &str, world: &VoxelWorld, eye: IVec3| {
-        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, |_| None, &kinds, 1);
         let place = super::place(&generator, eye, &[]);
         let groups: Vec<String> = ambience
             .groups
@@ -776,7 +779,7 @@ fn a_draughty_home_whistles_until_daubed() {
     let soft = ambience.roofs.patters.iter().position(|p| p == "roof_soft");
     let night = [("wind", 12.0), ("sun", -0.6), ("raining", 0.0), ("air", 0.1), ("sky", 0.0)];
     let heard = |world: &VoxelWorld, eye: IVec3, sheltered: f32| {
-        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, |_| None, &kinds, 1);
         let draughty = ambience.presence(group, found.groups[group]);
         let place = scene(&ambience, "home", &["forest"], &[night.as_slice(), &[("draughty", draughty), ("sheltered", sheltered)]].concat());
         (draughty, run(&ambience, &place, 20.0).1[draught])
@@ -826,7 +829,7 @@ fn a_draughty_home_whistles_until_daubed() {
     };
     let hushed = |world: &VoxelWorld| {
         let eye = IVec3::new(0, 11, 0);
-        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, |_| None, &kinds, 1);
         let (draughty, hush) = (ambience.presence(group, found.groups[group]), ambience.presence(curtained, found.groups[curtained]));
         let place = scene(&ambience, "home", &["forest"], &[night.as_slice(), &[("draughty", draughty), ("sheltered", under_thatch), ("curtained", hush)]].concat());
         run(&ambience, &place, 20.0).1[draught]
@@ -896,7 +899,7 @@ fn thatch_hisses_as_it_smoulders_and_crackles_thinner_as_it_burns_out() {
     };
     let night = [("sun", -0.6), ("air", 0.8), ("sky", 0.9), ("wind", 1.0), ("raining", 0.0)];
     let heard = |world: &VoxelWorld, smoulders: bool, listen: usize| {
-        let found = super::enclosure::scan(IVec3::new(0, 10, 0), |p| world.block(p), |_| smoulders, &kinds, 1);
+        let found = super::enclosure::scan(IVec3::new(0, 10, 0), |p| world.block(p), |_| smoulders, |_| None, &kinds, 1);
         let axes = [("smoulder", ambience.presence(smoulder, found.groups[smoulder])), ("blaze", ambience.presence(blaze, found.groups[blaze]))];
         let place = scene(&ambience, "yard", &["plains"], &[night.as_slice(), &axes].concat());
         run(&ambience, &place, 20.0).1[listen]
@@ -997,6 +1000,69 @@ fn a_home_settles_at_night_and_its_eaves_drip_after_rain() {
     };
     let (porch, indoors) = (loudness(&after_rain), loudness(&[&after_rain[..], &[("shelter", 1.0)]].concat()));
     assert!(indoors < 0.7 * porch, "eaves heard indoors at {indoors:.3}, from the porch at {porch:.3}");
+}
+
+/// A first night out on warm open grass has a nightjar churring somewhere past the camp,
+/// never by day, in the woods, in the cold or under a roof; and a frozen lake sings, most
+/// after dark, never without ice.
+#[test]
+fn a_nightjar_churrs_on_warm_open_nights_and_the_ice_sings() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let played = |name: &str, tags: &[&str], set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "night", tags, set), 900.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count()
+    };
+    let open = ["grassland", "temperate", "open"];
+    let night = [("grass", 1.0), ("sun", -0.6), ("temperature", 18.0)];
+    assert!(played("nightjar", &open, &night) > 0, "a warm night on open grass");
+    assert_eq!(played("nightjar", &open, &[("grass", 1.0), ("temperature", 18.0)]), 0, "by day");
+    assert_eq!(played("nightjar", &["forest", "temperate"], &[&night[..], &[("leaves", 1.0)]].concat()), 0, "in the woods");
+    assert_eq!(played("nightjar", &open, &[("grass", 1.0), ("sun", -0.6), ("temperature", 2.0)]), 0, "a cold night");
+    assert_eq!(played("nightjar", &open, &[&night[..], INDOORS].concat()), 0, "indoors");
+    let frozen = ["frozen", "cold", "open"];
+    let ice = |sun: f32| played("ice_sing", &frozen, &[("ice", 0.8), ("sun", sun), ("temperature", -12.0)]);
+    let (dark, noon) = (ice(-0.6), ice(0.8));
+    assert!(dark > 0 && noon < dark, "the ice sings most after dark: {dark} at night, {noon} at noon");
+    assert_eq!(played("ice_sing", &frozen, &[("snowpack", 1.0), ("sun", -0.6), ("temperature", -12.0)]), 0, "snow but no ice");
+}
+
+/// A kiln or a fire gone out ticks as it cools, the kiln longer by its group's seconds,
+/// and never while it burns or once cold; the client remembers when each went out.
+#[test]
+fn a_fire_gone_out_ticks_as_it_cools() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let played = |name: &str, set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "farm", &["plains", "temperate"], set), 300.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count()
+    };
+    assert!(played("kiln_cooling", &[("kiln_cooling", 1.0)]) > 0, "a kiln gone out");
+    assert_eq!(played("kiln_cooling", &[("kiln", 1.0)]), 0, "a kiln burning");
+    assert!(played("hearth_cooling", &[("fire_cooling", 1.0)]) > 0, "a fire gone out");
+    assert_eq!(played("hearth_cooling", &[("fire", 1.0)]), 0, "a fire burning");
+    // The groups cool the shipped lit groups, the kiln's the longer.
+    let group = |name: &str| ambience.groups.iter().position(|g| g.name == name).unwrap();
+    let (kiln, fire) = (ambience.groups[group("kiln_cooling")].cools.unwrap(), ambience.groups[group("fire_cooling")].cools.unwrap());
+    assert!(kiln.0 == group("kiln") && fire.0 == group("fire") && kiln.1 > fire.1, "{kiln:?} {fire:?}");
+
+    // A fire seen burning and then not went out then; lit again it burns; one never seen
+    // burning never went out; past the longest cooling it is forgotten.
+    let (a, b) = (IVec3::new(1, 2, 3), IVec3::new(4, 5, 6));
+    let mut out = super::GoneOut::default();
+    let set = |cores: &[IVec3]| cores.iter().copied().collect::<rustc_hash::FxHashSet<IVec3>>();
+    out.note(0.0, &set(&[a, b]), 1, 120.0);
+    assert!(out.ago(1.0).is_empty(), "both burning");
+    out.note(10.0, &set(&[b]), 2, 120.0);
+    assert_eq!(out.ago(15.0).get(&a), Some(&5.0));
+    out.note(20.0, &set(&[a, b]), 3, 120.0);
+    assert!(out.ago(21.0).is_empty(), "lit again");
+    out.note(25.0, &set(&[]), 3, 120.0);
+    assert!(out.ago(26.0).is_empty(), "not told anew, not looked at");
+    out.note(30.0, &set(&[]), 4, 120.0);
+    assert_eq!(out.ago(40.0).len(), 2);
+    out.note(151.0, &set(&[]), 4, 120.0);
+    assert!(out.ago(151.0).is_empty(), "cooled and forgotten");
 }
 
 /// A village at work by day: the anvil ringing at the smithy, the mill wheel turning, logs
@@ -1257,6 +1323,20 @@ fn leaving_drops_the_surveys_still_out() {
     assert!(ambient.surveys.answers().is_empty(), "survey 7, of the world left, is taken in the next");
 }
 
+/// Leaving a game forgets the fires seen burning in it, so one there is not taken on the
+/// next game's first survey for a fire just gone out, and none ticks as it cools.
+#[test]
+fn leaving_forgets_the_fires_seen_burning() {
+    use bevy::ecs::system::RunSystemOnce;
+    let mut world = left_world();
+    let hearth = IVec3::new(1, 2, 3);
+    world.resource_mut::<super::Ambient>().gone_out.note(10.0, &[hearth].into_iter().collect(), 1, 120.0);
+    world.run_system_once(super::leave).unwrap();
+    let mut ambient = world.resource_mut::<super::Ambient>();
+    ambient.gone_out.note(20.0, &Default::default(), 2, 120.0);
+    assert!(ambient.gone_out.ago(21.0).is_empty(), "a fire of the world left cools in the next");
+}
+
 /// A world with the ambience playing in a game, about to be left.
 fn left_world() -> bevy::prelude::World {
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
@@ -1471,4 +1551,26 @@ fn the_weather_drops_away_with_the_door_shut() {
     for inside in ["rain_on_roof", "rain_on_thatch", "rain_on_stone", "rain_on_glass", "fire", "embers"] {
         assert!(!ducks(inside), "{inside} drops with the door shut");
     }
+}
+
+/// A smouldering structure sounds as it smoulders from lighting to the end: each stage its
+/// core shows (a clamp's flue catching, steady, dying down) is heard in the group its
+/// `burning` block is, so the smoulder never cuts out as the flue changes.
+#[test]
+fn every_stage_of_a_smoulder_is_heard_as_it_burns() {
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let group = ambience.block_groups(blocks);
+    let mut smoulders = 0;
+    for structure in content.multiblocks.iter() {
+        let Some(smoulder) = &structure.smoulder else { continue };
+        smoulders += 1;
+        let burning = group[smoulder.burning.0 as usize];
+        assert!(burning.is_some(), "{}'s {} is heard in no group", structure.name, blocks.def(smoulder.burning).name);
+        for &(from, stage) in &smoulder.stages {
+            assert_eq!(group[stage.0 as usize], burning, "{}'s {} from {from} of the burn", structure.name, blocks.def(stage).name);
+        }
+    }
+    assert!(smoulders > 0, "the base game has a clamp");
 }
