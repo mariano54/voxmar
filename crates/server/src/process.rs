@@ -221,7 +221,7 @@ impl Survival {
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
         let first = effects.active(&situation, &player.timed_effects);
-        situation.felt = cold_air + heat + effects.modifiers(&first).warmth;
+        situation.felt = effects.modifiers(&first).felt(cold_air + heat, server.survival.comfort_top);
         let active = effects.active(&situation, &player.timed_effects);
         let modifiers = effects.modifiers(&active);
         // Quests ask whether an effect was ever felt (`Felt`), not how often.

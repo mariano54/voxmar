@@ -15,8 +15,8 @@ fn decode(path: &str) -> Vec<f32> {
     left.iter().zip(&right).map(|(l, r)| 0.5 * (l + r)).collect()
 }
 
-/// Every species has a voice; every clip is there, decodes, is short and clean, and is
-/// small on disk.
+/// Every species has a voice, one that warns with a warning of its own; every clip is
+/// there, decodes, is short and clean, and is small on disk.
 #[test]
 fn every_species_has_a_voice() {
     let content = content();
@@ -27,6 +27,9 @@ fn every_species_has_a_voice() {
         assert!(voice.event(Kind::Hurt).is_some() && voice.event(Kind::Death).is_some(), "{} is mute when struck", creature.def.name);
         assert!(voice.event(Kind::Idle).is_some() || voice.event(Kind::Alert).is_some(), "{} never makes a sound", creature.def.name);
         assert!((0.5..=2.0).contains(&voice.pitch), "{}: pitch {}", creature.def.name, voice.pitch);
+        // One that warns players off (`creature::Warn`) has a warning of its own: a growl, a
+        // roar, a hiss, not just its alarm (so not `event`, which falls back to it).
+        assert!(creature.def.warn.is_none() || voice.events[Kind::Warn as usize].is_some(), "{} warns with no `warn` sound", creature.def.name);
     }
     let mut bytes = 0;
     for key in &bank.clips {

@@ -39,6 +39,11 @@
         // The bedchamber: a box of planks lined with wool, a table with two clay pots set on it.
         (ingredients: ["{name}_planks", "{name}_planks", "{name}_planks", "{name}_planks", "wool"], output: "{name}_blanket_chest", skill: "core:construction", level: 3, xp: 3.0),
         (ingredients: ["{name}_table", "clay_pot", "clay_pot"], output: "{name}_washstand", skill: "core:construction", level: 4, xp: 3.0),
+        // A rushlight: a peeled rush in a clip on a stick, a plank for its foot; two rushes
+        // make two.
+        (ingredients: ["{name}_planks", "stick", "rush", "rush"], output: "{name}_rushlight", count: 2, skill: "core:crafting", level: 2, xp: 2.0),
+        // A window box: a trough of planks filled with earth, and a poppy and a dandelion planted in it.
+        (ingredients: ["tag:planks", "tag:planks", "tag:planks", "dirt", "poppy", "dandelion"], output: "window_box", skill: "core:construction", level: 3, xp: 3.0),
         (ingredients: ["{name}_cupboard", "{name}_planks", "{name}_planks", "{name}_planks"], output: "{name}_wardrobe", skill: "core:construction", level: 10, xp: 6.0),
 
         // A cloth is a wool and a flower that dyes it, until the loom (one line a dye: each
