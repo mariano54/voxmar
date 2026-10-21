@@ -3779,3 +3779,76 @@ fn byres_stand_behind_their_homes() {
     assert!(byred.is_some(), "no place with a byre within 4000 of Wenworth on 0x5eed");
     assert!(wrong.is_empty(), "byres: {wrong:?}");
 }
+
+/// Every flame within a fire's reach of Wenworth's roofs (0x5eed's walled town, as the
+/// gate's roof step judges it) is one its plan sets: at a height of its own, or over the
+/// ground of its column (a lamp's torch on its post), which the plan's own list of where
+/// things go leaves out.
+#[test]
+fn every_flame_by_a_roof_is_planned() {
+    use voxmar_engine::coords::ColumnPos;
+    let world = crate::shared_full_world(0x5eed);
+    let centre = IVec2::new(-9680, 6416);
+    let reach_of_town = 56;
+    let within = |p: IVec3, r: i32| (p.xz() - centre).abs().max_element() <= r;
+    let reach = world.settlement_fire_reach() + 1;
+    let roofs: Vec<IVec3> = world.settlement_roofs(centre).into_iter().map(|r| r.0).filter(|&p| within(p, reach_of_town)).collect();
+    assert!(roofs.len() >= 20, "only {} roof pieces at Wenworth", roofs.len());
+    let flame = |b: BlockId| world.settlement_flame(b);
+    let planned: rustc_hash::FxHashSet<IVec3> = world.settlement_planned(centre, &flame).into_iter().map(|r| r.0).collect();
+    let mut on_ground: rustc_hash::FxHashMap<IVec2, Vec<BlockId>> = Default::default();
+    for (p, b) in world.settlement_planned_on_ground(centre, &flame) {
+        on_ground.entry(p.xz()).or_default().push(b);
+    }
+    let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
+    let mut at = |p: IVec3| -> BlockId {
+        let pos = ColumnPos::of_block(p);
+        let column = columns.entry(pos).or_insert_with(|| world.generate(pos));
+        let o = pos.origin();
+        column.block(IVec3::new(p.x - o.x, p.y, p.z - o.z))
+    };
+    let mut looked = rustc_hash::FxHashSet::default();
+    let (mut unplanned, mut over_ground) = (Vec::new(), 0);
+    // And every flame there, those over the ground too, kept from what catches.
+    let mut lit: Vec<IVec3> = planned.iter().copied().filter(|&p| within(p, reach_of_town)).collect();
+    for r in &roofs {
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let p = *r + IVec3::new(x, y, z);
+                    if !looked.insert(p) || planned.contains(&p) {
+                        continue;
+                    }
+                    let b = at(p);
+                    if !flame(b) {
+                        continue;
+                    }
+                    if on_ground.get(&p.xz()).is_some_and(|set| set.contains(&b)) {
+                        over_ground += 1;
+                        lit.push(p);
+                    } else {
+                        unplanned.push(p);
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{} roof pieces, {over_ground} flames over the ground beside them", roofs.len());
+    assert!(unplanned.is_empty(), "flames the plan never set by Wenworth's roofs: {:?}", &unplanned[..unplanned.len().min(6)]);
+    let mut blocks: rustc_hash::FxHashMap<IVec3, BlockId> = Default::default();
+    for f in &lit {
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let p = *f + IVec3::new(x, y, z);
+                    let b = at(p);
+                    if !b.is_air() {
+                        blocks.insert(p, b);
+                    }
+                }
+            }
+        }
+    }
+    let reached = world.flames_reaching(&blocks);
+    assert!(reached.is_empty(), "flames by Wenworth's roofs reach what catches: {:?}", &reached[..reached.len().min(4)]);
+}

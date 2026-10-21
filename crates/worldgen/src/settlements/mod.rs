@@ -795,6 +795,26 @@ impl Settlements {
         Some(roofs)
     }
 
+    /// As [`Settlements::planned`], the blocks set at a height over the ground of their
+    /// column rather than at one of their own (a lamp's torch on its post): each with its
+    /// height over the ground's top block, 0 being that block.
+    pub fn planned_on_ground(&self, world: &Overworld, centre: IVec2, keep: &dyn Fn(BlockId) -> bool) -> Option<Vec<(IVec3, BlockId)>> {
+        let slot = self.slot(world, self.cell_of(centre.x, centre.y));
+        let plan = slot.0.as_ref().filter(|p| p.centre == centre)?;
+        let mut set: Vec<(IVec3, BlockId)> = plan
+            .voxels
+            .values()
+            .flatten()
+            .filter(|v| v.ground)
+            .filter_map(|v| match v.put {
+                Put::Set(b) if keep(b) => Some((v.pos, b)),
+                _ => None,
+            })
+            .collect();
+        set.sort_unstable_by_key(|r| (r.0.y, r.0.x, r.0.z));
+        Some(set)
+    }
+
     /// What its flames are kept from (`rules.fire`).
     pub fn fire(&self) -> Option<&roofs::Fire> {
         self.fixed.as_ref().map(|f| &f.fire)
