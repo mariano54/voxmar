@@ -237,8 +237,8 @@
         // Food: cooking, grain and the first fields.
         (
             name: "meat_and_fire", age: "nomad", branch: "cooking", title: "Meat on the Fire",
-            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: small game or duck. Ducks live by rivers and in swamps. A higher Cooking level burns less. Six good meals will also take you to Cooking 2.",
-            tasks: [[Cook("tag:meat", 6), Level("cooking", 2)]],
+            why: "Raw meat heals little and leaves you Queasy; cooked meat heals far more. Cook six pieces of meat at a campfire: small game or duck. Ducks live by rivers and in swamps. A higher Cooking level burns less. Six good meals, with what the camp has taught you, will take you to Cooking 4.",
+            tasks: [[Cook("tag:meat", 6), Level("cooking", 4)]],
             after: ["first_night"],
             rewards: [Xp("cooking", 120.0)],
         ),
@@ -420,8 +420,8 @@
         (
             name: "hard_to_put_down", age: "nomad", branch: "combat", title: "Hard to Put Down",
             capstone: true,
-            why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 3 and Hitpoints 11.",
-            tasks: [[Level("defence", 3), Level("hitpoints", 11)]],
+            why: "Two skills grow only in a fight. Defence trains on the blows you turn aside while you fight back against something your match, and Hitpoints, twice your level in health, on every blow you land. Rabbits and fowl cannot hurt you, so wear your hide wraps against boar and wolves in the woods, or the monsters that come out at night. Reach Defence 4 and Hitpoints 12.",
+            tasks: [[Level("defence", 4), Level("hitpoints", 12)]],
             after: ["raise_your_guard", "a_stones_throw"],
             rewards: [Xp("defence", 60.0), Xp("hitpoints", 40.0)],
         ),
