@@ -534,6 +534,7 @@
     "quest.tracker.how": "How: {way}",
     "quest.tracker.first": "First: {way}",
     "quest.tracker.set_down": "First: Place {item}",
+    "quest.tracker.hold": "Hold out: {list}",
     "quest.tracker.from": "{how}: {list}",
     "quest.tracker.book": "{key}: Quest book",
     "quest.any": "anything",
