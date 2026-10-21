@@ -387,6 +387,7 @@
     "multiblock.smoulder_done": "Your {structure} is done: {count} {item} wait in it.",
     "multiblock.smoulder_done_wet": "Your {structure} is done: {count} {item} wait in it, and rain spoiled {spoiled} heaps to ash.",
     "multiblock.fire_out": "Your {structure} has gone cold.",
+    "multiblock.smoulder_opened": "Your {structure} was opened before it was done after all: {count} {item} wait in it instead.",
     "multiblock.open_early": "Opening the {structure} now leaves {early}, not {done}. Break it again to open it anyway.",
     "machine.put": "Put in {count} × {item}.",
     "machine.took": "Took {items}.",

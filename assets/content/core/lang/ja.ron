@@ -374,6 +374,7 @@
     "multiblock.smoulder_done": "{structure}が焼き上がった。{item}が{count}個待っている。",
     "multiblock.smoulder_done_wet": "{structure}が焼き上がった。{item}が{count}個待っているが、雨で{spoiled}山が灰になった。",
     "multiblock.fire_out": "{structure}の火が消えた。",
+    "multiblock.smoulder_opened": "{structure}は焼き上がる前に開いていた。代わりに{item}が{count}個ある。",
     "multiblock.open_early": "今{structure}を開けると、{done}ではなく{early}になる。それでも開けるなら、もう一度壊そう。",
     "machine.put": "{item}を{count}個入れた。",
     "machine.took": "{items}を取り出した。",
