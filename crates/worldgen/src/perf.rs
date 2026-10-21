@@ -335,6 +335,8 @@ fn light_is_unchanged() {
 #[ignore]
 fn distant_tiles() {
     use voxmar_engine::glam::IVec2;
+    // The client's (`render::lod`'s `LEVELS`, `FIRST_CELL`, `CELLS` and `RING`), copied:
+    // worldgen cannot see the client's crate.
     const LEVELS: i32 = 4;
     const FIRST_CELL: i32 = 4;
     const CELLS: i32 = 32;
