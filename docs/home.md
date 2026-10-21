@@ -415,7 +415,10 @@ doorway. Indoors at home behind a shut door, the **Door shut** reaction gives he
 
 How it works, for mod authors: it is all data on the blocks (blocks_furnishings.ron).
 `upper` names the block placed above with it, which rests on it (`support: Below`) and goes
-with it either way (`supported_by`). `swaps` names what using it turns it into, in the same
+with it either way (`supported_by`). `beside` names a block placed with it in the cell to
+the right of whoever sets it (a double gate's second leaf), in the same facing; the two
+are broken and turned together, and load refuses a pair whose `swaps` do not make a pair.
+`swaps` names what using it turns it into, in the same
 facing, its other half with it (`action::swapping`, the `open` action, `Effect::Swap`).
 Shut and open are two blocks with their own `solid`, and only the server turns them; the
 client is told, never guesses, so nobody walks through a door the server still holds shut.

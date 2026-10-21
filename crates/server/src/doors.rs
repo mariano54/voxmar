@@ -1,7 +1,8 @@
 //! Doors are data (`swaps` and `upper` on a block, the engine's `swapping` and
 //! `supported_by`); these tests drive one through the server's actions: placed whole,
 //! opened and shut here first, refused shut on whoever stands in it, and broken whole;
-//! and a shuttered window, which swaps the same way.
+//! and a shuttered window, which swaps the same way; and a double gate, two leaves set
+//! side by side (`beside`) that go in, turn and break together.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -133,4 +134,72 @@ fn shutters_on_a_lattice_shut_as_they_were_set_and_never_on_anyone() {
     server.players.get_mut(&1).unwrap().position = DOOR.as_vec3() + Vec3::new(1.2, 0.0, 0.5);
     act(&mut server, "base:open", ActionTarget::Block { block: DOOR, face: Face::NegX });
     assert_eq!(name(&server), "base:birch_shuttered_window_east", "shut on the player standing in it");
+}
+
+/// A double gate's two cells, by name: the leaf set, and the cell beside it, to the right
+/// of the player who set it facing them (west of them, so south of it: +z).
+fn double_gate(server: &Server) -> [String; 2] {
+    [DOOR, DOOR + IVec3::Z].map(|at| server.block(at).map_or_else(String::new, |b| server.content.blocks.def(b).name.clone()))
+}
+
+fn hold_double_gate(server: &mut Server) {
+    let gate = id(server, "base:oak_double_gate");
+    let player = server.players.get_mut(&1).unwrap();
+    player.inventory.slots[0] = Some(ItemStack::new(gate, 1));
+}
+
+/// A double gate goes in as two leaves, the second to the right of whoever sets it, both
+/// facing them; used by either leaf, both swing open and let anyone through, and shut
+/// again together.
+#[test]
+fn a_double_gate_is_placed_as_two_leaves_that_open_and_shut_together() {
+    let mut server = fixture();
+    hold_double_gate(&mut server);
+    place(&mut server);
+    assert_eq!(double_gate(&server), ["base:oak_double_gate_west", "base:oak_double_gate_leaf_west"]);
+    assert!(server.is_solid(DOOR) && server.is_solid(DOOR + IVec3::Z));
+    act(&mut server, "base:open", ActionTarget::Block { block: DOOR + IVec3::Z, face: Face::NegX });
+    assert_eq!(double_gate(&server), ["base:oak_double_gate_open_west", "base:oak_double_gate_leaf_open_west"]);
+    assert!(!server.is_solid(DOOR) && !server.is_solid(DOOR + IVec3::Z));
+    act(&mut server, "base:open", ActionTarget::Block { block: DOOR, face: Face::NegX });
+    assert_eq!(double_gate(&server), ["base:oak_double_gate_west", "base:oak_double_gate_leaf_west"]);
+}
+
+/// A double gate needs room for both leaves; broken by either, both go and one double gate
+/// comes back.
+#[test]
+fn a_double_gate_needs_room_for_both_leaves_and_breaks_whole() {
+    let mut server = fixture();
+    hold_double_gate(&mut server);
+    let stone = id(&server, "base:stone");
+    server.set_block(DOOR + IVec3::Z, stone);
+    place(&mut server);
+    assert_eq!(double_gate(&server)[0], "core:air", "no room for its second leaf");
+    // A creature standing where the second leaf would go keeps the gate out too.
+    let mut server = fixture();
+    hold_double_gate(&mut server);
+    let mouflon = server.content.creatures.id("base:mouflon").expect("species");
+    let beast = server.spawn_creature(mouflon, (DOOR + IVec3::Z).as_vec3() + Vec3::new(0.5, 0.0, 0.5), 1).expect("room");
+    assert!(server.creature_in(DOOR + IVec3::Z) && !server.creature_in(DOOR), "the creature stands in the second leaf's cell only");
+    place(&mut server);
+    assert_eq!(double_gate(&server), ["core:air", "core:air"], "set with a creature in its second leaf");
+    server.creatures.live.remove(&beast);
+    place(&mut server);
+    assert_eq!(double_gate(&server), ["base:oak_double_gate_west", "base:oak_double_gate_leaf_west"], "the creature gone, the gate goes in");
+    for leaf in [DOOR, DOOR + IVec3::Z] {
+        let mut server = fixture();
+        hold_double_gate(&mut server);
+        place(&mut server);
+        let gate = id(&server, "base:oak_double_gate");
+        let at = Instant::now();
+        let mine = server.content.actions.expect("core:mine");
+        server.propose(1, mine, ActionTarget::Block { block: leaf, face: Face::NegX }, at);
+        server.complete_actions(at + std::time::Duration::from_secs(30));
+        assert_eq!(double_gate(&server), ["core:air", "core:air"], "broken by {leaf}");
+        let held: u32 = server.players[&1].inventory.slots.iter().flatten().filter(|s| s.item == gate).map(|s| s.count as u32).sum();
+        let blocks = server.content.blocks.clone();
+        let dropped: u32 = server.items.saved(|b| blocks.def(b).name.clone()).iter().filter(|i| i.item == "base:oak_double_gate").map(|i| i.count as u32).sum();
+        let others = server.items.saved(|b| blocks.def(b).name.clone()).iter().filter(|i| i.item != "base:oak_double_gate").count();
+        assert_eq!((held + dropped, others), (1, 0), "one double gate back and nothing else, broken by {leaf}");
+    }
 }

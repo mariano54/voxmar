@@ -40,7 +40,7 @@
             capstone: true,
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
-            after: ["a_pot_on_the_fire", "roots_in_the_embers", "seed_mix", "a_proper_breakfast"],
+            after: ["a_pot_on_the_fire", "roots_in_the_embers", "a_side_of_beef", "seed_mix", "a_proper_breakfast"],
             rewards: [Xp("cooking", 300.0), Item("honey", 2)],
         ),
         // Fuel: logs to char or coal from a seam, two ways to the Crucible Kiln's charge.
@@ -142,7 +142,7 @@
         ),
         (
             name: "fire_the_clay", age: "farm", branch: "main", title: "Fire the Clay",
-            why: "Hold clay and right-click the pit kiln: after a moment it comes out as fired clay. Low Crafting levels crack some, so bring spare (a cracked one is clay again). Fire twelve.",
+            why: "Hold clay and right-click the pit kiln: up to twelve go in, and twelve seconds later the kiln shows them fired. Right-click it again to take them out, none cracked. You need not stand by it, so dig the next load meanwhile. Fire twelve.",
             tasks: [[Cook("fired_clay", 12)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("crafting", 100.0)],
@@ -250,6 +250,13 @@
             rewards: [Xp("cooking", 120.0)],
         ),
         (
+            name: "a_side_of_beef", age: "farm", branch: "cooking", title: "A Side of Beef",
+            why: "Aurochs beef is the richest meat the plains give, and it wants a practised cook. Cook whatever your hunting brings until you reach Cooking 12, then roast two beef from an aurochs (Bigger Game) at the campfire or the stove.",
+            tasks: [[Level("cooking", 12), Cook("cooked_beef", 2)]],
+            after: ["a_haunch_for_the_pot", "camp_cook"],
+            rewards: [Xp("cooking", 200.0)],
+        ),
+        (
             name: "hens_in_a_row", age: "farm", branch: "husbandry", title: "Hens in a Row",
             why: "Hold wheat seeds (wild wheat and your own field give them), walk up slowly (no sprinting, no hitting) and right-click a junglefowl until it trusts you; they keep to warm grassland and jungle. A kept hen needs room, grass or feed, and water nearby, and lays an egg about every five minutes. Tame three.",
             tasks: [[Tame("junglefowl", 3)]],
@@ -325,7 +332,7 @@
             name: "a_haunch_for_the_pot", age: "farm", branch: "hunter", title: "A Haunch for the Pot",
             why: "Big game feeds a house for days, but only cooked. Roast a haunch at the campfire or the stove: mutton once your Cooking is 5, pork at 8, beef at 12, venison at 15. Cook one.",
             tasks: [[Cook("cooked_mutton", 1)], [Cook("cooked_pork", 1)], [Cook("cooked_beef", 1)], [Cook("cooked_venison", 1)]],
-            after: ["bigger_game"],
+            after: ["bigger_game", "camp_cook"],
             rewards: [Xp("cooking", 80.0), Xp("hunter", 40.0)],
         ),
         (
@@ -427,9 +434,9 @@
         // Side quests along the water: each teaches where or how a fish bites, or what it is for.
         (
             name: "salt_and_sardines", age: "farm", branch: "fishing", title: "Salt and Sardines",
-            why: "Sardines bite only in salt water: cast into the sea, not a river or a lake. Take your rod to the coast, land four sardines and roast them at a fire: a sardine heals as well as a minnow.",
+            why: "Sardines bite only in salt water: cast into the sea, not a river or a lake. Take your rod to the coast, land four sardines and roast them at a fire (Cooking 5): a sardine heals as well as a minnow.",
             tasks: [[Catch("raw_sardine", 4), Cook("cooked_sardine", 4)]],
-            after: ["patient_angler"],
+            after: ["patient_angler", "camp_cook"],
             side: true,
             rewards: [Xp("fishing", 80.0), Item("bread", 2)],
         ),
@@ -443,9 +450,9 @@
         ),
         (
             name: "cold_water_trout", age: "farm", branch: "fishing", title: "Cold Water Trout",
-            why: "Where you fish matters as much as how well. Trout bite from Fishing 15, and only in cold fresh water: mountain streams, conifer lakes, cool and frozen rivers. Go up into the cold, land two and cook them.",
+            why: "Where you fish matters as much as how well. Trout bite from Fishing 15, and only in cold fresh water: mountain streams, conifer lakes, cool and frozen rivers. Go up into the cold, land two and cook them: a trout wants Cooking 15, a step past the stew.",
             tasks: [[Catch("raw_trout", 2), Cook("cooked_trout", 2)]],
-            after: ["still_water_perch"],
+            after: ["still_water_perch", "a_hearty_stew"],
             side: true,
             rewards: [Xp("fishing", 120.0), Item("bread", 4)],
         ),
@@ -524,7 +531,7 @@
         ),
         (
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
-            why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3; raw hide hung a while on a drying rack turns to hide), a softer light than a torch for a table or shelf.",
+            why: "With shelves and cupboards up (Shelves and Cupboards), light them: a twine wick over a lump of lard makes two candles (Crafting 3), and wild boar and brown bears drop lard; a cake of beeswax makes three, and two hides two. A candle is a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
             after: ["shelves_and_cupboards"],
             rewards: [Xp("crafting", 60.0)],
@@ -626,7 +633,7 @@
         ),
         (
             name: "a_place_to_pray", age: "farm", branch: "prayer", title: "A Place to Pray",
-            why: "An altar is built of stone bricks, and bricks are cut from smooth stone. Hold cobblestone and right-click your pit kiln: it comes out as stone. Four stone in a square make four stone bricks, and seven bricks (three across the top, one in the middle, three across the bottom) make a stone altar at the crafting table (Construction 5). Place it and right-click it: your prayer points fill, and a bone in hand is offered for Magic experience. Then press C and open Prayers to turn Bark Skin on.",
+            why: "An altar is built of stone bricks, and bricks are cut from smooth stone. Load cobblestone into your pit kiln as you do clay: it comes out as stone. Four stone in a square make four stone bricks, and seven bricks (three across the top, one in the middle, three across the bottom) make a stone altar at the crafting table (Construction 5). Place it and right-click it: your prayer points fill, and a bone in hand is offered for Magic experience. Then press C and open Prayers to turn Bark Skin on.",
             tasks: [[Craft("stone_altar", 1)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("magic", 120.0)],
@@ -735,7 +742,7 @@
             side: true,
             why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12): the bees move in, and you carry home a skep of bees. Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
-            after: ["herb_garden", "food_enough"],
+            after: ["herb_garden", "food_enough", "the_potter"],
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
         ),
         (
@@ -875,7 +882,7 @@
             name: "fang_and_stick", age: "farm", branch: "crafting", title: "Fang and Stick",
             why: "A trophy can be a tool. Wolves, lynx and bears drop a fang now and then; lash one to a stick and it is a fang dagger (Crafting 10), quick in the hand. Make one.",
             tasks: [[Craft("fang_dagger", 1)]],
-            after: ["the_farm_age"],
+            after: ["earthenware"],
             side: true,
             rewards: [Xp("crafting", 60.0), Item("bread", 2)],
         ),
@@ -897,9 +904,9 @@
         ),
         (
             name: "five_colours", age: "farm", branch: "crafting", title: "Five Colours",
-            why: "Every flower dyes a cloth its own colour: look a cloth up in the recipe book to see which. Wind flags take five, indigo, white, red, green and amber, tied on one twine (Crafting 9). Dye all five and make the flags.",
+            why: "Every flower dyes a cloth its own colour: look a cloth up in the recipe book to see which. Wind flags take five, indigo, white, red, green and amber, tied on one twine (Crafting 9). Dye all five at the loom, or all five in the grid, then make the flags.",
             tasks: [[Craft("indigo_cloth", 1), Craft("white_cloth", 1), Craft("red_cloth", 1), Craft("green_cloth", 1), Craft("amber_cloth", 1), Craft("wind_flags", 1)], [Cook("indigo_cloth", 1), Cook("white_cloth", 1), Cook("red_cloth", 1), Cook("green_cloth", 1), Cook("amber_cloth", 1), Craft("wind_flags", 1)]],
-            after: ["a_rug_underfoot"],
+            after: ["a_rug_underfoot", "a_kiln_load"],
             side: true,
             rewards: [Xp("crafting", 120.0), Item("bread", 4)],
         ),

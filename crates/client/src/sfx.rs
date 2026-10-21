@@ -1950,7 +1950,7 @@ mod tests {
         }
         assert_eq!(way("base:light", &["hearthstone"]), Some("kindle_hearth".into()));
         assert_eq!(way("base:light", &["crucible", "charcoal"]), Some("kindle_kiln".into()));
-        assert_eq!(way("base:cook", &["pit_kiln", "clay"]), Some("fire_in_kiln".into()));
+        assert_eq!(way("base:use_station", &["pit_kiln"]), Some("fire_in_kiln".into()));
         assert_eq!(way("base:cook", &["crucible", "copper_ore"]), Some("smelt".into()));
         assert_eq!(way("base:cook", &["campfire", "raw_beef"]), None);
         // The Farm age's hand stations are heard at their work, never as food on a fire,
@@ -2009,6 +2009,7 @@ mod tests {
             ("base:sleep", "oak_bed", Some("bed_frame")),
             ("base:sit", "birch_stool", Some("wooden_seat")),
             ("base:sit", "oak_settle", Some("wooden_seat")),
+            ("base:sit", "birch_rocking_chair", Some("rocking_chair")),
             ("base:sit", "red_cushion", None),
             ("base:sit", "oak_window_seat", Some("cushioned_seat")),
         ] {
@@ -2179,6 +2180,8 @@ mod tests {
             ("base:half_timber", "timber"),
             ("base:chimney_stack", "stone_brick"),
             ("base:chimney_pot", "terracotta"),
+            ("base:birch_rocking_chair", "rocking_chair"),
+            ("base:oak_cradle", "cradle"),
         ] {
             let found = recorded.material_of(blocks, blocks.id(block).unwrap()).map(|m| recorded.materials[m].name.as_str());
             assert_eq!(found, Some(material), "{block}");

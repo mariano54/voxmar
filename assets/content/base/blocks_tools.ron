@@ -37,6 +37,15 @@
             name: "pit_kiln", sound: Stone, textures: Sides(top: "pit_kiln_top", bottom: "cobblestone", side: "pit_kiln_side"),
             hardness: 1.5, color: (120, 90, 70), tags: ["pit_kiln", "station", "heat"], light: 8,
         ),
+        // Loaded and firing (stations.ron), then fired and cooling with the wares in it.
+        (
+            name: "pit_kiln_firing", sound: Stone, textures: Sides(top: "pit_kiln_firing_top", bottom: "cobblestone", side: "pit_kiln_firing_side"),
+            drops: "pit_kiln", hardness: 1.5, color: (150, 90, 60), tags: ["creative_only", "pit_kiln", "heat"], light: 12,
+        ),
+        (
+            name: "pit_kiln_fired", sound: Stone, textures: Sides(top: "pit_kiln_fired_top", bottom: "cobblestone", side: "pit_kiln_fired_side"),
+            drops: "pit_kiln", hardness: 1.5, color: (120, 100, 90), tags: ["creative_only", "pit_kiln", "heat"], light: 4,
+        ),
         (
             name: "kiln_bricks", sound: Stone, textures: All("kiln_bricks"),
             hardness: 2.0, color: (160, 90, 60), tags: ["kiln_bricks", "bricks", "building", "shelter:fine"],
