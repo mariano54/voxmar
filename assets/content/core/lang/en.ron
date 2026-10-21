@@ -421,6 +421,7 @@
     "bed.set": "You will wake here after dying, until you have a home.",
     "bed.set_home": "You will wake here after dying, though your hearth comes first.",
     "bed.someones": "This bed belongs to someone who lives here: sleep in your own.",
+    "villager.leave": "Out of my house! No one comes in here at night.",
     "bed.lost": "Your bed is gone: you will not wake there again.",
     "home.lost": "Your hearth is gone: it is your home no more.",
     "screen.prayers": "Prayers",

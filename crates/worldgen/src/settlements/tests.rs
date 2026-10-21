@@ -1707,10 +1707,11 @@ fn people_numbers_that_would_not_play_are_refused() {
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 16] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 17] = [
         ("a talk as long as the wait to talk again", |p| p.react.chat_for = p.react.chat_every),
         ("a talk from farther than a greeting", |p| p.react.chat = p.react.greet + 1.0),
         ("a talk for no time", |p| p.react.chat_for = 0.0),
+        ("no wait between telling a stranger in a home to leave", |p| p.react.intruder_every = 0.0),
         ("newcomer in a fifth of a day", |p| p.newcomer = 0.2),
         ("a greeting from below nothing", |p| p.react.greet = -1.0),
         ("a greeting held as long as the wait to greet again", |p| p.react.greet_for = p.react.greet_every),
