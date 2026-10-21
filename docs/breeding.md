@@ -195,7 +195,7 @@ At each birth, each gene may mutate: a new allele (a colour nobody has seen, a t
 horn) or a jump in a quantitative gene. The chance is small and comes from the world:
 
 ```
-chance = base (0.5%)
+chance = base (0.5%, `genetics.mutation` in creatures.ron, from 0 to 0.2)
        × aether at the pen          (×1 at none, up to ×5 where aether is highest)
        × mutagenic feed             (whisper oats, aether orchid: ×2)
        × level finds                (up to ×1.5 at 99, the shared rare-find bonus)

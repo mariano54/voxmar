@@ -279,6 +279,9 @@ pub struct Overworld {
     /// searches from the same lattice (a test's many biomes from the same places) work
     /// each out once.
     fields: water::cache::Cache<(IVec2, IVec2), Arc<[Point]>>,
+    /// The ground over tiles of one column's width (`ground_tile`), by tile: each column
+    /// reads its own and, at its border and for what reaches out of it, its neighbours'.
+    ground: water::cache::Cache<IVec2, Arc<[GeoSample]>>,
     /// Columns already generated, when a caller asked to keep them (`remember_columns`).
     remembered: std::sync::OnceLock<water::cache::Cache<ColumnPos, Arc<Column>>>,
     /// `spawn_search` without and with trails and settlements, each worked out once: a
@@ -290,6 +293,9 @@ pub struct Overworld {
 /// Points a side of a tile of `Overworld::fields`, and the bytes those tiles may hold.
 const FIELD_TILE: i32 = 16;
 const FIELD_BUDGET: usize = 16 << 20;
+/// The bytes `Overworld::ground`'s tiles may hold: the rings of columns a load makes at
+/// once and the rings either side of them.
+const GROUND_BUDGET: usize = 48 << 20;
 
 /// How far around the first place found `locate_biome` looks for the biome's interior.
 const LOCATE_INSIDE: i32 = 256;
@@ -353,6 +359,7 @@ impl Overworld {
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
             fields: water::cache::Cache::copying(FIELD_BUDGET),
+            ground: water::cache::Cache::copying(GROUND_BUDGET),
             remembered: std::sync::OnceLock::new(),
             spawns: Default::default(),
             seed: stream,
@@ -404,7 +411,7 @@ impl Overworld {
     /// a function of the seed, the content and its place, so a copy is what generating it
     /// again would make. Only the first call sets the budget.
     pub fn remember_columns(&self, bytes: usize) {
-        let _ = self.remembered.set(water::cache::Cache::new(bytes));
+        let _ = self.remembered.set(water::cache::Cache::copying(bytes));
     }
 
     /// The biomes of this world.
@@ -654,6 +661,13 @@ impl Overworld {
             *sample = self.settlements.apply(self, self.trails.apply(&land, *sample, sx, sz), sx, sz);
         }
         area
+    }
+
+    /// The ground over the `CHUNK_SIZE`×`CHUNK_SIZE` positions of the column `tile`, row by
+    /// row (`geo_area`), worked out once for the columns around it, which all read it.
+    pub(crate) fn ground_tile(&self, tile: IVec2) -> Arc<[GeoSample]> {
+        let size = voxmar_engine::coords::CHUNK_SIZE;
+        self.ground.get(tile, || self.geo_area(tile.x * size, tile.y * size, size).into())
     }
 
     /// The land trails are planned over: the ground with its rivers and lakes.
@@ -1492,6 +1506,22 @@ mod tests {
             for _ in 0..2 {
                 assert!(generate_columns(&kept, &at) == made, "a kept column differs from one made afresh (budget {budget})");
             }
+        }
+    }
+
+    /// A column is the same made alone, with no tile of ground (`Overworld::ground_tile`)
+    /// made yet, as made after its eight neighbours, which made the tiles it shares with
+    /// them first: what the world's caches hold never changes what a column holds. Over a
+    /// creek with waterfalls on seed 42 and plains and woods on seed 7.
+    #[test]
+    fn a_column_alone_is_the_column_after_its_neighbours() {
+        let registry = registry();
+        for (seed, at) in [(42, ColumnPos::new(-10, -3)), (42, ColumnPos::new(-33, -2)), (7, ColumnPos::new(5, -4))] {
+            let alone = Overworld::new(seed, registry.clone()).generate(at);
+            let world = Overworld::new(seed, registry.clone());
+            let around: Vec<ColumnPos> = (0..9).filter(|&i| i != 4).map(|i| at.offset(i % 3 - 1, i / 3 - 1)).collect();
+            generate_columns(&world, &around);
+            assert!(world.generate(at) == alone, "seed {seed}: column {at:?} made after its neighbours differs from it made alone");
         }
     }
 
