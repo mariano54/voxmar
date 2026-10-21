@@ -1620,7 +1620,8 @@ fn a_settlement_stands_near_spawn() {
     // 0x5eed: the world a new game makes unless told otherwise.
     let seeds: Vec<u64> = (0..20).chain([42, 99, 0x5eed]).collect();
     // Seeds no other test reads: their worlds are let go with each, not held for the run.
-    const ONLY_HERE: [u64; 4] = [10, 15, 17, 18];
+    // (18 is the snowy villages test's too.)
+    const ONLY_HERE: [u64; 3] = [10, 15, 17];
     // Each world on its own core, its outcome kept in seed order.
     let outcomes: Vec<(u64, Option<Result<(), String>>)> = seeds.par_iter().map(|&seed| {
         let world = if ONLY_HERE.contains(&seed) { std::sync::Arc::new(base_world(seed)) } else { shared_world(seed) };
@@ -1830,8 +1831,9 @@ fn snowy_villages_keep_their_built_stone() {
     // worlds; the others are the search it falls back to when content moves the snow.
     const SNOWY: [u64; 2] = [18, 1];
     'seeds: for seed in SNOWY.into_iter().chain((1u64..=60).filter(|seed| !SNOWY.contains(seed))) {
-        // The base content's world, as the other tests read it (`content` is the base's).
-        let world = shared_world(seed);
+        // The base content's world (`content` is the base's): the known seeds' as the other
+        // tests read it, the fallback's let go with each seed, not held for the run.
+        let world = if SNOWY.contains(&seed) { shared_world(seed) } else { std::sync::Arc::new(base_world(seed)) };
         let spawn = world.spawn_point();
         for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 4000) {
             // Snowy where snow lies on the ground about its middle.
