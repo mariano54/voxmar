@@ -505,7 +505,7 @@
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
             why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3; raw hide hung a while on a drying rack turns to hide), a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
-            after: ["shelves_and_cupboards", "bigger_game"],
+            after: ["shelves_and_cupboards"],
             rewards: [Xp("crafting", 60.0)],
         ),
         (
@@ -746,7 +746,7 @@
             side: true,
             why: "A home with bees draws the beekeeper by day, to look over your skeps and walk your garden with you; three honey buys a spare skep for a second hive. Beeswax makes the best light a Farm home has before coal: a wick of twine over a cake of wax gives three candles. Meet the beekeeper and make three candles, or, with no visit yet, keep two cakes of wax and make six.",
             tasks: [[Met("beekeeper", 1), Craft("candle", 3)], [Have("beeswax", 2), Craft("candle", 6)]],
-            after: ["smoke_that_clings", "bigger_game"],
+            after: ["smoke_that_clings"],
             rewards: [Xp("farming", 200.0), Xp("crafting", 60.0), Item("skep", 1)],
         ),
         (
