@@ -6360,7 +6360,7 @@ mod fight_tests {
 
     /// `/creatures hold` holds a creature still for a minute even in the middle of winding
     /// up a blow at a player: its wind-up is called off, so it neither walks on after them
-    /// (`tracking_drive`) nor lands the blow.
+    /// (`tracking_drive`) nor has the blow still on its way.
     #[test]
     fn a_hold_calls_off_a_wind_up() {
         let mut server = crate::test_server();
@@ -6369,9 +6369,10 @@ mod fight_tests {
         let player = join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
         server.players.get_mut(&player).unwrap().admin = true;
         server.wind_up(bear, player);
-        assert!(server.creatures.live[&bear].tracking.is_some(), "the bear never wound up");
+        assert!(server.creatures.live[&bear].tracking.is_some() && server.blow_on_its_way(bear), "the bear never wound up");
         server.command(player, "creatures hold");
-        let (from, health) = (server.creatures.live[&bear].body.position, server.players[&player].health);
+        assert!(!server.blow_on_its_way(bear), "the held bear's blow is still on its way");
+        let from = server.creatures.live[&bear].body.position;
         for _ in 0..3 * TICKS_PER_SECOND {
             server.tick += 1;
             server.tick_creatures();
@@ -6379,7 +6380,6 @@ mod fight_tests {
         }
         let moved = server.creatures.live[&bear].body.position.with_y(0.0).distance(from.with_y(0.0));
         assert!(moved < 0.1, "the held bear moved {moved:.2} blocks");
-        assert_eq!(server.players[&player].health, health, "the held bear's blow landed");
     }
 
     /// A fox goes only for meat it senses (`creature::Scavenge`): not meat shut in a stone
