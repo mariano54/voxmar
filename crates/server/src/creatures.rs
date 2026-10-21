@@ -104,6 +104,12 @@ const SHORE_RANGE: i32 = 12;
 /// How near a wild creature comes to a player holding its favourite food to count as drawn
 /// to them (`Server::note_lured`): about a blow's reach.
 const LURED_WITHIN: f32 = 3.0;
+/// Blocks from a scavenger that it snatches food lying on the ground from (its brain asks
+/// within `modules::SNATCH`, 1.3, of where the food lay).
+const SNATCH_REACH: f32 = 1.6;
+/// Seconds a scavenger leaves be food it got stuck short of (`Live::no_scrap`): a fox at a
+/// pen's fence with the meat inside goes about its day.
+const SCRAP_GIVE_UP: u64 = 30;
 
 /// A live creature.
 #[derive(Clone, Debug)]
@@ -204,6 +210,14 @@ pub struct Live {
     pub needs: Needs,
     /// How well its home suits its kind's climate (`Server::settle`).
     pub climate_fit: f32,
+    /// A piece of food it stole off the ground and is making off home with
+    /// (`creature::Scavenge`): it drops it if killed first. Only wild ones steal, and those
+    /// are never saved, so it goes with one that leaves the loaded world.
+    pub carrying: Option<ItemStack>,
+    /// Food on the ground it found no way to (`creature::Scavenge`): where it lay, and the
+    /// tick until which it leaves food there be (`SCRAP_GIVE_UP`), as a chase it found no
+    /// way to win is given up (`brain::Memory::NoWay`). Not saved.
+    pub no_scrap: Option<(Vec3, u64)>,
     /// The last view each player was sent, to send only changes.
     sent: Option<CreatureView>,
     pub(crate) changed: bool,
@@ -914,6 +928,17 @@ impl Server {
                     kept: creature.owner.is_some(),
                     errand: self.villagers.errand(id, handoff).or_else(|| self.wandering.errand(id)),
                     ward: if warded { self.creatures.ward_at(position) } else { None },
+                    scrap: species.def.scavenge.as_ref().filter(|_| creature.owner.is_none()).and_then(|s| {
+                        // Food it sees (its look, as for a player: `in_view`) or smells close by
+                        // (`Senses::close`), and none it lately found no way to.
+                        let senses = &species.def.senses;
+                        let given_up = creature.no_scrap.filter(|&(_, until)| self.tick < until).map(|(at, _)| at);
+                        self.items.scrap_near(position, s.reach, &species.scraps, |at| {
+                            let d = at.distance(position);
+                            given_up.is_none_or(|g| g.distance(at) > 1.5) && (d < senses.close || d < senses.sight && self.in_view(&creature.body, senses.field, at + Vec3::Y * 0.2))
+                        })
+                    }),
+                    carrying: creature.carrying.is_some(),
                     dt: every as f32 * dt,
                     // By its own count of thoughts, never the tick it thinks on.
                     seed: own_roll(creature.seed, creature.rolls, THOUGHT),
@@ -1277,6 +1302,14 @@ impl Server {
         if over || wanted != Vec3::ZERO && (!gained || detour != 0.0) {
             creature.stuck += if gained && !over { dt * 0.5 } else { dt };
             if creature.stuck > 2.0 {
+                // Stuck short of food on the ground (a fence, a wall between): it leaves food
+                // there be for a while.
+                if creature.carrying.is_none()
+                    && doing_any(species, &creature.mind, &["scavenge"])
+                    && let Some(goal) = decision.goal
+                {
+                    creature.no_scrap = Some((goal, self.tick + SCRAP_GIVE_UP * TICKS_PER_SECOND as u64));
+                }
                 creature.decision.goal = None;
                 creature.mind.goal = None;
                 creature.stuck = 0.0;
@@ -1346,6 +1379,20 @@ impl Server {
             if roll < 0.3 && block.is_some_and(|b| self.content.blocks.info(b).replaceable && !self.content.blocks.info(b).solid) {
                 self.set_block(cell, BlockId::AIR);
             }
+        }
+        // A scavenger snatches a piece of the food it reached, or eats what it carried home.
+        if decision.take.is_some() {
+            let scraps = &self.content.creatures.get(species_id).scraps;
+            if let Some(piece) = self.items.snatch(position, SNATCH_REACH, scraps)
+                && let Some(creature) = self.creatures.live.get_mut(&id)
+            {
+                creature.carrying = Some(piece);
+            }
+        }
+        if decision.swallow
+            && let Some(creature) = self.creatures.live.get_mut(&id)
+        {
+            creature.carrying = None;
         }
         if let Some(to) = decision.blink {
             let height = self.content.creatures.get(species_id).def.body.size;
@@ -1630,7 +1677,9 @@ impl Server {
         journal.extend(found.iter().map(|&(item, count)| (voxmar_engine::journal::Page::Collection, self.content.blocks.def(item).name.clone(), count as u32)));
         // Its loot comes out once its body has fallen, never from an animal still standing.
         let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
-        for (i, (item, count)) in found.into_iter().enumerate() {
+        // And what it was making off with, if anything.
+        let stolen = creature.carrying.map(|stack| (stack.item, stack.count));
+        for (i, (item, count)) in found.into_iter().chain(stolen).enumerate() {
             let body = dropped::popped(cell, self.meta.next_pop(cell, i as u32 + id));
             self.creatures.falling_loot.push((due, ItemStack::new(item, count), body));
         }
@@ -1804,6 +1853,8 @@ impl Server {
             fed: self.day,
             needs: Needs::default(),
             climate_fit: 1.0,
+            carrying: None,
+            no_scrap: None,
             sent: None,
             changed: true,
         };
@@ -6307,6 +6358,55 @@ mod fight_tests {
         assert!((ran - said).abs() < 0.08, "hurt to {share:.2} of its health it ran {ran:.2} of the ground, not {said:.2} ({limped:.1} of {whole:.1} blocks)");
     }
 
+    /// A fox goes only for meat it senses (`creature::Scavenge`): not meat shut in a stone
+    /// hut out of its sight and smell. Meat it sees through a fence but cannot get to, it
+    /// gives up on (`Live::no_scrap`) rather than mill at the fence.
+    #[test]
+    fn a_fox_gives_up_on_meat_it_cannot_reach() {
+        for (what, fenced) in [("hut", false), ("fence", true)] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 48);
+            let id = put(&mut server, "base:fox", c.as_vec3() + Vec3::new(0.5, 0.0, 0.5), Vec3::X);
+            let meat = c + IVec3::new(9, 0, 0);
+            let ring: Vec<IVec3> = (-2..=2).flat_map(|i| [IVec3::new(i, 0, -2), IVec3::new(i, 0, 2), IVec3::new(-2, 0, i), IVec3::new(2, 0, i)]).map(|d| meat + d).collect();
+            if fenced {
+                let fence = server.content.blocks.expect("base:oak_fence_east");
+                for cell in ring {
+                    server.world.set_block(cell, fence);
+                }
+            } else {
+                wall(&mut server, ring, 3);
+                let stone = server.content.blocks.expect("base:stone");
+                for d in (-2..=2).flat_map(|x| (-2..=2).map(move |z| IVec3::new(x, 3, z))) {
+                    server.world.set_block(meat + d, stone);
+                }
+            }
+            let venison = server.content.blocks.id("base:raw_venison").expect("venison");
+            server.items.spawn(ItemStack::new(venison, 3), voxmar_engine::dropped::Loose::new(meat.as_vec3() + Vec3::new(0.5, 0.0, 0.5), Vec3::ZERO), 0.0);
+            join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, -30.5));
+            let scavenging = |server: &Server| doing_any(server.content.creatures.get(server.creatures.live[&id].species), &server.creatures.live[&id].mind, &["scavenge"]);
+            let (mut tried, mut late) = (false, 0);
+            for _ in 0..40 * TICKS_PER_SECOND {
+                server.tick += 1;
+                server.tick_creatures();
+                tried |= scavenging(&server);
+                // Once it has given the meat up (and thought again since), it leaves it be.
+                let since = |until: u64| until - SCRAP_GIVE_UP * TICKS_PER_SECOND as u64 + TICKS_PER_SECOND as u64;
+                let given_up = server.creatures.live[&id].no_scrap.is_some_and(|(_, until)| (since(until)..until).contains(&server.tick));
+                if given_up && scavenging(&server) {
+                    late += 1;
+                }
+            }
+            assert!(server.creatures.live[&id].carrying.is_none(), "{what}: the fox got the meat");
+            if fenced {
+                assert!(tried && server.creatures.live[&id].no_scrap.is_some(), "{what}: the fox never tried for the meat, or never gave it up");
+                assert_eq!(late, 0, "{what}: the fox still milled at the fence once it gave the meat up");
+            } else {
+                assert!(!tried, "{what}: the fox went for meat it could neither see nor smell");
+            }
+        }
+    }
+
     /// A game bird sits tight (`creature::Flush`): a player walking up to it in the open is
     /// let come to its `hold`, the bird crouched where it was; within it, it bursts away
     /// faster than it can run.
@@ -6363,6 +6463,40 @@ mod fight_tests {
             let pace = server.creatures.live[&id].mind.personality.pace();
             assert!(top > run * pace * 1.2, "{name} went at most {top:.2} blocks a second; its run is {:.2}", run * pace);
         }
+    }
+
+    /// A fox (`creature::Scavenge`) slinks in to meat left lying with nobody by it, snatches
+    /// a piece and makes off with it, and drops it if killed first; with a player standing
+    /// over the meat, it lets it lie.
+    #[test]
+    fn a_fox_steals_meat_left_lying() {
+        // Whether the fox has the venison by `seconds` on, with a player at `by` from the meat.
+        let steal = |by: Vec3, seconds: u32| {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 48);
+            let id = put(&mut server, "base:fox", c.as_vec3() + Vec3::new(0.5, 0.0, 0.5), Vec3::X);
+            let meat = c.as_vec3() + Vec3::new(9.5, 0.0, 0.5);
+            let venison = server.content.blocks.id("base:raw_venison").expect("venison");
+            server.items.spawn(ItemStack::new(venison, 3), voxmar_engine::dropped::Loose::new(meat, Vec3::ZERO), 0.0);
+            join(&mut server, meat + by);
+            for _ in 0..seconds * TICKS_PER_SECOND {
+                server.tick += 1;
+                server.tick_creatures();
+                if server.creatures.live[&id].carrying.is_some() {
+                    break;
+                }
+            }
+            (server, id, venison)
+        };
+        let (mut server, id, venison) = steal(Vec3::new(0.0, 0.0, 20.0), 20);
+        let carried = server.creatures.live[&id].carrying;
+        assert_eq!(carried.map(|s| (s.item, s.count)), Some((venison, 1)), "the fox never stole a piece");
+        let left: u32 = server.items.take_all().filter(|d| d.stack.item == venison).map(|d| d.stack.count as u32).sum();
+        assert_eq!(left, 2, "it took one piece of three");
+        server.creature_dies(id);
+        assert!(server.creatures.falling_loot.iter().any(|(_, s, _)| s.item == venison), "killed, it drops what it stole");
+        let (server, id, _) = steal(Vec3::new(0.0, 0.0, 3.0), 20);
+        assert!(server.creatures.live[&id].carrying.is_none(), "it stole from under a player's nose");
     }
 
     /// At night a wolf in a campfire's ward (`BlockDef::ward`) walks out of it. Not by day,
