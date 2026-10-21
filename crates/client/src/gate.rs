@@ -5917,9 +5917,10 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         // The one stick in hand and the fire there: held into the fire until it catches. A
-        // stick picked up meanwhile (one lying where the last step was) stacks on it, and of
-        // two in hand one catches and the brand goes where it fits, the other left in hand
-        // (train 174): the sticks are cleared and the one given again.
+        // stick picked up meanwhile (one lying where the last step was) stacks on it (train
+        // 174): the sticks are cleared and the one given again, so the step holds one stick
+        // as a player first does. One picked up during the hold the server answers itself:
+        // the brand is held up and the other stick put by (train 190).
         1 => {
             let Some(mut plan) = gate.firebrand else { return };
             let burning = world.resource::<ClientWorld>().block(fire_at) == Some(plan.fire);

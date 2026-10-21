@@ -2527,7 +2527,9 @@ fn a_stick_held_in_a_campfire_comes_back_a_firebrand() {
     client.ok(&format!("/setblock {} {} {} campfire", fire.x, fire.y, fire.z));
     client.tp(Vec3::new(at.x as f32 + 0.5, at.y as f32, at.z as f32 + 0.5));
     let named = |c: &Client, slot: usize| c.inventory.get(slot).map(|s| c.content.blocks.def(s.item).name.clone());
-    for (sticks, hand_after) in [(1, "base:firebrand"), (2, "base:stick")] {
+    // Two in hand (one picked up while it was held there): one catches and is held up all
+    // the same, the other put by in the pack, so a lit brand is never left in the pack.
+    for (sticks, hand_after) in [(1, "base:firebrand"), (2, "base:firebrand")] {
         client.ok("/clear stick");
         client.ok("/clear firebrand");
         client.ok(&format!("/give stick {sticks}"));
@@ -2538,6 +2540,8 @@ fn a_stick_held_in_a_campfire_comes_back_a_firebrand() {
         client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::NegX });
         client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == brand) || c.chat.iter().any(|(_, t)| !t.is_empty()));
         assert_eq!(named(&client, slot).as_deref(), Some(hand_after), "{sticks} sticks in hand; said: {:?}", client.chat);
+        let kept: u8 = client.inventory.slots.iter().flatten().filter(|s| s.item == stick).map(|s| s.count).sum();
+        assert_eq!(kept, sticks as u8 - 1, "the rest kept");
     }
 }
 
