@@ -57,6 +57,8 @@ pub struct Content {
     pub multiblocks: Arc<crate::multiblock::MultiblockRegistry>,
     /// Machines, what they burn and what they make (`machines.ron`, `processing.ron`).
     pub machines: Arc<crate::machine::MachineRegistry>,
+    /// Where each item is worn (`combat::Slot` index), if it is: armour, shields, charms.
+    pub worn_slots: Arc<Vec<Option<u8>>>,
     /// The quest book.
     pub quests: Arc<crate::quest::QuestRegistry>,
     /// The quest book's lanes, one per age and branch (`quest_paths.ron`).
@@ -632,7 +634,7 @@ impl Content {
         if let Some(&id) = charms.iter().find(|&&id| !effects.worn_tags().iter().any(|tag| blocks.def(id).has_tag(tag))) {
             return Err(RegistryError(format!("blocks: `{}` is a charm, but no effect asks for it worn (effects.ron's `Wearing`)", blocks.def(id).name)));
         }
-        crate::inventory::set_worn_slots(worn);
+        crate::inventory::set_worn_slots(worn.clone());
         // A store's slots follow the player's own in a slot number of a byte.
         let mut holds = vec![None; blocks.len()];
         for machine in machines.iter().filter(|m| m.is_store()) {
@@ -697,6 +699,7 @@ impl Content {
             machines: Arc::new(machines),
             quests: Arc::new(quests),
             quest_paths: Arc::new(quest_paths),
+            worn_slots: Arc::new(worn),
             journal: Arc::new(crate::journal::JournalRules::merge(journal, &mut notes)),
             refusals: Arc::new(refusals),
             files: Arc::new(files),
@@ -1066,7 +1069,7 @@ mod tests {
                 }
             }
             let home = self.built.iter().any(|name| self.content.multiblocks.get(name).is_some_and(|m| m.home));
-            self.content.effects.can_feel(effect, &crate::effect::Means { items: &items, home, done }, &self.content.blocks)
+            self.content.effects.can_feel(effect, &crate::effect::Means { items: &items, home, done, worn: &self.content.worn_slots }, &self.content.blocks)
         }
 
         /// Puts down a station with `tag` once (the easiest block with it that is made), if
@@ -1243,7 +1246,7 @@ mod tests {
         let feel = |effect: &str, have: &[(&str, u32)], home: bool| {
             let items: Vec<(BlockId, u32)> = have.iter().map(|&(name, n)| (item(name), n)).collect();
             let id = content.effects.find(effect).unwrap_or_else(|| panic!("no effect {effect}"));
-            content.effects.can_feel(id, &Means { items: &items, home, done: &[] }, blocks)
+            content.effects.can_feel(id, &Means { items: &items, home, done: &[], worn: &content.worn_slots }, blocks)
         };
         let fire = ("campfire", 1);
         assert!(feel("fireside", &[("tag:seat", 1), fire], false), "fireside: a stool at a campfire");
@@ -1252,6 +1255,11 @@ mod tests {
         assert!(feel("hearty", &[("cooked_small_game", 1)], false), "hearty: cooked meat eaten");
         assert!(!feel("hearty", &[("raw_small_game", 1)], false), "hearty: raw meat");
         assert!(feel("smoky", &[("torch", 1)], false), "smoky: a torch in hand");
+        assert!(feel("tusk_stride", &[("charge_charm", 1)], false), "tusk_stride: the charm worn");
+        let unworn = vec![None; content.worn_slots.len()];
+        let charm = [(item("charge_charm"), 1)];
+        let id = content.effects.find("tusk_stride").unwrap();
+        assert!(!content.effects.can_feel(id, &Means { items: &charm, home: false, done: &[], worn: &unworn }, blocks), "tusk_stride: a charm the content wears nowhere");
         assert!(feel("evening_in", &[fire], true), "evening_in: home, with its campfire");
         assert!(!feel("evening_in", &[fire], false), "evening_in: no home");
         // Snug wants the room walled: nine faces of a two-cell room, and two lights (of

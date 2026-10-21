@@ -176,7 +176,7 @@ impl Survival {
         // And of the charm worn (`Wearing`): only the charm slot's, so one charm's effect
         // at a time, whatever else a pack tags.
         let charm = player.inventory.worn[voxmar_engine::combat::Slot::Charm.index()];
-        let worn: Vec<String> = charm.map_or_else(Vec::new, |s| effects.worn_by(s.item, server.content.blocks.def(s.item)));
+        let worn: Vec<String> = charm.map_or_else(Vec::new, |s| effects.worn_by(Some(voxmar_engine::combat::Slot::Charm.index()), server.content.blocks.def(s.item)));
         let near: Vec<(String, i32)> = effects.near_asks().iter().filter(|(tag, reach)| server.tagged_within(feet, tag, *reach)).cloned().collect();
         let max_level = hitpoints.map(|skill| server.content.skills.level(server.players[&id].skills.xp(skill)));
         // Mending (a prayer) brings health back faster.
