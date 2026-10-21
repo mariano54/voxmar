@@ -267,6 +267,8 @@ pub struct Overworld {
     /// searches from the same lattice (a test's many biomes from the same places) work
     /// each out once.
     fields: water::cache::Cache<(IVec2, IVec2), Arc<[Point]>>,
+    /// Columns already generated, when a caller asked to keep them (`remember_columns`).
+    remembered: std::sync::OnceLock<water::cache::Cache<ColumnPos, Arc<Column>>>,
     /// `spawn_search` without and with trails and settlements, each worked out once: a
     /// shared generator gives every server on its world the spawn found by the first.
     spawns: [std::sync::OnceLock<IVec3>; 2],
@@ -339,6 +341,7 @@ impl Overworld {
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
             fields: water::cache::Cache::new(FIELD_BUDGET),
+            remembered: std::sync::OnceLock::new(),
             spawns: Default::default(),
             seed: stream,
         }
@@ -381,6 +384,15 @@ impl Overworld {
     fn find(shared: &mut Vec<((u64, u64), std::sync::Weak<Overworld>)>, key: (u64, u64)) -> Option<Arc<Self>> {
         shared.retain(|(_, held)| held.strong_count() > 0);
         shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade())
+    }
+
+    /// Keeps up to about `bytes` of the columns this generator makes, and hands out copies
+    /// of them when they are asked for again: for a process that starts many servers on
+    /// one world (a test run), each generating the land round the same spawn. A column is
+    /// a function of the seed, the content and its place, so a copy is what generating it
+    /// again would make. Only the first call sets the budget.
+    pub fn remember_columns(&self, bytes: usize) {
+        let _ = self.remembered.set(water::cache::Cache::new(bytes));
     }
 
     /// The biomes of this world.
@@ -1146,7 +1158,10 @@ impl Generator for Overworld {
 
     fn generate(&self, pos: ColumnPos) -> Column {
         let _span = tracing::info_span!("generate_column").entered();
-        terrain::generate(self, pos)
+        match self.remembered.get() {
+            Some(remembered) => (*remembered.get(pos, || Arc::new(terrain::generate(self, pos)))).clone(),
+            None => terrain::generate(self, pos),
+        }
     }
 
     fn spawn_point(&self) -> IVec3 {
@@ -1381,6 +1396,23 @@ mod tests {
     pub(crate) fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
         let positions: Vec<ColumnPos> = (0..count * count).map(|i| first.offset(i % count, i / count)).collect();
         generate_columns(world, &positions)
+    }
+
+    /// A generator keeping its columns (`remember_columns`) hands out exactly what one
+    /// that keeps none makes, asked once or again, and with too small a budget to keep them all.
+    #[test]
+    fn remembered_columns_are_the_columns() {
+        let registry = registry();
+        let fresh = Overworld::new(42, registry.clone());
+        let at: Vec<ColumnPos> = (0..6).map(|i| ColumnPos::new(i % 3 - 10, i / 3 - 3)).collect();
+        let made = generate_columns(&fresh, &at);
+        for budget in [64 << 20, 200 << 10] {
+            let kept = Overworld::new(42, registry.clone());
+            kept.remember_columns(budget);
+            for _ in 0..2 {
+                assert!(generate_columns(&kept, &at) == made, "a kept column differs from one made afresh (budget {budget})");
+            }
+        }
     }
 
     /// Rivers are traced region by region and cached; nothing may depend on which column,
