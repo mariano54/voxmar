@@ -227,10 +227,12 @@ pub(crate) fn show(
 
 /// What stands on the blocks that show what they hold (a mantel shelf's things, as the
 /// server last said: `ClientWorld::shown`), each drawn still on its spot (`BlockDef::shows`),
-/// as large as it lies dropped, turned to face out as the block does. After the drops, so
-/// a crowd of them never leaves a shelf bare: the renderer keeps the first models.
+/// as large as it lies dropped, turned to face out as the block does. At the front, before
+/// the drops (`show` cut them to what is drawn, nearest first): the renderer keeps the first
+/// models, so a crowd of dropped stacks never leaves a shelf bare.
 fn shelf_things(player: Res<LocalPlayer>, world: Res<ClientWorld>, pieces: Option<Res<TexturePieces>>, mut models: ResMut<ItemModels>) {
     let eye = player.eye();
+    let mut shelved = Vec::new();
     for (&pos, things) in &world.shown {
         let Some(block) = world.block(pos) else { continue };
         let def = world.registry.def(block);
@@ -243,9 +245,10 @@ fn shelf_things(player: Res<LocalPlayer>, world: Res<ClientWorld>, pieces: Optio
             let Some(item) = *thing else { continue };
             let Look { shape, size, layers, tinted, tint } = look_of(&world, pieces.as_deref(), item, pos);
             let center = pos.as_vec3() + Vec3::from_array(spot) + Vec3::Y * (size / 2.0);
-            models.0.push(ItemModel { center, phase: 0.0, offset: Vec3::ZERO, size, shape, layers, tinted, tint, light, held: None, posed: Some(Vec3::Y * yaw) });
+            shelved.push(ItemModel { center, phase: 0.0, offset: Vec3::ZERO, size, shape, layers, tinted, tint, light, held: None, posed: Some(Vec3::Y * yaw) });
         }
     }
+    models.0.splice(0..0, shelved);
 }
 
 /// How far a thing on a shelf facing `facing` is turned about the vertical, in radians: a
