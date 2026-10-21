@@ -580,6 +580,12 @@ impl Server {
             }
             return Ok(Words::key("command.creatures.dispersed").with("count", Words::text(wild.len())));
         }
+        // How many of the settlements' people near players are out, of those due out.
+        if what == "people" && species.is_none() {
+            let (out, due, seen) = self.people_out(at);
+            let seen = Words::List(seen.into_iter().map(Words::text).collect());
+            return Ok(Words::key("command.creatures.people").with("out", Words::text(out)).with("due", Words::text(due)).with("seen", seen));
+        }
         // One of a settlement's people near makes a bark: `/creatures bark greet`.
         if what == "bark" {
             let (name, made) = species.and_then(|name| Some((name, self.bark_command(at, name)?))).ok_or_else(|| Words::key("command.creatures.bark_what"))?;
@@ -696,7 +702,7 @@ impl Server {
         if self.players[&player].quests_done.contains(&quest.name) {
             return Err(Words::key("command.quest.already").with("quest", title));
         }
-        self.finish_quest(player, &quest.name);
+        self.finish_quest(player, &quest.name, std::slice::from_ref(&quest.name));
         // Told at once, as a claim is: the stations its rite opens show open straight away.
         self.update_quests(player);
         Ok(Words::key("command.quest.done").with("quest", title))

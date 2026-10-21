@@ -100,7 +100,9 @@ impl RecipeViewer {
     /// The ways the current look-up finds.
     pub fn found(&self) -> Vec<&Entry> {
         let (Some(book), Some(lookup)) = (&self.book, self.trail.last()) else { return Vec::new() };
-        if lookup.uses { book.using(lookup.item) } else { book.making(lookup.item) }
+        // Never a way no player meets: breaking an ore sample the world never lays.
+        let found = if lookup.uses { book.using(lookup.item) } else { book.making(lookup.item) };
+        found.into_iter().filter(|e| book.met(e)).collect()
     }
 
     /// Whether the quests row needs drawing for `item` in `language`, noting that it is.
@@ -204,8 +206,12 @@ fn look_up(
     start: Option<Res<StartLookup>>,
     mut commands: Commands,
 ) {
-    if viewer.book.is_none() {
-        viewer.book = Some(Arc::new(RecipeBook::new(&launch.content)));
+    // Built again for a world played with other content (other packages, other ways), and
+    // what was being looked up there forgotten.
+    if viewer.book.is_none() || launch.is_changed() {
+        // Its world data parsed as the content loaded (`load_content` refuses it otherwise).
+        viewer.book = Some(Arc::new(voxmar_server::recipe_book(&launch.content).expect("the world data of loaded content parses")));
+        viewer.trail.clear();
     }
     if let Some(StartLookup(name, uses)) = start.as_deref() {
         commands.remove_resource::<StartLookup>();
@@ -489,7 +495,9 @@ fn draw(
     let entries: Vec<Entry> = found.iter().skip(lookup.page * PER_PAGE).take(PER_PAGE).map(|e| (*e).clone()).collect();
     commands.entity(body).despawn_children().with_children(|body| {
         if entries.is_empty() {
-            let key = if lookup.uses { "recipes.none.uses" } else { "recipes.none.recipes" };
+            // An item no way in survival gives says so, rather than to look for it.
+            let creative = content.blocks.def(lookup.item).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY);
+            let key = if lookup.uses { "recipes.none.uses" } else if creative { "recipes.none.creative" } else { "recipes.none.recipes" };
             body.spawn(text(font, locale.format(key, &[("item", &name(lookup.item))]), BODY, MUTED));
         }
         for (entry, wants) in entries.iter().zip(wants.iter().cloned().chain(std::iter::repeat(None))) {
@@ -500,10 +508,14 @@ fn draw(
                 card.spawn(shadowed(font, "→", LARGE, GOLD));
                 // A fixed count sits on the slot's corner, as in the inventory; a range of
                 // amounts is too wide for that and goes with the name instead.
-                let (low, high) = entry.count;
+                // Burnt food looked up shows the cooking it is left from, burnt: always one,
+                // whatever the dish makes.
+                let burnt = !lookup.uses && matches!(&entry.method, Method::Cook { burnt: Some(b), .. } if content.blocks.item_of(*b) == lookup.item && entry.output != lookup.item);
+                let output = if burnt { lookup.item } else { entry.output };
+                let (low, high) = if burnt { (1, 1) } else { entry.count };
                 let count = (high > 1 && low == high).then(|| format!("{high}"));
-                item_cell(card, font, &images, Some(entry.output), count);
-                let title = if low == high { name(entry.output) } else { locale.format("recipes.amount", &[("item", &name(entry.output)), ("low", &low), ("high", &high)]) };
+                item_cell(card, font, &images, Some(output), count);
+                let title = if low == high { name(output) } else { locale.format("recipes.amount", &[("item", &name(output)), ("low", &low), ("high", &high)]) };
                 // How, in words.
                 let words = Node { flex_direction: FlexDirection::Column, row_gap: Val::Px(space::HAIR), flex_grow: 1.0, min_width: Val::ZERO, ..default() };
                 card.spawn(words).with_children(|words| {
@@ -558,8 +570,7 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
             });
             // Made near a block: that block beside the grid, as a cooking station is.
             if let Some(block) = near.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(block), None);
+                plus(card, font, images, Some(block), None);
             }
         }
         Method::Cook { input, uses, with, station, .. } => {
@@ -567,12 +578,10 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
             let count = |n: u8| (n > 1).then(|| n.to_string());
             item_cell(card, font, images, Some(*input), count(*uses));
             for &(item, n) in with {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(item), count(n));
+                plus(card, font, images, Some(item), count(n));
             }
             if let Some(fire) = content.blocks.tagged(station).next() {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(fire), None);
+                plus(card, font, images, Some(fire), None);
             }
         }
         Method::Product { tool, .. } => {
@@ -582,36 +591,70 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
         }
         Method::Process { machines, inputs, .. } => {
             for (i, &(item, n)) in inputs.iter().enumerate() {
+                let count = (n > 1).then(|| n.to_string());
                 if i > 0 {
-                    card.spawn(text(font, "+", BODY, MUTED));
+                    plus(card, font, images, Some(item), count);
+                } else {
+                    item_cell(card, font, images, Some(item), count);
                 }
-                item_cell(card, font, images, Some(item), (n > 1).then(|| n.to_string()));
             }
             if let Some(&machine) = machines.first() {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(machine), None);
+                plus(card, font, images, Some(machine), None);
             }
         }
         Method::Work { station, input, takes, .. } => {
             item_cell(card, font, images, Some(*input), (*takes > 1).then(|| takes.to_string()));
-            card.spawn(text(font, "+", BODY, MUTED));
-            item_cell(card, font, images, Some(*station), None);
+            plus(card, font, images, Some(*station), None);
         }
-        Method::Harvest { crop, .. } => {
-            // What plants it, if players plant it; else the crop itself.
-            let crops = &content.crops;
-            let seed = crops.iter().find(|(_, c)| c.ripe() == *crop).and_then(|(_, c)| c.seed);
-            item_cell(card, font, images, Some(seed.unwrap_or(*crop)), None);
+        // What plants it (or the crop itself, if players don't), or the wild plant foraged.
+        Method::Harvest { from, .. } => {
+            item_cell(card, font, images, Some(*from), None);
         }
         Method::Break { block, tool, .. } => {
             item_cell(card, font, images, Some(content.blocks.item_of(*block)), None);
             if let Some(tool) = tool {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(*tool), None);
+                plus(card, font, images, Some(*tool), None);
             }
         }
-        Method::Drop { .. } | Method::Catch { .. } => {}
+        Method::Trap { trap, .. } => {
+            item_cell(card, font, images, Some(*trap), None);
+        }
+        Method::Bees { block, holding, .. } => {
+            let nest = Some(content.blocks.item_of(*block));
+            if let Some(held) = holding {
+                item_cell(card, font, images, Some(*held), None);
+                plus(card, font, images, nest, None);
+            } else {
+                item_cell(card, font, images, nest, None);
+            }
+        }
+        Method::Chest { chest, .. } => {
+            item_cell(card, font, images, Some(*chest), None);
+        }
+        Method::Trade { wants: Some((want, n)), .. } => {
+            let asked = match want {
+                voxmar_engine::wander::Want::Item(item) => Some(*item),
+                voxmar_engine::wander::Want::Tag(tag) => content.blocks.tagged(tag).next(),
+            };
+            item_cell(card, font, images, asked, (*n > 1).then(|| n.to_string()));
+        }
+        Method::Found { tool: Some(tool), .. } => {
+            item_cell(card, font, images, Some(*tool), None);
+        }
+        Method::Burn { from, .. } | Method::Smoulder { from, .. } => {
+            item_cell(card, font, images, Some(*from), None);
+        }
+        Method::Drop { .. } | Method::Catch { .. } | Method::Trade { wants: None, .. } | Method::Reward { .. } | Method::Found { tool: None, .. } => {}
     }
+}
+
+/// A "+" and the item after it, together, so a recipe line that wraps never leaves the "+"
+/// at a line's end apart from its item.
+fn plus(card: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, item: Option<BlockId>, count: Option<String>) {
+    card.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|pair| {
+        pair.spawn(text(font, "+", BODY, MUTED));
+        item_cell(pair, font, images, item, count);
+    });
 }
 
 /// The words under a way's result: how it is done, and what it takes.
@@ -643,7 +686,7 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
             lines
         }
         Method::Work { station, skill, level: at, .. } => [(locale.format("recipes.work", &[("station", &block(*station))]), MUTED)].into_iter().chain(level(Some(*skill), *at)).collect(),
-        Method::Harvest { crop, forage, chance: odds, skill, level: at } => {
+        Method::Harvest { crop, forage, chance: odds, skill, level: at, .. } => {
             let crop = block(content.blocks.item_of(*crop));
             [(locale.format(if *forage { "recipes.forage" } else { "recipes.harvest" }, &[("crop", &crop)]), MUTED)].into_iter().chain(chance(*odds)).chain(level(Some(*skill), *at)).collect()
         }
@@ -679,6 +722,52 @@ pub(crate) fn describe(locale: &Locale, launch: &Launch, method: &Method) -> Vec
         Method::Drop { creature: id, chance } => {
             let percent = (chance.min(1.0) * 100.0).round() as u32;
             vec![(locale.format("recipes.drop", &[("creature", &creature(*id)), ("chance", &percent)]), MUTED)]
+        }
+        Method::Trap { trap, creature: id, chance: odds, skill, level: at } => {
+            [(locale.format("recipes.trap", &[("trap", &block(*trap)), ("creature", &creature(*id))]), MUTED)].into_iter().chain(chance(*odds)).chain(level(Some(*skill), *at)).collect()
+        }
+        Method::Bees { block: bees, holding, chance: odds, skill, level: at } => {
+            let bees = block(content.blocks.item_of(*bees));
+            let line = match holding {
+                Some(held) => locale.format("recipes.bees.holding", &[("block", &bees), ("item", &block(*held))]),
+                None => locale.format("recipes.bees", &[("block", &bees)]),
+            };
+            [(line, MUTED)].into_iter().chain(chance(*odds)).chain(level(Some(*skill), *at)).collect()
+        }
+        Method::Chest { chest, chance: odds } => [(locale.format("recipes.chest", &[("chest", &block(*chest))]), MUTED)].into_iter().chain(chance(*odds)).collect(),
+        Method::Trade { event, wants, chance: odds } => {
+            let party = locale.get(&content.wandering.get(*event).title_key()).to_owned();
+            let line = match wants {
+                Some((want, n)) => {
+                    let asked = match want {
+                        voxmar_engine::wander::Want::Item(item) => block(*item),
+                        voxmar_engine::wander::Want::Tag(tag) => content.blocks.tagged(tag).next().map_or_else(|| tag.clone(), block),
+                    };
+                    locale.format("recipes.trade", &[("party", &party), ("count", n), ("item", &asked)])
+                }
+                None => locale.format("recipes.gift", &[("party", &party)]),
+            };
+            [(line, MUTED)].into_iter().chain(chance(*odds)).collect()
+        }
+        Method::Reward { quest } => {
+            let title = content.quests.get(quest).map_or_else(|| quest.clone(), |q| super::quests::title(locale, q));
+            vec![(locale.format("recipes.reward", &[("quest", &title)]), MUTED)]
+        }
+        Method::Burn { from, relit: false, .. } => vec![(locale.format("recipes.burnt_out", &[("item", &block(*from))]), MUTED)],
+        Method::Burn { from, relit: true, fuel: None } => vec![(locale.format("recipes.relit", &[("item", &block(*from))]), MUTED)],
+        Method::Burn { from, relit: true, fuel: Some(tag) } => {
+            // Named as the kind of thing it takes (`tag.fat`), never one item of many.
+            let fuel = locale.get_or(&format!("tag.{tag}"), &voxmar_engine::lang::title_from_id(tag)).to_owned();
+            vec![(locale.format("recipes.relit.with", &[("item", &block(*from)), ("fuel", &fuel)]), MUTED)]
+        }
+        Method::Smoulder { structure, from, early } => {
+            let key = if *early { "recipes.smoulder.early" } else { "recipes.smoulder" };
+            let structure = locale.get_or(&voxmar_engine::lang::def_key("multiblock", structure), &voxmar_engine::lang::title_from_id(structure)).to_owned();
+            vec![(locale.format(key, &[("item", &block(*from)), ("structure", &structure)]), MUTED)]
+        }
+        Method::Found { tool, skill, level: at } => {
+            let tool = tool.map(|tool| (locale.format("recipes.found.tool", &[("tool", &block(tool))]), SOFT));
+            [(locale.get("recipes.found").to_owned(), MUTED)].into_iter().chain(tool).chain(level(*skill, *at)).collect()
         }
     }
 }

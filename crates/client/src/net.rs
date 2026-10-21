@@ -42,6 +42,7 @@ impl Plugin for NetPlugin {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Proposed {
     pub action: ActionId,
+    pub target: ActionTarget,
     pub with: Vec<BlockId>,
 }
 
@@ -62,6 +63,9 @@ pub struct Net {
     /// The integrated server's ticks as `receive` began: every message of those ticks had
     /// been sent, and was taken in (`taken_ticks`).
     taken: std::sync::atomic::AtomicU64,
+    /// Actions proposed since startup: how a tended animal waiting on the server's word
+    /// knows something else was done meanwhile (`creatures::Tended`).
+    proposals: std::sync::atomic::AtomicU64,
 }
 
 impl Net {
@@ -71,7 +75,7 @@ impl Net {
         let tokens = std::env::var("VOXMAR_ADMIN_TOKENS").unwrap_or_default();
         let admin_token = address.and_then(|address| admin_token_for(address, &tokens));
         connection.send(ClientMessage::Hello { name, protocol: voxmar_protocol::PROTOCOL_VERSION, content, admin_token });
-        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), last: Default::default(), taken: Default::default() }
+        Self { connection, server, input_timer: 0.0, proposed: Default::default(), shown: Default::default(), last: Default::default(), taken: Default::default(), proposals: Default::default() }
     }
 
     /// The next message from the server, for tests that play without the app.
@@ -105,7 +109,8 @@ impl Net {
     /// worked), which say how it sounds (`sounds.ron`'s `ways`).
     pub fn propose_with(&self, action: ActionId, target: ActionTarget, with: Vec<BlockId>) {
         self.connection.send(ClientMessage::Propose { action, target });
-        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, with });
+        self.proposals.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.proposed.lock().unwrap_or_else(|e| e.into_inner()).push(Proposed { action, target, with });
         self.shown.lock().unwrap_or_else(|e| e.into_inner()).push((action, target));
         *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((action, target));
     }
@@ -113,6 +118,11 @@ impl Net {
     /// The last action proposed and what it aimed at, kept after `take_shown`.
     pub fn last_proposed(&self) -> Option<(ActionId, ActionTarget)> {
         *self.last.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// How many actions have been proposed since startup.
+    pub fn proposals(&self) -> u64 {
+        self.proposals.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// The actions proposed since the last call: the client proposes only what it has
@@ -321,7 +331,7 @@ pub(crate) fn receive(
     mut weather: ResMut<ClientWeather>,
     (time, mut clock, mut console, mut air, mut cues): (Res<Time>, ResMut<Clock>, ResMut<Console>, ResMut<ClientAtmosphere>, MessageWriter<SoundCue>),
     (mut drops, mut toasts, launch, locale, mut creatures): (ResMut<Drops>, ResMut<SkillToasts>, Res<Launch>, Res<Locale>, ResMut<crate::creatures::Creatures>),
-    (mut broken, mut catches): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>),
+    (mut broken, mut catches, mut done): (MessageWriter<BlockBroken>, MessageWriter<crate::sfx::Catches>, MessageWriter<crate::sfx::Done>),
     mut fighting: ResMut<crate::fight::Fighting>,
     (mut stations, mut wore): (ResMut<crate::hud::target::StationSeen>, MessageWriter<crate::breaking::ToolWore>),
 ) {
@@ -386,6 +396,15 @@ pub(crate) fn receive(
                         && let Some(cue) = station_cue(&launch.content.stations, &world.registry, old, block)
                     {
                         cues.write(cue.at(pos.as_vec3() + Vec3::splat(0.5)));
+                    }
+                    // A full skep's honey cut nearby: heard if the player cut it (`sfx::play_done`
+                    // matches it to their own click), not a bear's raid or another's cut.
+                    if let Some(old) = old
+                        && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
+                        && crate::sfx::bees_taken(&launch.content.bees, old, block)
+                        && let Some(action) = launch.content.actions.id("base:tend_bees")
+                    {
+                        done.write(crate::sfx::Done { at: pos, action, with: old });
                     }
                     // Thatch or wattle catching fire, nearby.
                     if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
@@ -478,11 +497,14 @@ pub(crate) fn receive(
                 creatures.struck(creature, damage, blow, killed, time.elapsed_secs());
                 fighting.struck(creature, damage, blow, pips, killed, time.elapsed_secs_f64());
             }
-            ServerMessage::Hurt { creature, damage, defended } => {
+            ServerMessage::Hurt { creature, damage, defended, spoiled } => {
                 let combat = &launch.content.combat;
                 let held = player.inventory.get(player.selected).map(|s| s.item);
                 let weapon = combat.wielded(held, |skill| launch.content.skills.level(player.skills.xp(skill)));
-                let spoil = combat.spoiled_by_hits(&weapon).then(|| (combat.timing(&weapon), combat.feel));
+                // Told a round trip late: only a shot drawn with a weapon a hit spoils is let
+                // go, never a melee swing begun since (a draw's cooldown outlasts the trip, so no
+                // new draw can have begun).
+                let spoil = (spoiled && combat.spoiled_by_hits(&weapon)).then(|| (combat.timing(&weapon), combat.feel));
                 fighting.hurt(creature, damage, defended, time.elapsed_secs_f64(), spoil)
             }
             ServerMessage::Ping { id } => {

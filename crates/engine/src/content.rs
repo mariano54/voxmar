@@ -212,7 +212,7 @@ pub const READ_ELSEWHERE: &[&str] = &[
     "action_fx.ron", "ambience.ron", "ambient.ron", "biomes.ron", "cave_biomes.ron", "celebrations.ron", "climate.ron", "combat_fx.ron",
     "combat_hud.ron", "creature_motion.ron", "creature_sounds.ron", "cultures.ron", "decorations.ron", "hoards.ron",
     "interface.ron", "lairs.ron", "land.ron", "look.ron", "menu_bar.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron",
-    "player_look.ron", "quest_book.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
+    "player_look.ron", "quest_book.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "streaming.ron", "surfaces.ron",
     "survival.ron", "terrain.ron", "trails.ron", "trees.ron", "wear.ron",
 ];
 
@@ -577,8 +577,29 @@ impl Content {
         let stations = crate::station::Stations::new(stations, &blocks, &skills)?;
         let traps = crate::trap::Traps::new(traps, &blocks, &creatures, &skills)?;
         let wandering = crate::wander::WanderRegistry::new(wandering, wander_rules.value, &creatures, &blocks, &skills, &effects, &cooking, &weather)?;
+        let parties_cook: Vec<&str> = wandering
+            .iter()
+            .flat_map(|(_, event)| &event.meetings)
+            .flat_map(|meeting| &meeting.lines)
+            .flat_map(|line| &line.gives)
+            .filter_map(|give| match give {
+                crate::wander::ResolvedReward::Cook(station, ..) => Some(station.as_str()),
+                _ => None,
+            })
+            .collect();
+        cooking.check_stations(&blocks, &parties_cook)?;
+        // What picking a block gives besides its drops: a ripe crop's harvest, a wild plant's
+        // forage (the quest load check counts a Pick goal as teaching them).
+        let harvests: Vec<(crate::block::BlockId, crate::block::BlockId)> = crops
+            .iter()
+            .flat_map(|(_, crop)| {
+                let ripe = crop.harvest.iter().map(|(item, _)| (crop.ripe(), *item));
+                let wild = crop.def.wild.iter().filter_map(|name| blocks.item_named(name)).flat_map(|wild| crop.forage.iter().map(move |(item, _)| (wild, *item)));
+                ripe.chain(wild).collect::<Vec<_>>()
+            })
+            .collect();
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
-        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), near: &recipes.iter().filter_map(|r| r.near.clone()).collect::<Vec<_>>(), stores: &machines.iter().filter(|m| m.is_store()).map(|m| blocks.def(m.block).name.clone()).collect::<Vec<_>>(), trapped: &traps.traps.iter().flat_map(|t| &t.catches).map(|&c| creatures.get(c).def.name.clone()).collect::<Vec<_>>() })?;
+        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), near: &recipes.iter().filter_map(|r| r.near.clone()).collect::<Vec<_>>(), stores: &machines.iter().filter(|m| m.is_store()).map(|m| blocks.def(m.block).name.clone()).collect::<Vec<_>>(), trapped: &traps.traps.iter().flat_map(|t| &t.catches).map(|&c| creatures.get(c).def.name.clone()).collect::<Vec<_>>(), harvests: &harvests })?;
         // A recipe of a later age needs that age's rite, or it could never be made.
         if let Some(recipe) = recipes.iter().find(|r| r.age.as_ref().is_some_and(|age| quests.rite(age).is_none())) {
             let age = recipe.age.as_deref().unwrap_or_default();
@@ -754,6 +775,34 @@ mod tests {
     /// Skills no content trains: the combat skills train by any fight, and Ranged, Magic
     /// and Alchemy wait for their systems (Combat's slices, brewing).
     const UNTRAINED: [&str; 6] = ["core:attack", "core:defence", "core:hitpoints", "core:ranged", "core:magic", "core:alchemy"];
+
+    /// Loading checks every cooking station (`CookingRegistry::check_stations`): the game's
+    /// content with one recipe at a misspelt station is refused, naming it.
+    #[test]
+    fn content_with_a_station_nothing_has_is_refused() {
+        fn copy(from: &Path, to: &Path) {
+            std::fs::create_dir_all(to).unwrap();
+            for entry in std::fs::read_dir(from).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if path.is_dir() {
+                    copy(&path, &to.join(entry.file_name()));
+                } else {
+                    std::fs::copy(&path, to.join(entry.file_name())).unwrap();
+                }
+            }
+        }
+        let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let at = std::env::temp_dir().join(format!("voxmar-stations-{}", std::process::id()));
+        copy(&assets, &at);
+        let cooking = at.join("base/cooking.ron");
+        let source = std::fs::read_to_string(&cooking).unwrap();
+        let source = source.replacen("    recipes: [\n", "    recipes: [\n        (input: \"clay\", output: \"fired_clay\", station: \"pit_klin\", xp: 1.0),\n", 1);
+        std::fs::write(&cooking, source).unwrap();
+        let refused = Content::load(&at).err().map(|e| e.0);
+        std::fs::remove_dir_all(&at).unwrap();
+        assert!(refused.as_deref().is_some_and(|e| e.contains("`pit_klin`")), "{refused:?}");
+    }
 
     /// The game's flues, hood and pot carry `CHIMNEY_PIECE_TAG`, so a renamed tag can't
     /// quietly leave every chimney smoking from under its roof.
@@ -1053,6 +1102,30 @@ mod tests {
         }
     }
 
+    /// A Fence and a Gate asks for six plain fences beside the gate: gates and corners carry
+    /// `fence` too, so seven gates set down (or one fence and six gates) are not the fences.
+    #[test]
+    fn a_fence_and_a_gate_wants_fences_not_gates() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let quest = content.quests.get("base:a_fence_and_a_gate").expect("A Fence and a Gate");
+        let done = |tallies: &[(&str, u32)]| {
+            let tallies: FxHashMap<String, u32> = tallies.iter().map(|(k, n)| (k.to_string(), *n)).collect();
+            let journal = crate::journal::Journal::default();
+            let has_tag = |name: &str, tag: &str| content.blocks.item_named(name).is_some_and(|id| content.blocks.def(id).has_tag(tag));
+            let progress = crate::quest::Progress { journal: &journal, tallies: &tallies, level: &|_| 1, carried: &|_| 0, has_tag: &has_tag, drops: &|_| None, thriving: &|_| 0, home: false };
+            quest.tasks.iter().any(|task| content.quests.task_done(task, &progress, &|_| true))
+        };
+        let (fence, gate) = ("base:oak_fence", "base:oak_fence_gate");
+        let both = |fences: u32, gates: u32| {
+            let keys = [format!("crafted:{fence}"), format!("crafted:{gate}"), format!("placed:{fence}"), format!("placed:{gate}")];
+            done(&[(keys[0].as_str(), fences), (keys[1].as_str(), gates), (keys[2].as_str(), fences), (keys[3].as_str(), gates)])
+        };
+        assert!(both(6, 1), "six fences and a gate made and set down");
+        assert!(!both(0, 7), "seven gates are no fences");
+        assert!(!both(1, 6), "one fence and six gates are not six fences");
+        assert!(!both(5, 1), "five fences are not six");
+    }
+
     /// Each Farm path's capstone comes after every other quest of its path, directly or
     /// through what comes before it, but for side quests and the age's rite. An "a|b" edge
     /// is followed down neither side, as it makes sure of neither. (The Nomad book is checked
@@ -1258,7 +1331,7 @@ mod tests {
                         Goal::Visit(_) | Goal::LookUp(_) => {}
                         // A rite asks for quests done, on whatever paths: nothing made.
                         Goal::QuestsDone(..) | Goal::Capstones(..) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Mended(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {

@@ -31,7 +31,7 @@ use rustc_hash::FxHashMap;
 use voxmar_engine::glam::IVec2;
 
 use crate::climate::{self, Base, Climate, Regional};
-use crate::router::{Lanes, NoClimate, Program, Router};
+use crate::router::{LANES, Lanes, NoClimate, Program, Router};
 use crate::content::WorldContent;
 use crate::dials::WorldDials;
 use crate::rocks::Rocks;
@@ -252,9 +252,11 @@ impl Geology {
             vertical: 0.6 + 0.4 * dials.mountain_height / 140.0,
             climate: Climate::new(seed, dials, &content.climate),
             shapes: Shapes::new(seed, dials, content, rocks),
-            lattice: Cache::new(16 << 20),
-            lattice_reliefs: Cache::new(8 << 20),
-            bases: Cache::new(4 << 20),
+            // Samples of the land, pure functions of their tiles, which the server's tick may
+            // read: copying.
+            lattice: Cache::copying(16 << 20),
+            lattice_reliefs: Cache::copying(8 << 20),
+            bases: Cache::copying(4 << 20),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -278,7 +280,7 @@ impl Geology {
 
     /// The relief at each position: bilinear between the points of a lattice every
     /// `RELIEF_CELL` blocks (as Minecraft interpolates its terrain over 4-block cells), each
-    /// lattice point worked out once per call, four at a time, one per lane of the noises.
+    /// lattice point worked out once per call, `LANES` at a time, side by side.
     /// Positions on the lattice (the rivers' and trails' grids) take its points as they are.
     pub fn reliefs(&self, points: &[(f32, f32)]) -> Vec<Relief> {
         let cell = RELIEF_CELL as f32;
@@ -286,8 +288,8 @@ impl Geology {
         if points.iter().all(|&(x, z)| x % cell == 0.0 && z % cell == 0.0) {
             let mut lanes = self.router.lanes();
             let mut out = Vec::with_capacity(points.len());
-            for four in points.chunks(4) {
-                out.extend_from_slice(&self.relief_lanes(&mut lanes, four)[..four.len()]);
+            for some in points.chunks(LANES) {
+                out.extend_from_slice(&self.relief_lanes(&mut lanes, some)[..some.len()]);
             }
             return out;
         }
@@ -325,12 +327,12 @@ impl Geology {
             // A warm corner lookup needs interpolation only, not fresh router state.
             let mut lanes = self.router.lanes();
             values.reserve(fresh.len());
-            for four in fresh.chunks(4) {
-                let at: [(f32, f32); 4] = std::array::from_fn(|k| {
-                    let (cx, cz) = four[k.min(four.len() - 1)];
+            for some in fresh.chunks(LANES) {
+                let at: [(f32, f32); LANES] = std::array::from_fn(|k| {
+                    let (cx, cz) = some[k.min(some.len() - 1)];
                     (cx as f32 * cell, cz as f32 * cell)
                 });
-                values.extend_from_slice(&self.relief_lanes(&mut lanes, &at[..four.len()])[..four.len()]);
+                values.extend_from_slice(&self.relief_lanes(&mut lanes, &at[..some.len()])[..some.len()]);
             }
         }
         refs.iter()
@@ -341,13 +343,13 @@ impl Geology {
             .collect()
     }
 
-    /// The relief at one to four positions side by side, exactly as at each alone. Lanes
+    /// The relief at one to `LANES` positions side by side, exactly as at each alone. Lanes
     /// past the positions are left at their defaults.
-    fn relief_lanes(&self, lanes: &mut Lanes, points: &[(f32, f32)]) -> [Relief; 4] {
+    fn relief_lanes(&self, lanes: &mut Lanes, points: &[(f32, f32)]) -> [Relief; LANES] {
         let router = &self.router;
         let o = router.outputs;
         router.start(lanes, points);
-        let mut out = [Relief::default(); 4];
+        let mut out = [Relief::default(); LANES];
         for (k, out) in out.iter_mut().enumerate().take(points.len()) {
             let mut get = |field| router.get(lanes, self, field, k);
             let surface = get(o.surface);
@@ -371,9 +373,9 @@ impl Geology {
         let o = router.outputs;
         let mut lanes = router.lanes();
         let mut out = Vec::with_capacity(points.len());
-        for four in points.chunks(4) {
-            router.start(&mut lanes, four);
-            for k in 0..four.len() {
+        for some in points.chunks(LANES) {
+            router.start(&mut lanes, some);
+            for k in 0..some.len() {
                 let c = router.get(&mut lanes, &NoClimate, o.continental, k);
                 out.push((c, router.get(&mut lanes, &NoClimate, o.mountain, k)));
             }
@@ -387,9 +389,9 @@ impl Geology {
         let router = &self.router;
         let mut lanes = router.lanes();
         let mut out = Vec::with_capacity(points.len());
-        for four in points.chunks(4) {
-            router.start(&mut lanes, four);
-            out.extend((0..four.len()).map(|k| router.get(&mut lanes, &NoClimate, router.outputs.continental, k)));
+        for some in points.chunks(LANES) {
+            router.start(&mut lanes, some);
+            out.extend((0..some.len()).map(|k| router.get(&mut lanes, &NoClimate, router.outputs.continental, k)));
         }
         out
     }
@@ -655,13 +657,14 @@ impl Geology {
 
 /// Geology already sampled over a square of positions, which falls back to sampling
 /// anywhere else (and keeps those samples, since decorations reaching out of the column
-/// ask for the same few positions over and over).
+/// ask for the same few positions over and over, and the relief at the lattice corners
+/// around them, which positions a few blocks apart share).
 pub struct GeoGrid<'a> {
     world: &'a Overworld,
     min: (i32, i32),
     size: i32,
     samples: Vec<GeoSample>,
-    beyond: RefCell<FxHashMap<(i32, i32), GeoSample>>,
+    beyond: RefCell<(FxHashMap<(i32, i32), GeoSample>, Corners)>,
 }
 
 impl<'a> GeoGrid<'a> {
@@ -680,7 +683,8 @@ impl<'a> GeoGrid<'a> {
         if (0..self.size).contains(&i) && (0..self.size).contains(&j) {
             self.samples[(j * self.size + i) as usize]
         } else {
-            *self.beyond.borrow_mut().entry((x, z)).or_insert_with(|| self.world.geo(x, z))
+            let (beyond, corners) = &mut *self.beyond.borrow_mut();
+            *beyond.entry((x, z)).or_insert_with(|| self.world.geo_with(x, z, corners))
         }
     }
 
@@ -754,7 +758,7 @@ mod tests {
         }
     }
 
-    /// Land worked out four positions at a time is exactly the land at each alone, over
+    /// Land worked out many positions at a time is exactly the land at each alone, over
     /// sea, coast, plains and ranges, in any grouping.
     #[test]
     fn lands_match_land_alone() {
@@ -930,9 +934,9 @@ mod profile {
         let mut lanes = router.lanes();
         let mut sum = 0.0;
         for _ in 0..repeat {
-            for four in points.chunks(4) {
-                router.start(&mut lanes, four);
-                for k in 0..4 {
+            for some in points.chunks(crate::router::LANES) {
+                router.start(&mut lanes, some);
+                for k in 0..some.len() {
                     sum += router.get(&mut lanes, &world.geology, field, k);
                 }
             }

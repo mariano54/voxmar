@@ -152,6 +152,15 @@ impl Multiblock {
             .collect()
     }
 
+    /// What the cell at `offset` from the core (unturned) takes; none for one that takes
+    /// any block or air, or is not a cell of it.
+    pub fn takes(&self, offset: IVec3) -> &[BlockId] {
+        self.cells.iter().find(|(at, _)| *at == offset).map_or(&[], |(_, cell)| match cell {
+            Cell::OneOf(accepts) => accepts.as_slice(),
+            Cell::Any | Cell::Air => &[],
+        })
+    }
+
     /// How far from its core, across, its farthest cell lies (any way it is turned).
     pub fn reach(&self) -> i32 {
         self.cells.iter().map(|(o, _)| o.x.abs().max(o.z.abs())).max().unwrap_or(0)
@@ -170,13 +179,16 @@ impl Multiblock {
 
     /// The first turn (quarter turns) it stands at with its core at `core`, if any.
     pub fn turn(&self, core: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> Option<u8> {
-        (0..4).find(|&turns| {
-            self.cells.iter().all(|(offset, cell)| match (cell, block(core + turned(*offset, turns))) {
-                (_, None) => false,
-                (Cell::Any, _) => true,
-                (Cell::Air, Some(b)) => b.is_air(),
-                (Cell::OneOf(accepts), Some(b)) => accepts.binary_search(&b).is_ok(),
-            })
+        (0..4).find(|&turns| self.turn_matches(core, turns, &block))
+    }
+
+    /// Whether it stands with its core at `core`, turned `turns` quarter turns.
+    pub fn turn_matches(&self, core: IVec3, turns: u8, block: impl Fn(IVec3) -> Option<BlockId>) -> bool {
+        self.cells.iter().all(|(offset, cell)| match (cell, block(core + turned(*offset, turns))) {
+            (_, None) => false,
+            (Cell::Any, _) => true,
+            (Cell::Air, Some(b)) => b.is_air(),
+            (Cell::OneOf(accepts), Some(b)) => accepts.binary_search(&b).is_ok(),
         })
     }
 }
@@ -339,8 +351,13 @@ impl MultiblockRegistry {
     pub fn smoulder_round(&self, at: IVec3, block: impl Fn(IVec3) -> Option<BlockId>) -> Option<(IVec3, &Multiblock)> {
         self.multiblocks.iter().filter(|m| m.smoulder.is_some()).find_map(|m| {
             let built = m.cells.iter().filter(|(_, cell)| matches!(cell, Cell::OneOf(_)));
-            let cores = built.flat_map(|(offset, _)| (0..4).map(move |turns| at - turned(*offset, turns)));
-            cores.filter(|&core| block(core).is_some_and(|b| m.core.binary_search(&b).is_ok())).find(|&core| m.stands(core, &block)).map(|core| (core, m))
+            // Each core `at` could be a cell of, at the turn that puts it there: standing at
+            // another turn, `at` may lie outside it.
+            let cores = built.flat_map(|(offset, _)| (0..4u8).map(move |turns| (at - turned(*offset, turns), turns)));
+            cores
+                .filter(|&(core, _)| block(core).is_some_and(|b| m.core.binary_search(&b).is_ok()))
+                .find(|&(core, turns)| m.turn_matches(core, turns, &block))
+                .map(|(core, _)| (core, m))
         })
     }
 }
@@ -415,6 +432,30 @@ mod tests {
         ] {
             assert!(load(lit_by, smoulder, core_key).is_err(), "{lit_by} {smoulder} {core_key} loaded");
         }
+    }
+
+    /// A clamp that is not the same turned about is lit from a cell of it, never from one
+    /// where only another turn of it would have a cell: that turn does not stand.
+    #[test]
+    fn a_turned_clamp_is_lit_only_from_its_own_cells() {
+        let def = |name: &str, tags: &[&str]| BlockDef { name: format!("t:{name}"), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
+        let blocks = BlockRegistry::new(vec![def("air", &[]), def("wood", &[]), def("earth", &[]), def("kindling", &["multiblock_core"]), def("flue", &["multiblock_core"]), def("coal", &[]), def("torch", &["fire"])]).unwrap();
+        // Wood under the core, earth east of the wood, air east of the core.
+        let source = "(multiblocks: [(name: \"clamp\", lit_by: Some(\"fire\"), smoulder: Some((hours: 8.0, wood: 'W', done: \"coal\", early: \"wood\", spoiled: \"earth\", burning: \"flue\", spent: \"air\")), layers: [[\"We\"], [\"K \"]], key: {'W': \"wood\", 'e': \"earth\", 'K': \"kindling|flue\"}, core: 'K')])";
+        let registry = MultiblockRegistry::new(vec![MultiblockRegistry::read("t", source).unwrap()], &blocks).unwrap();
+        let (id, core) = (|n: &str| blocks.id(n).unwrap(), IVec3::new(5, 1, 5));
+        // Built unturned, with earth west of the wood and beside the core too: turned a half,
+        // the west earth would be its earth, but the earth beside the core fills its air.
+        let at = |p: IVec3| {
+            Some(match (p - core).to_array() {
+                [0, 0, 0] => id("t:kindling"),
+                [0, -1, 0] => id("t:wood"),
+                [1, -1, 0] | [-1, -1, 0] | [-1, 0, 0] => id("t:earth"),
+                _ => BlockId::AIR,
+            })
+        };
+        assert_eq!(registry.smoulder_round(core + IVec3::new(1, -1, 0), at).map(|(c, _)| c), Some(core), "its own earth");
+        assert_eq!(registry.smoulder_round(core + IVec3::new(-1, -1, 0), at).map(|(c, _)| c), None, "earth only a half turn of it would have");
     }
 
     #[test]

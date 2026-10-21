@@ -69,7 +69,7 @@ const NEAR: f32 = 64.0;
 /// Wild creatures further than this from every player go.
 const DESPAWN: f32 = 128.0;
 /// Players are told about creatures within this many blocks.
-const SEEN_WITHIN: f32 = 96.0;
+pub(crate) const SEEN_WITHIN: f32 = 96.0;
 /// How far kin hear an alarm, and are counted as kin by herding.
 const KIN_RANGE: f32 = 14.0;
 /// The width of a `Neighbours` cell, in blocks: the widest search (kin) and a block more for
@@ -284,6 +284,12 @@ pub struct Creatures {
     pub(crate) release_asked: FxHashMap<PlayerId, (u32, u64)>,
     /// Which blocks are water a creature swims in or drinks, by id, worked out once.
     water: std::sync::OnceLock<Vec<bool>>,
+    /// Which blocks stand in a creature's way at its feet (`motion::Surroundings::solid`),
+    /// by id, worked out once.
+    in_way: std::sync::OnceLock<Vec<bool>>,
+    /// Which blocks are a whole block to a creature's body (`Ground::boxes`), by id,
+    /// worked out once.
+    whole: std::sync::OnceLock<Vec<bool>>,
     /// Which blocks are lava (a fluid that burns), by id, worked out once.
     lava: std::sync::OnceLock<Vec<bool>>,
     /// Which blocks are railings (`RAILING_TAG`), by id, worked out once.
@@ -350,6 +356,26 @@ impl Creatures {
         self.water.get_or_init(|| blocks.ids().map(|b| blocks.info(b).fluid.is_some() && blocks.def(b).name.contains("water")).collect())
     }
 
+    /// Which blocks a body meets as a whole block, by id: what stands in its way and is
+    /// not walked up (stairs and a roof's courses, pieces with a floor across all of their
+    /// cell), and every railing, whatever its shape (`RAILING_TAG`). A post, a panel, a
+    /// lattice window or a lean-to is whole: a quail or a mouse fits the gap beside a
+    /// fence's post, or a hedgehog the corner where two panels meet, and a pen keeps them
+    /// in only as a whole wall.
+    fn whole_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
+        self.whole.get_or_init(|| {
+            let (in_way, railings) = (self.in_way_blocks(blocks), self.railing_blocks(blocks));
+            let floored = |a: &voxmar_engine::physics::Aabb| a.min.y <= 1e-3 && a.min.x <= 1e-3 && a.min.z <= 1e-3 && a.max.x >= 1.0 - 1e-3 && a.max.z >= 1.0 - 1e-3;
+            blocks.ids().map(|b| railings[b.0 as usize] || in_way[b.0 as usize] && !blocks.collision(b).iter().any(floored)).collect()
+        })
+    }
+
+    /// Which blocks stand in the way at a body's feet, by id: a whole block, or a shape
+    /// taller than a half block (`motion::HALF_STEP`); a lower slab is walked up onto.
+    fn in_way_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
+        self.in_way.get_or_init(|| blocks.ids().map(|b| blocks.collision(b).iter().any(|a| a.max.y > motion::HALF_STEP)).collect())
+    }
+
     /// Which blocks are lava (`process::is_lava`), by id.
     fn lava_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
         self.lava.get_or_init(|| blocks.ids().map(|b| blocks.fluid(b).is_some_and(|f| crate::process::is_lava(blocks, f.fluid))).collect())
@@ -409,6 +435,12 @@ impl<'a> Ground<'a> {
         self.block(cell).is_some_and(|b| self.server.creatures.railing_blocks(&self.server.content.blocks)[b.0 as usize])
     }
 
+    /// Whether `cell` is over a railing to one that does not climb it: a wall, as the
+    /// railing's second block.
+    fn over_railing(&self, cell: IVec3) -> bool {
+        !self.climbs_railings && self.railing(cell - IVec3::Y)
+    }
+
     /// Whether the block in `cell` is solid (an unloaded column is).
     fn solid_block(&self, cell: IVec3) -> bool {
         let blocks = &self.server.content.blocks;
@@ -441,7 +473,18 @@ impl motion::Surroundings for Ground<'_> {
     fn solid(&self, cell: IVec3) -> bool {
         // Unloaded columns are walls, so nothing walks off the edge of the world. Over a
         // railing is a wall too, to all but a climber: it stands two high to a creature.
-        self.solid_block(cell) || !self.climbs_railings && self.railing(cell - IVec3::Y)
+        self.block(cell).is_none_or(|b| self.server.creatures.in_way_blocks(&self.server.content.blocks)[b.0 as usize]) || self.over_railing(cell)
+    }
+
+    fn boxes(&self, cell: IVec3) -> &[voxmar_engine::physics::Aabb] {
+        // The wall over a railing to all but a climber; a railing, a post or a panel to
+        // anything (`Creatures::whole_blocks`): nothing small walks in on a railing's bottom
+        // rail and out between its balusters, or out of a pen beside a post.
+        if self.over_railing(cell) {
+            return &voxmar_engine::physics::CUBE;
+        }
+        let blocks = &self.server.content.blocks;
+        self.block(cell).map_or(&voxmar_engine::physics::CUBE, |b| if self.server.creatures.whole_blocks(blocks)[b.0 as usize] { &voxmar_engine::physics::CUBE } else { blocks.collision(b) })
     }
 
     fn footing(&self, cell: IVec3) -> bool {
@@ -472,7 +515,56 @@ fn strikes_from(species: &creature::Creature, phase: u8, scale: f32, from: Vec3,
     species.reaches(phase, edge, level) && species.strikes_from_here(phase, edge, level) && species.in_band(from.y, to.y, voxmar_engine::physics::player::HEIGHT, scale)
 }
 
+/// Whether the segment from `a` to `b` passes through `aabb` (slab by slab).
+fn segment_meets(a: Vec3, b: Vec3, aabb: &voxmar_engine::physics::Aabb) -> bool {
+    let (mut near, mut far) = (0.0f32, 1.0f32);
+    let d = b - a;
+    for axis in 0..3 {
+        if d[axis].abs() < 1e-6 {
+            if a[axis] < aabb.min[axis] || a[axis] > aabb.max[axis] {
+                return false;
+            }
+            continue;
+        }
+        let (t0, t1) = ((aabb.min[axis] - a[axis]) / d[axis], (aabb.max[axis] - a[axis]) / d[axis]);
+        near = near.max(t0.min(t1));
+        far = far.min(t0.max(t1));
+        if near > far {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether only a charge of a creature's fits a target at `to` from `from` (`strikes_from`
+/// aside): one it runs at the target first, so the way along the ground decides it
+/// (`Server::charge_open`), not the air between them now.
+fn charges_from(species: &creature::Creature, phase: u8, scale: f32, from: Vec3, to: Vec3) -> bool {
+    let (edge, level) = (species.edge((to - from).with_y(0.0).length(), scale), species.level(from.y, to.y, scale));
+    species.reaches(phase, edge, level) && !species.strikes_from_here(phase, edge, level) && species.in_band(from.y, to.y, voxmar_engine::physics::player::HEIGHT, scale)
+}
+
 impl Server {
+    /// Whether a charge from `body` at a player with their feet at `to` has a way along the
+    /// ground: down one lane or the other, at the height of its body's middle, from each of
+    /// its sides straight on to beside the player. A wall across both lanes bars it; a
+    /// trunk on the line between them bars at most one, and the charge runs past it.
+    pub(crate) fn charge_open(&self, body: &Body, to: Vec3) -> bool {
+        // What stands in a body's way (`Surroundings::solid`): a slab floor or a sill it
+        // runs over is no bar.
+        let blocks = &self.content.blocks;
+        let in_way = self.creatures.in_way_blocks(blocks);
+        let solid = |c: IVec3| self.block(c).is_some_and(|b| in_way[b.0 as usize]);
+        let (width, height) = body.size;
+        let flat = (to - body.position).with_y(0.0);
+        let side = Vec3::new(-flat.z, 0.0, flat.x).normalize_or_zero() * (width * 0.5 - 0.05);
+        let y = Vec3::Y * height * 0.5;
+        [side, -side].into_iter().any(|lane| {
+            let (from, end) = (body.position + lane + y, to.with_y(body.position.y) + lane + y);
+            voxmar_engine::physics::raycast(from, end - from, (end - from).length(), solid).is_none()
+        })
+    }
+
     /// Whether a creature's blow from `body` at a player with their feet at `to` has a way
     /// through the air: from high in its body out to the tip of its reach (`reach` blocks
     /// past its edge, no nearer the player than their side), then on to the player's head or
@@ -481,10 +573,22 @@ impl Server {
     /// beside a wall from striking through it.
     pub(crate) fn blow_open(&self, body: &Body, reach: f32, to: Vec3) -> bool {
         const PLAYER_HALF: f32 = 0.3;
-        // Land not loaded is no wall to a blow, as it is to walking (`Ground`).
+        // Land not loaded is no wall to a blow, as it is to walking (`Ground`). What is a
+        // whole block to a body (`Creatures::whole_blocks`: a lattice window, an arrow slit,
+        // a railing's balusters) is one to a blow, but for what is climbed (a ladder, an
+        // open hatch): a blow at a player on one passes the rungs or the hatch hung at the
+        // back of the cell. Anything else stops it by its shape.
         let blocks = &self.content.blocks;
-        let solid = |c: IVec3| self.block(c).is_some_and(|b| blocks.info(b).solid);
-        let clear = |a: Vec3, b: Vec3| voxmar_engine::physics::raycast(a, b - a, (b - a).length(), solid).is_none();
+        let whole = self.creatures.whole_blocks(blocks);
+        let clear = |a: Vec3, b: Vec3| {
+            let meets = |c: IVec3| {
+                self.block(c).is_some_and(|block| {
+                    let boxes = if whole[block.0 as usize] && !blocks.info(block).climbable { &voxmar_engine::physics::CUBE[..] } else { blocks.collision(block) };
+                    boxes.iter().any(|aabb| segment_meets(a - c.as_vec3(), b - c.as_vec3(), aabb))
+                })
+            };
+            voxmar_engine::physics::raycast(a, b - a, (b - a).length(), meets).is_none()
+        };
         let (width, height) = body.size;
         let flat = (to - body.position).with_y(0.0);
         let out = (flat.length() - PLAYER_HALF).clamp(0.0, width * 0.5 + reach.max(0.0));
@@ -568,8 +672,10 @@ impl Server {
     /// The players a creature at `at` can sense, nearest first.
     /// The players a creature with `body` sees within `range`; whether its blow, `reach`
     /// past its edge, has a way through the air (`blow_open`) to each `strikes` says it
-    /// would strike at (in its reach and strike band): to no other is it close to striking.
-    fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
+    /// would strike at (in its reach and strike band), and its charge a way along the
+    /// ground (`charge_open`) to each `charges` says only its charge fits: to no other is
+    /// it close to striking.
+    fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, charges: impl Fn(Vec3) -> bool, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
         let at = body.position;
         let mut seen: Vec<Seen> = self
             .players
@@ -583,7 +689,11 @@ impl Server {
                 creative: p.allow_flight,
                 tolerated: self.creatures.settled.get(&p.id).is_some_and(|&(_, since)| self.tick - since > TOLERANCE),
                 friend: owner.is_some_and(|name| name == p.name),
-                open: !strikes(p.position) || self.blow_open(body, reach, p.position),
+                open: if strikes(p.position) {
+                    self.blow_open(body, reach, p.position)
+                } else {
+                    !charges(p.position) || self.charge_open(body, p.position)
+                },
             })
             .collect();
         seen.sort_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)));
@@ -637,10 +747,11 @@ impl Server {
             if (self.tick + id as u64).is_multiple_of(every) {
                 let range = species.def.senses.sight.max(species.def.senses.hearing).max(16.0) * 1.5;
                 // Whom it would strike at from here, as its brain judges close (`strike`): a
-                // charge is traced where it lands, not along its run.
+                // blow through the air; a charge along its run, its hit traced where it lands.
                 let (phase, scale) = (creature.phase, creature.scale);
                 let strikes = |to: Vec3| strikes_from(species, phase, scale, position, to);
-                let players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, range, &species.favourite, creature.owner.as_deref());
+                let charges = |to: Vec3| charges_from(species, phase, scale, position, to);
+                let players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, charges, range, &species.favourite, creature.owner.as_deref());
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
                 // What it grazes, else, kept and hungry, a trough of its food by home.
@@ -794,7 +905,7 @@ impl Server {
     /// where a body `height` blocks tall stands.
     fn shore_for(&self, at: Vec3, height: i32) -> Option<IVec3> {
         let ground = Ground::of(self);
-        let walker = path::Walker { height, climbs: true, wary: true, span: 1, drop: motion::SAFE_DROP };
+        let walker = path::Walker { height, climbs: true, step: voxmar_engine::creature::STEP, wary: true, span: 1, drop: motion::SAFE_DROP };
         let feet = at.floor().as_ivec3();
         (1..=SHORE_RANGE).find_map(|r| {
             (-r..=r)
@@ -887,7 +998,7 @@ impl Server {
                 // Down a drop deeper than it climbs back only in a chase, or onto open ground.
                 let jumps = movement.jump > 0.0;
                 let drop = if body.bold { motion::SAFE_DROP } else { jumps as i32 };
-                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: jumps, wary: water == Water::Land, span, drop };
+                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: jumps, step: movement.step, wary: water == Water::Land, span, drop };
                 if (going_round || !cells.is_empty()) && stale && self.tick >= creature.way_at + TICKS_PER_SECOND as u64 {
                     let found = path::find(&Ground::climbing(self, climbs), &walker, walker.corner(body.position + Vec3::Y * 0.01), walker.corner(goal));
                     #[cfg(test)]
@@ -938,9 +1049,15 @@ impl Server {
         // Only in a chase: a grazer at its grass traces nothing.
         let phase = self.creatures.live[&id].phase;
         let chasing = doing_any(species, &self.creatures.live[&id].mind, &["hunt", "defend"]);
-        // A charge it would make from here is no blow from here (`strikes_from`).
+        // A charge it would make from here is no blow from here (`strikes_from`): it is shut
+        // off only by what stands across its run (`charge_open`), a wall, not a trunk.
         let scale = self.creatures.live[&id].scale;
-        let shut_off = chasing && wanted == Vec3::ZERO && decision.goal.is_some_and(|g| strikes_from(species, phase, scale, body.position, g) && !self.blow_open(&body, species.longest_reach(phase), g));
+        let shut_off = chasing
+            && wanted == Vec3::ZERO
+            && decision.goal.is_some_and(|g| {
+                strikes_from(species, phase, scale, body.position, g) && !self.blow_open(&body, species.longest_reach(phase), g)
+                    || charges_from(species, phase, scale, body.position, g) && !self.charge_open(&body, g)
+            });
         let creature = self.creatures.live.get_mut(&id).expect("still there");
         // What a search found holds for a second, bobbing at the surface or not; out on dry
         // ground it is done with.
@@ -4005,6 +4122,14 @@ pub(crate) mod tick_cost_tests {
             self.1.set(self.1.get() + 1);
             self.0.footing(c)
         }
+        fn lava(&self, c: IVec3) -> bool {
+            self.1.set(self.1.get() + 1);
+            self.0.lava(c)
+        }
+        fn boxes(&self, c: IVec3) -> &[voxmar_engine::physics::Aabb] {
+            self.1.set(self.1.get() + 1);
+            self.0.boxes(c)
+        }
     }
 
     /// Block lookups and time per path search on the server's own ground, in a pen with a
@@ -4014,7 +4139,7 @@ pub(crate) mod tick_cost_tests {
     #[test]
     #[ignore]
     fn search_cost_on_the_ground() {
-        let wolf = path::Walker { height: 1, climbs: true, wary: true, span: 1, drop: motion::SAFE_DROP };
+        let wolf = path::Walker { height: 1, climbs: true, step: voxmar_engine::creature::STEP, wary: true, span: 1, drop: motion::SAFE_DROP };
         let bear = path::Walker { height: 2, span: 2, ..wolf };
         for door in [0, 1, 2] {
             let mut server = crate::test_server();
@@ -4259,6 +4384,78 @@ mod fight_tests {
         assert!(!server.blow_open(&body, species.longest_reach(0), at(4.5)), "the trunk did not stand in the way");
         assert!(species.reaches(0, species.edge(9.0, 1.0), true) && !strikes_from(species, 0, 1.0, body.position, at(4.5)), "at nine blocks only his charge fits");
         assert!(open(at(4.5)), "the trunk barred his charge");
+        assert!(charges_from(species, 0, 1.0, body.position, at(4.5)) && server.charge_open(&body, at(4.5)), "the trunk barred his charge's run");
+    }
+
+    /// A wolf's blow at a player standing on a ladder, or in an open hatch, has its way: the
+    /// rungs and the hatch hang at the back of the cell, the player before them. Before:
+    /// every solid block was a whole cell to a blow, so a ladder shaft was a cell no blow
+    /// reached.
+    #[test]
+    fn a_blow_reaches_a_player_on_a_ladder_or_in_an_open_hatch() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let wolf = put(&mut server, "base:wolf", c.as_vec3() + Vec3::new(-1.5, 0.0, -1.5), Vec3::Z);
+        let body = server.creatures.live[&wolf].body;
+        let reach = server.content.creatures.get(server.creatures.live[&wolf].species).longest_reach(0);
+        for name in ["base:oak_ladder", "base:oak_hatch_open"] {
+            set(&mut server, name, [c + IVec3::new(-2, 0, 0), c + IVec3::new(-2, 1, 0)]);
+            assert!(server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 0.5)), "no blow through {name} to the player in it");
+        }
+        for name in ["base:stone", "base:oak_lattice_window", "base:stone_arrow_slit"] {
+            set(&mut server, name, [c + IVec3::new(-2, 0, 0), c + IVec3::new(-2, 1, 0)]);
+            assert!(!server.blow_open(&body, reach, c.as_vec3() + Vec3::new(-1.5, 0.0, 1.5)), "a blow went through {name}");
+        }
+    }
+
+    /// Old Tusk struck by a player nine blocks off on open ground, with the server's own
+    /// ticks: he winds up his charge, runs it, and it lands on them within 10 s.
+    #[test]
+    fn old_tusk_charges_a_player_across_open_ground() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let id = put(&mut server, "base:old_tusk", c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), Vec3::X);
+        let player = join(&mut server, c.as_vec3() + Vec3::new(4.5, 0.0, 0.5));
+        server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+        let (mut charged, mut most) = (false, 0);
+        let landed = (0..10 * TICKS_PER_SECOND as u64).any(|_| {
+            server.tick();
+            charged |= server.creatures.live[&id].charging.is_some();
+            let health = server.players[&player].health.current;
+            most = most.max(health);
+            charged && health < most
+        });
+        assert!(charged && landed, "no charge landed: charged {charged}, Tusk at {:.2}", server.creatures.live[&id].body.position - c.as_vec3());
+    }
+
+    /// Old Tusk at charge range of a player behind a wall across his run, three high and
+    /// seven across: his charge is shut off, and he gives the chase up rather than stand
+    /// at the wall for good. Before (with `strikes_from` leaving a charge out): only a
+    /// blow from where he stood was judged for a way through the air, so a charge-only fit
+    /// was never shut off.
+    #[test]
+    fn old_tusk_at_charge_range_behind_a_wall_gives_up() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        let tusk = server.content.creatures.id("base:old_tusk").expect("Old Tusk");
+        let id = put(&mut server, "base:old_tusk", c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5), Vec3::X);
+        wall(&mut server, (-3..=3).map(|z| c + IVec3::new(0, 0, z)), 3);
+        let species = server.content.creatures.get(tusk);
+        let body = server.creatures.live[&id].body;
+        let to = c.as_vec3() + Vec3::new(4.5, 0.0, 0.5);
+        assert!(charges_from(species, 0, 1.0, body.position, to) && !server.charge_open(&body, to), "the wall left his charge's run open");
+        let player = join(&mut server, to);
+        server.creatures.live.get_mut(&id).unwrap().mind.remember(brain::Memory::Struck, brain::STRUCK_LATELY);
+        server.hurt_creature(player, id, 0, None, voxmar_engine::combat::Blow::Plain);
+        let mut chased = false;
+        let gave_up = (0..12 * TICKS_PER_SECOND as u64).any(|_| {
+            server.tick();
+            server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+            let after = server.creatures.live[&id].decision.goal.is_some();
+            chased |= after;
+            chased && !after
+        });
+        assert!(gave_up, "he stood at the wall: at {:.2}", server.creatures.live[&id].body.position - c.as_vec3());
     }
 
     /// The player in a pocket two high at the foot of a hole three deep, a block over their
@@ -4494,6 +4691,120 @@ mod fight_tests {
                             // Two blocks high: no creature hops it. Its feet never come up
                             // half way, nor its middle into the fence's or ledge's first
                             // column (x 1).
+                            assert!(f.highest < 1.5 && f.farthest < 1.0, "{scene}: {name} got over: its feet {:.2} up, its middle {:.2} east", f.highest, f.farthest);
+                            let gave_up = f.strikes == 0 && f.pressing < 4.0;
+                            assert!(f.first.is_some_and(|s| s < 3.5) || gave_up, "{scene}: {name} first struck at {:?}, pressed {:.1} s", f.first, f.pressing);
+                        } else {
+                            assert!(f.first.is_some_and(|s| s < 3.0), "{scene}: {name} first struck at {:?}", f.first);
+                            assert!(f.pressing < 1.0, "{scene}: {name} pressed a wall {:.1} s", f.pressing);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    /// Building pieces in a fight, their shapes as they collide (`BlockRegistry::collision`):
+    /// stairs and a roof rising toward the player onto a floor a block up, a flight of two,
+    /// a floor of slabs, sills (beams lying across the way), posts with gaps two across, and
+    /// a wall two high with a lattice window in its top course.
+    fn shaped_scenes() -> [(&'static str, Scene); 7] {
+        [
+            ("stairs", |s, c| {
+                set(s, "base:oak_stairs_west", (-2..=2).map(|z| c + IVec3::new(1, 0, z)));
+                set(s, "base:oak_planks", (2..=4).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, 0, z))));
+                (c.as_vec3() + Vec3::new(3.0, 1.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("flight", |s, c| {
+                set(s, "base:oak_stairs_west", (-2..=2).flat_map(|z| [c + IVec3::new(1, 0, z), c + IVec3::new(2, 1, z)]));
+                set(s, "base:oak_planks", (-2..=2).flat_map(|z| [c + IVec3::new(2, 0, z)]));
+                set(s, "base:oak_planks", (3..=5).flat_map(|x| (-2..=2).flat_map(move |z| (0..2).map(move |y| c + IVec3::new(x, y, z)))));
+                (c.as_vec3() + Vec3::new(4.0, 2.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("roof", |s, c| {
+                set(s, "base:oak_shingles_west", (-2..=2).map(|z| c + IVec3::new(1, 0, z)));
+                set(s, "base:oak_planks", (2..=4).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, 0, z))));
+                (c.as_vec3() + Vec3::new(3.0, 1.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("slab floor", |s, c| {
+                set(s, "base:oak_slab", (1..=4).flat_map(|x| (-2..=2).map(move |z| c + IVec3::new(x, 0, z))));
+                (c.as_vec3() + Vec3::new(2.5, 0.5, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("sills", |s, c| {
+                set(s, "base:oak_beam_east", (-8..=8).flat_map(|z| [c + IVec3::new(-2, 0, z), c + IVec3::new(0, 0, z)]));
+                (c.as_vec3() + Vec3::new(2.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("posts", |s, c| {
+                set(s, "base:oak_post", (-2..=2).map(|i| c + IVec3::new(1, 0, i * 3 - 1)));
+                set(s, "base:oak_post", (-2..=2).map(|i| c + IVec3::new(1, 1, i * 3 - 1)));
+                (c.as_vec3() + Vec3::new(3.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+            ("window", |s, c| {
+                wall(s, (-8..=8).map(|z| c + IVec3::new(1, 0, z)), 1);
+                set(s, "base:oak_lattice_window_east", (-8..=8).map(|z| c + IVec3::new(1, 1, z)));
+                (c.as_vec3() + Vec3::new(2.5, 0.0, 0.5), c.as_vec3() + Vec3::new(-4.5, 0.0, 0.5))
+            }),
+        ]
+    }
+
+    /// Every land kind, jumper or not (a snail, a tortoise), walks up stairs and a roof from
+    /// their low side onto a floor a block up, and onto a floor of slabs, course by course
+    /// as a player steps (`Movement::step`), its head never in a block. Before: each shaped
+    /// piece was a whole block to a creature, so those that cannot jump stayed below.
+    #[test]
+    fn every_walker_walks_up_stairs_a_roof_and_slabs() {
+        let dt = 1.0 / TICKS_PER_SECOND as f32;
+        for (piece, top) in [("base:oak_stairs_west", 1.0), ("base:oak_shingles_west", 1.0), ("base:oak_slab", 0.5)] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            set(&mut server, piece, (-3..=3).map(|z| c + IVec3::new(1, 0, z)));
+            let floor = if top < 1.0 { piece } else { "base:oak_planks" };
+            set(&mut server, floor, (2..=7).flat_map(|x| (-3..=3).map(move |z| c + IVec3::new(x, 0, z))));
+            let ground = Ground::of(&server);
+            let mut tried = 0;
+            for (_, species) in server.content.creatures.iter() {
+                let movement = species.def.movement;
+                if species.def.habitat.water != Water::Land || matches!(movement.style, voxmar_engine::creature::Style::Flier | voxmar_engine::creature::Style::Drifter) {
+                    continue;
+                }
+                let mut body = Body::new(c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5), motion::yaw_of(Vec3::X), species.def.body.size);
+                (body.reach, body.head, body.on_ground) = (species.reach, species.head, true);
+                let (mut side, ticks) = (0.0, ((6.0 / movement.walk + 4.0) * TICKS_PER_SECOND as f32) as u32);
+                for t in 0..ticks {
+                    let (heading, turned) = motion::steer(&body, &ground, &movement, Water::Land, Vec3::X, side, movement.walk, dt);
+                    side = turned;
+                    motion::step(&mut body, &ground, &movement, Water::Land, Drive { wish: heading, speed: movement.walk, face: None }, dt);
+                    assert!(!body.head_blocked(&ground), "{} on {piece}: its head in a block {t} ticks on, at {:.2}", species.def.name, body.position - c.as_vec3());
+                    if std::env::var("VOXMAR_TRACE").is_ok_and(|v| v == species.def.name) && t % 3 == 0 {
+                        println!("t {t} at {:.2} v {:.2} ground {} wall {} heading {:.2}", body.position - c.as_vec3(), body.velocity, body.on_ground, body.against_wall, heading);
+                    }
+                    if body.on_ground && body.position.x > c.x as f32 + 3.0 {
+                        break;
+                    }
+                }
+                let at = body.position - c.as_vec3();
+                assert!(at.x > 3.0 && at.y > top - 0.05, "{} never got up the {piece} at a walk: at {at:.2}", species.def.name);
+                tried += 1;
+            }
+            assert!(tried > 10);
+        }
+    }
+
+    /// Among building pieces every fighter gets up stairs, a roof, a flight and a slab
+    /// floor, over sills and between posts, and strikes within 3 s, pressing a wall under
+    /// 1 s of the 10. At a wall two high with a lattice window it never gets over or
+    /// through, and strikes over it within 3.5 s or gives up, pressing under 4 s, as at a
+    /// fence. Before: creatures took every shaped block for a whole one (`info.solid`): a
+    /// slab floor was a step to hop, a post a block-wide pillar, stairs and a roof a wall a
+    /// block high, and nothing that cannot jump got up a flight.
+    #[test]
+    fn fighters_among_building_pieces_climb_to_strike_or_give_up() {
+        std::thread::scope(|threads| {
+            for (scene, set) in shaped_scenes() {
+                threads.spawn(move || {
+                    for name in FIGHTERS {
+                        let f = fight(name, set, 10.0);
+                        if scene == "window" {
                             assert!(f.highest < 1.5 && f.farthest < 1.0, "{scene}: {name} got over: its feet {:.2} up, its middle {:.2} east", f.highest, f.farthest);
                             let gave_up = f.strikes == 0 && f.pressing < 4.0;
                             assert!(f.first.is_some_and(|s| s < 3.5) || gave_up, "{scene}: {name} first struck at {:?}, pressed {:.1} s", f.first, f.pressing);
@@ -5144,6 +5455,37 @@ mod fight_tests {
         for scene in ["railing", "stone step", "stair", "corner", "on the railing", "over the railing"] {
             railed_balcony(scene);
         }
+    }
+
+    /// A post in a fence line, or wattle panels meeting at a corner, leave no gap for the
+    /// smallest creatures: a quail has no room in the 0.3125 beside the post, nor a hedgehog
+    /// in the corner of two panels, and every piece in a body's way that is not walked up
+    /// (one with no floor across its cell, as stairs and roofs have) meets a body as a
+    /// whole block. Before: a body met only a piece's own boxes, so a kept quail walked
+    /// out of a pen beside a post.
+    #[test]
+    fn small_creatures_find_no_gap_beside_a_post_or_in_a_panel_corner() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 9);
+        set(&mut server, "base:oak_fence", [c + IVec3::new(2, 0, -1), c + IVec3::new(2, 0, 1)]);
+        set(&mut server, "base:oak_post", [c + IVec3::new(2, 0, 0)]);
+        // A panel across x = -4, its end at x = -3, and one along z in the cell beyond it,
+        // down its middle: the corner between them, 0.4375 across, fits a hedgehog.
+        set(&mut server, "base:wattle_panel", [c + IVec3::new(-4, 0, 0)]);
+        set(&mut server, "base:wattle_panel_east", [c + IVec3::new(-3, 0, 0), c + IVec3::new(-3, 0, 1)]);
+        let ground = Ground::of(&server);
+        for (name, at) in [("base:quail", Vec3::new(2.15, 0.0, 0.15)), ("base:quail", Vec3::new(2.5, 0.0, 0.85)), ("base:hedgehog", Vec3::new(-2.78, 0.0, 0.5))] {
+            let species = server.content.creatures.get(server.content.creatures.id(name).expect(name));
+            let body = Body::new(c.as_vec3() + at, 0.0, species.def.body.size);
+            assert!(body.aabb().overlaps(|p| motion::Surroundings::boxes(&ground, p)), "{name} fits at {at:.2}");
+        }
+        let blocks = &server.content.blocks;
+        let (in_way, whole) = (server.creatures.in_way_blocks(blocks), server.creatures.whole_blocks(blocks));
+        for b in blocks.ids() {
+            let walked_up = blocks.collision(b).iter().any(|a| a.min.y <= 1e-3 && a.min.x <= 1e-3 && a.min.z <= 1e-3 && a.max.x >= 1.0 - 1e-3 && a.max.z >= 1.0 - 1e-3);
+            assert_eq!(whole[b.0 as usize], in_way[b.0 as usize] && !walked_up, "{}", blocks.def(b).name);
+        }
+        assert!(!whole[blocks.expect("base:oak_stairs_east").0 as usize], "stairs are walked up, not a wall");
     }
 
     fn railed_balcony(scene: &str) {

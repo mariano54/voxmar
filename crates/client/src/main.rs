@@ -65,6 +65,7 @@ mod slow_frames;
 mod textures;
 mod ui;
 mod weather;
+mod workers;
 mod world;
 
 use std::sync::Arc;
@@ -321,15 +322,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // (priority.rs). Cores, not hardware threads: on a machine with two threads a core (the
     // Linux box's 16-core EPYC), workers on every thread slowed every frame system about
     // threefold while the world streamed in, whatever their priority, and took flightfast's
-    // p99 frame from 11 to 25 ms. `VOXMAR_WORKERS=n` sets their number instead, for timing how
-    // many a busy machine's frames can take (tools/perf/play_frames).
+    // p99 frame from 11 to 25 ms. Once the world has loaded, fewer of them stream
+    // (workers.rs). `VOXMAR_WORKERS=n` sets their number instead, loading and playing alike,
+    // for timing how many a busy machine's frames can take and whether streaming keeps up
+    // (tools/perf/play_frames, its `ahead:` lines).
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
     let mut workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
+    let mut given_workers = None;
     if let Ok(given) = std::env::var("VOXMAR_WORKERS")
         && !given.is_empty()
     {
         match given.parse::<usize>() {
-            Ok(n) if (1..=threads).contains(&n) => workers = n,
+            Ok(n) if (1..=threads).contains(&n) => (workers, given_workers) = (n, Some(n)),
             // Before logging starts, so on stderr, where tools/perf/play_frames shows it beside
             // the numbers, which are then the default's.
             _ => eprintln!("VOXMAR_WORKERS={given} is not from 1 to {threads}; {workers} workers"),
@@ -346,6 +350,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
+    // While playing, as many streaming jobs at once as the content says (`streaming.ron`).
+    let playing = given_workers.unwrap_or(workers::Streaming::load(&content.files)?.playing.min(workers));
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
     let quest_look = hud::quest_look::QuestLook::load(&content.files)?;
@@ -497,6 +503,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
     app.add_plugins(priority::PriorityPlugin);
+    app.add_plugins(workers::WorkersPlugin { all: workers, playing });
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);

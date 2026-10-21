@@ -1857,6 +1857,75 @@ pub(crate) const BASE_FILES: [(&str, &str); 19] = [
     ("weather.ron", include_str!("../../../assets/content/base/weather.ron")),
 ];
 
+/// Every string in a RON source, comments left out, each with what holds it: the field
+/// it is the value of, else the field or enum variant (`Tag(...)`) whose brackets it is in.
+fn ron_strings(source: &str) -> Vec<(String, String, String)> {
+    let mut strings = Vec::new();
+    let mut chars = source.chars().peekable();
+    // The identifier just read, the field a `:` named, and the holder of each open bracket.
+    let (mut ident, mut field, mut held) = (String::new(), None::<String>, Vec::<String>::new());
+    let mut last_ident = String::new();
+    while let Some(c) = chars.next() {
+        if c.is_alphanumeric() || c == '_' {
+            ident.push(c);
+            continue;
+        }
+        let just_read = !ident.is_empty();
+        if just_read {
+            last_ident = std::mem::take(&mut ident);
+        }
+        match c {
+            '/' if chars.peek() == Some(&'/') => {
+                chars.by_ref().find(|&c| c == '\n');
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut last = ' ';
+                for c in chars.by_ref() {
+                    if last == '*' && c == '/' {
+                        break;
+                    }
+                    last = c;
+                }
+            }
+            ':' => field = Some(last_ident.clone()),
+            ',' => field = None,
+            '(' | '[' | '{' => {
+                let named = field.take();
+                // `Some(..)` holds what it wraps as its field or brackets would.
+                let holder = if c == '(' && just_read && last_ident != "Some" { last_ident.clone() } else { named.or_else(|| held.last().cloned()).unwrap_or_default() };
+                held.push(holder);
+            }
+            ')' | ']' | '}' => {
+                held.pop();
+                field = None;
+            }
+            '"' => {
+                let mut word = String::new();
+                while let Some(c) = chars.next() {
+                    match c {
+                        '\\' => word.extend(chars.next()),
+                        '"' => break,
+                        c => word.push(c),
+                    }
+                }
+                let holder = field.clone().or_else(|| held.last().cloned()).unwrap_or_default();
+                // What holds the holder: the list a `Tag(..)` stands in.
+                let within = if field.is_some() { held.last() } else { held.iter().rev().nth(1) }.cloned().unwrap_or_default();
+                strings.push((holder, within, word));
+            }
+            _ => {}
+        }
+    }
+    strings
+}
+
+/// Whether a list of `Tag(..)` and `Name(..)` picks definitions (plants, trees, ground
+/// decorations, particles) rather than blocks.
+fn picks_definitions(list: &str) -> bool {
+    ["plants", "trees", "decorations", "particles", "density_keeps", "wonders"].contains(&list)
+}
+
 impl WorldContent {
     /// The generator's definitions from loaded content packages, checked against their
     /// blocks.
@@ -1896,6 +1965,56 @@ impl WorldContent {
             add("");
         }
         hash
+    }
+
+    /// The blocks the generator's files (every package's, but ambient particles) name, by
+    /// name or by `tag:`: what the world may lay, for the recipe book's "found in the world"
+    /// (`RecipeBook::found`). Names count wherever they stand, so this may hold a block the
+    /// world never lays after all, never leave one out; items that are never placed
+    /// (seeds a wild crop is named by) are left out. `self` is what `files` load as.
+    pub fn placed<'a>(&self, files: impl Iterator<Item = &'a ContentFile>, registry: &BlockRegistry) -> Vec<voxmar_engine::block::BlockId> {
+        // A settlement style's names with `{wood}` and `{trim}` in them stand for each of
+        // its woods; any style's, as the names are read without their style.
+        let mut woods: Vec<String> = self.settlements.styles.iter().flat_map(|style| style.woods.iter().map(|(wood, _)| wood.clone())).collect();
+        woods.sort();
+        woods.dedup();
+        let lays = |name: &str| name != "ambient.ron" && BASE_FILES.iter().any(|(base, _)| *base == name);
+        let mut found = Vec::new();
+        for file in files.into_iter().filter(|file| lays(&file.name)) {
+            for (holder, within, word) in ron_strings(&file.source) {
+                // A list of tags names land and biomes, not blocks; `Tag("flower", 1.0)`
+                // picks blocks by their tag.
+                // Nor do a crop's stages, which grow from what is sown (a fruit tree's ripe
+                // leaves its file names).
+                if holder == "tags" || (file.name == "crops.ron" && holder == "stages") {
+                    continue;
+                }
+                if holder == "Tag" {
+                    // Under a list that picks definitions (plants, trees, ground decorations,
+                    // particles) a tag picks those, whose blocks their own files name, and a
+                    // snow blanket's tag only matches what it covers; elsewhere (a palette,
+                    // a settlement's flowers) it picks blocks, a settlement's flowers and
+                    // bushes only small plants among them.
+                    if !picks_definitions(&within) && within != "blanket" {
+                        let small = ["flowers", "bushes"].contains(&within.as_str());
+                        found.extend(registry.tagged(&word).filter(|&b| !small || crate::settlements::small_plant(registry, b)));
+                    }
+                } else if let Some(tag) = word.strip_prefix("tag:") {
+                    found.extend(registry.tagged(tag));
+                } else if word.contains("{wood}") || word.contains("{trim}") {
+                    for (wood, trim) in woods.iter().flat_map(|wood| woods.iter().map(move |trim| (wood, trim))) {
+                        let name = crate::settlements::def::fill(&word, wood, trim);
+                        found.extend(registry.id(&name).or_else(|| registry.id(&format!("{}:{name}", file.package))));
+                    }
+                } else if let Some(id) = registry.id(&word).or_else(|| registry.id(&format!("{}:{word}", file.package))) {
+                    found.push(id);
+                }
+            }
+        }
+        found.retain(|&id| !registry.def(id).item);
+        found.sort();
+        found.dedup();
+        found
     }
 
     /// The base package's definitions alone.
@@ -3259,6 +3378,25 @@ fn temperature_axis() -> Axis {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Strings are read with what holds them: a field, or an enum variant's brackets (`Some`
+    /// is seen through), and comments are skipped.
+    #[test]
+    fn strings_know_what_holds_them() {
+        let source = r#"// "not this"
+            (name: "flint_scatter", tags: ["forest", "open"], plants: [Tag("flower", 1.0), Name("fern", 2.0)], top: Block("grass"), decorations: Some([Tag("rock", 1.0)]))"#;
+        let got: Vec<(String, String, String)> = ron_strings(source);
+        let held = |word: &str| got.iter().find(|(.., w)| w == word).map(|(h, ..)| h.as_str());
+        assert_eq!(got.len(), 7, "{got:?}");
+        assert_eq!(held("flint_scatter"), Some("name"));
+        assert_eq!((held("forest"), held("open")), (Some("tags"), Some("tags")));
+        assert_eq!((held("flower"), held("fern"), held("grass")), (Some("Tag"), Some("Name"), Some("Block")));
+        let within = |word: &str| got.iter().find(|(.., w)| w == word).map(|(_, within, _)| within.as_str());
+        assert_eq!((within("flower"), within("fern")), (Some("plants"), Some("plants")));
+        // `Some(..)` is no holder of its own: what it wraps is held as without it.
+        assert_eq!((held("rock"), within("rock")), (Some("Tag"), Some("decorations")));
+        assert!(picks_definitions("plants") && !picks_definitions("flowers"));
+    }
 
     fn registry() -> BlockRegistry {
         crate::test_registry()

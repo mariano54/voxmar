@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Synthesizes the everyday action sounds: eating, crafting, lighting a fire, opening a
-chest or a door, cooking, lying down to sleep, casting a line, picking an item up, feeding
-an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
+chest, a barrel, a cupboard, a jar or a basket, a door (and shutting it), a gate,
+shutters, a hatch or a curtain, cooking, lying down to sleep (on a wooden bed too),
+sitting on a wooden seat,
+casting a line, picking an item up, feeding an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
 spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, food
 coming off the fire done or burnt, and a tool nearly worn out and breaking; for the
 interface, a quest book's page turned and a soft "no" when something is refused; and the
@@ -9,7 +11,9 @@ building materials' steps, placings and breakings (timber, thatch, shingle, cobb
 stone brick, wattle, daub, hide, terracotta) under materials/;
 and the work of the first two ages under work/: flint knapped,
 a hide scraped, clay shaped, pottery, stone dressed, cord twisted, wood whittled, the
-home stations loaded, a kiln fed, ore smelted, and a hearth or kiln kindled.
+home stations loaded, a kiln fed, ore smelted, a hearth or kiln kindled, a sheep shorn,
+a cow milked, bees smoked and honey taken, grain ground at a quern, wool spun on a
+spindle and woven at a loom, and the flour, twine and cloth they give.
 
 Our own work, built from noise, resonators and decaying modes (no samples). Run once
 offline; the clips are written to assets/content/base/sounds/ as Ogg Vorbis and listed in
@@ -950,6 +954,255 @@ def kindle_kiln(rng):
     return kindle(rng, 1.6)
 
 
+def shear(rng):
+    """Wool shorn: crisp snips of iron blades closing, the fleece rustling as it parts."""
+    out = np.zeros(int(0.75 * RATE))
+    place(out, 0.0, rustle(rng, 0.65, rng.uniform(1600, 2000)), 0.6)
+    for snip in range(3):
+        at = 0.05 + snip * rng.uniform(0.17, 0.21)
+        n = int(0.04 * RATE)
+        blades = bandpass(rng.standard_normal(n) * envelope(n, 0.0005, 0.014), rng.uniform(4600, 5600), 1.2)
+        place(out, at, blades, 0.6)
+        place(out, at + 0.004, modes(rng.uniform(2700, 3200), 0.12, [(1.0, 0.25, 0.03), (2.3, 0.12, 0.015)], attack=0.0002), 0.2)
+    return out
+
+
+def milk(rng):
+    """Milk drawn into a pail: hissing squirts, two hands in turn, ringing on the wood."""
+    out = np.zeros(int(0.9 * RATE))
+    for squirt in range(4):
+        n = int(rng.uniform(0.1, 0.13) * RATE)
+        t = np.arange(n) / n
+        jet = rng.standard_normal(n) * np.sin(np.pi * t ** 0.6) ** 1.5
+        body = bandpass(jet, rng.uniform(2600, 3200) - 600 * t, 1.1) + 0.5 * bandpass(jet, 700, 3.0)
+        at = squirt * rng.uniform(0.19, 0.23)
+        place(out, at, body, (0.8, 0.9, 0.85, 1.0)[squirt])
+        place(out, at + 0.02, modes(rng.uniform(320, 380), 0.25, [(1.0, 0.3, 0.06), (2.7, 0.1, 0.03)], attack=0.004), 0.25)
+    return out
+
+
+def hive(rng):
+    """Bees calmed with smoke: two breathy puffs, and the swarm's hum swelling and settling."""
+    out = np.zeros(int(1.0 * RATE))
+    for puff in range(2):
+        n = int(0.16 * RATE)
+        place(out, puff * 0.22, lowpass(rng.standard_normal(n), 0.09) * envelope(n, 0.02, 0.05) * 3, 0.7)
+    n = int(0.9 * RATE)
+    t = np.arange(n) / RATE
+    swell = np.minimum(t / 0.3, 1.0) * np.exp(-np.maximum(t - 0.4, 0) / 0.3)
+    hum = sum(np.sin(2 * np.pi * f * t + rng.uniform(0, 6.3)) for f in rng.uniform(205, 245, 6))
+    hum = hum * (1 + 0.4 * np.sin(2 * np.pi * rng.uniform(5, 9) * t))
+    place(out, 0.1, bandpass(hum + 0.3 * rng.standard_normal(n), 470, 0.9) * swell, 0.6)
+    return out
+
+
+def gate(rng):
+    """A field gate swung: a wooden latch bar lifted with a clack, a light, dry creak, and
+    the gate knocking against its post."""
+    out = np.zeros(int(0.9 * RATE))
+    place(out, 0.0, knock(rng, rng.uniform(520, 620)), 0.6)
+    swing = rng.uniform(0.38, 0.48)
+    place(out, 0.07, creak(rng, swing, 45, 110, rng.uniform(600, 760)), 0.6)
+    place(out, 0.07 + swing, knock(rng, rng.uniform(240, 290)), 0.7)
+    return out
+
+
+def shutters(rng):
+    """Shutters folded: two light leaves swinging on small hinges, each knocking home."""
+    out = np.zeros(int(0.6 * RATE))
+    for leaf in range(2):
+        at = leaf * rng.uniform(0.16, 0.21)
+        place(out, at, creak(rng, 0.12, 80, 160, rng.uniform(800, 950)), 0.35)
+        place(out, at + 0.11, knock(rng, rng.uniform(330, 400)), (0.75, 0.9)[leaf])
+    return out
+
+
+def hatch(rng):
+    """A loft hatch: a heavy board creaking on its hinges and dropping home with a thump."""
+    out = np.zeros(int(0.8 * RATE))
+    swing = rng.uniform(0.3, 0.38)
+    place(out, 0.0, creak(rng, swing, 30, 70, rng.uniform(300, 380)), 0.7)
+    place(out, swing - 0.02, knock(rng, rng.uniform(110, 140)), 1.0)
+    place(out, swing - 0.02, thud(rng, 0.12, 0.03, 0.03), 0.6)
+    return out
+
+
+def curtain(rng):
+    """A curtain drawn: cloth swishing along, its rings sliding and ticking on the pole."""
+    out = np.zeros(int(0.6 * RATE))
+    n = int(0.45 * RATE)
+    t = np.arange(n) / n
+    swish = bandpass(rng.standard_normal(n) * np.sin(np.pi * t) ** 1.4, 1500 + 900 * t, 0.9)
+    place(out, 0.02, swish, 0.8)
+    for ring in range(5):
+        place(out, 0.04 + ring * rng.uniform(0.06, 0.08), modes(rng.uniform(2400, 3000), 0.05, [(1.0, 0.3, 0.012), (2.4, 0.15, 0.006)], attack=0.0003), 0.18)
+    return out
+
+
+def honey(rng):
+    """Comb cut from a full skep: a sticky tearing, and honey dripping into the pot."""
+    out = np.zeros(int(0.9 * RATE))
+    n = int(0.3 * RATE)
+    t = np.arange(n) / n
+    tear = rng.standard_normal(n) * (rng.random(n) < 0.3) * np.sin(np.pi * t)
+    place(out, 0.0, bandpass(tear, 1300, 1.6) + 0.4 * lowpass(tear, 0.1), 0.8)
+    for drip in range(3):
+        m = int(0.07 * RATE)
+        u = np.arange(m) / RATE
+        plop = np.sin(2 * np.pi * (rng.uniform(380, 460) + 900 * u / u[-1]) * u) * envelope(m, 0.002, 0.018)
+        place(out, 0.36 + drip * rng.uniform(0.13, 0.17), plop, (0.6, 0.5, 0.45)[drip])
+    return out
+
+
+def shut(rng):
+    """A wooden door pushed shut: a short creak on its hinges, the door meeting its frame
+    with a deep thud, and the latch dropping into its keeper."""
+    out = np.zeros(int(0.8 * RATE))
+    swing = rng.uniform(0.22, 0.3)
+    place(out, 0.0, creak(rng, swing, 40, 90, rng.uniform(380, 460)), 0.6)
+    place(out, swing, knock(rng, rng.uniform(95, 120)), 1.0)
+    place(out, swing, thud(rng, 0.15, 0.025, 0.04), 0.8)
+    n = int(0.03 * RATE)
+    latch = modes(rng.uniform(1700, 2100), 0.05, [(1.0, 0.6, 0.012), (2.6, 0.3, 0.006)], attack=0.0003)[:n]
+    place(out, swing + rng.uniform(0.06, 0.09), latch + bandpass(rng.standard_normal(n) * envelope(n, 0.0002, 0.003), 3000, 1.0), 0.4)
+    return out
+
+
+def store_barrel(rng):
+    """A barrel's lid prised up: wood scraping on the staves, and the hollow, low boom of
+    the cask as the lid is set against it."""
+    out = np.zeros(int(0.7 * RATE))
+    place(out, 0.0, scrape(rng, rng.uniform(0.14, 0.2), rng.uniform(900, 1200)), 0.5)
+    cask = modes(rng.uniform(85, 105), 0.4, [(1.0, 1.0, 0.12), (1.58, 0.5, 0.08), (2.4, 0.3, 0.05), (3.9, 0.12, 0.02)], attack=0.001)
+    at = rng.uniform(0.17, 0.22)
+    place(out, at, cask, 0.7)
+    place(out, at, knock(rng, rng.uniform(200, 240)), 0.5)
+    return out
+
+
+def store_cupboard(rng):
+    """A cupboard door opened: a little latch, then a small, quick creak of its hinges."""
+    out = np.zeros(int(0.5 * RATE))
+    n = int(0.025 * RATE)
+    latch = modes(rng.uniform(2300, 2700), 0.04, [(1.0, 0.6, 0.008), (2.8, 0.3, 0.004)], attack=0.0003)[:n]
+    place(out, 0.0, latch, 0.3)
+    place(out, 0.04, creak(rng, rng.uniform(0.2, 0.26), 70, 150, rng.uniform(750, 900)), 0.7)
+    return out
+
+
+def store_jar(rng):
+    """A jar's clay lid lifted: a gritty scrape of glaze on glaze and a ringing clink as it
+    is set down beside it."""
+    out = np.zeros(int(0.5 * RATE))
+    place(out, 0.0, scrape(rng, 0.08, rng.uniform(2800, 3400)), 0.35)
+    place(out, rng.uniform(0.1, 0.14), tile(rng), 0.9)
+    place(out, 0.12, modes(rng.uniform(1300, 1600), 0.25, [(1.0, 0.5, 0.07), (2.7, 0.2, 0.03)], attack=0.0003), 0.35)
+    return out
+
+
+def store_basket(rng):
+    """A lidded basket opened: the dry, crackling creak of wicker flexing and a soft rustle
+    of what lies inside."""
+    out = np.zeros(int(0.6 * RATE))
+    place(out, 0.0, crackles(rng, 0.28, 90, 0.5), 0.8)
+    place(out, 0.0, creak(rng, 0.25, 120, 220, rng.uniform(1300, 1600)), 0.25)
+    place(out, 0.2, rustle(rng, 0.3, rng.uniform(1800, 2300)), 0.5)
+    return out
+
+
+def bed_frame(rng):
+    """Lying down on a wooden bed: the frame creaking under the weight, the straw tick
+    rustling, and a low settling."""
+    out = sleep(rng)
+    place(out, 0.28, creak(rng, rng.uniform(0.35, 0.45), 25, 55, rng.uniform(260, 330)), 0.5)
+    return out
+
+
+def seat_wood(rng):
+    """Sitting on a wooden seat: a quick knock of its legs on the floor and a short creak
+    as it takes the weight."""
+    out = np.zeros(int(0.5 * RATE))
+    place(out, 0.0, knock(rng, rng.uniform(160, 200)), 0.6)
+    place(out, 0.04, creak(rng, rng.uniform(0.18, 0.24), 35, 75, rng.uniform(420, 520)), 0.55)
+    place(out, 0.02, rustle(rng, 0.2, 1500), 0.25)
+    return out
+
+
+def grind(rng):
+    """A quern turned: the upper stone rumbling round on the lower, a turn and more of gritty,
+    low grinding, and grain crunching between them."""
+    seconds = 1.4
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    turns = rng.uniform(1.0, 1.25)
+    sweep = 0.55 + 0.45 * np.abs(np.sin(np.pi * turns * t))
+    rumble = lowpass(rng.standard_normal(n), 0.02) * 5 * sweep
+    grit = bandpass(rng.standard_normal(n) * (rng.random(n) < 0.08), 2600, 1.2) * sweep
+    out = rumble + 0.6 * grit + 0.5 * bandpass(rng.standard_normal(n), 420 + 120 * sweep, 3.0) * sweep
+    out += crackles(rng, seconds, 22, 0.5)
+    return out * np.minimum(t / 0.08, 1.0) * np.minimum((seconds - t) / 0.2, 1.0)
+
+
+def spin(rng):
+    """A spindle spun: a flick of the fingers, the whorl whirring as it turns and slows,
+    and the wool drawing out with a soft rasp."""
+    seconds = 1.4
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    speed = 9.0 * np.exp(-t / rng.uniform(1.4, 1.8)) + 2.0
+    phase = np.cumsum(speed / RATE)
+    hum = np.sin(2 * np.pi * phase * 28) * (0.5 + 0.5 * np.sin(2 * np.pi * phase))
+    whirr = bandpass(rng.standard_normal(n), 900, 2.0) * (0.6 + 0.4 * np.sin(2 * np.pi * phase)) * (speed / 11)
+    out = 0.35 * hum * (speed / 11) + whirr
+    place(out, 0.0, knock(rng, rng.uniform(600, 700)), 0.4)
+    place(out, 0.3, rustle(rng, 1.0, 2600), 0.35)
+    return out * np.minimum(t / 0.01, 1.0) * np.minimum((seconds - t) / 0.25, 1.0)
+
+
+def weave(rng):
+    """A loom worked: the shuttle swishing through the shed and the beater clacking the
+    weft home, twice, the frame knocking under it."""
+    out = np.zeros(int(1.4 * RATE))
+    for pick in range(2):
+        at = pick * rng.uniform(0.6, 0.66)
+        m = int(0.32 * RATE)
+        s = np.arange(m) / m
+        swish = bandpass(rng.standard_normal(m) * np.sin(np.pi * s) ** 2, 1800 + 1400 * s, 1.5)
+        place(out, at, swish, 0.5)
+        place(out, at + 0.4, knock(rng, rng.uniform(260, 320)), 0.9)
+        place(out, at + 0.41, knock(rng, rng.uniform(130, 160)), 0.6)
+        place(out, at + 0.5, creak(rng, 0.2, 50, 100, 500), 0.25)
+    return out
+
+
+def flour(rng):
+    """Flour gathered up off the quern: a soft, dusty sift and a pat of the hand."""
+    out = np.zeros(int(0.5 * RATE))
+    place(out, 0.0, trickle(rng, 0.35, 3800, 160), 0.5)
+    place(out, 0.3, thud(rng, 0.1, 0.05, 0.02), 0.5)
+    return out
+
+
+def twine_wound(rng):
+    """Spun twine wound off the spindle: a dry, quick winding creak and a snap of the
+    thread."""
+    out = np.zeros(int(0.45 * RATE))
+    place(out, 0.0, creak(rng, 0.25, 110, 220, 1100), 0.5)
+    n = int(0.03 * RATE)
+    place(out, 0.27, bandpass(rng.standard_normal(n) * envelope(n, 0.0002, 0.006), 3200, 1.5), 0.8)
+    return out
+
+
+def cloth_off(rng):
+    """Cloth taken off the loom: a soft fold of fabric shaken out and laid down."""
+    out = np.zeros(int(0.55 * RATE))
+    m = int(0.18 * RATE)
+    s = np.arange(m) / m
+    place(out, 0.0, bandpass(rng.standard_normal(m) * np.sin(np.pi * s), 1400, 1.0), 0.6)
+    place(out, 0.2, rustle(rng, 0.3, 1600), 0.6)
+    return out
+
+
 def finish(mono, rng, width=0.15):
     """The clip made stereo (a hair of width from a short delay), faded, and brought to
     its loudness."""
@@ -1036,6 +1289,27 @@ SOUNDS = {
     "work/smelt": (smelt, 2),
     "work/kindle_hearth": (kindle_hearth, 2),
     "work/kindle_kiln": (kindle_kiln, 2),
+    "work/shear": (shear, 2),
+    "work/milk": (milk, 2),
+    "work/hive": (hive, 2),
+    "work/honey": (honey, 2),
+    "gate": (gate, 2),
+    "shutters": (shutters, 2),
+    "hatch": (hatch, 2),
+    "curtain": (curtain, 2),
+    "shut": (shut, 2),
+    "store_barrel": (store_barrel, 2),
+    "store_cupboard": (store_cupboard, 2),
+    "store_jar": (store_jar, 2),
+    "store_basket": (store_basket, 2),
+    "bed_frame": (bed_frame, 2),
+    "seat_wood": (seat_wood, 2),
+    "work/grind": (grind, 2),
+    "work/spin": (spin, 2),
+    "work/weave": (weave, 2),
+    "work/flour": (flour, 2),
+    "work/twine": (twine_wound, 2),
+    "work/cloth": (cloth_off, 2),
 }
 
 

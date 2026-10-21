@@ -174,6 +174,14 @@ pub struct CreatureSound {
     /// Its size against its species', from its genes.
     pub scale: f32,
     pub young: bool,
+    /// An answer to the player's own hand (a fed ewe's munch): always heard, as an event's
+    /// `chance` thins only what a creature does unbidden.
+    pub answering: bool,
+    /// Its own noise as it wanders, with the roll (0..1) that also set its pause after
+    /// (a low roll, a short one): a call when the roll falls under its voice's share of
+    /// calls at this hour ([`defs::Calls`]), else a contented sound. `kind` is `Idle` until
+    /// it is heard.
+    pub chatter: Option<f32>,
 }
 
 /// What creatures did this frame that may be heard; drained each frame.
@@ -345,6 +353,18 @@ fn listen(mut commands: Commands, cameras: Query<Entity, With<Camera3d>>, listen
     }
 }
 
+/// Whether a sound is dropped by its event's `chance` (`roll` drawn only if it may be): an
+/// answer to the player's hand never is.
+fn thinned(chance: f32, answering: bool, roll: impl FnOnce() -> f32) -> bool {
+    !answering && chance < 1.0 && roll() > chance
+}
+
+/// What a creature's chatter is, by its voice's share of calls at this hour and a roll
+/// in 0..1.
+fn chatter(calls: f32, roll: f32) -> Kind {
+    if roll < calls { Kind::Call } else { Kind::Idle }
+}
+
 /// A sound about to be played.
 struct Voiced {
     clip: Handle<AudioSource>,
@@ -368,11 +388,21 @@ fn play(
     settings: Res<Settings>,
     global: Option<Res<GlobalVolume>>,
     time: Res<Time>,
+    cycle: Option<Res<crate::render::DayCycle>>,
     listener: Query<&GlobalTransform, With<SpatialListener>>,
     mix: Option<Res<Mix>>,
     mut cues: MessageWriter<SoundCue>,
 ) {
-    let asked = std::mem::take(&mut asked.0);
+    let mut asked = std::mem::take(&mut asked.0);
+    let part = defs::Part::at(cycle.map_or(0.25, |cycle| cycle.ticks.rem_euclid(voxmar_protocol::TICKS_PER_DAY as f64) / voxmar_protocol::TICKS_PER_DAY as f64));
+    // What each chatter is, before it is counted: a call is counted as a call.
+    if let Some(voices) = &voices {
+        for sound in asked.iter_mut() {
+            if let (Some(roll), Some(voice)) = (sound.chatter, voices.bank.voice(sound.species)) {
+                sound.kind = chatter(voice.calls.at(part), roll);
+            }
+        }
+    }
     for sound in &asked {
         *heard.asked.entry(sound.kind).or_default() += 1;
     }
@@ -412,7 +442,7 @@ fn play(
             }
         }
         let Some(event) = voice.event(sound.kind) else { continue };
-        if event.chance < 1.0 && random(counter) > event.chance {
+        if thinned(event.chance, sound.answering, || random(counter)) {
             continue;
         }
         let fall = falloff(distance, event.range);
