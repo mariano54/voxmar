@@ -84,8 +84,7 @@
         (
             name: "a_fence_and_a_gate", age: "nomad", branch: "start", title: "A Fence and a Gate",
             why: "Three logs stood end on end make six posts; posts and sticks make fences (Construction 2), and a fence beside a slab and a fence makes a gate. Animals and most creatures take a fence as two blocks high: only a boss, or a fighter on a chase, climbs it. Set down six fences and a gate; right-click the gate to swing it open.",
-            // A gate is tagged fence too: seven of the tag with one gate is six fences and the gate.
-            tasks: [[Craft("tag:fence", 7), Craft("tag:gate", 1), Placed("tag:fence", 7), Placed("tag:gate", 1)]],
+            tasks: [[Craft("tag:plain_fence", 6), Craft("tag:gate", 1), Placed("tag:plain_fence", 6), Placed("tag:gate", 1)]],
             after: ["steps_and_slabs", "a_bench_to_work_at"],
             side: true,
             rewards: [Xp("construction", 40.0), Item("bread", 2)],
@@ -103,6 +102,24 @@
             why: "Make a campfire: put two logs or Wood blocks above two Cobblestones in the 2×2 crafting grid. No stripped wood is needed. Stone lies a few blocks under the dirt or bare on hillsides; a flint pickaxe breaks it into two loose stones, and four loose stones knock together into two cobblestone in the grid. Place the fire, select raw small game or an egg in your hotbar, and right-click the fire. Rabbits and junglefowl roam open grassland; both give small game, and a junglefowl sometimes an egg. Fists are slow at the hunt too: swing an axe instead; a stone one hits three times as hard as a fist (a stone sword, two cobblestone over a stick, does as well). Wait two seconds; the cooked food goes into your inventory. If it burns, try again. Cooked food heals more than raw food.",
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
+        ),
+        // Side quests on the way to the hearth, on the cooking and home paths (the main line's
+        // walk counts no buffs): what fire, food and a home at night give.
+        (
+            name: "a_hot_meal", age: "nomad", branch: "cooking", title: "A Hot Meal",
+            why: "What you eat does more than fill you. Hold a food and use it to eat while you are hurt: a cooked meat leaves you Hearty, with room for a tenth more health while it lasts. Eat a cooked meat when you are hurt and feel it.",
+            tasks: [[Felt("hearty")]],
+            after: ["first_night"],
+            side: true,
+            rewards: [Xp("cooking", 20.0), Item("bread", 1)],
+        ),
+        (
+            name: "by_the_fire", age: "nomad", branch: "home", title: "By the Fire",
+            why: "Nights are cold, and a fire is more than light. Two planks over two sticks make a stool (Construction 1). Set it within three blocks of your campfire and right-click it to sit: by the fire you heal half as fast again, and it warms you.",
+            tasks: [[Craft("tag:seat", 1), Felt("fireside")]],
+            after: ["first_night", "crafting_table"],
+            side: true,
+            rewards: [Xp("construction", 20.0), Item("bread", 1)],
         ),
         (
             name: "stone_in_hand", age: "nomad", branch: "main", title: "Stone in Hand",
@@ -132,6 +149,14 @@
             tasks: [[Craft("hearthstone", 1), Craft("chimney", 2), Home]],
             after: ["torchlight"],
             rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 1)],
+        ),
+        (
+            name: "an_evening_in", age: "nomad", branch: "home", title: "An Evening In",
+            why: "With the hearth lit, the night is yours to spend at home. After dark, stay under your roof within four blocks of your lit hearth: in by your own fire you heal a fifth faster and are warmer.",
+            tasks: [[Felt("evening_in")]],
+            after: ["homestead_hearth"],
+            side: true,
+            rewards: [Xp("construction", 40.0), Item("bread", 2)],
         ),
         (
             name: "the_farm_age", age: "nomad", branch: "main", title: "The Farm Age",

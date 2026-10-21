@@ -1292,13 +1292,19 @@ fn tooltip(
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
     mut japanese: Local<Option<Locale>>,
-    (viewer, forced, places, viewer_items): (
+    (viewer, forced, places, viewer_items, beside): (
         Res<super::recipes::RecipeViewer>,
         Option<Res<HoverSlot>>,
         Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>,
         Query<(&super::recipes::ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
+        Query<(&ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), (With<super::creative::CataloguePanel>, Without<Tooltip>)>,
     ),
 ) {
+    // The catalogue beside the inventory, where it is open: a tip for a slot keeps clear of it.
+    let beside = beside.iter().find(|(.., visible)| visible.get()).map(|(node, transform, _)| {
+        let scale = node.inverse_scale_factor();
+        Rect::from_center_size(transform.translation * scale, node.size() * scale)
+    });
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
     let browsing = ui.recipes_open || ui.quests_open;
     let pointed = hovered(&slots).or(forced.as_ref().map(|f| f.0)).filter(|_| !browsing && ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none());
@@ -1322,7 +1328,7 @@ fn tooltip(
             lines.spawn((text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED), tip_line()));
         });
         visibility.set_if_neq(Visibility::Inherited);
-        place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
+        place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places, beside);
         return;
     };
     // Shift shows how the name reads: in Japanese, the kana over the name; in another
@@ -1378,27 +1384,55 @@ fn tooltip(
         });
     }
     visibility.set_if_neq(Visibility::Inherited);
-    place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
+    place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places, beside);
 }
 
 /// Puts the tooltip up and to the right of the pointer, kept on screen; without a pointer,
 /// beside the slot a screenshot names. The pointer is in the window's points, the
-/// interface laid out at its own scale.
-fn place_tip(node: &mut Node, computed: &ComputedNode, window: Option<&Window>, scale: f32, forced: Option<usize>, places: &Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>) {
+/// interface laid out at its own scale. `beside` is a panel to the right that a tip from
+/// left of it keeps clear of (the catalogue by the inventory), by going to the left.
+#[allow(clippy::too_many_arguments)]
+fn place_tip(
+    node: &mut Node,
+    computed: &ComputedNode,
+    window: Option<&Window>,
+    scale: f32,
+    forced: Option<usize>,
+    places: &Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>,
+    beside: Option<Rect>,
+) {
     let size = computed.size() * computed.inverse_scale_factor();
+    let width = window.map(|window| window.width() / scale);
     if let Some(window) = window
         && let Some(at) = window.cursor_position()
     {
-        let (at, width) = (at / scale, window.width() / scale);
-        node.left = Val::Px((at.x + 6.0 * PX).min(width - size.x - 2.0 * PX));
+        let at = at / scale;
+        node.left = Val::Px(tip_left(at.x, 6.0 * PX, size.x, width, beside));
         node.top = Val::Px((at.y - size.y - 2.0 * PX).max(2.0 * PX));
     } else if let Some(slot) = forced
         && let Some((_, cell, place)) = places.iter().find(|(s, ..)| s.0 == slot)
     {
         let at = (place.translation + cell.size() / 2.0) * cell.inverse_scale_factor();
-        node.left = Val::Px(at.x + 2.0 * PX);
+        node.left = Val::Px(tip_left(at.x, 2.0 * PX, size.x, width, beside));
         node.top = Val::Px((at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
     }
+}
+
+/// Where a tip `wide` across starts, from a point at `x`: `gap` to its right, or, where that
+/// would run into the panel `beside` to the right, `gap` to its left; kept within the window
+/// `width` across.
+fn tip_left(x: f32, gap: f32, wide: f32, width: Option<f32>, beside: Option<Rect>) -> f32 {
+    let mut left = x + gap;
+    if let Some(panel) = beside
+        && panel.min.x > x
+        && left + wide > panel.min.x
+    {
+        left = x - gap - wide;
+    }
+    if let Some(width) = width {
+        left = left.min(width - wide - 2.0 * PX);
+    }
+    left.max(2.0 * PX)
 }
 
 #[cfg(test)]
@@ -1406,6 +1440,22 @@ mod tests {
     use voxmar_engine::block::BlockId;
 
     use super::*;
+
+    /// A tip goes right of where it points from, but flips to the left rather than run into
+    /// the catalogue to the right (a long tool's lines ran into its search line at 1280x720),
+    /// and stays on screen; one pointing from in the catalogue stays over it.
+    #[test]
+    fn a_tip_keeps_clear_of_the_catalogue_beside_it() {
+        let catalogue = Rect::new(1270.0, 24.0, 1680.0, 940.0);
+        let (gap, wide, width) = (4.0, 360.0, Some(1706.0));
+        assert_eq!(tip_left(800.0, gap, wide, width, Some(catalogue)), 804.0, "room before the catalogue");
+        let left = tip_left(1013.0, gap, wide, width, Some(catalogue));
+        assert_eq!(left, 1013.0 - gap - wide, "flipped");
+        assert!(left + wide <= catalogue.min.x);
+        assert_eq!(tip_left(1013.0, gap, wide, width, None), 1017.0, "no catalogue open");
+        assert_eq!(tip_left(1400.0, gap, wide, width, Some(catalogue)), 1706.0 - wide - 2.0 * PX, "in the catalogue: on screen");
+        assert_eq!(tip_left(100.0, gap, 360.0, width, Some(Rect::new(300.0, 0.0, 600.0, 100.0))), 2.0 * PX, "never off the left");
+    }
 
     #[test]
     fn the_interface_style_comes_from_data_and_a_later_package_changes_it() {

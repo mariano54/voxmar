@@ -1104,6 +1104,30 @@ mod tests {
         }
     }
 
+    /// A Fence and a Gate asks for six plain fences beside the gate: gates and corners carry
+    /// `fence` too, so seven gates set down (or one fence and six gates) are not the fences.
+    #[test]
+    fn a_fence_and_a_gate_wants_fences_not_gates() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let quest = content.quests.get("base:a_fence_and_a_gate").expect("A Fence and a Gate");
+        let done = |tallies: &[(&str, u32)]| {
+            let tallies: FxHashMap<String, u32> = tallies.iter().map(|(k, n)| (k.to_string(), *n)).collect();
+            let journal = crate::journal::Journal::default();
+            let has_tag = |name: &str, tag: &str| content.blocks.item_named(name).is_some_and(|id| content.blocks.def(id).has_tag(tag));
+            let progress = crate::quest::Progress { journal: &journal, tallies: &tallies, level: &|_| 1, carried: &|_| 0, has_tag: &has_tag, drops: &|_| None, thriving: &|_| 0, home: false };
+            quest.tasks.iter().any(|task| content.quests.task_done(task, &progress, &|_| true))
+        };
+        let (fence, gate) = ("base:oak_fence", "base:oak_fence_gate");
+        let both = |fences: u32, gates: u32| {
+            let keys = [format!("crafted:{fence}"), format!("crafted:{gate}"), format!("placed:{fence}"), format!("placed:{gate}")];
+            done(&[(keys[0].as_str(), fences), (keys[1].as_str(), gates), (keys[2].as_str(), fences), (keys[3].as_str(), gates)])
+        };
+        assert!(both(6, 1), "six fences and a gate made and set down");
+        assert!(!both(0, 7), "seven gates are no fences");
+        assert!(!both(1, 6), "one fence and six gates are not six fences");
+        assert!(!both(5, 1), "five fences are not six");
+    }
+
     /// Each Farm path's capstone comes after every other quest of its path, directly or
     /// through what comes before it, but for side quests and the age's rite. An "a|b" edge
     /// is followed down neither side, as it makes sure of neither. (The Nomad book is checked

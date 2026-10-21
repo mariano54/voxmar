@@ -5804,7 +5804,9 @@ const BRAND_WARMTH: f64 = 15.0;
 
 /// What the firebrand step lights and holds, picked from the content by what each is: the
 /// item that gives light held and burns away, what is held in a fire to make it, the fire
-/// (a placeable block of the station tag its recipe asks), and what it leaves burnt out.
+/// (a placeable block of the station tag its recipe asks, one a player sets down: not a
+/// creative-only flame such as a burning thatch's, which goes out with nothing to burn), and
+/// what it leaves burnt out.
 #[derive(Clone, Copy, Debug)]
 struct BrandPlan {
     brand: BlockId,
@@ -5821,7 +5823,10 @@ impl BrandPlan {
             if tools.held_light(brand) == 0 || tools.burns(brand) == 0 || recipe.def.level > 1 || !recipe.with.is_empty() {
                 continue;
             }
-            let fire = blocks.ids().find(|&b| blocks.def(b).has_tag(&recipe.def.station) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0);
+            let fire = blocks.ids().find(|&b| {
+                let def = blocks.def(b);
+                def.has_tag(&recipe.def.station) && !def.has_tag("creative_only") && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
+            });
             if let Some(fire) = fire {
                 return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand) });
             }
@@ -21134,6 +21139,17 @@ mod tests {
     }
 
     use super::{sling_next, warm_window, SlingNext, BEAR, SLING, SLING_LEVEL, SLING_STONES, UNANSWERED};
+
+    /// The firebrand step holds its stick in a fire a player sets down and keeps: a
+    /// creative-only flame (the blaze of a burning thatch, first of the fires in the data)
+    /// went out under the stick and nothing caught.
+    #[test]
+    fn the_firebrand_step_holds_its_stick_in_a_players_fire() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let plan = super::BrandPlan::of(&content).unwrap();
+        let fire = content.blocks.def(plan.fire);
+        assert!(!fire.has_tag("creative_only"), "the firebrand step's fire is {}, creative only", fire.name);
+    }
 
     /// The Home step lays the crafting table from oak planks in the home barrel: the
     /// loaded data has a table recipe of oak planks to lay, whichever wood's comes first.

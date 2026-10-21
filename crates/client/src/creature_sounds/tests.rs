@@ -77,7 +77,7 @@ fn silent_runs_drain_and_play_nothing() {
         .init_resource::<Heard>()
         .add_message::<SoundCue>()
         .add_systems(Update, play);
-    let sound = CreatureSound { kind: Kind::Hurt, id: 1, species: rabbit, position: Vec3::ZERO, speed: 0.0, scale: 1.0, young: false, answering: false, chatter: false };
+    let sound = CreatureSound { kind: Kind::Hurt, id: 1, species: rabbit, position: Vec3::ZERO, speed: 0.0, scale: 1.0, young: false, answering: false, chatter: None };
     app.world_mut().resource_mut::<CreatureSounds>().push(sound);
     app.update();
     assert!(app.world().resource::<CreatureSounds>().0.is_empty());
@@ -119,6 +119,9 @@ fn the_shipped_voices_keep_their_hours() {
         let calls = calls(night_caller);
         assert!(calls.at(Part::Night) > calls.at(Part::Day), "{night_caller}: {calls:?}");
     }
+    // A hound by a home barks, and seldom howls, least of all at night.
+    let (hound, wolf) = (calls("hound"), calls("wolf"));
+    assert!(hound.at(Part::Night) <= hound.at(Part::Day) && hound.at(Part::Night) < 0.05 && wolf.at(Part::Night) > 0.4, "{hound:?}");
 }
 
 /// `cargo test --profile iter -p voxmar_client creature_sound_preview -- --ignored` writes
