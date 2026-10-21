@@ -233,6 +233,12 @@
             (from: (9, 9, 7.5), to: (12, 10, 8.5)),
             (from: (11, 10, 7.75), to: (11.5, 13, 8.25), textures: All("candle_grey")),
         ]),
+        // The same with its rush burnt down: the bare clip.
+        "rushlight_spent": (boxes: [
+            (from: (5, 0, 5), to: (11, 1, 11)),
+            (from: (7, 1, 7), to: (9, 10, 9)),
+            (from: (9, 9, 7.5), to: (12, 10, 8.5)),
+        ]),
         // A window box against the wall behind it (south): a trough of flowers on two
         // brackets, the blooms standing up out of it to the cell's top.
         "window_box": (boxes: [
@@ -421,6 +427,17 @@
         "candle": (boxes: [
             (from: (7, 0, 7), to: (9, 5, 9)),
             (from: (7.75, 5, 7.75), to: (8.25, 6.5, 8.25)),
+        ]),
+        // A candle burnt down to its end: a nub of wax and a black wick.
+        "candle_end": (boxes: [
+            (from: (7, 0, 7), to: (9, 1.5, 9)),
+            (from: (7.75, 1.5, 7.75), to: (8.25, 2.25, 8.25)),
+        ]),
+        // A clay oil lamp: a low bowl, its spout to the south and a loop of handle north.
+        "oil_lamp": (boxes: [
+            (from: (5, 0, 4), to: (11, 3, 12)),
+            (from: (7, 1, 12), to: (9, 3, 14)),
+            (from: (7, 1, 2), to: (9, 4, 4)),
         ]),
         // A chain, a cap, a glass-sided box and a foot.
         "hanging_lantern": (boxes: [

@@ -90,6 +90,11 @@
         (pattern: [["twine", ""], ["hide", "hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
         // Beeswax burns cleaner and longer: one cake and a wick make three (bees.ron).
         (pattern: [["twine"], ["beeswax"]], output: "candle", count: 3, skill: "core:crafting", level: 3, xp: 3.0),
+        // Tallow from rendered fat: a wick over a lump of lard makes two.
+        (pattern: [["twine"], ["lard"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
+        // A clay oil lamp, made empty: a twine wick in a fired clay bowl. Filled with fat by
+        // a right click, it is lit (blocks_furnishings.ron).
+        (pattern: [["", "twine"], ["fired_clay", "fired_clay"]], output: "clay_oil_lamp_empty", skill: "core:crafting", level: 4, xp: 4.0),
         // A skep: wheat straw coiled into a dome, bound with twine; a swarm is taken into it.
         (pattern: [["wheat", "wheat", "wheat"], ["wheat", "twine", "wheat"], ["twine", "", "twine"]], output: "skep", age: "farm", skill: "core:crafting", level: 6, xp: 10.0),
         // A drying rack (stations.ron): two sticks a side and a row of twine to hang meat on.
@@ -98,8 +103,6 @@
         (pattern: [["twine", "twine"], ["stick", "stick"]], output: "snare", skill: "core:hunter", level: 1, xp: 4.0),
         // A compost heap (stations.ron): boards round three sides and the bottom.
         (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "compost_heap", age: "farm", skill: "core:construction", level: 5, xp: 12.0),
-        // An earth clamp (stations.ron): dirt heaped over a log.
-        (pattern: [["dirt", "dirt", "dirt"], ["dirt", "tag:log", "dirt"], ["dirt", "dirt", "dirt"]], output: "earth_clamp", age: "farm", skill: "core:construction", level: 3, xp: 10.0),
         // A cooking pot: fired clay about a clay pot (Nomad, Crafting 3).
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "clay_pot", "fired_clay"], ["fired_clay", "fired_clay", "fired_clay"]], output: "cooking_pot", age: "farm", skill: "core:crafting", level: 3, xp: 14.0),
         // A well: a ring of cobbles about a pail, under a beam (Farm, Construction 8).

@@ -765,8 +765,8 @@ mod tests {
         let id = |name: &str| blocks.id(&format!("test:{name}")).unwrap();
         // Four logs and one stone: one loaf, and then the logs alone would make planks.
         let mut inventory = Inventory::default();
-        inventory.craft[0] = Some(ItemStack { item: id("oak_log"), count: 4 });
-        inventory.craft[1] = Some(ItemStack { item: id("stone"), count: 1 });
+        inventory.craft[0] = Some(ItemStack::new(id("oak_log"), 4));
+        inventory.craft[1] = Some(ItemStack::new(id("stone"), 1));
         let first = registry.find(&inventory.grid());
         assert_eq!(first.map(|r| r.output), Some(id("bread")));
         assert_eq!(inventory.craft(registry.while_making(first, |_| false), true), 1);
@@ -799,11 +799,11 @@ mod tests {
         assert_eq!(registry.find_near(&held, near).map(|r| r.count), Some(6), "by it, two more");
         assert_eq!(registry.near_tags(), ["chopping_block"]);
         let mut inventory = Inventory::default();
-        inventory.craft[0] = Some(ItemStack { item: log.unwrap(), count: 2 });
+        inventory.craft[0] = Some(ItemStack::new(log.unwrap(), 2));
         let first = registry.find_near(&inventory.grid(), near);
         assert_eq!(inventory.craft(registry.while_making(first, near), true), 2);
         // Held near it, the recipe makes nothing once away.
-        inventory.craft[0] = Some(ItemStack { item: log.unwrap(), count: 2 });
+        inventory.craft[0] = Some(ItemStack::new(log.unwrap(), 2));
         assert_eq!(inventory.craft(registry.while_making(first, |_| false), true), 0);
         // A tag no block has is refused.
         let bad = RecipeRegistry::read("test", r#"(recipes: [(ingredients: ["oak_log"], output: "oak_planks", near: "anvil")])"#).unwrap();

@@ -1,0 +1,9 @@
+// How the game streams the land in (crates/client/src/workers.rs). While a world loads it
+// generates and meshes on every worker it has (the cores less two); once the land in view
+// has come, no more than `playing` streaming jobs run at once, so the rest of the machine's
+// cores stay with the frames. On the 18-core Mac a 40 s flight's 1% low was 143-197 fps with
+// 4 against 39-56 fps with 16 (2026-10-20). The game refuses fewer than 3 (one of each kind
+// of job) or more than 64.
+(
+    playing: 4,
+)

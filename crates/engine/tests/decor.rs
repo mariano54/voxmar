@@ -150,6 +150,15 @@ fn the_singles_load_and_can_be_made() {
     }
     let light = |name: &str| content.blocks.info(content.blocks.id(&format!("base:{name}")).unwrap()).emission;
     assert_eq!((light("candle"), light("brazier"), light("iron_hanging_lantern"), light("stone_lantern"), light("red_paper_lantern"), light("oak_rushlight")), (8, 14, 14, 10, 12, 7));
+    // A rushlight burns out sooner than a candle, down to its bare holder, which a fresh
+    // rush lights again; a settlement's are tended.
+    let (blocks, flames) = (&content.blocks, &content.flames);
+    let (rushlight, candle) = (blocks.expect("base:oak_rushlight"), blocks.expect("base:candle"));
+    let (days, spent) = flames.burns_out(blocks, rushlight).expect("a rushlight burns out");
+    assert!(days < flames.burns_out(blocks, candle).unwrap().0, "a rush burns out before a candle");
+    assert_eq!((blocks.def(spent).name.as_str(), blocks.info(spent).emission), ("base:oak_rushlight_spent", 0));
+    assert_eq!((flames.relit(blocks, spent), flames.relit_with(spent)), (Some(rushlight), Some("reed")));
+    assert!(flames.tended(rushlight) && !blocks.def(rushlight).has_tag("fire"), "tended, and no fire to spread");
     // A metal lantern breaks to its metal; baked in its colour.
     let copper = content.blocks.id("base:copper_hanging_lantern").unwrap();
     assert_eq!(content.blocks.info(copper).drops, content.blocks.id("base:copper_ingot").unwrap());
