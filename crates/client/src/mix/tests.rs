@@ -166,3 +166,16 @@ fn the_music_makes_room_for_jingles_and_bosses_only() {
         assert_eq!(level < 1.0, dips, "{voice:?}: {level}");
     }
 }
+
+/// The shipped mix passes its check; a category given no voices, or more than
+/// [`VOICES_MOST`], fails it.
+#[test]
+fn voices_are_bounded() {
+    let mix = base();
+    assert_eq!(mix.check(), Ok(()));
+    for (n, bad) in [(0, true), (VOICES_MOST, false), (VOICES_MOST + 1, true)] {
+        let mut changed = mix.clone();
+        changed.voices.insert(Category::Creatures, n);
+        assert_eq!(changed.check().is_err(), bad, "{n} voices");
+    }
+}

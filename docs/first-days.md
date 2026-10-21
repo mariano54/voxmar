@@ -43,7 +43,11 @@ paying Farming, Mining and Fishing experience and two bread.
 (Hens in a Row, Fresh Eggs), cook (Camp Cook, level 5), a flock (A Woolly Flock). The main line
 is clay work: Clay Banks, A Pit Kiln, Fire the Clay (twelve fired clay), The Potter, Brick by
 Brick (nineteen kiln bricks, about 40 fired clay: four make two), and Red Metal for the copper the crucible
-needs. The Crucible then The Crucible Kiln: **lighting it ends Farm**. Everything else
+needs. The Crucible then The Crucible Kiln, whose ring is tempered kiln bricks: four fired
+clay and a straw, and straw comes of grain: a tuft of wild wheat picked gives one, a ripe
+field's plant one or two. Twelve bricks take six tufts, so the first kiln waits on no
+field's twelve minutes of growing (that wait left the line nothing new for ten minutes).
+**Lighting it ends Farm**. Everything else
 (husbandry, hunting, mail, home furnishings, ores, exploring) is optional breadth with its
 own rewards, so a player can always see two or three things worth doing.
 
@@ -458,6 +462,20 @@ does Red Metal, then finishes the bricks. Seven runs: the lit Crucible Kiln at 4
 the window from 360 s brings 7 new things (kiln bricks, charcoal, copper ore, ingot and
 pickaxe, the crucible and its station); the longest wait with nothing new is about 150 s
 (firing clay); the longest single-action stretch is 39 to 40 s (17 firings in a row).
+
+### The kiln stretch filled (Oct 21)
+
+On main the window from 360 s held only 4 or 5 new things (the chest, kiln bricks,
+charcoal, the crucible and its station) and failed about one run in three, when the walk
+outlasted 540 s. The bot now does what the book has open
+between firings and while the clamp chars, all of it quests a player meets there:
+Earthenware (bowls and a jar) and A Table for Two (two stools and a table, set by the
+hearth), Straw for the Kiln and the tempered bricks; and once the bricks are shaped, the
+far side of The Kiln Ring, Shelves and Cupboards (a shelf and a cupboard) and A Place to
+Pray (cobblestone fired to stone in the free pit kiln, cut into stone bricks, an altar). The
+pit kiln fires a dozen clay at a time while the bot digs the next load. Six runs: the lit
+Crucible Kiln at 473 to 545 s; the window from 360 s brings 14 to 16 new things; the longest
+single-action stretch is 39 s (49 gravel dug in a row for the clamp's flint).
 
 ## Measured pacing
 

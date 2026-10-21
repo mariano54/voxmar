@@ -40,7 +40,7 @@
             capstone: true,
             why: "At Cooking 14 the pot takes three raw meat, roots or vegetables at once and simmers them into a stew, the best food a pot makes. Carrots, raw small game or raw mutton all go in; cooked food and grain do not. Load it as before, take the stew three minutes later, and keep two.",
             tasks: [[Level("cooking", 14), Have("stew", 2)]],
-            after: ["a_pot_on_the_fire", "roots_in_the_embers", "seed_mix", "a_proper_breakfast"],
+            after: ["a_pot_on_the_fire", "roots_in_the_embers", "a_side_of_beef", "seed_mix", "a_proper_breakfast"],
             rewards: [Xp("cooking", 300.0), Item("honey", 2)],
         ),
         // Fuel: logs to char or coal from a seam, two ways to the Crucible Kiln's charge.
@@ -53,8 +53,8 @@
         ),
         (
             name: "kiln_plans", age: "farm", branch: "fuel", title: "Plans for the Kiln",
-            why: "With fuel in hand, charcoal or coal, plan the kiln it burns in: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up kiln bricks to see what they take.",
-            tasks: [[LookUp("crucible"), LookUp("kiln_bricks")]],
+            why: "With fuel in hand, charcoal or coal, plan the kiln it burns in: open the recipe viewer and look up the crucible, seven kiln bricks round a clay pot, then look up tempered kiln bricks, the straw-bound bricks its ring is built of, to see what they take.",
+            tasks: [[LookUp("crucible"), LookUp("tempered_kiln_bricks")]],
             after: ["charcoal"],
             rewards: [Xp("engineering", 30.0)],
         ),
@@ -137,7 +137,7 @@
         ),
         (
             name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",
-            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks to start the kiln with. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
+            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks toward the seven plain ones of the crucible. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
             tasks: [[Cook("fired_clay", 40)]],
             after: ["the_potter"],
             rewards: [Xp("crafting", 120.0), Item("kiln_bricks", 4)],
@@ -158,23 +158,23 @@
         ),
         (
             name: "fire_the_clay", age: "farm", branch: "main", title: "Fire the Clay",
-            why: "Hold clay and right-click the pit kiln: after a moment it comes out as fired clay. Low Crafting levels crack some, so bring spare (a cracked one is clay again). Fire twelve.",
+            why: "Hold clay and right-click the pit kiln: up to twelve go in, and twelve seconds later the kiln shows them fired. Right-click it again to take them out, none cracked. You need not stand by it, so dig the next load meanwhile. Fire twelve.",
             tasks: [[Cook("fired_clay", 12)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("crafting", 100.0)],
         ),
         (
             name: "first_bricks", age: "farm", branch: "main", title: "First Bricks",
-            why: "Kiln bricks are fired clay pressed hard: four fired clay in the crafting grid make two (Crafting 5). Shape four, and keep sixteen more fired clay in your pack for the next eight. The kiln and its crucible want nineteen bricks in all.",
+            why: "Kiln bricks are fired clay pressed hard: four fired clay in the crafting grid make two (Crafting 5). Shape four, and keep sixteen more fired clay in your pack for the rest. The kiln wants nineteen bricks in all: twelve tempered for the ring, seven plain for the crucible.",
             tasks: [[Craft("kiln_bricks", 4), Have("fired_clay", 16)]],
             after: ["the_potter", "a_clay_store"],
             rewards: [Xp("crafting", 150.0)],
         ),
         (
             name: "brick_by_brick", age: "farm", branch: "main", title: "Brick by Brick",
-            why: "The Crucible Kiln is built of kiln bricks: twelve for its ring and corner pillars, and seven for the crucible at its heart. Four fired clay make two bricks in the crafting grid (Crafting 5), so nineteen bricks are forty fired clay. Keep the pit kiln and the clamp going while you dig the next load, and shape nineteen in all, counting your first.",
-            tasks: [[Craft("kiln_bricks", 19)]],
-            after: ["first_bricks", "a_kiln_load"],
+            why: "The Crucible Kiln is built of kiln bricks: twelve tempered for the ring, seven plain for the crucible. Four fired clay make two plain bricks in the crafting grid (Crafting 5); add a straw to the four at the crafting table and they make two tempered bricks, which keep whole in the kiln's heat. Nineteen bricks are forty fired clay and six straw. Keep the pit kiln and the clamp going while you dig the next load, and shape seven plain, counting your first, and twelve tempered.",
+            tasks: [[Craft("kiln_bricks", 7), Craft("tempered_kiln_bricks", 12)]],
+            after: ["first_bricks", "a_kiln_load", "straw_for_the_kiln"],
             // Its Engineering pays for The Crucible's level 10 until Hammer and Anvil (the kiln-age
             // PR) does: drop it when that lands, so it is never paid twice. 750 makes the level on
             // The Crucible's own chain (about 1,180 of the 1,154 xp, with the crafts it forces).
@@ -182,8 +182,8 @@
         ),
         (
             name: "the_kiln_ring", age: "farm", branch: "main", title: "The Kiln Ring",
-            why: "Choose the kiln's ground, flat and clear, near your pit kiln. Lay eight kiln bricks in a ring round an empty middle, where the crucible will sit, and stand one more on each corner of the ring: twelve bricks set down.",
-            tasks: [[Placed("kiln_bricks", 12)]],
+            why: "Choose the kiln's ground, flat and clear, near your pit kiln. Lay eight tempered kiln bricks in a ring round an empty middle, where the crucible will sit, and stand one more on each corner of the ring: twelve tempered bricks set down.",
+            tasks: [[Placed("tempered_kiln_bricks", 12)]],
             after: ["brick_by_brick"],
             rewards: [Xp("construction", 150.0)],
         ),
@@ -200,6 +200,13 @@
             tasks: [[Pick("wheat_crop", 4), Have("wheat", 4)]],
             after: ["the_farm_age"],
             rewards: [Xp("farming", 100.0), Item("wheat_seeds", 6)],
+        ),
+        (
+            name: "straw_for_the_kiln", age: "farm", branch: "main", title: "Straw for the Kiln",
+            why: "Straw in the clay keeps a kiln brick whole in the Crucible Kiln's heat. A ripe wheat plant you break gives one or two straw, and a wild wheat tuft one. Keep six straw in your pack: four fired clay and a straw make two tempered kiln bricks at the crafting table (Crafting 5).",
+            tasks: [[Have("straw", 6)]],
+            after: ["the_farm_age"],
+            rewards: [Xp("farming", 60.0)],
         ),
         (
             name: "a_field_of_gold", age: "farm", branch: "farming", title: "A Field of Gold",
@@ -257,6 +264,13 @@
             tasks: [[Cook("roast_carrot", 4)]],
             after: ["carrot_patch"],
             rewards: [Xp("cooking", 120.0)],
+        ),
+        (
+            name: "a_side_of_beef", age: "farm", branch: "cooking", title: "A Side of Beef",
+            why: "Aurochs beef is the richest meat the plains give, and it wants a practised cook. Cook whatever your hunting brings until you reach Cooking 12, then roast two beef from an aurochs (Bigger Game) at the campfire or the stove.",
+            tasks: [[Level("cooking", 12), Cook("cooked_beef", 2)]],
+            after: ["a_haunch_for_the_pot", "camp_cook"],
+            rewards: [Xp("cooking", 200.0)],
         ),
         (
             name: "hens_in_a_row", age: "farm", branch: "husbandry", title: "Hens in a Row",
@@ -334,7 +348,7 @@
             name: "a_haunch_for_the_pot", age: "farm", branch: "hunter", title: "A Haunch for the Pot",
             why: "Big game feeds a house for days, but only cooked. Roast a haunch at the campfire or the stove: mutton once your Cooking is 5, pork at 8, beef at 12, venison at 15. Cook one.",
             tasks: [[Cook("cooked_mutton", 1)], [Cook("cooked_pork", 1)], [Cook("cooked_beef", 1)], [Cook("cooked_venison", 1)]],
-            after: ["bigger_game"],
+            after: ["bigger_game", "camp_cook"],
             rewards: [Xp("cooking", 80.0), Xp("hunter", 40.0)],
         ),
         (
@@ -436,9 +450,9 @@
         // Side quests along the water: each teaches where or how a fish bites, or what it is for.
         (
             name: "salt_and_sardines", age: "farm", branch: "fishing", title: "Salt and Sardines",
-            why: "Sardines bite only in salt water: cast into the sea, not a river or a lake. Take your rod to the coast, land four sardines and roast them at a fire: a sardine heals as well as a minnow.",
+            why: "Sardines bite only in salt water: cast into the sea, not a river or a lake. Take your rod to the coast, land four sardines and roast them at a fire (Cooking 5): a sardine heals as well as a minnow.",
             tasks: [[Catch("raw_sardine", 4), Cook("cooked_sardine", 4)]],
-            after: ["patient_angler"],
+            after: ["patient_angler", "camp_cook"],
             side: true,
             rewards: [Xp("fishing", 80.0), Item("bread", 2)],
         ),
@@ -452,9 +466,9 @@
         ),
         (
             name: "cold_water_trout", age: "farm", branch: "fishing", title: "Cold Water Trout",
-            why: "Where you fish matters as much as how well. Trout bite from Fishing 15, and only in cold fresh water: mountain streams, conifer lakes, cool and frozen rivers. Go up into the cold, land two and cook them.",
+            why: "Where you fish matters as much as how well. Trout bite from Fishing 15, and only in cold fresh water: mountain streams, conifer lakes, cool and frozen rivers. Go up into the cold, land two and cook them: a trout wants Cooking 15, a step past the stew.",
             tasks: [[Catch("raw_trout", 2), Cook("cooked_trout", 2)]],
-            after: ["still_water_perch"],
+            after: ["still_water_perch", "a_hearty_stew"],
             side: true,
             rewards: [Xp("fishing", 120.0), Item("bread", 4)],
         ),
@@ -651,7 +665,7 @@
         ),
         (
             name: "a_place_to_pray", age: "farm", branch: "prayer", title: "A Place to Pray",
-            why: "An altar is built of stone bricks, and bricks are cut from smooth stone. Hold cobblestone and right-click your pit kiln: it comes out as stone. Four stone in a square make four stone bricks, and seven bricks (three across the top, one in the middle, three across the bottom) make a stone altar at the crafting table (Construction 5). Place it and right-click it: your prayer points fill, and a bone in hand is offered for Magic experience. Then press C and open Prayers to turn Bark Skin on.",
+            why: "An altar is built of stone bricks, and bricks are cut from smooth stone. Load cobblestone into your pit kiln as you do clay: it comes out as stone. Four stone in a square make four stone bricks, and seven bricks (three across the top, one in the middle, three across the bottom) make a stone altar at the crafting table (Construction 5). Place it and right-click it: your prayer points fill, and a bone in hand is offered for Magic experience. Then press C and open Prayers to turn Bark Skin on.",
             tasks: [[Craft("stone_altar", 1)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("magic", 120.0)],
@@ -760,7 +774,7 @@
             side: true,
             why: "Wild bees nest in hollows at the foot of broadleaf, fruit and blossom trees in a Flower Meadow, a Cherry Grove or Lavender Fields: listen for the hum and look for bees about the roots. Coil a skep from seven wheat and three twine (Crafting 6), light a campfire within four blocks of the nest so the smoke calms them (or hold a torch a moment: its smoke clings to you for half a minute), then hold the skep up to it and right-click (Farming 12): the bees move in, and you carry home a skep of bees. Without smoke they only sting.",
             tasks: [[Level("farming", 12), Craft("skep", 1), Have("bee_skep", 1)]],
-            after: ["herb_garden", "food_enough"],
+            after: ["herb_garden", "food_enough", "the_potter"],
             rewards: [Xp("farming", 300.0), Xp("crafting", 60.0)],
         ),
         (
@@ -900,7 +914,7 @@
             name: "fang_and_stick", age: "farm", branch: "crafting", title: "Fang and Stick",
             why: "A trophy can be a tool. Wolves, lynx and bears drop a fang now and then; lash one to a stick and it is a fang dagger (Crafting 10), quick in the hand. Make one.",
             tasks: [[Craft("fang_dagger", 1)]],
-            after: ["the_farm_age"],
+            after: ["earthenware"],
             side: true,
             rewards: [Xp("crafting", 60.0), Item("bread", 2)],
         ),
@@ -922,9 +936,9 @@
         ),
         (
             name: "five_colours", age: "farm", branch: "crafting", title: "Five Colours",
-            why: "Every flower dyes a cloth its own colour: look a cloth up in the recipe book to see which. Wind flags take five, indigo, white, red, green and amber, tied on one twine (Crafting 9). Dye all five and make the flags.",
+            why: "Every flower dyes a cloth its own colour: look a cloth up in the recipe book to see which. Wind flags take five, indigo, white, red, green and amber, tied on one twine (Crafting 9). Dye all five at the loom, or all five in the grid, then make the flags.",
             tasks: [[Craft("indigo_cloth", 1), Craft("white_cloth", 1), Craft("red_cloth", 1), Craft("green_cloth", 1), Craft("amber_cloth", 1), Craft("wind_flags", 1)], [Cook("indigo_cloth", 1), Cook("white_cloth", 1), Cook("red_cloth", 1), Cook("green_cloth", 1), Cook("amber_cloth", 1), Craft("wind_flags", 1)]],
-            after: ["a_rug_underfoot"],
+            after: ["a_rug_underfoot", "a_kiln_load"],
             side: true,
             rewards: [Xp("crafting", 120.0), Item("bread", 4)],
         ),
