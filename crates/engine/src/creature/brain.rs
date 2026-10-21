@@ -639,6 +639,8 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     }
     mind.looking = taking.is_some();
     if let Some(p) = taking {
+        // Standing to look, it gets its wind back, whatever it then does.
+        rest(mind, dt);
         return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
     }
     // Not running, it gets its wind back (`Tires`).
@@ -786,6 +788,21 @@ pub(super) mod tests {
         let decision = think(&wolf, &mut mind, &situation(&close));
         assert_eq!((decision.pose, doing(&wolf, &mind)), (Pose::Alert, "hunt"), "a look at the one beside it");
         assert!(mind.warning.is_some_and(|w| (w.lapse - 0.2).abs() < 1e-4), "the look held the warning: {:?}", mind.warning);
+    }
+
+    /// A double take is a stand, not a run: prey winded from a sprint gets its wind back
+    /// while it looks, though it is fleeing it looks before.
+    #[test]
+    fn a_double_take_gets_its_wind_back() {
+        let deer = species(&format!(
+            "(creatures: [(name: \"deer\", health: 4, {BODY}, senses: (react: 0.4), temperament: (fear: 0.9), behaviours: [(do: Wander(radius: 6.0)), (do: Flee(radius: 10.0))])])"
+        ));
+        let near = [player(Vec3::new(5.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        (mind.sprinted, mind.winded) = (1.0, 1.0);
+        let decision = think(&deer, &mut mind, &situation(&near));
+        assert!(decision.goal.is_none() && decision.face == Some(near[0].position), "no look first: {decision:?}");
+        assert!(mind.sprinted < 1.0 && mind.winded < 1.0, "the look gave no wind back: {} {}", mind.sprinted, mind.winded);
     }
 
     /// Prey with a double take looks, then flees, and its first decision to flee still

@@ -144,8 +144,10 @@ pub struct Live {
     /// while its way is open.
     pub detour: f32,
     /// The short way round it is following (`path::find`), cell by cell; the goal cell it
-    /// was found for, and when it last looked.
+    /// was found for, and when it last looked; and the cell of it it last reached, or
+    /// set out from.
     pub way: Vec<IVec3>,
+    pub way_from: Option<IVec3>,
     pub way_to: Option<IVec3>,
     pub way_at: u64,
     /// Out of its depth (a land animal), the dry cell it makes for, and the tick it last
@@ -1123,7 +1125,7 @@ impl Server {
         // kept animal, even defending itself, stays in its railed pen.
         let climbs = species.def.boss || creature.owner.is_none() && creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
         // The way it follows after this tick, and the goal cell and tick of a fresh search.
-        let (mut way, mut searched) = (Vec::new(), None);
+        let (mut way, mut way_from, mut searched) = (Vec::new(), None, None);
         // What it wanted before steering: a creature boxed in steers to a standstill but still
         // wants to go, so its stuck clock runs and it gives the goal up.
         let wanted = drive.wish;
@@ -1131,6 +1133,7 @@ impl Server {
             Some(goal) if !held && drive.wish != Vec3::ZERO && motion::walks(movement, water, drive) => {
                 let to = goal.floor().as_ivec3();
                 let mut cells = creature.way.clone();
+                let mut from = creature.way_from;
                 // A way followed to its end is done with: meeting the wall again, it looks again.
                 let stale = cells.is_empty() || creature.way_to.is_none_or(|known| known.as_vec3().distance(to.as_vec3()) > 2.0);
                 // Going round, pressing or boxed in for half a second, or on a way whose
@@ -1149,6 +1152,7 @@ impl Server {
                     tick_cost_tests::SEARCHES.with(|n| n.set((n.get().0 + 1, n.get().1 + found.is_none() as u64)));
                     searched = Some((found.is_some().then_some(to), self.tick));
                     cells = found.unwrap_or_default();
+                    from = Some(walker.corner(body.position + Vec3::Y * 0.01));
                 }
                 // At a cell (beside it, at its level), or already nearer the one after: on to
                 // the next, so it never turns back for a cell it brushed past.
@@ -1179,7 +1183,7 @@ impl Server {
                     if !(level && (off(cell) < 0.1 || past || ((off(cell) < 0.6 || cells.get(1).is_some_and(|after| off(after) < 1.0)) && on()))) {
                         break;
                     }
-                    cells.remove(0);
+                    from = Some(cells.remove(0));
                 }
                 let wish = cells.first().map_or(drive.wish, |cell| {
                     let to = (walker.middle(*cell) - body.position).with_y(0.0);
@@ -1198,14 +1202,17 @@ impl Server {
                         there.translate(to - axis);
                         goes_straight(there, axis, |p| motion::Surroundings::solid(&ground, p))
                     };
-                    if level && (0.5..1.5).contains(&ahead) && aside.length() > LINE_UP && !straight(cell) && lined_up() {
+                    // No gap is lined up for on a diagonal step of its way, so it sweeps
+                    // no boxes there.
+                    let diagonal = from.is_some_and(|from| from.x != cell.x && from.z != cell.z);
+                    if level && !diagonal && (0.5..1.5).contains(&ahead) && aside.length() > LINE_UP && !straight(cell) && lined_up() {
                         (to - axis).normalize_or_zero()
                     } else {
                         to.normalize_or_zero()
                     }
                 });
                 let (heading, side) = motion::steer(&body, &Ground::climbing(self, climbs), movement, water, wish, creature.detour, drive.speed, dt);
-                way = cells;
+                (way, way_from) = (cells, from);
                 (Drive { wish: heading, ..drive }, side)
             }
             _ => (drive, 0.0),
@@ -1233,7 +1240,7 @@ impl Server {
             (creature.shore, creature.shore_at) = (None, None);
         }
         creature.detour = detour;
-        creature.way = way;
+        (creature.way, creature.way_from) = (way, way_from);
         if let Some((to, at)) = searched {
             (creature.way_to, creature.way_at) = (to, at);
             // No way there at all (a player shut in a box, or behind a fence with no gap):
@@ -1766,6 +1773,7 @@ impl Server {
             stuck: 0.0,
             detour: 0.0,
             way: Vec::new(),
+            way_from: None,
             way_to: None,
             shore: None,
             shore_at: None,
