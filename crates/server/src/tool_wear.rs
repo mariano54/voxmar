@@ -109,9 +109,9 @@ impl Server {
     }
 }
 
-/// What burns while carried (a firebrand, `burns:N`) burns down a second at a time,
-/// wherever it is in the inventory, counted in its stack's `wear`; burnt out it becomes
-/// what it leaves (`burns_to:`), or nothing. Once a second.
+/// What burns while held (a firebrand, `burns:N`) burns down a second at a time in the
+/// hand (the selected slot; carried elsewhere it keeps), counted in its stack's `wear`;
+/// burnt out it becomes what it leaves (`burns_to:`), or nothing. Once a second.
 #[derive(Default)]
 pub(crate) struct Burning {
     /// Seconds gone by not yet burnt, under one.

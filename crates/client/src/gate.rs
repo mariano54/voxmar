@@ -6044,7 +6044,8 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let Some(slot) = slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS) else {
                     return fail(world, gate, "firebrand: burns out", format!("the {} is not in the hotbar", name(plan.brand)));
                 };
-                // Its slot named, so the wear needs no wait on the server hearing the hand.
+                // Its slot named for the wear; it burns its last second once the server hears
+                // it is the hand, as only the hand burns (waited on below).
                 world.resource_mut::<LocalPlayer>().selected = slot;
                 world.resource::<Net>().command(&format!("wear 1 {}", slot + 1));
                 gate.advance(now);
