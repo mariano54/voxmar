@@ -1311,7 +1311,7 @@ fn tooltip(
     let words: Vec<Rect> = if pinned.is_some() {
         texts
             .iter()
-            .filter(|(text, node, _, visible)| visible.get() && node.size().min_element() > 0.0 && parents.get(*text).is_ok_and(|p| p.parent() != entity))
+            .filter(|(text, node, _, visible)| visible.get() && node.size().min_element() > 0.0 && parents.get(*text).ok().is_none_or(|p| p.parent() != entity))
             .map(|(_, node, transform, _)| {
                 let scale = node.inverse_scale_factor();
                 Rect::from_center_size(transform.translation * scale, node.size() * scale)
