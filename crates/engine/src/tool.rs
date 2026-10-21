@@ -416,6 +416,21 @@ impl ToolRegistry {
         &self.wear
     }
 
+    /// The slot of `slots` (other than `hand`) holding the spare to bring up for `broken`, a
+    /// tool that broke there: its like first, else a tool of its kind, the one with most uses
+    /// left; a weapon's spare is only its like, whatever kind it is tagged with.
+    pub fn spare(&self, blocks: &BlockRegistry, broken: BlockId, slots: &[Option<crate::inventory::ItemStack>], hand: usize) -> Option<usize> {
+        let kind = self.tool(Some(broken)).kind.filter(|_| !blocks.def(broken).has_tag("weapon"));
+        let fits = |s: &crate::inventory::ItemStack| s.item == broken || kind.is_some() && self.tool(Some(s.item)).kind == kind;
+        slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.map(|s| (i, s)))
+            .filter(|&(i, s)| i != hand && fits(&s) && self.uses(s.item) > 0)
+            .max_by_key(|&(i, s)| (s.item == broken, self.uses(s.item).saturating_sub(s.wear), std::cmp::Reverse(i)))
+            .map(|(i, _)| i)
+    }
+
     /// Seconds `item` burns while held; 0 if it never burns.
     pub fn burns(&self, item: BlockId) -> u16 {
         self.tools.get(item.0 as usize).map_or(0, |tool| tool.burns)
@@ -699,6 +714,7 @@ mod tests {
             block("flint_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2", "uses:50", "mend:log"]),
             block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05", "uses:100", "mend:stone"]),
             block("stone_axe", &["axe", "tool", "tier:2", "speed:4", "uses:100", "mend:stone"]),
+            block("war_axe", &["weapon", "axe", "tool", "tier:2", "speed:4", "uses:100", "mend:stone"]),
         ])
         .unwrap();
         let mut skills = SkillRegistry::default();
@@ -724,6 +740,22 @@ mod tests {
         assert_eq!(tools.speed(Some(id("stone_axe")), id("log")), 4.0);
         assert_eq!(tools.speed(Some(id("log")), id("stone")), 1.0, "a log is no tool");
         assert_eq!(tools.yield_bonus(Some(id("stone_pickaxe")), id("iron_ore")), 0.05);
+    }
+
+    /// A spare for a tool broken in the hand: its like first, else its kind's with most uses
+    /// left; for a weapon, only its like, though it is tagged a tool of a kind.
+    #[test]
+    fn a_spare_is_its_like_or_its_kind_and_a_weapons_only_its_like() {
+        use crate::inventory::ItemStack;
+        let (blocks, _, tools) = setup();
+        let id = |n: &str| blocks.expect(&format!("t:{n}"));
+        let worn = |n: &str, wear: u16| Some(ItemStack { wear, ..ItemStack::new(id(n), 1) });
+        let slots = [None, worn("stone_axe", 90), worn("war_axe", 0), worn("stone_axe", 10), worn("flint_pickaxe", 0)];
+        assert_eq!(tools.spare(&blocks, id("stone_axe"), &slots, 0), Some(3), "its like with most uses left");
+        assert_eq!(tools.spare(&blocks, id("flint_pickaxe"), &slots, 4), None, "not the one in the hand itself");
+        assert_eq!(tools.spare(&blocks, id("war_axe"), &[None, worn("stone_axe", 0)], 0), None, "a weapon's spare is only its like");
+        assert_eq!(tools.spare(&blocks, id("war_axe"), &slots, 0), Some(2));
+        assert_eq!(tools.spare(&blocks, id("stone_pickaxe"), &slots, 0), Some(4), "a tool of its kind");
     }
 
     #[test]
