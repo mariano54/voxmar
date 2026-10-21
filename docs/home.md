@@ -467,6 +467,35 @@ gate's Nest step keeps a junglefowl at the Home step's bag, opens a barrel, make
 due, and checks the egg in the barrel and the chat line (shot `home-nest`, check
 "home: nest").
 
+**Putting things away (Oct 14).** The twelfth pass is the counterpart: one key empties the
+pack into the stores, so a home stays useful without sorting by hand.
+
+- **The key is H** ("home"), the `base:put_away` action, bound in the settings as the
+  "Put away key". It works when walking about and with the inventory open, and does
+  nothing while the chat is open. Every other free letter was a weaker mnemonic, and F, M
+  and the prayer keys X V B N G are taken.
+- **What moves.** Every stack in the pack's 27 main slots whose item already has a stack in
+  one of the home's stores goes there. It fills that item's stacks in the stores first,
+  then empty slots in a store that already holds the item, nearest store first. A store
+  with no stack of the item is never started on, so the barrel of planks stays the
+  barrel of planks. Whatever does not fit stays in the pack.
+- **What stays.** The hotbar is skipped: what is in hand is what the player chose to carry.
+  The pouches, the crafting grid and the pointer are skipped too, and so is any store
+  that is full or does not take the item (`Machine::bin_takes`).
+- **Which stores count.** Those in the home box (the same `home_stores` that Lay and the
+  stations draw from, nearest first), and only while the player stands in their own home.
+  `from_stores` belongs to stations and does not apply. A guest puts nothing into a
+  friend's stores.
+- **What the player hears and reads.** A lid lifted (the `base:open_store` sound, softer). The
+  chat says how many stacks went in (`store.put_away`). It says when nothing matched
+  (`store.put_away.none`), and when the player is not at home (`store.put_away.away`).
+  All three are in en and ja. There is no protocol change: the action rides
+  `ActionTarget::None`, and the inventory and any open store are resent as usual.
+- **Tests.** `put_away` tests in server/src/stores.rs (matched stacks move, the hotbar
+  stays, a full store keeps the rest in the pack, away from home nothing moves). In the
+  gate's Home step, after Lay, check "home: put away": planks carried in the pack go into
+  the barrel when H is pressed.
+
 ## A well by the field
 
 Crops grow best with water within four blocks, and rice not at all without it, so a home

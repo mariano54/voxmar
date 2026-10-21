@@ -48,6 +48,9 @@
         // move items in and out of its slots; anything but a machine in hand (a chute is
         // laid against it).
         (name: "open_store", duration: Instant, requires: [Alive, InReach, Store], effects: [OpenStore]),
+        // Put the pack away at home (H): each stack off the hotbar whose item a store in the
+        // home already holds goes into it (docs/home.md, "Putting things away").
+        (name: "put_away", duration: Instant, requires: [Alive], effects: [PutAway]),
         // Pick the lock of a treasure chest (treasure.ron) with the lockpick in hand; with
         // anything else, be told it is locked.
         (name: "pick_lock", duration: Instant, requires: [Alive, InReach, Locked], effects: [PickLock]),

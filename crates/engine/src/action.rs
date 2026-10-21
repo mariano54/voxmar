@@ -302,6 +302,9 @@ pub enum Effect {
     /// Open the target store beside the actor's inventory, its slots theirs to move items
     /// in and out of until the screen closes (`inventory::STORE`).
     OpenStore,
+    /// Put the actor's pack away into their home's stores: each stack off the hotbar whose
+    /// item a store there already holds goes into that store, as far as it fits.
+    PutAway,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
