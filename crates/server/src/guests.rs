@@ -97,7 +97,13 @@ mod tests {
     #[test]
     fn a_guest_by_a_friends_hearth_is_hearthside_unannounced() {
         let mut server = fixture();
+        // What the guest last saw of their own home, kept to tell them on their return what
+        // it lost (`flames::check_home_return`).
+        let theirs = (vec![server.content.effects.id("base:camp").unwrap()], Some(voxmar_engine::glam::IVec3::new(-40, 64, -40)));
+        let guest = server.players.get_mut(&1).unwrap();
+        (guest.home_steps, guest.home_anchor, guest.home_unchecked) = (theirs.0.clone(), theirs.1, false);
         crate::process::Survival.run(&mut server);
+        assert_eq!((server.players[&1].home_steps.clone(), server.players[&1].home_anchor), theirs, "a visit wrote the host's home over the guest's own");
         assert!(hearthside(&server, 2), "the host is not Hearthside at their own hearth");
         assert!(hearthside(&server, 1), "a guest by the host's hearth is not Hearthside");
         let effect = server.content.effects.id("base:hearthside").unwrap();

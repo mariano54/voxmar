@@ -201,8 +201,8 @@ impl Survival {
         let player = server.players.get_mut(&id).unwrap();
         // What their home meets now, and where it stands, to tell on their return what
         // lights burnt out while they were away cost; not before that is told
-        // (`flames::check_home_return`).
-        if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked) {
+        // (`flames::check_home_return`). Their own home only: a guest's stays as it was.
+        if let Some(home) = home.as_ref().filter(|_| !player.home_unchecked && !guest) {
             (player.home_steps, player.home_anchor) = (effects.home_steps(home), anchor);
         }
         let creative = player.allow_flight;
