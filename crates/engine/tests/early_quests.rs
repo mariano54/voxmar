@@ -428,47 +428,51 @@ fn the_milk_pail_opens_at_the_hunter_level_its_cheapest_milker_asks() {
     assert!(total >= need, "The Milk Pail opens with {total:.0} Hunter experience at the least, short of the {need:.0} Hunter {level} its cheapest milker asks");
 }
 
-/// Quests whose words name the level to train to first, kept so: Seed Mix (Cooking 8) and
-/// Under Lock and Key (Crafting 5) by design calls, and A Place to Pray (Construction 5)
-/// because a reward on its chain would move the Farm walk the bots play.
-const TRAIN_FIRST: [&str; 3] = ["base:seed_mix", "base:under_lock_and_key", "base:a_place_to_pray"];
+/// Quests whose words name the level to train to first, kept so by design calls: Seed Mix
+/// (Cooking 8) and Under Lock and Key (Crafting 5).
+const TRAIN_FIRST: [&str; 2] = ["base:seed_mix", "base:under_lock_and_key"];
 
 /// What each Nomad and Farm quest asks a skill for, against what its `after` chain surely
-/// gives: the skill's start, the highest `Level` goal before it, the chain's Xp rewards, and
-/// the cheapest make of each earlier quest (its least-giving task's crafts, cooks and mines
-/// at the lowest level that makes them), plus the makes its own task asks at a lower level
-/// already in reach (First Ore's coal before its copper). A goal whose make needs more than
-/// that is a level the books never bring the player to, unless a `Level` goal in the same
-/// task tells the player to train first, or the quest is one of `TRAIN_FIRST`.
+/// gives. Sure is the most of: the skill's start, or any `Level` goal in the chain, plus what
+/// comes surely after that point: the experience rewards (as paid, through the book's
+/// scale) of the quest asking that level and of every chain quest that follows it, and the
+/// cheapest makes those quests ask (each earlier quest's least-giving task, its crafts,
+/// cooks and mines at the lowest level that makes them). Goals count what was ever made,
+/// so a thing asked twice is made only as often as the larger count, and a recipe pays per
+/// craft, not per item it gives. The quest's own task adds what it asks at a lower level
+/// beyond that (First Ore's coal before its copper). A goal whose make needs more is a level
+/// the books never bring the player to, unless a `Level` goal in the same task tells the
+/// player to train first, or the quest is one of `TRAIN_FIRST`.
 fn shortfalls(content: &Content) -> Vec<String> {
     let skills = &content.skills;
     let local = |name: &str| name.rsplit(':').next().unwrap_or(name).to_owned();
     let skill = |name: &str| skills.ids().find(|&id| local(&skills.get(id).name) == local(name));
     let item = |name: &str| content.blocks.id(name).or_else(|| content.blocks.id(&format!("base:{name}")));
-    // (skill, level the cheapest make needs, xp it gives each, how many the goal asks).
-    let make = |goal: &Goal| -> Option<(String, u8, f32, u32)> {
+    // (what is counted, skill, level the cheapest make needs, xp a make pays, items a make
+    // gives, how many the goal asks).
+    let make = |goal: &Goal| -> Option<(String, String, u8, f32, u32, u32)> {
         match goal {
             Goal::Craft(name, n) if !name.starts_with("tag:") && name != "any" => {
                 let id = item(name)?;
                 let recipe = content.recipes.iter().filter(|r| r.output == id).min_by_key(|r| r.level)?;
-                Some((local(&skills.get(recipe.skill?).name), recipe.level, recipe.xp, *n))
+                Some((format!("craft {name}"), local(&skills.get(recipe.skill?).name), recipe.level, recipe.xp, recipe.count.max(1) as u32, *n))
             }
             Goal::Cook(name, n) | Goal::CookAt(name, _, n) if !name.starts_with("tag:") && name != "any" => {
                 let id = item(name)?;
                 let recipe = content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id).min_by_key(|r| r.def.level)?;
-                Some((recipe.def.skill.as_deref().map_or("cooking".to_owned(), local), recipe.def.level, recipe.def.xp, *n))
+                Some((format!("cook {name}"), recipe.def.skill.as_deref().map_or("cooking".to_owned(), local), recipe.def.level, recipe.def.xp, recipe.def.count.max(1) as u32, *n))
             }
             Goal::Mine(name, n) => {
                 let rule = content.tools.rule(item(name)?)?;
-                Some((local(&skills.get(rule.skill?).name), rule.level, rule.xp, *n))
+                Some((format!("mine {name}"), local(&skills.get(rule.skill?).name), rule.level, rule.xp, 1, *n))
             }
             _ => None,
         }
     };
-    let mut short = Vec::new();
-    for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+    let paid = |m: &(String, String, u8, f32, u32, u32), count: u32| m.3 * count.div_ceil(m.4) as f32;
+    let chain = |of: &str| -> Vec<String> {
         let mut before: Vec<String> = Vec::new();
-        let mut todo = vec![quest.name.clone()];
+        let mut todo = vec![of.to_owned()];
         while let Some(name) = todo.pop() {
             // An `a|b` either-or is not sure to be done, so it brings nothing.
             for after in content.quests.get(&name).unwrap().after.iter().filter(|a| !a.contains('|')) {
@@ -478,22 +482,66 @@ fn shortfalls(content: &Content) -> Vec<String> {
                 }
             }
         }
-        let earlier = || before.iter().map(|name| content.quests.get(name).unwrap());
-        let sure = |name: &str| -> f32 {
+        before
+    };
+    // A quest's least-giving task in a skill: the makes a player surely does for it.
+    let least = |q: &voxmar_engine::quest::QuestDef, name: &str| {
+        q.tasks
+            .iter()
+            .map(|t| t.iter().filter_map(&make).filter(|m| m.1 == name).collect::<Vec<_>>())
+            .min_by(|a, b| a.iter().map(|m| paid(m, m.5)).sum::<f32>().total_cmp(&b.iter().map(|m| paid(m, m.5)).sum::<f32>()))
+            .unwrap_or_default()
+    };
+    let mut short = Vec::new();
+    for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        let before = chain(&quest.name);
+        // The most of each thing the chain's quests ask, after `from` (all of the chain when none).
+        let asked = |name: &str, from: Option<&str>| -> Vec<(String, (String, String, u8, f32, u32, u32))> {
+            let mut most: Vec<(String, (String, String, u8, f32, u32, u32))> = Vec::new();
+            for q in before.iter().map(|n| content.quests.get(n).unwrap()) {
+                if from.is_some_and(|from| q.name != from && !chain(&q.name).iter().any(|a| a == from)) {
+                    continue;
+                }
+                for m in least(q, name) {
+                    match most.iter_mut().find(|(k, _)| *k == m.0) {
+                        Some((_, given)) => given.5 = given.5.max(m.5),
+                        None => most.push((m.0.clone(), m)),
+                    }
+                }
+            }
+            most
+        };
+        let sure = |name: &str| -> (f32, Vec<(String, (String, String, u8, f32, u32, u32))>) {
             let start = skills.xp_for(skills.get(skill(name).unwrap()).start) as f32 / 10.0;
-            let floor = earlier().flat_map(|q| q.tasks.iter().flatten()).filter_map(|g| match g {
-                Goal::Level(s, n) if local(s) == name => Some(skills.xp_for(*n) as f32 / 10.0),
-                _ => None,
-            });
-            let rewards: f32 = earlier().flat_map(|q| q.rewards.iter()).map(|r| match r {
-                Reward::Xp(s, xp) if local(s) == name => *xp,
-                _ => 0.0,
-            }).sum();
-            let made: f32 = earlier()
-                .map(|q| q.tasks.iter().map(|t| t.iter().filter_map(&make).filter(|m| m.0 == name).map(|m| m.2 * m.3 as f32).sum::<f32>()).fold(f32::MAX, f32::min))
-                .map(|xp| if xp == f32::MAX { 0.0 } else { xp })
-                .sum();
-            floor.fold(start, f32::max) + rewards + made
+            // From the start, or from each `Level` goal in the chain, what surely follows.
+            let mut floors: Vec<(f32, Option<String>)> = vec![(start, None)];
+            for q in before.iter().map(|n| content.quests.get(n).unwrap()) {
+                for g in q.tasks.iter().flatten() {
+                    if let Goal::Level(s, n) = g
+                        && local(s) == name
+                    {
+                        floors.push((skills.xp_for(*n) as f32 / 10.0, Some(q.name.clone())));
+                    }
+                }
+            }
+            floors
+                .into_iter()
+                .map(|(floor, from)| {
+                    let after: f32 = before
+                        .iter()
+                        .map(|n| content.quests.get(n).unwrap())
+                        .filter(|q| from.as_ref().is_none_or(|from| q.name == *from || chain(&q.name).contains(from)))
+                        .flat_map(|q| q.rewards.iter())
+                        .map(|r| match r {
+                            Reward::Xp(s, xp) if local(s) == name => *xp,
+                            _ => 0.0,
+                        })
+                        .sum();
+                    let made = asked(name, from.as_deref());
+                    (floor + after + made.iter().map(|(_, m)| paid(m, m.5)).sum::<f32>(), asked(name, None))
+                })
+                .max_by(|a, b| a.0.total_cmp(&b.0))
+                .unwrap()
         };
         // The quest is open to a player who can do any one of its tasks.
         let worst: Vec<String> = quest
@@ -502,14 +550,18 @@ fn shortfalls(content: &Content) -> Vec<String> {
             .map(|task| {
                 task.iter()
                     .filter_map(|g| make(g).map(|m| (g, m)))
-                    .filter(|(_, (name, level, _, _))| skill(name).is_some() && !task.iter().any(|g| matches!(g, Goal::Level(s, n) if local(s) == *name && n >= level)) && !TRAIN_FIRST.contains(&quest.name.as_str()))
-                    .filter_map(|(g, (name, level, _, _))| {
-                        let sure = sure(&name);
+                    .filter(|(_, m)| skill(&m.1).is_some() && !task.iter().any(|g| matches!(g, Goal::Level(s, n) if local(s) == m.1 && *n >= m.2)) && !TRAIN_FIRST.contains(&quest.name.as_str()))
+                    .filter_map(|(g, (_, name, level, _, _, _))| {
+                        let (sure, ever) = sure(&name);
+                        // What its own task makes first, beyond what the chain ever asked.
                         let own: f32 = task
                             .iter()
                             .filter_map(&make)
-                            .filter(|m| m.0 == name && m.1 < level && skills.xp_for(m.1) as f32 / 10.0 <= sure)
-                            .map(|m| m.2 * m.3 as f32)
+                            .filter(|m| m.1 == name && m.2 < level && skills.xp_for(m.2) as f32 / 10.0 <= sure)
+                            .map(|m| {
+                                let made = ever.iter().find(|(k, _)| *k == m.0).map_or(0, |(_, e)| e.5);
+                                paid(&m, m.5.saturating_sub(made))
+                            })
                             .sum();
                         let (need, have) = (skills.xp_for(level) as f32 / 10.0, sure + own);
                         (need > have).then(|| format!("{g:?} needs {name} {level} ({need:.0} xp), the books surely give {have:.0}"))
