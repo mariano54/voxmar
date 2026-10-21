@@ -5,11 +5,11 @@
 //! that finds no room is not started, and its dispatcher tries again on a later frame or tick.
 //!
 //! Under a limit each kind has its share, since the client asks every frame and the server
-//! only every tick: generation always has a third of the room (at least one job) that the
-//! others may not take, distant land, the least urgent, at most a third, and meshing at
-//! least one. While a player's land around them is missing (any server says so, each tick:
-//! `LandMissing`), as after a teleport beyond the view, there is no limit: that is loading
-//! again.
+//! only every tick: generation always has a third of the room, rounded down (at least one
+//! job: a fifth at a limit of 5), that the others may not take, distant land, the least
+//! urgent, at most that much, and meshing at least one. While a player's land around them
+//! is missing (any server says so, each tick: `LandMissing`), as after a teleport beyond
+//! the view, there is no limit: that is loading again.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -100,6 +100,7 @@ pub fn start(kind: Kind) -> Option<Slot> {
 /// Whether `running` (columns, meshes, distant land) leaves room for one more of `kind`
 /// under `limit` (at least `LEAST`).
 fn room(limit: usize, [columns, meshes, distant]: [usize; 3], kind: Kind) -> bool {
+    // A third, rounded down, and at least one.
     let third = (limit / 3).max(1);
     // Generation's share, however little of it it uses.
     let others = meshes + distant + third.max(columns);
@@ -134,8 +135,9 @@ mod tests {
         taken
     }
 
-    /// At every limit, each kind has room when the others are full: generation its third,
-    /// meshing one at least, distant land a third at most; and the limit holds.
+    /// At every limit, each kind has room when the others are full: generation its third
+    /// (rounded down), meshing one at least, distant land a third at most; and the limit
+    /// holds.
     #[test]
     fn each_kind_has_its_share_at_every_limit() {
         for limit in LEAST..=12 {
