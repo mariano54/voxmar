@@ -655,23 +655,47 @@ impl Geology {
     }
 }
 
-/// Geology already sampled over a square of positions, which falls back to sampling
-/// anywhere else (and keeps those samples, since decorations reaching out of the column
-/// ask for the same few positions over and over, and the relief at the lattice corners
-/// around them, which positions a few blocks apart share).
+/// Geology already sampled over a square of positions, read from the world's tiles of
+/// ground (`Overworld::ground_tile`) the square and a tile round it cover, which falls back
+/// to sampling anywhere else (and keeps those samples, since decorations reaching out of
+/// the column ask for the same few positions over and over, and the relief at the lattice
+/// corners around them, which positions a few blocks apart share).
 pub struct GeoGrid<'a> {
     world: &'a Overworld,
     min: (i32, i32),
     size: i32,
     samples: Vec<GeoSample>,
+    /// The first tile of `tiles`, and how many a side it holds.
+    first: IVec2,
+    side: i32,
+    tiles: Vec<std::cell::OnceCell<Arc<[GeoSample]>>>,
     beyond: RefCell<(FxHashMap<(i32, i32), GeoSample>, Corners)>,
 }
 
 impl<'a> GeoGrid<'a> {
     /// Samples the `size`×`size` positions from `min`.
     pub fn new(world: &'a Overworld, min: (i32, i32), size: i32) -> Self {
-        let samples = world.geo_area(min.0, min.1, size);
-        Self { world, min, size, samples, beyond: RefCell::default() }
+        let tile = voxmar_engine::coords::CHUNK_SIZE;
+        // The tiles under the square, and one more all round for what reaches out of it.
+        let low = IVec2::new(min.0, min.1);
+        let first = low.div_euclid(IVec2::splat(tile)) - 1;
+        let last = (low + size - 1).div_euclid(IVec2::splat(tile)) + 1;
+        let side = (last - first + 1).max_element();
+        let mut grid = Self { world, min, size, samples: Vec::new(), first, side, tiles: (0..side * side).map(|_| Default::default()).collect(), beyond: RefCell::default() };
+        grid.samples = (0..size * size).map(|i| grid.tiled(min.0 + i % size, min.1 + i / size).expect("a tile under the square")).collect();
+        grid
+    }
+
+    /// The sample at (x, z) from the world's tile holding it, when that is one of the grid's.
+    fn tiled(&self, x: i32, z: i32) -> Option<GeoSample> {
+        let size = voxmar_engine::coords::CHUNK_SIZE;
+        let tile = IVec2::new(x, z).div_euclid(IVec2::splat(size));
+        let at = tile - self.first;
+        if !(0..self.side).contains(&at.x) || !(0..self.side).contains(&at.y) {
+            return None;
+        }
+        let samples = self.tiles[(at.y * self.side + at.x) as usize].get_or_init(|| self.world.ground_tile(tile));
+        Some(samples[(z.rem_euclid(size) * size + x.rem_euclid(size)) as usize])
     }
 
     pub fn samples(&self) -> &[GeoSample] {
@@ -682,6 +706,8 @@ impl<'a> GeoGrid<'a> {
         let (i, j) = (x - self.min.0, z - self.min.1);
         if (0..self.size).contains(&i) && (0..self.size).contains(&j) {
             self.samples[(j * self.size + i) as usize]
+        } else if let Some(sample) = self.tiled(x, z) {
+            sample
         } else {
             let (beyond, corners) = &mut *self.beyond.borrow_mut();
             *beyond.entry((x, z)).or_insert_with(|| self.world.geo_with(x, z, corners))

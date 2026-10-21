@@ -44,7 +44,7 @@ the tag, and `Wearing("tag")` while something worn carries it (the charm slot: b
 `tusk_stride`, from Old Tusk's Charge Charm, never from it held in hand); `Near("tag", reach)` while a block carrying it lies within `reach` blocks (1 to 8,
 every way) of the player's feet. A tag no block carries is refused at launch. `Seated` holds
 while the player sits on a seat (`base:sit`, right click on a stool, chair, bench or cushion
-with no block in hand; they sit until they move off it); base's `fireside` (By the Fire: heal
+with no block in hand; they sit until they move off it); base's `fireside` (Fireside: heal
 x1.5, 4° warmer) asks for it with a fire or the hearth within 3, and `at_table` (At the Table:
 a meal heals x1.25 and its good lasts x1.25, as `meal_heal`/`meal_time`) with a table within 2. **Effects that
 cling:** `lingers: SECONDS` makes an effect stay that long after its `when` stops holding (it

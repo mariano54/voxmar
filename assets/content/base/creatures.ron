@@ -15,6 +15,28 @@
 // - `taming` is how players tame it (the Hunter level, trust a feeding gives, experience),
 //   `breeding` how kept ones breed (the Farming level, litter, minutes to grow up) and
 //   `products` what kept ones give on timers, laid or taken with a tool (docs/breeding.md).
+// - `warn` is how it warns a player off before it attacks them (docs/creature-ai.md,
+//   "Warnings"): it stands in its `stance` (nod, crouch, rear, 0 to 1) with its `warn`
+//   sound for `seconds`, and goes for one who stays, or comes within `near`, as if struck.
+//   A hunter warns those it would hunt, as far off, in place of going straight in (no
+//   `radius`); one that only defends itself warns those it sees within `radius` blocks,
+//   then defends its ground. No warning goes to one holding the food that tempts it,
+//   unless it hunts.
+// - `fire` is its fear of fire (docs/creature-ai.md, "Fire"): a torch held at it within
+//   `give` blocks (2 to 8) backs it off, facing the flame, unless it was provoked or the
+//   individual is braver than `fear` (0 to 1: the share that give ground); and at night it
+//   keeps out of a lit fire's ward (a block's or multiblock's `ward`) and goes for no one
+//   inside one, unless `ward: false`. Never for a boss or the supernatural; kept animals
+//   and villagers pay fire no heed.
+// - `tires` is how it tires as it flees (docs/creature-ai.md, "Winded"): flat out for
+//   `after` seconds (1 to 20), then winded at `pace` of its run (0.2 to 0.9) for `rest`
+//   seconds (1 to 30), then flat out again. Set on prey faster than a sprinting player
+//   (6.1), so a chase on foot ends in a catch; hurt, it runs up to `hurt` slower (0 to
+//   0.9, at the last of its health). Kept animals and villages' run as ever.
+// - `flush` is how a game bird sits tight (docs/creature-ai.md, "Flush"): crouched still
+//   while a player is beyond `hold` blocks (1 to 6), then within it bursts away at `burst`
+//   times its run (1 to 2.5) for `seconds` (0.2 to 3). Prey only; kept birds and
+//   villages' sit tight for no one.
 // - `loot` is what it drops: always (chance 1) or by chance, more with the right tool
 //   (`tools`: the tags of what the killer holds) and, for rarer finds, with level.
 (
@@ -54,6 +76,9 @@
     // gap would otherwise come down on a fence two high beyond it. Anything that jumps at
     // all still gets up a block.
     climbing: (step_rise: 1.45),
+    // How often a gene mutates at a birth, before aether raises it up to five times
+    // (docs/breeding.md, "Mutation"): from 0 to 0.2.
+    genetics: (mutation: 0.005),
     creatures: [
         // --- Small and common: where everyone starts -------------------------------------
         (
@@ -73,6 +98,7 @@
                 (name: "snow_rabbit", title: "Snow rabbit", when: [Shows("coat", "white")]),
             ],
             movement: (style: Hopper, walk: 2.2, run: 7.0, turn: 420.0, jump: 7.0),
+            tires: (after: 3.0, pace: 0.4, rest: 4.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:grassland", 1.0), ("tag:heath", 0.8), ("tag:tundra", 0.6), ("tag:forest", 0.3), ("tag:scrubland", 0.5)],
                 comfort: (temperature: (-16.0, 30.0), moisture: (0.12, 2.0)),
@@ -80,7 +106,7 @@
             ),
             group: (size: (1, 3)),
             temperament: (fear: 0.9, nervousness: 0.85, curiosity: 0.2, sociability: 0.35, energy: 0.75),
-            senses: (sight: 18.0, hearing: 24.0),
+            senses: (sight: 18.0, hearing: 24.0, field: 170.0, react: 0.3),
             leash: 14.0,
             diet: (eats: ["short_grass", "clover", "dandelion"], favourite: ["carrot", "wild_carrot"]),
             xp: (kill: 4.0, skill: "hunter"),
@@ -111,6 +137,8 @@
                 (name: "layer", title: "Layer hen", when: [Above("laying", 1.3)]),
             ],
             movement: (walk: 1.5, run: 4.8, turn: 480.0, jump: 6.5),
+            senses: (field: 150.0, react: 0.3),
+            flush: (hold: 3.5, burst: 1.6, seconds: 1.0),
             habitat: (
                 biomes: [("tag:grassland", 0.7), ("tag:jungle", 1.0), ("tag:scrubland", 0.6), ("tag:forest", 0.3)],
                 comfort: (temperature: (6.0, 36.0), moisture: (0.3, 2.4)),
@@ -137,6 +165,7 @@
                 skin: (fur: 0.04, belly: 0.4, markings: [Hood(colour: (34, 104, 62)), Collar(colour: (236, 236, 228), width: 0.025), Saddle(colour: (100, 82, 66))]),
             ),
             movement: (style: Walker, walk: 1.2, run: 4.0, turn: 360.0, jump: 6.0),
+            senses: (field: 150.0, react: 0.3),
             habitat: (
                 biomes: [("tag:wetland", 1.0), ("tag:river", 1.0), ("tag:grassland", 0.2)],
                 comfort: (temperature: (-4.0, 30.0), moisture: (0.6, 3.0)),
@@ -197,6 +226,7 @@
                 (name: "black_sheep", title: "Black mouflon", when: [Shows("fleece", "dark")]),
             ],
             movement: (walk: 1.4, run: 5.5, turn: 260.0, jump: 8.0),
+            senses: (field: 150.0, react: 0.4),
             habitat: (
                 biomes: [("tag:grassland", 0.6), ("tag:heath", 1.0), ("tag:mountain", 1.0), ("tag:highland", 1.0)],
                 comfort: (temperature: (-12.0, 24.0), moisture: (0.2, 1.8)),
@@ -229,6 +259,7 @@
                 (name: "size", kind: Number(mean: 1.0, spread: 0.06, range: (0.8, 1.3), effect: Scale)),
             ],
             movement: (walk: 1.5, run: 8.5, turn: 300.0, jump: 9.5),
+            tires: (after: 3.0, pace: 0.4, rest: 5.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:forest", 1.0), ("tag:grassland", 0.25)],
                 comfort: (temperature: (-15.0, 26.0), moisture: (0.4, 2.2)),
@@ -236,7 +267,7 @@
             ),
             group: (size: (2, 5)),
             temperament: (fear: 0.85, nervousness: 0.8, curiosity: 0.25, sociability: 0.65, energy: 0.5),
-            senses: (sight: 24.0, hearing: 30.0),
+            senses: (sight: 24.0, hearing: 30.0, field: 160.0, react: 0.5),
             leash: 40.0,
             diet: (eats: ["short_grass", "clover", "dandelion"], favourite: ["apple"]),
             xp: (kill: 15.0, skill: "hunter"),
@@ -268,6 +299,7 @@
                 (name: "dairy", title: "Dairy aurochs", when: [Above("milk", 1.3), Below("temper", 0.0)]),
             ],
             movement: (style: Lumberer, walk: 1.2, run: 5.0, turn: 160.0, jump: 7.5),
+            senses: (field: 140.0, react: 0.6),
             habitat: (
                 biomes: [("tag:grassland", 1.0), ("tag:savanna", 0.6), ("tag:forest", 0.2)],
                 comfort: (temperature: (-4.0, 34.0), moisture: (0.2, 1.8)),
@@ -306,6 +338,7 @@
                 skin: (fur: 0.18, belly: 0.2, feet: (36, 28, 24), markings: [Dorsal(colour: (46, 34, 28), width: 0.16), Muzzle(colour: (120, 96, 84))]),
             ),
             movement: (style: Lumberer, walk: 1.3, run: 5.1, turn: 220.0, jump: 7.5),
+            senses: (field: 120.0, react: 0.5),
             habitat: (
                 biomes: [("tag:forest", 1.0), ("tag:broadleaf", 1.0), ("tag:scrubland", 0.7), ("tag:conifer", 0.5), ("tag:grassland", 0.35)],
                 comfort: (temperature: (-12.0, 32.0), moisture: (0.3, 2.4)),
@@ -352,7 +385,7 @@
             ),
             group: (size: (1, 2)),
             temperament: (fear: 0.55, nervousness: 0.5, curiosity: 0.75, sociability: 0.2, energy: 0.7),
-            senses: (sight: 20.0, hearing: 32.0),
+            senses: (sight: 20.0, hearing: 32.0, field: 120.0, react: 0.4),
             leash: 36.0,
             diet: (favourite: ["raw_small_game"]),
             xp: (kill: 12.0, skill: "hunter"),
@@ -363,8 +396,12 @@
             // A new player's first real fight: won without guarding with a third or so of
             // their health left, easily while guarding (engine/tests/first_fights.rs).
             // Between bites it backs off and circles, facing the player, then comes in again.
+            // It growls first, head low and hackles up: a player who backs off is let be.
+            // A torch held at it backs most off; at night it keeps out of firelight.
             name: "wolf", level: 12, health: 13, rarity: Uncommon, weak: Some(Crush),
             attack: (damage: (2, 5), reach: 1.0, every: 1.1, lunge: 1.5, style: Stab, circle: (seconds: 0.8, away: 0.6, pace: 0.7, round: 50.0)),
+            warn: (near: 4.0, seconds: 1.5, stance: (nod: 0.5, crouch: 0.35)),
+            fire: (fear: 0.85, give: 5.0),
             defence: 4,
             body: (
                 size: (0.7, 0.9),
@@ -388,7 +425,7 @@
             ),
             group: (size: (2, 5)),
             temperament: (aggression: 0.6, fear: 0.2, nervousness: 0.3, curiosity: 0.4, sociability: 0.9, territory: 0.7, energy: 0.65),
-            senses: (sight: 22.0, hearing: 32.0),
+            senses: (sight: 22.0, hearing: 32.0, field: 110.0, react: 0.6),
             leash: 48.0,
             diet: (favourite: ["raw_mutton", "raw_beef", "raw_venison"]),
             xp: (kill: 30.0, skill: "hunter"),
@@ -401,8 +438,12 @@
             ],
         ),
         (
+            // It stands up and roars at one who comes too close, and then comes down at them.
             name: "brown_bear", level: 28, health: 40, rarity: Rare, weak: Some(Stab),
             attack: (windup: 0.7, recovery: 0.9, damage: (2, 6), reach: 1.4, every: 1.4, lunge: 1.0, style: Slash),
+            warn: (radius: 8.0, near: 3.0, seconds: 2.0, stance: (rear: 0.7)),
+            // Bolder than a wolf before a torch, but it too keeps out of firelight.
+            fire: (fear: 0.6, give: 5.0),
             defence: 20,
             body: (
                 size: (1.2, 1.4),
@@ -420,7 +461,7 @@
             ),
             group: (size: (1, 1)),
             temperament: (aggression: 0.25, fear: 0.1, nervousness: 0.4, curiosity: 0.5, sociability: 0.1, territory: 0.8, energy: 0.3),
-            senses: (sight: 16.0, hearing: 24.0),
+            senses: (sight: 16.0, hearing: 24.0, field: 100.0, react: 0.8),
             leash: 48.0,
             diet: (eats: ["sweet_berry_bush", "brown_mushroom"], favourite: ["apple"]),
             behaviours: [
@@ -469,6 +510,7 @@
                 skin: (fur: 0.11, belly: 0.35, markings: [EarTips(colour: (120, 50, 24)), TailTip(colour: (150, 62, 28), length: 0.4)]),
             ),
             movement: (style: Hopper, walk: 2.0, run: 6.5, turn: 520.0, jump: 8.0),
+            tires: (after: 2.5, pace: 0.5, rest: 4.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:conifer", 1.0), ("tag:broadleaf", 0.8), ("tag:forest", 0.6)],
                 comfort: (temperature: (-20.0, 26.0), moisture: (0.3, 2.2)),
@@ -550,7 +592,8 @@
             ),
             group: (size: (2, 6)),
             temperament: (fear: 0.85, nervousness: 0.8, curiosity: 0.25, sociability: 0.9, energy: 0.6),
-            senses: (sight: 14.0, hearing: 18.0),
+            senses: (sight: 14.0, hearing: 18.0, field: 150.0, react: 0.3),
+            flush: (hold: 2.5, burst: 2.0, seconds: 0.8),
             leash: 14.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["wheat"]),
             xp: (kill: 3.0, skill: "hunter"),
@@ -579,7 +622,7 @@
             ),
             group: (size: (3, 8)),
             temperament: (fear: 0.3, nervousness: 0.15, curiosity: 0.5, sociability: 1.0, energy: 0.2),
-            senses: (sight: 14.0, hearing: 20.0),
+            senses: (sight: 14.0, hearing: 20.0, field: 150.0, react: 0.5),
             leash: 20.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["mango", "banana"]),
             xp: (kill: 8.0, skill: "hunter"),
@@ -653,7 +696,7 @@
             ),
             group: (size: (2, 5)),
             temperament: (fear: 0.5, nervousness: 0.45, curiosity: 0.55, sociability: 0.75, energy: 0.6, aggression: 0.1),
-            senses: (sight: 24.0, hearing: 20.0),
+            senses: (sight: 24.0, hearing: 20.0, field: 150.0, react: 0.4),
             leash: 28.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["apple", "wheat"]),
             xp: (kill: 10.0, skill: "hunter"),
@@ -704,7 +747,7 @@
             ),
             group: (size: (1, 1)),
             temperament: (aggression: 0.35, fear: 0.3, nervousness: 0.35, curiosity: 0.55, sociability: 0.05, territory: 0.75, energy: 0.55),
-            senses: (sight: 28.0, hearing: 32.0),
+            senses: (sight: 28.0, hearing: 32.0, field: 110.0, react: 0.5),
             leash: 44.0,
             diet: (favourite: ["raw_small_game", "raw_venison"]),
             xp: (kill: 34.0, skill: "hunter"),
@@ -712,8 +755,11 @@
         ),
         (
             // An easy fight for a new player, if a stubborn one.
+            // It hunches and hisses at one who comes too close to it, then goes for their ankles.
             name: "badger", level: 7, health: 12, weak: Some(Crush),
             attack: (windup: 0.35, recovery: 0.4, damage: (1, 2), reach: 0.9, every: 1.4, lunge: 1.5, style: Slash),
+            warn: (radius: 5.0, near: 2.0, seconds: 1.2, stance: (nod: 0.3, crouch: 0.6)),
+            fire: (fear: 0.9, give: 3.0),
             defence: 3,
             body: (
                 size: (0.6, 0.45),
@@ -729,7 +775,7 @@
             ),
             group: (size: (1, 2)),
             temperament: (aggression: 0.2, fear: 0.25, nervousness: 0.4, curiosity: 0.35, sociability: 0.3, territory: 0.85, energy: 0.4),
-            senses: (sight: 8.0, hearing: 18.0),
+            senses: (sight: 8.0, hearing: 18.0, field: 100.0, react: 0.5),
             leash: 20.0,
             diet: (eats: ["brown_mushroom"], favourite: ["strawberry", "apple"]),
             xp: (kill: 18.0, skill: "hunter"),
@@ -806,6 +852,7 @@
                 (name: "size", kind: Number(mean: 1.0, spread: 0.06, range: (0.78, 1.3), effect: Scale)),
             ],
             movement: (style: Hopper, walk: 2.4, run: 9.0, turn: 420.0, jump: 7.5),
+            tires: (after: 2.5, pace: 0.35, rest: 5.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:open", 0.8), ("tag:grassland", 1.0), ("tag:tundra", 1.0), ("tag:heath", 0.8), ("tag:highland", 0.6)],
                 comfort: (temperature: (-30.0, 28.0)),
@@ -813,7 +860,7 @@
             ),
             group: (size: (1, 2)),
             temperament: (fear: 0.85, nervousness: 0.7, curiosity: 0.2, sociability: 0.2, energy: 0.8),
-            senses: (sight: 24.0, hearing: 28.0),
+            senses: (sight: 24.0, hearing: 28.0, field: 170.0, react: 0.3),
             leash: 20.0,
             diet: (eats: ["short_grass", "clover", "dandelion"], favourite: ["carrot", "wild_carrot"]),
             xp: (kill: 6.0, skill: "hunter"),
@@ -838,7 +885,8 @@
             ),
             group: (size: (1, 3)),
             temperament: (fear: 0.85, nervousness: 0.75, curiosity: 0.25, sociability: 0.4, energy: 0.5),
-            senses: (sight: 16.0, hearing: 20.0),
+            senses: (sight: 16.0, hearing: 20.0, field: 150.0, react: 0.3),
+            flush: (hold: 3.0, burst: 1.8, seconds: 1.2),
             leash: 16.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["wheat"]),
             xp: (kill: 4.0, skill: "hunter"),
@@ -954,13 +1002,14 @@
                 (name: "white_reindeer", title: "White reindeer", when: [Shows("coat", "pale"), Above("size", 1.05)]),
             ],
             movement: (walk: 1.5, run: 7.0, turn: 260.0, jump: 8.5),
+            tires: (after: 4.0, pace: 0.45, rest: 5.0, hurt: 0.5),
             habitat: (
                 biomes: [("tag:tundra", 1.0), ("tag:cold", 0.8), ("tag:conifer", 0.4), ("tag:frozen", 0.6)],
                 comfort: (temperature: (-40.0, 12.0)),
             ),
             group: (size: (3, 8)),
             temperament: (fear: 0.55, nervousness: 0.4, curiosity: 0.45, sociability: 0.95, energy: 0.45),
-            senses: (sight: 22.0, hearing: 24.0),
+            senses: (sight: 22.0, hearing: 24.0, field: 160.0, react: 0.5),
             leash: 40.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["mushroom"]),
             xp: (kill: 14.0, skill: "hunter"),
@@ -987,7 +1036,7 @@
             ),
             group: (size: (3, 7)),
             temperament: (aggression: 0.15, fear: 0.3, nervousness: 0.35, curiosity: 0.2, sociability: 0.95, territory: 0.4, energy: 0.3),
-            senses: (sight: 16.0, hearing: 24.0),
+            senses: (sight: 16.0, hearing: 24.0, field: 140.0, react: 0.6),
             leash: 40.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["wheat"]),
             behaviours: [(do: Wander(radius: 24.0)), (do: Graze, weight: 1.5), (do: Herd(spacing: 3.0)), (do: Defend, weight: 1.2), (do: LookAround), (do: Tempted(radius: 6.0))],
@@ -1014,13 +1063,14 @@
                 (name: "draught", title: "Draught horse", when: [Above("size", 1.15), Below("temper", -0.1)]),
             ],
             movement: (walk: 1.6, run: 9.5, turn: 260.0, jump: 9.0),
+            tires: (after: 4.0, pace: 0.35, rest: 6.0, hurt: 0.4),
             habitat: (
                 biomes: [("tag:grassland", 1.0), ("tag:savanna", 0.7), ("tag:open", 0.6), ("tag:highland", 0.5)],
                 comfort: (temperature: (-20.0, 34.0), moisture: (0.1, 1.6)),
             ),
             group: (size: (3, 6)),
             temperament: (fear: 0.6, nervousness: 0.6, curiosity: 0.5, sociability: 0.95, energy: 0.6),
-            senses: (sight: 24.0, hearing: 26.0),
+            senses: (sight: 24.0, hearing: 26.0, field: 160.0, react: 0.4),
             leash: 48.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["apple", "carrot"]),
             xp: (kill: 16.0, skill: "hunter"),
@@ -1047,7 +1097,7 @@
             ),
             group: (size: (1, 2)),
             temperament: (aggression: 0.7, fear: 0.05, nervousness: 0.15, curiosity: 0.2, sociability: 0.2, territory: 0.9, energy: 0.15),
-            senses: (sight: 18.0, hearing: 16.0),
+            senses: (sight: 18.0, hearing: 16.0, field: 90.0, react: 0.6),
             leash: 24.0,
             diet: (favourite: ["raw_beef", "raw_pork", "raw_venison"]),
             xp: (kill: 60.0, skill: "hunter"),
@@ -1114,13 +1164,14 @@
                 skin: (fur: 0.06, belly: 0.4, feet: (40, 34, 30), markings: [Stripes(colour: (60, 44, 34), width: 0.04, spacing: 2.0), Blaze(colour: (242, 236, 224)), Mask(colour: (90, 64, 44))]),
             ),
             movement: (walk: 1.6, run: 10.0, turn: 360.0, jump: 10.0),
+            tires: (after: 3.0, pace: 0.35, rest: 6.0, hurt: 0.4),
             habitat: (
                 biomes: [("tag:savanna", 1.0), ("tag:dry", 0.6), ("tag:open", 0.4), ("tag:scrubland", 0.5)],
                 comfort: (temperature: (14.0, 42.0), moisture: (0.0, 1.2)),
             ),
             group: (size: (3, 8)),
             temperament: (fear: 0.9, nervousness: 0.8, curiosity: 0.3, sociability: 0.95, energy: 0.7),
-            senses: (sight: 30.0, hearing: 26.0),
+            senses: (sight: 30.0, hearing: 26.0, field: 165.0, react: 0.4),
             leash: 40.0,
             diet: (eats: ["short_grass", "clover"], favourite: ["wheat"]),
             xp: (kill: 9.0, skill: "hunter"),
@@ -1142,7 +1193,7 @@
             ),
             group: (size: (2, 5)),
             temperament: (fear: 0.3, nervousness: 0.2, curiosity: 0.4, sociability: 0.8, energy: 0.2, aggression: 0.1),
-            senses: (sight: 24.0, hearing: 20.0),
+            senses: (sight: 24.0, hearing: 20.0, field: 150.0, react: 0.5),
             leash: 40.0,
             diet: (eats: ["short_grass", "dead_bush"], favourite: ["fig", "olives"]),
             xp: (kill: 18.0, skill: "hunter"),
@@ -1193,7 +1244,7 @@
             ),
             group: (size: (1, 1)),
             temperament: (aggression: 0.35, fear: 0.3, nervousness: 0.3, curiosity: 0.5, sociability: 0.05, territory: 0.8, energy: 0.5),
-            senses: (sight: 30.0, hearing: 28.0),
+            senses: (sight: 30.0, hearing: 28.0, field: 110.0, react: 0.5),
             leash: 48.0,
             diet: (favourite: ["raw_mutton", "raw_venison"]),
             xp: (kill: 60.0, skill: "hunter"),

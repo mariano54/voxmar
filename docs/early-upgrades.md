@@ -53,7 +53,7 @@ leading to a step:
 
 | Quest | Age | Parts (all of them) |
 | --- | --- | --- |
-| Stone in Hand | Nomad | craft a stone pickaxe and axe |
+| Stone in Hand | Nomad | craft a grindstone (the stone heads are ground beside it), a stone pickaxe and axe |
 | Dig In | Nomad | craft a stone shovel, then have 4 clay |
 | A Full Stone Kit | Nomad | carry a stone pickaxe, axe, shovel, hoe and knife |
 | Stockpile | Nomad | carry 32 logs and 64 cobblestone |

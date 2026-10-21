@@ -49,7 +49,7 @@
             (name: "{name}_crate_stack", render: Model, shape: "crate_stack", sound: Wood, textures: All("furniture_crate"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "storage", "decor", "wood"]),
             // A window seat: a panelled box under a cushion, built in under a window to sit
             // at (`seat`) with things kept in it (`storage`).
-            (name: "{name}_window_seat", render: Model, shape: "window_seat", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "storage", "decor", "wood"]),
+            (name: "{name}_window_seat", render: Model, shape: "window_seat", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "cushioned", "storage", "decor", "wood"]),
             // A deep sill: a board on two brackets along the wall at the top of its cell, set
             // under a window inside, for a pot or a candle.
             (name: "{name}_sill", render: Model, shape: "deep_sill", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "sill", "decor", "wood"]),
@@ -99,7 +99,7 @@
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
         // of cloth_grey and its kin, multiplied by the dye. Broken, a placed piece gives itself back.
         "dyed": [
-            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "decor", "building", "colour:{name}", "shelter:draughty"]),
+            (name: "{name}_cloth", sound: Moss, textures: All("cloth_grey"), hardness: 0.4, color: (200, 200, 200), tags: ["cloth", "bolt", "decor", "building", "colour:{name}", "shelter:draughty"]),
             (name: "{name}_rug", render: Model, shape: "rug", solid: false, sound: Moss, textures: All("rug_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "rug", "decor", "colour:{name}"]),
             (name: "{name}_banner", render: Model, shape: "banner", facing: true, solid: false, sound: Moss, textures: All("banner_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "banner", "decor", "colour:{name}"]),
             (name: "{name}_wall_hanging", render: Model, shape: "wall_hanging", facing: true, solid: false, sound: Moss, textures: All("hanging_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "drape", "decor", "colour:{name}"]),
@@ -110,7 +110,9 @@
                 swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
             (name: "{name}_curtain_open", render: Model, shape: "curtain_open", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
                 swaps: "{name}_curtain", drops: "{name}_curtain", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
-            (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "light", "decor", "colour:{name}"]),
+            // `paper_lantern` is this alone, not the metal or stone lanterns, for a quest that asks
+            // for paper lanterns (Lanterns of Cloth).
+            (name: "{name}_paper_lantern", render: Model, shape: "paper_lantern", solid: false, sound: Moss, light: 12, textures: All("lantern_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "lantern", "paper_lantern", "light", "decor", "colour:{name}"]),
             (name: "{name}_cushion", render: Model, shape: "cushion", solid: false, sound: Moss, textures: All("cushion_grey"), hardness: 0.2, color: (200, 200, 200), tags: ["cloth", "seat", "cushion", "decor", "colour:{name}"]),
             (name: "{name}_bunting", render: Model, shape: "bunting", facing: true, solid: false, sound: Moss, textures: All("bunting_grey"), hardness: 0.1, color: (200, 200, 200), tags: ["cloth", "bunting", "decor", "yard", "colour:{name}"]),
             (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}", "shelter:draughty"]),
@@ -172,10 +174,12 @@
             name: "wooden_door_open_top", render: Model, shape: "door_open", facing: true, solid: false, support: Below, sound: Wood, textures: All("oak_planks"),
             swaps: "wooden_door_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building"],
         ),
-        // A bale of straw, tied in two places.
+        // A bale of straw, tied in two places: nine straw bound (recipes.ron). One a player
+        // set down comes apart into the nine when broken (no recipe unbinds it, so straw
+        // stays a thing only a harvest gives); a village's gives nothing (`furnishing`).
         (
             name: "hay_bale", sound: Grass, textures: Column(end: "hay_bale_top", side: "hay_bale_side"),
-            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["creative_only", "hay", "farm", "decor", "yard", "building", "shelter:draughty"],
+            drops: "straw", drop_count: 9, hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "yard", "building", "shelter:draughty", "furnishing"],
         ),
         // A barrel of staves held by two iron hoops.
         (

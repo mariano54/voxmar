@@ -951,9 +951,11 @@ const TEND_ANSWER_WITHIN: f32 = 3.0;
 impl Tended {
     /// Tending `species` with `held`, of which (or of whose product) the pack has
     /// `count(item)`.
-    fn new(id: u32, species: &creature::Creature, held: voxmar_engine::block::BlockId, blocks: &voxmar_engine::block::BlockRegistry, count: impl Fn(voxmar_engine::block::BlockId) -> u32, now: f32) -> Self {
+    /// `yield_` is the animal's yield gene, which multiplies what it gives (rounded either
+    /// way, at least one: the server's `husbandry::yielded`).
+    fn new(id: u32, species: &creature::Creature, held: voxmar_engine::block::BlockId, yield_: f32, blocks: &voxmar_engine::block::BlockRegistry, count: impl Fn(voxmar_engine::block::BlockId) -> u32, now: f32) -> Self {
         let (watched, answer, most) = match product_taken_by(species, held, blocks) {
-            Some(product) => (species.products[product], Sound::Idle, species.def.products[product].count.1.max(1) as u32),
+            Some(product) => (species.products[product], Sound::Idle, (species.def.products[product].count.1 as f32 * yield_.max(0.0)).ceil().clamp(1.0, 64.0) as u32),
             None => (held, Sound::Graze, 1),
         };
         Tended { id, watched, had: count(watched), answer, most, until: now + TEND_ANSWER_WITHIN, proposals: 0, harmless: 0 }
@@ -1189,6 +1191,7 @@ fn show(
     }
     let mut built = 0;
     let views: Vec<CreatureView> = std::mem::take(&mut creatures.waiting).into_iter().chain(std::mem::take(&mut creatures.inbox)).collect();
+    let me = creatures.me;
     for view in views {
         if let Some(shown) = creatures.shown.get_mut(&view.id) {
             // Hurt by someone else's blow (ours cry as the server answers them, below).
@@ -1203,11 +1206,16 @@ fn show(
                     Pose::Alert => Some(Sound::Alert),
                     Pose::Resting => Some(Sound::Rest),
                     Pose::Attacking => Some(Sound::Attack),
+                    Pose::Warning => Some(Sound::Warn),
                     Pose::Idle | Pose::Crouched => None,
                 };
                 if let Some(kind) = kind {
                     sounds.push(sound(kind, view.id, &view, shown.position, 0.0));
                 }
+            }
+            // Tamed by this player: it says it is theirs, heard whatever its chance.
+            if view.kept && !shown.view.kept && view.owner.is_some() && view.owner == me {
+                sounds.push(CreatureSound { answering: true, ..sound(Sound::Tamed, view.id, &view, shown.position, 0.0) });
             }
             if view.ready && !shown.view.ready {
                 sounds.push(sound(Sound::Ready, view.id, &view, shown.position, 0.0));
@@ -1542,13 +1550,16 @@ fn show(
             Pose::Crouched => (0.1, 0.25),
             Pose::Attacking => (0.3, 0.05),
             Pose::Idle => (0.0, 0.0),
+            // Warning a player off: its kind's stance (`creature::Warn`), rearing included.
+            Pose::Warning => registry.get(shown.view.species).def.warn.map_or((0.0, 0.0), |w| (w.stance.nod, w.stance.crouch)),
         };
+        let warn_rear = (shown.view.pose == Pose::Warning).then(|| registry.get(shown.view.species).def.warn.map_or(0.0, |w| w.stance.rear)).unwrap_or(0.0);
         // A boss's move shows its own tell, so each reads apart; rearing into a new phase,
         // it rears right up. Staggered, its stagger stance (above) is what shows.
         let (nod, crouch, rear) = match shown.view.tell {
             voxmar_protocol::REARING => (-0.4, 0.0, 1.0),
             voxmar_protocol::STAGGERED => (nod, crouch, 0.0),
-            0 => (nod, crouch, 0.0),
+            0 => (nod, crouch, warn_rear),
             index => {
                 let tell = registry.get(shown.view.species).tell_at(index);
                 (tell.nod, tell.crouch * 0.3, tell.rear)
@@ -2001,7 +2012,7 @@ pub fn aim(
             (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
         });
         let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
-        let engaged = !view.kept && (view.pose == Pose::Attacking || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
+        let engaged = !view.kept && (matches!(view.pose, Pose::Attacking | Pose::Warning) || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
         let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
         let action = if shift && mine {
             Some("base:release")
@@ -2023,7 +2034,8 @@ pub fn aim(
                 && let Some(item) = held
             {
                 let (proposals, harmless) = (net.proposals(), tending.harmless);
-                tending.waiting.push(Tended { proposals, harmless, ..Tended::new(id, species, item, &launch.content.blocks, |item| player.inventory.count(item), now) });
+                let yield_ = voxmar_engine::genes::express(&species.def.genes, &voxmar_engine::genes::unpack(&species.def.genes, &view.genes)).yield_;
+                tending.waiting.push(Tended { proposals, harmless, ..Tended::new(id, species, item, yield_, &launch.content.blocks, |item| player.inventory.count(item), now) });
             }
         }
     }
@@ -2102,9 +2114,14 @@ mod tests {
         let (blocks, creatures) = (&content.blocks, &content.creatures);
         let species = |name: &str| creatures.get(creatures.id(name).unwrap_or_else(|| panic!("{name}")));
         let item = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
-        let tend = |who: &str, held: &str| Tended::new(7, species(who), item(held), blocks, |_| 4, 10.0);
+        let tend = |who: &str, held: &str| Tended::new(7, species(who), item(held), 1.0, blocks, |_| 4, 10.0);
         let shorn = tend("base:mouflon", "base:shears");
         assert_eq!((shorn.watched, shorn.answer, shorn.had, shorn.most), (item("base:wool"), Sound::Idle, 4, 3));
+        // A ewe of a high yield (2.5 times) may give up to eight; a cow of 2.2, up to three
+        // milk: as the server rounds what its gene gives, never past.
+        assert_eq!(Tended::new(7, species("base:mouflon"), item("base:shears"), 2.5, blocks, |_| 4, 10.0).most, 8);
+        assert_eq!(Tended::new(7, species("base:aurochs"), item("base:pail"), 2.2, blocks, |_| 4, 10.0).most, 3);
+        assert_eq!(Tended::new(7, species("base:aurochs"), item("base:pail"), 0.4, blocks, |_| 4, 10.0).most, 1, "at least one");
         assert!(shorn.done(5) && !shorn.done(4), "the wool came, or not yet");
         let milked = tend("base:aurochs", "base:pail");
         assert_eq!((milked.watched, milked.answer), (item("base:milk"), Sound::Idle));
@@ -2151,7 +2168,7 @@ mod tests {
         let [tend, inspect, release, plant] = ["base:tend", "base:inspect", "base:release", "base:plant"].map(|name| content.actions.id(name).unwrap());
         let mut tending = Tending::default();
         tending.propose(&net, &player, tend, 1, None);
-        let fed = Tended { proposals: net.proposals(), harmless: tending.harmless, ..Tended::new(1, content.creatures.get(content.creatures.id("base:mouflon").unwrap()), content.blocks.expect("base:wheat"), &content.blocks, |_| 4, 0.0) };
+        let fed = Tended { proposals: net.proposals(), harmless: tending.harmless, ..Tended::new(1, content.creatures.get(content.creatures.id("base:mouflon").unwrap()), content.blocks.expect("base:wheat"), 1.0, &content.blocks, |_| 4, 0.0) };
         tending.propose(&net, &player, inspect, 2, None);
         tending.propose(&net, &player, release, 3, None);
         assert!(!fed.something_else_since(net.proposals(), tending.harmless), "looked at and let go");

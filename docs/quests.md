@@ -260,6 +260,27 @@ Along the bot's run the open quests are one head per path: the next main quest, 
 Cook, Far Horizons, First Harvest, Patient Angler, A Table for Two, Earthenware, Bigger
 Game, First Metal, Fired Whole and A Place to Pray.
 
+A path waits on the stations its goals need (Oct 21): A Stove and a Quern comes after Fire
+the Clay as well as Snug for Winter, since every workshop piece now takes kiln output (the
+spindle and loom fired clay, the quern stone, which is cobblestone fired in a pit kiln), and
+Hung to Dry comes after Crafting Table, as its rack is a 3 by 3 recipe. A content test
+(`a_quest_asks_only_for_what_its_stations_are_taught_for`) holds every quest on every path to
+this: one of its routes (a quest finishes on any one of its tasks) has the player make only
+what is gathered, mined, or made at stations the quests before it have the player make,
+counting for each goal only the ways the quest book shows for it (`recipe_book::counts`). It
+prints the route it found for each quest. The main-line walk could not catch it: it walks
+only the main line, and it puts down whatever station a recipe needs. What it found: Stone
+in Hand has the player make the grindstone its stone heads are ground at, and A Full Stone
+Kit comes after it; A Fish Supper comes after First Night, which teaches its campfire; and
+the Nomad quests whose goals take hide (A Coin Purse, Pockets, A Stone's Throw, Hide Wraps)
+come after Hung to Dry, whose drying rack turns a hunt's raw hide into hide. The Farm book
+teaches its own rack, as a Farm quest comes after Farm quests only: Bigger Game has the player
+make one, and the Farm quests that take hide (Full Hide Wraps, Light in the Window, Books and
+Banners) come after it. Candlelight and The Beekeeper Calls need no hide: a candle is also a wick
+over lard (a wild boar's drop) or over beeswax, so they come after their own chapters alone. A drop counts only from a creature
+every player meets: the raiders and jailers that also drop hide come only with rare
+wandering parties, and a boss's drop counts once a quest before has the player kill it.
+
 ### Nomad paths, and quests in parts (Oct 14)
 
 The Nomad tab opened ten quests at once on a new world (Wild Harvest, A Pile of Stone,
@@ -420,9 +441,9 @@ names cooked fish alone:
 
 | Quest | After | Teaches | Pays |
 |---|---|---|---|
-| Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
+| Salt and Sardines | Patient Angler, Camp Cook | Sardines bite only in the sea: four caught and cooked (Cooking 5) | Fishing 80, 2 bread |
 | Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, 2 bread |
-| Cold Water Trout | Still Water Perch | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked | Fishing 120, 4 bread |
+| Cold Water Trout | Still Water Perch, A Hearty Stew | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked (Cooking 15) | Fishing 120, 4 bread |
 | Three Waters | Salt and Sardines, Still Water Perch | A fourth kind past minnow, sardine and perch: a trout or a cod | Fishing 150, 4 bread |
 | Fish on the Table | Salt and Sardines | A lit hearth, eight fish cooked and six eaten | Cooking 120, 4 bread |
 
@@ -436,10 +457,10 @@ cloth and dyes. Each pays in bread:
 
 | Quest | After | Teaches | Pays |
 |---|---|---|---|
-| Fang and Stick | The Farm Age | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
+| Fang and Stick | Earthenware | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
 | Lanterns of Cloth | A Rug Underfoot | Paper lanterns (Crafting 6): two made and set down at home, each a light | Crafting 60, 2 bread |
 | A Dooryard | Lanterns of Cloth | An awning and bunting made, then the Dooryard felt (an awning and two yard things under open sky) | Crafting 100, 4 bread |
-| Five Colours | A Rug Underfoot | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
+| Five Colours | A Rug Underfoot, A Kiln Load | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
 
 ## About camp in the Nomad book (Oct 20)
 
@@ -514,7 +535,7 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 | Mining | A Pile of Stone (Nomad) | Stone and coal at 1, copper 5, tin 10 | Wooden to stone pickaxe (Stone in Hand), then copper (Red Metal) |
 | Cooking | First Night (Nomad) | Campfire meat and fish at 1, carrots 2, mutton 5, seed mix 8 | Campfire to cottage stove (Workshop and Stove) |
 | Engineering | Crafting Table (Nomad) | Tools at 1, copper ingots and tools 5, crucible 10, bronze 12 | The crafting table, then the Crucible Kiln |
-| Crafting | Look It Up and Twine and Thong (Nomad) | Pouches 3, kiln bricks and workshop pieces 5, loom 8; fired clay cracks until 12 | The pit kiln (A Pit Kiln) |
+| Crafting | Look It Up and Twine and Thong (Nomad) | Pouches 3, kiln bricks and workshop pieces 5, loom 8 | The pit kiln (A Pit Kiln) |
 | Construction | Homestead Hearth (Nomad) | Stool 1, table 3, bed and altar 5, bookshelf 8 | A workbench at home (A Bench to Work At) |
 | Fishing | Rod and Line (Nomad) | Minnows at 1, sardines 5, perch 10 | The fishing rod |
 | Attack | Something to Swing (Nomad) | Stone weapons at 1, copper 5 | Fist to stone sword or bone club, then copper (Copper Arms) |
@@ -561,6 +582,7 @@ that quest needs.
 | A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
 | Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
 | Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+| A pit kiln firing | 12 s a load | Fire the Clay | Digging the next load, tending the charcoal clamp |
 | A charcoal clamp smouldering | 2 game hours (about 150 s of the quest-book bot's time, which runs about 75 s a game hour) | Charcoal | Brick by Brick: firing clay at the pit kiln to A Kiln Load's forty and crafting kiln bricks; A Second Clamp |
 | A drying rack drying | 10 min (5 by a fire) | Hung to Dry | Hunting for the next load; Trail Rations |
 | A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed, the compost's next part |

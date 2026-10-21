@@ -115,6 +115,7 @@ fn scenes(ambience: &Ambience) -> Vec<Scene> {
         scene(ambience, "waterfall", &["river", "water"], &[("water", 0.6), ("falls", 0.9), ("flowing", 1.0), ("rock", 0.4)]),
         scene(ambience, "campfire_night", &["grassland", "temperate", "open"], &[("grass", 1.0), ("fire", 1.0), ("sun", -0.7), ("temperature", 18.0)]),
         scene(ambience, "by_the_hearth", &["forest", "temperate"], &[("fire", 1.0), ("air", 0.5), ("sky", 0.0), ("reverb", 0.1), ("shelter", 1.0), ("roof", 1.0)]),
+        scene(ambience, "heart_of_the_home", &["forest", "temperate"], &[&INDOORS[..], &[("fire", 1.0), ("home", 6.0), ("sun", -0.5)]].concat()),
         scene(ambience, "storm_outside", &forest_tags, &[&forest[..], STORM].concat()),
         scene(ambience, "storm_by_the_hearth", &forest_tags, &[&forest[..], STORM, INDOORS, &[("fire", 1.0)]].concat()),
         scene(ambience, "quiet_peak", &["mountain"], &[("rock", 0.8), ("relief", 60.0), ("height", 150.0), ("wind", 4.0), ("temperature", 2.0)]),
@@ -136,17 +137,18 @@ fn run(ambience: &Ambience, scene: &Scene, seconds: f32) -> (Vec<(f32, Cue)>, Ve
     (timeline, levels)
 }
 
-/// A hearth or a Crucible Kiln is heard as a fire only while it burns; a campfire or a pit
-/// kiln, always a fire, always.
+/// A hearth is heard as a fire only while it burns, and a Crucible Kiln as a kiln; a
+/// campfire or a pit kiln, always a fire, always.
 #[test]
 fn structures_are_heard_as_fires_only_while_lit() {
     let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
     let ambience = base();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
-    let fire = ambience.groups.iter().position(|g| g.name == "fire").unwrap() as u8;
-    for (name, lit_only) in [("base:hearthstone", true), ("base:crucible", true), ("base:campfire", false), ("base:pit_kiln", false)] {
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content));
+    let group = |name: &str| ambience.groups.iter().position(|g| g.name == name).unwrap() as u8;
+    let (fire, kiln) = (group("fire"), group("kiln"));
+    for (name, heard, lit_only) in [("base:hearthstone", fire, true), ("base:crucible", kiln, true), ("base:campfire", fire, false), ("base:pit_kiln", fire, false)] {
         let id = content.blocks.expect(name).0 as usize;
-        assert_eq!(kinds.group[id], Some(fire), "{name} is not heard as a fire");
+        assert_eq!(kinds.group[id], Some(heard), "{name} is not heard as a {}", ambience.groups[heard as usize].name);
         assert_eq!(kinds.lit_only[id], lit_only, "{name}");
     }
 }
@@ -181,7 +183,10 @@ fn each_place_has_its_own_sound() {
             "lava_cave" => (&["lava", "lava_pop", "cave", "far_drip"], &["stream", "lake", "waterfall", "fire", "fire_snap"]),
             // A fire is heard by the fire, crackling and snapping, under the night outdoors.
             "campfire_night" => (&["fire", "fire_snap", "crickets"], &["lava", "lava_pop", "warbler"]),
-            "by_the_hearth" => (&["fire", "fire_snap"], &["lava", "breeze", "rain_on_roof"]),
+            // Someone else's hearth, or one away from home: the fire, no embers of a home.
+            "by_the_hearth" => (&["fire", "fire_snap"], &["lava", "breeze", "rain_on_roof", "embers"]),
+            // The player's own hearth at the top of the ladder: its embers glow under it.
+            "heart_of_the_home" => (&["fire", "embers", "fire_snap"], &["lava", "breeze", "storm_wind"]),
             "storm_outside" => (&["downpour", "storm_wind"], &["rain_on_roof", "fire"]),
             // Indoors in a storm: the rain on the roof and the hearth, the storm a murmur.
             "storm_by_the_hearth" => (&["rain_on_roof", "fire", "fire_snap"], &["downpour", "storm_wind", "dripping_trees", "leaves", "breeze"]),
@@ -469,7 +474,7 @@ fn ambience_survey() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let generator = Overworld::with_content(seed, content.blocks.clone(), &WorldContent::load(&content).unwrap());
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let kinds = super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content));
     let around = |x: i32, z: i32| {
         let center = ColumnPos::of_block(IVec3::new(x, 0, z));
         let mut world = VoxelWorld::default();
@@ -741,7 +746,7 @@ fn a_draughty_home_whistles_until_daubed() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let blocks = &content.blocks;
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content));
     let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
     let group = ambience.groups.iter().position(|g| g.name == "draughty").expect("a draughty group");
     let draught = ambience.beds.iter().position(|b| b.name == "base:draught").expect("a draught bed");
@@ -844,7 +849,7 @@ fn thatch_hisses_as_it_smoulders_and_crackles_thinner_as_it_burns_out() {
     let content = voxmar_server::load_content(&assets).unwrap();
     let blocks = &content.blocks;
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content));
+    let kinds = super::kinds(&ambience, blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content));
     let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
     let group = |name: &str| ambience.groups.iter().position(|g| g.name == name).unwrap_or_else(|| panic!("a {name} group"));
     let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("a {name} bed"));
@@ -1041,6 +1046,49 @@ fn a_fire_hears_the_weather() {
     assert_eq!(heard(&[("fire", 1.0)]).1, 0, "a dry night");
 }
 
+/// The Farm age's fires: a Crucible Kiln firing roars as a kiln, never as a hearth; an
+/// charcoal clamp smouldering hisses low and its soil ticks as it settles. And the village's
+/// smith works the bellows and its bakers turn the quern by day, never at night. A lit
+/// kiln hisses in the rain by its own sky, and its stack moans on a stormy night.
+#[test]
+fn a_kiln_roars_a_clamp_hisses_and_the_village_grinds() {
+    let ambience = base();
+    let bed = |name: &str| ambience.beds.iter().position(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("no bed {name}"));
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let heard = |set: &[(&str, f32)]| {
+        let (timeline, levels) = run(&ambience, &scene(&ambience, "farm", &["plains", "temperate"], set), 300.0);
+        let played = |name: &str| timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count();
+        (levels, ["clamp_settle", "bellows", "quern", "hearth_settle"].map(played))
+    };
+    let full = |name: &str, levels: &[f32]| levels[bed(name)] > 0.8 * ambience.beds[bed(name)].volume;
+    let quiet = |name: &str, levels: &[f32]| levels[bed(name)] < 1e-3;
+    let (kiln, [_, _, _, settles]) = heard(&[("kiln", 1.0)]);
+    assert!(full("kiln_roar", &kiln) && quiet("fire", &kiln) && settles == 0, "a kiln firing is a kiln, not a hearth");
+    let (clamp, [ticks, ..]) = heard(&[("clamp", 1.0)]);
+    assert!(full("clamp_hiss", &clamp) && ticks > 0 && quiet("kiln_roar", &clamp), "a clamp burning: {ticks} ticks");
+    let (nothing, [ticks, ..]) = heard(&[]);
+    assert!(quiet("kiln_roar", &nothing) && quiet("clamp_hiss", &nothing) && ticks == 0, "no kiln, no clamp");
+    let village = |sun: f32| [("settlement", 10.0), ("settlementedge", 0.0), ("settlementpeople", 30.0), ("sun", sun)];
+    let (_, [_, bellows, quern, _]) = heard(&village(0.8));
+    assert!(bellows > 0 && quern > 0, "the village at work: {bellows} bellows, {quern} quern");
+    let (_, [_, bellows, quern, _]) = heard(&village(-0.8));
+    assert!(bellows == 0 && quern == 0, "the village at night: {bellows} bellows, {quern} quern");
+    // The kiln's top is open: rain hisses into it by its own sky, and a stormy night moans
+    // over its stack as over a hearth's chimney.
+    let by_kiln = |set: &[(&str, f32)], open: bool| {
+        let mut scene = scene(&ambience, "kiln", &["plains"], set);
+        scene.sky.iter_mut().flatten().for_each(|sky| *sky = open);
+        let (timeline, levels) = run(&ambience, &scene, 120.0);
+        (levels[bed("kiln_flue")], timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound("kiln_sizzle"))).count())
+    };
+    let rain = [("kiln", 1.0), ("rain", 1.0), ("raining", 1.0)];
+    assert!(by_kiln(&rain, true).1 > 0, "rain into a lit kiln");
+    assert_eq!(by_kiln(&rain, false).1, 0, "a kiln under a roof");
+    assert_eq!(by_kiln(&[("kiln", 1.0)], true).1, 0, "a dry day");
+    let storm = [&INDOORS[..], &[("kiln", 1.0), ("sun", -0.5), ("wind", 16.0)]].concat();
+    assert!(by_kiln(&storm, false).0 > 0.6 * ambience.beds[bed("kiln_flue")].volume, "a stormy night by the kiln");
+}
+
 /// Every recorded bed's files are there; one a mod mistyped is not, and fails the launch.
 #[test]
 fn recorded_beds_are_there() {
@@ -1069,6 +1117,20 @@ fn hives_and_boards_are_heard_by_their_groups() {
     for id in planks {
         assert_eq!(groups[id.0 as usize].map(|g| ambience.groups[g as usize].name.as_str()), Some("timber"), "{}", content.blocks.def(id).name);
     }
+}
+
+/// A charcoal clamp's flue, the block it burns as, is the clamp heard hissing; a lit
+/// Crucible Kiln's core is the kiln.
+#[test]
+fn a_lit_clamp_and_kiln_are_heard_by_their_groups() {
+    let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+    let content = voxmar_server::load_content(&assets).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let groups = ambience.block_groups(&content.blocks);
+    let group = |name: &str| groups[content.blocks.id(name).unwrap_or_else(|| panic!("{name}")).0 as usize].map(|g| ambience.groups[g as usize].name.as_str());
+    let burning = content.multiblocks.iter().find_map(|m| m.smoulder.as_ref().filter(|_| m.name == "base:charcoal_clamp").map(|s| s.burning)).expect("the clamp smoulders");
+    assert_eq!(groups[burning.0 as usize].map(|g| ambience.groups[g as usize].name.as_str()), Some("clamp"), "the clamp's burning block");
+    assert_eq!(group("base:clamp_flue"), Some("clamp"));
 }
 
 /// Bees drone by their hive on a warm day, and keep in at night, in the cold and while it
@@ -1179,7 +1241,7 @@ fn left_world() -> bevy::prelude::World {
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
     let content = voxmar_server::load_content(&assets).unwrap();
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
+    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content)));
     let mut world = bevy::prelude::World::new();
     world.insert_resource(super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1));
     world.insert_resource(super::Surroundings { started: 7, surveyed: 7, ..Default::default() });
@@ -1211,7 +1273,7 @@ fn the_beds_wait_for_their_recordings() {
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
     let content = voxmar_server::load_content(&assets).unwrap();
     let ambience = Ambience::load(&content.files).unwrap();
-    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content)));
+    let kinds = std::sync::Arc::new(super::kinds(&ambience, &content.blocks, &content.multiblocks, &voxmar_server::wall_shelters(&content), voxmar_server::roof_scan(&content)));
     let mut ambient = super::Ambient::new(ambience, Vec::new(), kinds, content, crossbeam_channel::unbounded().1);
     let mut app = bevy::app::App::new();
     app.add_plugins((bevy::app::TaskPoolPlugin::default(), AssetPlugin::default())).init_asset::<AudioSource>();
@@ -1226,4 +1288,118 @@ fn the_beds_wait_for_their_recordings() {
     app.world_mut().run_system_once(super::receive_clips).unwrap();
     let ambient = app.world().resource::<super::Ambient>();
     assert!(ambient.clips.is_some() && ambient.loading.is_none());
+}
+
+/// The home ladder names effects.ron's homes, lowest first, and a player stands as high on
+/// it as the highest step they hold; a step naming no effect, or one twice, fails the load.
+#[test]
+fn the_home_ladder_follows_the_players_home() {
+    use voxmar_engine::effect::ActiveEffect;
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let ambience = Ambience::load(&content.files).unwrap();
+    let effects = &content.effects;
+    assert_eq!(ambience.check_home(effects), Ok(()));
+    let holding = |names: &[&str]| names.iter().map(|name| ActiveEffect { effect: effects.find(name).unwrap(), seconds_left: None }).collect::<Vec<_>>();
+    let ladder = ambience.home_ladder(effects);
+    assert_eq!(ladder.len(), 6);
+    let step = |names: &[&str]| super::defs::home_step(&ladder, &holding(names));
+    assert_eq!(step(&[]), 0.0);
+    assert_eq!(step(&["mired"]), 0.0, "not a home");
+    assert_eq!(step(&["camp"]), 1.0);
+    assert_eq!(step(&["hearthside", "workbench"]), 2.0);
+    assert_eq!(step(&["camp", "heart_of_the_home"]), 6.0, "the highest held");
+    // The embers grow with each step: none at a camp, faint by a bare hearth, full at the top.
+    let embers = ambience.beds.iter().find(|b| b.name == "base:embers").unwrap();
+    let level = |step: f32| {
+        let mut env = Environment::new(ambience.axes());
+        env.set_group(ambience.groups.iter().position(|g| g.name == "fire").unwrap(), 1.0);
+        env.set(Fixed::Home, step);
+        embers.when.weight(&env)
+    };
+    assert_eq!(level(1.0), 0.0);
+    assert!(level(2.0) > 0.0 && level(2.0) < level(4.0) && level(4.0) < level(6.0), "{} {} {}", level(2.0), level(4.0), level(6.0));
+    assert_eq!(level(6.0), 1.0);
+    for bad in [r#"(home: ["camp", "palace"])"#, r#"(home: ["camp", "camp"])"#] {
+        let mistyped = Ambience::load(&[ContentFile { package: "base".into(), name: FILE.into(), source: bad.into() }]).unwrap();
+        assert!(mistyped.check_home(effects).is_err(), "{bad}");
+    }
+}
+
+/// The works without a smith's noise have their own: hides scraped at the tannery, the
+/// smokehouse's fire, boats at the boathouse, each from its building; and the market's
+/// trade grows with the place, some in a village, a town's stalls busy all day, and none
+/// in a hamlet, which has no stalls, however crowded. By night the tanner and the market
+/// rest.
+#[test]
+fn a_towns_market_is_busier_than_a_villages() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let names = ["tannery", "smokehouse", "moorings", "market", "market_busy"];
+    let stalls = ambience.buildings.iter().position(|set| set.names == ["stall"]).expect("the market sounds from stalls");
+    let heard_with = |people: f32, sun: f32, has_stalls: bool| {
+        let set = [("settlement", 10.0), ("settlementedge", 0.0), ("settlementpeople", people), ("sun", sun)];
+        let mut place = scene(&ambience, "town", &["plains", "temperate"], &set);
+        if !has_stalls {
+            place.buildings[stalls].clear();
+        }
+        let (timeline, _) = run(&ambience, &place, 600.0);
+        names.map(|name| {
+            let at: Vec<_> = timeline.iter().filter_map(|(_, c)| match c { Cue::Sound { sound: s, at, .. } if *s == sound(name) => Some(*at), _ => None }).collect();
+            assert!(at.iter().all(|at| *at == Some(Vec3::new(12.0, 0.0, 0.0))), "{name} from its building: {at:?}");
+            at.len()
+        })
+    };
+    let heard = |people: f32, sun: f32| heard_with(people, sun, true);
+    let [tannery, smokehouse, moorings, market, busy] = heard(30.0, 0.8);
+    assert!(tannery > 0 && smokehouse > 0 && moorings > 0, "a village's works by day: {tannery} {smokehouse} {moorings}");
+    assert!(market > 0 && busy == 0, "a village's stalls now and then: {market}, {busy}");
+    let town = heard(90.0, 0.8);
+    assert!(town[4] > 0 && town[3] + town[4] > 2 * (market + busy), "a town's market: {town:?}, a village's {market} + {busy}");
+    // A hamlet has a trader but no stalls: quiet even at its most crowded (six homes of
+    // four and the trader's two); and the busiest village's stalls are never a town's
+    // market.
+    let hamlet = heard_with(26.0, 0.8, false);
+    assert_eq!(hamlet[3] + hamlet[4], 0, "a crowded hamlet's trader: {hamlet:?}");
+    assert_eq!(heard(45.0, 0.8)[4], 0, "a big village's stalls");
+    let night = heard(90.0, -0.8);
+    assert_eq!([night[0], night[3], night[4]], [0, 0, 0], "the tanner and the market at night: {night:?}");
+}
+
+/// Bench (silent; `cargo test -p voxmar_client --release big_town_sound_cost -- --ignored
+/// --nocapture`): a town of ninety at noon, every set of its buildings twenty times over
+/// round the player, run at 60 frames a second for ten minutes. Prints the mixer's cost a
+/// frame (mean, p99, worst), the one-shots it starts a minute, and the most playing at once
+/// (each as long as its longer variant) against the mix's Ambience cap.
+#[test]
+#[ignore]
+fn big_town_sound_cost() {
+    let ambience = base();
+    let set = [("settlement", 10.0), ("settlementedge", 0.0), ("settlementpeople", 90.0), ("sun", 0.8), ("grass", 0.6), ("timber", 0.8)];
+    let mut town = scene(&ambience, "town", &["plains", "temperate"], &set);
+    town.buildings = (0..ambience.buildings.len())
+        .map(|s| (0..20).map(|i| { let a = (s * 20 + i) as f32 * 0.7; Vec3::new(a.cos() * (8.0 + i as f32 * 2.0), 0.0, a.sin() * (8.0 + i as f32 * 2.0)) }).collect())
+        .collect();
+    let length: Vec<f32> = ambience.sounds.iter().map(|s| (0..2).map(|v| synth::one_shot(s.synth, v).0.len() as f32 / RATE as f32).fold(0.0, f32::max)).collect();
+    let mut mixer = Mixer::new(&ambience, 5);
+    let (mut cues, mut costs, mut playing, mut started, mut most) = (Vec::new(), Vec::new(), Vec::<f32>::new(), 0usize, 0usize);
+    let (dt, seconds) = (1.0 / 60.0, 600.0);
+    for frame in 0..(seconds / dt) as usize {
+        let now = frame as f32 * dt;
+        let begun = std::time::Instant::now();
+        mixer.update(&ambience, &town.env, &town.samples, &town.sky, &town.buildings, Vec3::ZERO, dt, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+        costs.push(begun.elapsed().as_secs_f64() * 1e6);
+        playing.retain(|&end| end > now);
+        for cue in cues.drain(..) {
+            if let Cue::Sound { sound, .. } = cue {
+                started += 1;
+                playing.push(now + length[sound]);
+            }
+        }
+        most = most.max(playing.len());
+    }
+    costs.sort_by(f64::total_cmp);
+    let mean = costs.iter().sum::<f64>() / costs.len() as f64;
+    let (p99, worst) = (costs[costs.len() * 99 / 100], costs[costs.len() - 1]);
+    let cap = crate::sfx::Recordings::load(&voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap().files).map(|r| r.mix.voices.get(&crate::mix::Category::Ambience).copied()).ok().flatten();
+    println!("big town: mixer {mean:.1} us mean, p99 {p99:.1}, worst {worst:.1} a frame; {:.1} one-shots a minute; at most {most} at once (Ambience cap {cap:?})", started as f32 / (seconds / 60.0));
 }

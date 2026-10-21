@@ -97,6 +97,9 @@ Built now (`engine::creature::brain::modules`):
 | hunt | danger | chases and strikes, by RuneScape's rules; strikes up to its height and 1.5 blocks over its feet and down at a head 1.5 under them, from a pit's rim (`strike: (above, below)` on the creature), and only along a way through the air from its body to the player's head or middle (`blow_open`: never through a roof or a wall, and standing at a target it has no such way to, it gives up at once; a charge, which runs at the target first, needs instead a lane along the ground from one side of its body or the other, `charge_open`: a wall across its run shuts it off, a trunk on the line does not); stalkers creep crouched, then pounce; gives up past its leash (unless struck there in the last 3 s: it fights back), or after balking twice running (a search finding no way to its target brings a balk on sooner; standing over or under its target out of that reach, a player down a hole too deep, it has no way at once), then lopes home and leaves players be for 45 s (strolling the side away from them) unless struck again; back at a chase within a minute, it gives up at its first balk |
 | defend | danger | fights back when hurt (the boar, the bull, the bear); gives up as hunt does |
 | curious | social | comes to look from a distance, backs off if you come closer |
+| warn | danger | every creature whose kind has a `warn`: stands its ground and warns a player before it attacks them (its stance and `warn` sound): a hunter those it would hunt, one that only defends itself those it sees within its radius, never one holding its food unless it hunts; goes for one who stays its seconds or comes within `near`, as if struck; lets be one who backs off first (see "Warnings" below) |
+| fire | danger | every creature whose kind has a `fire`: backs away from a player holding a fire at it (a torch), facing them, if it is one of its kind's `fear` share; at night walks out of a lit fire's ward; not once provoked, kept or on an errand (see "Fire" below) |
+| hide | danger | every creature whose kind has a `flush`: crouches still while a noticed player is beyond its `hold`; not once they flushed it, it is hurt, its kin are alarmed, they hold its favourite food, or it is kept or on an errand (see "Flush" below) |
 | return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
 
 Planned (from the deep dive's library): cache food, drink, sleep, bask, seek shade, huddle,
@@ -116,6 +119,17 @@ curse spread, aura, molt rebirth, dream walk.
 | Vibration | burrowers | running feet; sneaking is silent |
 | Aether | supernatural only | the aether field and aether-bearing items |
 
+Where it looks decides what it notices (`senses.field`, `close`, `react` in its data). It sees a
+player within `field` degrees either way of where it faces, with nothing opaque between
+(`Server::in_view`); a deer's eyes see most of the way round (160), a wolf's to the front (110),
+and 180, the default, sees all round. Out of view it notices a player only within `close`
+blocks (it hears and smells them), when they hold its food within its hearing, or once they
+hurt it; a player it has noticed it keeps in mind for `keep` seconds out of sight (default 10, at most 60), so
+turning away does not drop a chase. Just noticing someone, it takes a double take of `react`
+seconds, facing them, alert, before it runs, hunts or comes to look: the moment a player has to
+back off, or to creep closer behind it. A blow skips the double take. What it then does starts
+afresh after the look, so prey that looks and then runs still raises the alarm to its kin.
+
 ## Aggression
 
 - **Temperament, not type.** Hostile is high aggression and low fear; neutral is a
@@ -127,8 +141,93 @@ curse spread, aura, molt rebirth, dream walk.
   both. Weak areas stay safe for strong players; camping one spot calms down.
 - **Provocation**: a blow angers a creature that can fight (if it is brave enough and not
   badly hurt; otherwise it flees) and is remembered. Kin within earshot are alarmed.
-- **Warnings** (planned): many creatures warn before attacking (an adder rattles at 5
-  blocks and strikes at 2; a bear stands up), so players can back away.
+- **Warnings** (Oct 20): a creature whose kind has a `warn` (creatures.ron) warns a
+  player before it attacks them, so they can back away: it stands its ground facing them
+  in its warning stance (a pose, `Pose::Warning`, protocol 58: its `stance` of nod, crouch
+  and rear, drawn as a tell is) and makes its `warn` sound (the wolf's snarls slowed
+  into a low growl, the bear's deep roar, the badger's alarm lowered to a hiss; a kind
+  whose voice has none uses its `alert`, and every kind that warns in the base game has
+  one). If they stay its `seconds`, or come within its `near` blocks, it is provoked
+  (`Mind::provoked`) and goes for them as if they had struck it, its hunt or defence
+  taking over in that same decision. A warning only tells a hunt before it comes, and
+  never changes whom a hunter goes for or when: it warns the one its hunt would go for (the
+  nearest it would hunt, as far off, kept, frightened or on an errand as much as not) if
+  it sees them, and goes unwarned for one it has noticed but cannot see now (one close,
+  its keeper, one who hurt it or holds its food, or one it saw within its `keep`); one it
+  does not see and has not noticed it leaves be. One that only defends itself (a badger, a bear)
+  warns those it sees (in its field of view with a clear line from its eyes, the same
+  `in_view` look it notices by) within its `radius`, and then defends
+  its ground. No warning goes to a player holding the food that tempts it unless it hunts
+  (a hunter's chase outranked the food before, and still does): a lured bear or badger
+  follows the food as before. It warns no one creative, of more than twice its level or
+  settled long in one place, nor having given up a chase, and one that only defends
+  itself not while frightened, kept or on an errand; struck, it fights at once. One clock runs for the creature, whoever it warns
+  (a second player stepping nearer does not start it over), and a warning holds over
+  decisions spent on anything else for `WARN_LAPSE` (0.5 s); a player must go `WARN_EXIT`
+  (1.5) blocks past where it began to warn to be let be, so the edge does not flicker.
+  Then the warning is over, with no grudge, and a later one starts afresh. The wolf growls
+  head low for 1.5 s (at once within 4 blocks), the badger hunches and hisses for 1.2 s
+  within 5 (2), the brown bear stands up and roars for 2 s within 8 (3). Load-checked: an
+  attack to follow it, no boss, a `radius` (2 to 16) only for one that does not hunt, near
+  0.5 to a block inside the radius, seconds 0.5 to 4, stance 0 to 1. Tests: the engine's
+  `a_warning_hunter_warns_then_goes_for_one_who_stays`,
+  `a_defender_that_warns_defends_its_ground` and `warnings_out_of_range_are_refused`; the
+  server's `a_wolf_warns_before_it_goes_for_a_player`,
+  `lured_bears_and_badgers_follow_without_warning` and `a_badger_warns_only_one_it_sees`.
+  The gate's Narrow and Feel steps summon their bear held and let it go with the first
+  blow, as Climb does its wolf: stepping close is meant to provoke it.
+- **Fire** (Oct 21): a creature whose kind has a `fire` (creatures.ron) is afraid of it.
+  A player holding a fire (an item tagged `fire`: a torch) at it, one it has noticed
+  (`Senses`: seen where it looks, or close by, and kept in mind a while as it turns away),
+  within its `give` blocks, it backs away from, facing them (in its warning stance, for one that
+  warns), until they are `give` off and a block more (`FIRE_EXIT`); a warning it was giving
+  lapses. Its kind's `fear` is the share that give ground, each individual by its own
+  roll (`Fire::gives_ground`); the bold rest stand theirs. Held off, one that warns
+  warns from beyond the torch as long as it is held and never comes for them by its
+  warning's time (only within its `near`, which the torch keeps it out of), nor hunts them
+  unwarned when it does not see them; put away, it does. At night, unless `ward: false`, it keeps out of a lit fire's ward: a block's
+  `ward` (a campfire, 8 blocks) or a lit multiblock's (the Homestead Hearth 16, the
+  Crucible Kiln 10). Standing in one it walks out past its edge, a stroll (roam or
+  wander) that would end in one is dropped, and a player standing in one it neither
+  hunts nor warns. The server finds the wards each second at night (`find_wards`: the lit
+  multiblocks', and warding blocks within 20 blocks across and 5 up or down of each
+  player). Provoked, it fights whatever the light; kept animals and those on an errand
+  (villagers, guards) pay fire no heed; a boss or a supernatural kind may not have a
+  `fire`. Base game: wolf (fear 0.85, give 5), brown bear (0.6, 5), badger (0.9, 3).
+  Tests: the brain's `fire_keeps_the_wild_back` and `fire_out_of_range_is_refused`;
+  the server's `a_torch_holds_a_wolf_off`, `wolves_keep_out_of_firelight_at_night` and
+  `a_player_by_a_lit_hearth_is_let_be_at_night`; `wards_out_of_range_are_refused`.
+- **Flush** (Oct 21): a game bird whose kind has `flush` (creatures.ron) sits tight: a
+  player it has noticed beyond its `hold` it lets be, crouched still (the `hide` module),
+  and a player within its `hold` it bursts away from (`Flee` takes `hold` as its distance)
+  at `burst` times its run for its first `seconds`, raising the alarm so its kin burst
+  with it. Flushed, it recalls being scared by them (`Memory::ScaredBy`, 10 s) and runs on
+  at its kind's distance rather than settle again at the edge of its hold. Hurt, it flees
+  as any prey; kept or on an errand it sits tight for no one. A stalker who keeps coming
+  gets close, and is startled at the last. Refused at load: hold outside 1 to 6 blocks,
+  burst outside 1 to 2.5, seconds outside 0.2 to 3, or a flush on a boss, a supernatural
+  kind or one that attacks. Base game: pheasant (hold 3, burst 1.8, 1.2 s), quail (2.5,
+  2, 0.8 s), junglefowl (3.5, 1.6, 1 s). Tests: the brain's
+  `a_game_bird_sits_tight_then_bursts_away` and the server's of the same name (each bird,
+  walked up to in the open, crouches unmoved to half a block outside its hold, and one
+  step in it is fleeing faster than its run; with no burst it is not).
+- **Winded** (Oct 21): a creature whose kind has `tires` (creatures.ron) runs flat out
+  from a threat for its `after` seconds, then winded at its `pace` of its run for `rest`
+  seconds, then flat out again; time not spent fleeing gets its wind back a second for a
+  second (`Mind::sprinted`, `Mind::winded`). A kept animal or one on an errand runs as
+  ever. Hurt, it limps: it runs `hurt` slower at the last of its health, in proportion
+  above (a creature does not heal), so each blow a hunter lands brings the catch nearer.
+  The base game sets it on the prey faster than a sprinting player (6.1 blocks a second):
+  rabbit (3 s, 0.4, 4 s, hurt 0.5), hare (2.5, 0.35, 5, 0.5), red squirrel (2.5, 0.5, 4,
+  0.5), red deer (3, 0.4, 5, 0.5), reindeer (4, 0.45, 5, 0.5), wild horse (4, 0.35, 6,
+  0.4) and gazelle (3, 0.35, 6, 0.4), each averaging under a sprint over a sprint and a
+  rest, so a first hunt on foot ends in a catch: first-days.md's slowest wait was the chase
+  for the bed's hides. Tests: the brain's `prey_that_tires_runs_winded_after_a_sprint`;
+  the server's `a_sprinting_hunter_runs_down_winded_prey` (a rabbit and a red deer run
+  down within 20 s on open ground; without `tires` the rabbit is not) and
+  `a_hurt_rabbit_limps` (at a third of its health, from the same seed and spot, it covers
+  0.63 of an unhurt one's ground in its sprint, the data saying 0.67; 1.00 without the
+  limp).
 
 ## Roaming
 
@@ -215,7 +314,12 @@ if it jumps, down no further than `SAFE_DROP` in a chase and otherwise no furthe
 it climbs back unless onto open ground (`Walker::drop`, `way_out`), at most 1500 cells within 24 blocks, again
 at most once a second and only when its goal has moved. It walks the cells' centres, still
 steering, so a wolf finds the doorway in a wall (a shut door is a wall) and a sheep after
-wheat follows the player through it. A creature is made facing open air, so none starts
+wheat follows the player through it. Before a gap barely wider than it that its box would
+not go straight through from where it is (a boar come along a fence to a gate), it first
+makes for the point square in front of the gap's middle, a cell back, and goes in from
+there; it does so only where it would go straight in from that point, so a step it climbs
+is no gap. Cattle broader than a block (an aurochs, a bison) fit no gate one wide; they
+are led through a double gate (`<timber>_double_gate`). A creature is made facing open air, so none starts
 with its head in a trunk. Next, from the deep dive:
 
 - A per-species movement profile for that search (step, jump, safe fall, media) and sparse
