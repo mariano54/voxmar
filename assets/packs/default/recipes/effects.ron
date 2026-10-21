@@ -257,7 +257,7 @@
             "mbmmbmwwmm",
             "mmmmmmmmmm",
         ])]),
-        // By the Fire: a stool drawn up to a small fire.
+        // Fireside: a stool drawn up to a small fire.
         "ui/effect/fireside": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'r': "#c22a1a", 'o': "#f07818", 'y': "#ffd04a", 'w': "#a06a3a", 'd': "#6a4222"}, rows: [
             "......r...",
             ".....ror..",

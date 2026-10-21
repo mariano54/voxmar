@@ -389,6 +389,16 @@ pub struct Situation<'a> {
     pub night: bool,
 }
 
+/// What a player is sure to have to bring an effect on with (`EffectRegistry::can_feel`):
+/// the tags of what they have, each with how many carry it, the tags of each food they
+/// have to eat, whether they have a home, and the quests they have done (full names).
+pub struct Means<'a> {
+    pub tags: &'a [(String, u32)],
+    pub foods: &'a [Vec<String>],
+    pub home: bool,
+    pub done: &'a [String],
+}
+
 /// How many blocks with each tag lie around a home: the tags are those effects ask of it
 /// (`EffectRegistry::home_tags`). And the walls about the room it stands in, when effects
 /// ask after them (`EffectRegistry::home_walls`).
@@ -825,6 +835,36 @@ impl EffectRegistry {
             }
         }
         given
+    }
+
+    /// Whether `effect` can be had with only `means`, by the rules the server gives effects
+    /// by: a food of `means` eaten (`given_by`), else its `when` met as each tick judges it
+    /// (`linger`, then `active`, so a replaced one is not had) at some hour, in or out, sat
+    /// (with a `seat`) or standing, at home (with one) or away, warmed (with a `fire`) or
+    /// not, with what `means` has in hand, worn, within every reach and about the home, its
+    /// room walled in the best shelter `means` has. The weather is calm and the air mild: a
+    /// feeling that needs weather, a biome or a cold is none a player can count on.
+    pub fn can_feel(&self, effect: EffectId, means: &Means) -> bool {
+        if means.foods.iter().any(|tags| self.given_by(tags).iter().any(|&(e, _)| e == effect)) {
+            return true;
+        }
+        let tags: Vec<String> = means.tags.iter().map(|(tag, _)| tag.clone()).collect();
+        let has = |tag: &str| tags.iter().any(|t| t == tag);
+        let near: Vec<(String, i32)> = self.near_asks.iter().filter(|(tag, _)| has(tag)).cloned().collect();
+        let walls = Shelter::of(&tags).map_or_else(Walls::default, |shelter| Walls::all(shelter, 1));
+        let survey = HomeSurvey { counts: means.tags.to_vec(), walls };
+        let weather = Weather::NONE;
+        (0..32u8).any(|bits| {
+            let bit = |n: u8| bits & (1 << n) != 0;
+            let (outdoors, night, seated, at_home, warmed) = (bit(0), bit(1), bit(2), bit(3), bit(4));
+            if (seated && !has("seat")) || (at_home && !means.home) || (warmed && !has("fire")) {
+                return false;
+            }
+            let situation = Situation { felt: 15.0, warmed, outdoors, weather: &weather, biome: "", biome_tags: &[], home: at_home.then_some(&survey), done: means.done, held: &tags, near: &near, worn: &tags, seated, night };
+            let mut timed = Vec::new();
+            self.linger(&situation, &mut timed);
+            self.active(&situation, &timed).iter().any(|a| a.effect == effect)
+        })
     }
 
     /// Whether effect `winner` hides `loser` while it lasts.

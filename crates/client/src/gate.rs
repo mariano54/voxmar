@@ -582,7 +582,7 @@ steps! {
     /// a lit room's window glows, and a campfire lights the ground around it warm.
     Door,
     /// A stool by a campfire, right-clicked with nothing to place in hand, is sat on: the
-    /// eye drops, the server says so, and By the Fire comes on (shot `seat-fire`); a step
+    /// eye drops, the server says so, and Fireside comes on (shot `seat-fire`); a step
     /// forward stands the player up, the eye back where it was.
     Seat,
     /// Walking forward with jump never pressed steps up a slab, a stair, a block and a slab
@@ -9146,7 +9146,7 @@ fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
     }
 }
 
-/// Server seconds the seat step waits on each answer (sat, By the Fire, stood up), with
+/// Server seconds the seat step waits on each answer (sat, Fireside, stood up), with
 /// at least `UNANSWERED_SWINGS` clicks or paced looks in them.
 const SEAT_WAIT: f32 = 8.0;
 
@@ -9232,7 +9232,7 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.tap(world, aimed && empty_handed, now);
             }
         }
-        // Sat by the fire: the eye drops below standing, and By the Fire comes on.
+        // Sat by the fire: the eye drops below standing, and Fireside comes on.
         2 => {
             let (eye, standing) = (world.resource::<LocalPlayer>().eye().y, standing_eye(world));
             let lower = eye < standing - 0.25;
@@ -9240,11 +9240,11 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
                 if gate.shot(world, "seat-fire").is_none() {
                     return;
                 }
-                gate.check("seat: by the fire", Ok(format!("sat on a stool under a roof two up, by a campfire: the eye dropped {:.2} below standing there, and By the Fire came on", standing - eye)));
+                gate.check("seat: by the fire", Ok(format!("sat on a stool under a roof two up, by a campfire: the eye dropped {:.2} below standing there, and Fireside came on", standing - eye)));
                 gate.check("seat: at the table", Ok("sat with a table beside the stool, At the Table came on".into()));
                 gate.advance(now);
             } else if gate.waited_out(SEAT_WAIT) {
-                gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, By the Fire {}, At the Table {}", fireside(world), at_table(world))));
+                gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, Fireside {}, At the Table {}", fireside(world), at_table(world))));
                 leave(world, gate);
             }
         }

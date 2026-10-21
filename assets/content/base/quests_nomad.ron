@@ -103,8 +103,8 @@
             tasks: [[Craft("campfire", 1), CookAt("tag:edible", "campfire", 1)]],
             rewards: [Xp("cooking", 93.0), Item("torch", 4)],
         ),
-        // Side quests on the way to the hearth, on the cooking and home paths (the main line's
-        // walk counts no buffs): what fire, food and a home at night give.
+        // Side quests on the way to the hearth, on the cooking and home paths: what fire, food
+        // and a home at night give.
         (
             name: "a_hot_meal", age: "nomad", branch: "cooking", title: "A Hot Meal",
             why: "What you eat does more than fill you. Hold a food and use it to eat while you are hurt: a cooked meat leaves you Hearty, with room for a tenth more health while it lasts. Eat a cooked meat when you are hurt and feel it.",
