@@ -54,9 +54,8 @@ pub use voxmar_engine::weather::Weather;
 // 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
 // 57: tools wear (ItemStack::wear) and ServerMessage::ToolWore.
 // 60: ServerMessage::Shown, what stands on the blocks that show what they hold (a shelf's
-// things; 58 and 59 are other lanes').
-// 61: ServerMessage::Shown a column at a time, to the players who have it.
-pub const PROTOCOL_VERSION: u32 = 61;
+// things), a column at a time to the players who have it (58 and 59 are other lanes').
+pub const PROTOCOL_VERSION: u32 = 60;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
