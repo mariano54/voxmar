@@ -223,8 +223,8 @@
         ),
         (
             name: "camp_cook", age: "farm", branch: "cooking", title: "Camp Cook",
-            why: "Every dish trains Cooking. Duck wants level 3, mutton 5 and crab 6, and a higher level burns less. Cook a mix of meat and fish, whatever your hunting and fishing bring, until you reach Cooking 5.",
-            tasks: [[Level("cooking", 5)]],
+            why: "Every dish trains Cooking. Duck wants level 3, mutton 5 and crab 6, and a higher level burns less. Roast six small game from your hunting at the campfire, and cook whatever else your hunting and fishing bring, until you reach Cooking 5.",
+            tasks: [[Cook("cooked_small_game", 6), Level("cooking", 5)]],
             after: ["the_farm_age"],
             rewards: [Item("bread", 6)],
         ),
@@ -244,8 +244,8 @@
         ),
         (
             name: "a_side_of_beef", age: "farm", branch: "cooking", title: "A Side of Beef",
-            why: "Aurochs beef is the richest meat the plains give, and it wants a practised cook. Cook whatever your hunting brings until you reach Cooking 12, then roast two beef from an aurochs (Bigger Game) at the campfire or the stove.",
-            tasks: [[Level("cooking", 12), Cook("cooked_beef", 2)]],
+            why: "Aurochs beef is the richest meat the plains give, and it wants a practised cook. Roast four mutton (Cooking 5) and four pork (Cooking 8) from your hunting on the way up to Cooking 12, then roast two beef from an aurochs (Bigger Game) at the campfire or the stove.",
+            tasks: [[Cook("cooked_mutton", 4), Cook("cooked_pork", 4), Level("cooking", 12), Cook("cooked_beef", 2)]],
             after: ["a_haunch_for_the_pot", "camp_cook"],
             rewards: [Xp("cooking", 200.0)],
         ),

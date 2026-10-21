@@ -427,3 +427,119 @@ fn the_milk_pail_opens_at_the_hunter_level_its_cheapest_milker_asks() {
     }
     assert!(total >= need, "The Milk Pail opens with {total:.0} Hunter experience at the least, short of the {need:.0} Hunter {level} its cheapest milker asks");
 }
+
+/// What each Nomad and Farm quest asks a skill for, against what its `after` chain surely
+/// gives: the skill's start, the highest `Level` goal before it, the chain's Xp rewards, and
+/// the cheapest make of each earlier quest (its least-giving task's crafts, cooks and mines
+/// at the lowest level that makes them). A goal whose make needs more than that is a level
+/// the books never bring the player to, unless the quest itself names the level to reach:
+/// a `Level` goal in the same task, or the level in its words ("seed mix (Cooking 8)"), is
+/// the book telling the player to train first, so it is not counted against itself.
+fn shortfalls(content: &Content) -> Vec<String> {
+    let skills = &content.skills;
+    let local = |name: &str| name.rsplit(':').next().unwrap_or(name).to_owned();
+    let skill = |name: &str| skills.ids().find(|&id| local(&skills.get(id).name) == local(name));
+    let item = |name: &str| content.blocks.id(name).or_else(|| content.blocks.id(&format!("base:{name}")));
+    // (skill, level the cheapest make needs, xp it gives each, how many the goal asks).
+    let make = |goal: &Goal| -> Option<(String, u8, f32, u32)> {
+        match goal {
+            Goal::Craft(name, n) if !name.starts_with("tag:") && name != "any" => {
+                let id = item(name)?;
+                let recipe = content.recipes.iter().filter(|r| r.output == id).min_by_key(|r| r.level)?;
+                Some((local(&skills.get(recipe.skill?).name), recipe.level, recipe.xp, *n))
+            }
+            Goal::Cook(name, n) | Goal::CookAt(name, _, n) if !name.starts_with("tag:") && name != "any" => {
+                let id = item(name)?;
+                let recipe = content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id).min_by_key(|r| r.def.level)?;
+                Some((recipe.def.skill.as_deref().map_or("cooking".to_owned(), local), recipe.def.level, recipe.def.xp, *n))
+            }
+            Goal::Mine(name, n) => {
+                let rule = content.tools.rule(item(name)?)?;
+                Some((local(&skills.get(rule.skill?).name), rule.level, rule.xp, *n))
+            }
+            _ => None,
+        }
+    };
+    // "Cooking 8" in the quest's words, as the books write a level.
+    let named = |why: &str, name: &str, level: u8| {
+        let mut title = name.to_owned();
+        title[..1].make_ascii_uppercase();
+        why.contains(&format!("{title} {level}"))
+    };
+    let mut short = Vec::new();
+    for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        let mut before: Vec<String> = Vec::new();
+        let mut todo = vec![quest.name.clone()];
+        while let Some(name) = todo.pop() {
+            // An `a|b` either-or is not sure to be done, so it brings nothing.
+            for after in content.quests.get(&name).unwrap().after.iter().filter(|a| !a.contains('|')) {
+                if !before.contains(after) {
+                    before.push(after.clone());
+                    todo.push(after.clone());
+                }
+            }
+        }
+        let earlier = || before.iter().map(|name| content.quests.get(name).unwrap());
+        let sure = |name: &str| -> f32 {
+            let start = skills.xp_for(skills.get(skill(name).unwrap()).start) as f32 / 10.0;
+            let floor = earlier().flat_map(|q| q.tasks.iter().flatten()).filter_map(|g| match g {
+                Goal::Level(s, n) if local(s) == name => Some(skills.xp_for(*n) as f32 / 10.0),
+                _ => None,
+            });
+            let rewards: f32 = earlier().flat_map(|q| q.rewards.iter()).map(|r| match r {
+                Reward::Xp(s, xp) if local(s) == name => *xp,
+                _ => 0.0,
+            }).sum();
+            let made: f32 = earlier()
+                .map(|q| q.tasks.iter().map(|t| t.iter().filter_map(&make).filter(|m| m.0 == name).map(|m| m.2 * m.3 as f32).sum::<f32>()).fold(f32::MAX, f32::min))
+                .map(|xp| if xp == f32::MAX { 0.0 } else { xp })
+                .sum();
+            floor.fold(start, f32::max) + rewards + made
+        };
+        // The quest is open to a player who can do any one of its tasks.
+        let worst: Vec<String> = quest
+            .tasks
+            .iter()
+            .map(|task| {
+                task.iter()
+                    .filter_map(|g| make(g).map(|m| (g, m)))
+                    .filter(|(_, (name, level, _, _))| skill(name).is_some() && !task.iter().any(|g| matches!(g, Goal::Level(s, n) if local(s) == *name && n >= level)) && !named(&quest.why, name, *level))
+                    .filter_map(|(g, (name, level, _, _))| {
+                        let (need, have) = (skills.xp_for(level) as f32 / 10.0, sure(&name));
+                        (need > have).then(|| format!("{g:?} needs {name} {level} ({need:.0} xp), the books surely give {have:.0}"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
+            .collect();
+        if worst.iter().all(|w| !w.is_empty()) {
+            short.push(format!("{}: {}", quest.name, worst.join(" | ")));
+        }
+    }
+    short
+}
+
+#[test]
+fn every_early_goal_is_within_the_level_its_books_bring() {
+    let short = shortfalls(&content());
+    assert!(short.is_empty(), "{short:#?}");
+}
+
+/// The check catches a gap: A Side of Beef with its Cooking 12 goal and the level in its
+/// words dropped asks for a beef roast its chain never trains the player for.
+#[test]
+fn a_goal_above_its_books_level_is_caught() {
+    use voxmar_engine::quest::QuestRegistry;
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+    let source = std::fs::read_to_string(base.join("quests.ron")).unwrap();
+    let nomad = QuestRegistry::read_named("base", "quests_nomad.ron", &std::fs::read_to_string(base.join("quests_nomad.ron")).unwrap()).unwrap();
+    let goal = r#"Level("cooking", 12), "#;
+    let at = source.find(r#"name: "a_side_of_beef""#).expect("A Side of Beef");
+    let level = at + source[at..].find(goal).expect("A Side of Beef asks for Cooking 12");
+    let untrained = format!("{}{}", &source[..level], &source[level + goal.len()..]).replacen("on the way up to Cooking 12", "on the way", 1);
+    assert!(!untrained[at..].split("name:").nth(1).unwrap().contains("Cooking 12"), "A Side of Beef still names Cooking 12");
+    let mut content = content();
+    content.quests = std::sync::Arc::new(QuestRegistry::new(vec![QuestRegistry::read("base", &untrained).unwrap(), nomad]).unwrap());
+    let short = shortfalls(&content);
+    assert!(short.iter().any(|s| s.starts_with("base:a_side_of_beef") && s.contains("cooked_beef")), "{short:#?}");
+}
