@@ -635,6 +635,20 @@ impl MachineRegistry {
                 registry.rules = rules;
             }
         }
+        // What burns is `fuel`, so a store that keeps fuel (a kindling box, `tag:fuel`) takes
+        // all a fire does: a package's fuel without the tag would burn in a furnace yet be
+        // refused by the box. Creative-only blocks (never in a survival hand) aside.
+        let untagged: std::collections::BTreeSet<&str> = registry
+            .fuels
+            .iter()
+            .flat_map(|(accepts, ..)| accepts.iter())
+            .map(|&id| blocks.def(id))
+            .filter(|def| !def.has_tag("fuel") && !def.has_tag(crate::recipe_book::CREATIVE_ONLY))
+            .map(|def| def.name.as_str())
+            .collect();
+        if !untagged.is_empty() {
+            return Err(RegistryError(format!("fuels: every survival item that burns is tagged `fuel`; these are not: {}", untagged.into_iter().collect::<Vec<_>>().join(", "))));
+        }
         // A store comes in every facing its block does: a cupboard turned east keeps things
         // as one facing north does.
         let turned: Vec<Machine> = blocks
@@ -766,7 +780,7 @@ mod tests {
 
     pub(crate) fn blocks() -> BlockRegistry {
         let block = |name: &str, tags: &[&str]| BlockDef { name: format!("t:{name}"), tags: tags.iter().map(|t| t.to_string()).collect(), ..Default::default() };
-        BlockRegistry::new(vec![block("ore", &[]), block("dust", &[]), block("log", &["log"]), block("crusher", &[]), block("cable", &[])]).unwrap()
+        BlockRegistry::new(vec![block("ore", &["fuel"]), block("dust", &[]), block("log", &["log", "fuel"]), block("crusher", &[]), block("cable", &[])]).unwrap()
     }
 
     #[test]
@@ -826,6 +840,16 @@ mod tests {
         let boiler = registry.get(blocks.id("t:crusher").unwrap()).unwrap();
         assert_eq!((registry.burns_in(boiler, log), registry.burns_in(boiler, ore)), (None, Some(80.0)), "a log too cool for it");
         assert!(MachineRegistry::new(vec![file(", heat: 0")], Vec::new(), &blocks).is_err());
+    }
+
+    /// Whatever burns carries the `fuel` tag, so a store keeping `tag:fuel` takes it too: a
+    /// fuel entry naming an untagged item is refused by name.
+    #[test]
+    fn a_fuel_not_tagged_fuel_is_refused() {
+        let blocks = blocks();
+        let file = MachineRegistry::read("t", r#"(machines: [], fuels: [(item: "tag:log", seconds: 15.0), (item: "dust", seconds: 5.0)])"#).unwrap();
+        let why = MachineRegistry::new(vec![file], Vec::new(), &blocks).unwrap_err().0;
+        assert!(why.contains("t:dust") && !why.contains("t:log"), "{why}");
     }
 
     #[test]
