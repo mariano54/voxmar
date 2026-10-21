@@ -466,9 +466,7 @@ impl Server {
         let (mother, father) = (self.creatures.live[&a].genome.clone(), self.creatures.live[&b].genome.clone());
         // Mutations are likelier where aether is high (docs/breeding.md, "Mutation").
         let aether = self.overworld.site(at.x.floor() as i32, at.z.floor() as i32).aether;
-        // A server set to a rate of its own (`ServerConfig::mutation`) uses it, otherwise the data's.
-        let genetics = self.config.mutation.map_or_else(|| *self.content.creatures.genetics(), |mutation| voxmar_engine::creature::Genetics { mutation });
-        let mutation = genetics.mutation_at(aether);
+        let mutation = self.genetics().mutation_at(aether);
         let mut born = 0;
         for i in 0..count {
             // Each young's genes, looks and mind by the world's count of rolls, never by the
@@ -621,12 +619,30 @@ fn yielded(count: u8, yield_: f32, roll: f32) -> u8 {
     (exact.floor() + if roll.fract() < exact.fract() { 1.0 } else { 0.0 }).clamp(1.0, 64.0) as u8
 }
 
+impl Server {
+    /// How young mutate here: as a server set to a rate of its own (`ServerConfig::mutation`)
+    /// says, otherwise as the creature data does.
+    pub(crate) fn genetics(&self) -> voxmar_engine::creature::Genetics {
+        self.config.mutation.map_or_else(|| *self.content.creatures.genetics(), |mutation| voxmar_engine::creature::Genetics { mutation })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{Server, test_server};
     use voxmar_engine::creature::condition::Met;
     use voxmar_engine::glam::IVec3;
+
+    /// A server set to a mutation rate of its own breeds by it, over the data's.
+    #[test]
+    fn a_servers_own_mutation_rate_overrides_the_datas() {
+        let mut server = test_server();
+        assert_eq!(server.genetics(), *server.content.creatures.genetics(), "the data's");
+        server.config.mutation = Some(0.1);
+        assert_eq!(server.genetics().mutation, 0.1);
+        assert!((server.genetics().mutation_at(1.0) - 0.5).abs() < 1e-6, "five times at full aether");
+    }
 
     fn rabbit(at: Vec3) -> SavedCreature {
         let at = at.to_array();

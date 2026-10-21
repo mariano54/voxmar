@@ -115,6 +115,11 @@ impl SkillToasts {
         self.lines.iter().filter(|l| self.now - l.at < l.kind.life()).filter_map(|l| if let LineKind::News { text } = &l.kind { Some(text.as_str()) } else { None })
     }
 
+    /// Whether news came since last asked (`take_fired`).
+    pub fn has_fired(&self) -> bool {
+        !self.fired.is_empty()
+    }
+
     /// When news came since last asked, to hear it by (`ui::sound`).
     pub fn take_fired(&mut self) -> Vec<f32> {
         std::mem::take(&mut self.fired)

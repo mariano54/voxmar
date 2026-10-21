@@ -477,9 +477,11 @@ const REFUSE_EVERY: f32 = 0.35;
 /// News of something finished elsewhere (`hud::skills`) sounds `Fired`, once however much
 /// came in the same frame.
 fn hear_news(toasts: Option<ResMut<crate::hud::skills::SkillToasts>>, mut sounds: MessageWriter<UiSound>) {
+    // Taken mutably only with news waiting, so the toasts are not marked changed each frame.
     if let Some(mut toasts) = toasts
-        && !toasts.take_fired().is_empty()
+        && toasts.has_fired()
     {
+        toasts.take_fired();
         sounds.write(UiSound::Fired);
     }
 }

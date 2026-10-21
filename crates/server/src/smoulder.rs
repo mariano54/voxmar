@@ -35,6 +35,14 @@ pub struct Smouldering {
     /// this was kept.
     #[serde(default)]
     pub by: Option<String>,
+    /// Whether whoever lit it has been told it is done: when its time is up out of loaded
+    /// land, before it is turned into what it made there.
+    #[serde(default)]
+    pub told: bool,
+    /// Whether a block of it changed while part of it was not loaded: it may have been
+    /// opened, which is judged only once all of it is loaded, so it is not told done before.
+    #[serde(default)]
+    pub doubt: bool,
 }
 
 /// How a smoulder ended.
@@ -70,7 +78,7 @@ impl Server {
         // Its flue is loaded now, so a roof already over it is known before it is left.
         let roofed = !self.open_sky(core + IVec3::Y);
         let by = self.players.get(&agent).map(|p| crate::player_key(&p.name));
-        self.smoulders.insert(core, Smouldering { position: core.to_array(), structure: structure.name.clone(), turn, lit: now, done, seen: now, wet: 0, roofed, by });
+        self.smoulders.insert(core, Smouldering { position: core.to_array(), structure: structure.name.clone(), turn, lit: now, done, seen: now, wet: 0, roofed, by, told: false, doubt: false });
         self.set_block(core, smoulder.burning_at(0.0));
         self.tally(agent, "lit", &structure.name, 1);
         let minutes = self.real_minutes(done.saturating_sub(now) as f64);
@@ -114,6 +122,14 @@ impl Server {
         for core in opened {
             self.end_smoulder(core, End::Opened);
         }
+        let (world, structures) = (&self.world, &self.content.multiblocks);
+        for (&core, s) in self.smoulders.iter_mut() {
+            if (changed - core).abs().max_element() <= reach
+                && structures.get(&s.structure).is_some_and(|m| m.includes(core, changed) && !m.cells_at(core, s.turn).all(|p| world.block(p).is_some()))
+            {
+                s.doubt = true;
+            }
+        }
     }
 
     /// Looks over each smouldering structure: rain on its open flue is counted as it falls,
@@ -126,7 +142,7 @@ impl Server {
         }
         let (now, tick, day, wet) = (self.day.floor() as u64, self.tick, self.day, self.survival.douse_rain);
         let cores: Vec<IVec3> = self.smoulders.keys().copied().collect();
-        let (mut done, mut opened, mut stage) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut done, mut opened, mut stage, mut told) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for core in cores {
             let s = &self.smoulders[&core];
             if let Some(m) = self.content.multiblocks.get(&s.structure)
@@ -157,6 +173,8 @@ impl Server {
             s.seen = s.seen.max(until);
             if now >= s.done && loaded {
                 done.push(core);
+            } else if now >= s.done && !s.told && !s.doubt {
+                told.push(core);
             } else if loaded {
                 stage.push((core, now.saturating_sub(s.lit) as f32 / s.done.saturating_sub(s.lit).max(1) as f32));
             }
@@ -169,6 +187,15 @@ impl Server {
                 self.set_block(core, now_shows);
             }
         }
+        // Done out of loaded land: told now, wherever they are, of all it was lit with (none
+        // of it can change unloaded), and turned into what it made once loaded.
+        for core in told {
+            let Some(s) = self.smoulders.get_mut(&core) else { continue };
+            s.told = true;
+            let s = s.clone();
+            let heaps = self.content.multiblocks.get(&s.structure).and_then(|m| m.smoulder.as_ref()).map_or(0, |smoulder| smoulder.wood.len());
+            self.tell_done(&s, heaps);
+        }
         for core in done {
             self.end_smoulder(core, End::Done);
         }
@@ -179,18 +206,31 @@ impl Server {
 
     /// Tells the one who lit a fuelled fire that is no home (a kiln) that it has gone cold,
     /// wherever they are, once, as its fuel runs out.
+    /// Fires gone out are taken out of `lit` here, or by a block changed meanwhile
+    /// (`fire_changed`), which keeps them for this to tell.
     pub(crate) fn tell_fires_out(&mut self) {
         let (since, tick) = (self.fires_out_seen, self.tick);
         self.fires_out_seen = tick;
+        let mut cold = std::mem::take(&mut self.fires_out);
+        let before = self.lit.len();
+        self.lit.retain(|_, fire| {
+            let keep = fire.until > tick;
+            if !keep {
+                cold.push(fire.clone());
+            }
+            keep
+        });
+        if self.lit.len() != before {
+            self.send_fires();
+        }
+        // The first look after a start tells nothing: those went out while no one played.
         if since == 0 {
             return;
         }
-        let out: Vec<(String, String)> = self
-            .lit
-            .values()
-            .filter(|fire| fire.until > since && fire.until <= tick)
+        let out: Vec<(String, String)> = cold
+            .into_iter()
             .filter(|fire| self.content.multiblocks.get(&fire.structure).is_some_and(|m| !m.home && !m.fuels.is_empty()))
-            .filter_map(|fire| Some((fire.owner.clone()?, fire.structure.clone())))
+            .filter_map(|fire| Some((fire.owner?, fire.structure)))
             .collect();
         for (owner, structure) in out {
             let Some(m) = self.content.multiblocks.get(&structure) else { continue };
@@ -259,16 +299,24 @@ impl Server {
         if self.block(core).is_some_and(|b| smoulder.is_burning(b)) {
             self.set_block(core, smoulder.spent);
         }
-        // Whoever lit it hears it is done, wherever they are, and what waits there.
-        if end == End::Done
-            && let Some(by) = &s.by
-        {
-            let title = Words::Own(def_key("multiblock", &structure.name), structure.title.clone());
-            let info = self.content.blocks.info(smoulder.done);
-            let count = (heaps - spoiled) * info.drop_count as usize;
-            let words = if spoiled > 0 { Words::key("multiblock.smoulder_done_wet").with("spoiled", Words::text(spoiled)) } else { Words::key("multiblock.smoulder_done") };
-            self.tell_fired(by, words.with("structure", title).with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(info.drops).name.clone())));
+        if end == End::Done && !s.told {
+            self.tell_done(&s, heaps);
         }
+    }
+
+    /// Whoever lit `s` hears it is done, wherever they are, and what waits there of the
+    /// `heaps` of wood it charred: its share of the burn rained on spoiled.
+    fn tell_done(&self, s: &Smouldering, heaps: usize) {
+        let Some(by) = &s.by else { return };
+        let Some(structure) = self.content.multiblocks.get(&s.structure) else { return };
+        let Some(smoulder) = structure.smoulder.as_ref() else { return };
+        let share = s.wet as f64 / s.done.saturating_sub(s.lit).max(1) as f64;
+        let spoiled = (heaps as f64 * share.min(1.0)).round() as usize;
+        let title = Words::Own(def_key("multiblock", &structure.name), structure.title.clone());
+        let info = self.content.blocks.info(smoulder.done);
+        let count = (heaps - spoiled) * info.drop_count as usize;
+        let words = if spoiled > 0 { Words::key("multiblock.smoulder_done_wet").with("spoiled", Words::text(spoiled)) } else { Words::key("multiblock.smoulder_done") };
+        self.tell_fired(by, words.with("structure", title).with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(info.drops).name.clone())));
     }
 
     pub(crate) fn saved_smoulders(&self) -> Vec<Smouldering> {
@@ -490,7 +538,8 @@ mod tests {
     }
 
     /// A kiln someone fired (a fuelled structure, no home) going cold tells them once,
-    /// wherever they are; a home hearth's fire, kept for good, never does.
+    /// wherever they are, even when a block changed anywhere took it out first (as one
+    /// nearly always does before the once-a-second look); a home hearth's fire never does.
     #[test]
     fn a_kiln_gone_cold_tells_whoever_fired_it_once() {
         let (mut server, client) = heard("base:torch");
@@ -516,6 +565,8 @@ mod tests {
         server.tell_fires_out();
         assert!(told(&client).is_empty(), "still burning");
         server.tick += 40;
+        server.set_block(IVec3::new(8, FLOOR + 1, 8), server.content.blocks.expect("base:stone"));
+        assert!(!server.lit.contains_key(&here), "a block changed takes the fire gone out away");
         server.tell_fires_out();
         assert_eq!(told(&client), ["multiblock.fire_out"], "gone cold, told once for the kiln and never for the hearth");
         server.tick += 40;
@@ -559,6 +610,60 @@ mod tests {
         server.set_block(CORNER, BlockId::AIR);
         assert_eq!(charred(&server), [("base:charred_wood_heap".to_owned(), 9)]);
         assert!(server.smoulders.is_empty() && server.block(FLUE) == Some(BlockId::AIR));
+    }
+
+    /// A clamp whose time is up with its land not loaded tells whoever lit it then, wherever
+    /// they are, and once loaded again chars to what it said, telling no more; one changed
+    /// while part of it was not loaded is not told done until it is judged loaded.
+    #[test]
+    fn a_clamp_done_out_of_loaded_land_tells_its_lighter_then() {
+        let (mut server, client) = heard("base:torch");
+        sky(&mut server, "clear");
+        build(&mut server);
+        light(&mut server);
+        let done = |client: &voxmar_protocol::ClientConnection| {
+            let mut keys = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let voxmar_protocol::ServerMessage::Fired { words: voxmar_engine::lang::Words::Key(key, args) } = message {
+                    keys.push((key, args.iter().find(|(name, _)| name == "count").map(|(_, w)| format!("{w:?}")).unwrap_or_default()));
+                }
+            }
+            keys
+        };
+        done(&client);
+        let column = server.world.remove(ColumnPos::new(0, 0)).unwrap();
+        server.day += burn_ticks(&server) + 1.0;
+        server.tend_smoulders();
+        let told = done(&client);
+        assert!(matches!(told.as_slice(), [(key, count)] if key == "multiblock.smoulder_done" && count.contains("36")), "told while away: {told:?}");
+        assert_eq!(server.smoulders.len(), 1, "charred only once loaded");
+        server.tend_smoulders();
+        assert!(done(&client).is_empty(), "told once");
+        server.world.insert(ColumnPos::new(0, 0), column);
+        server.tend_smoulders();
+        assert_eq!(charred(&server), [("base:charcoal_heap".to_owned(), 9)]);
+        assert!(done(&client).is_empty(), "not told again once charred");
+
+        // Changed while part of it was not loaded: it may have been opened, so not told.
+        let (mut server, client) = heard("base:torch");
+        let (corner, flue) = (IVec3::new(28, FLOOR + 1, 8), IVec3::new(30, FLOOR + 2, 10));
+        server.players.get_mut(&1).unwrap().position = Vec3::new(30.5, (FLOOR + 1) as f32, 6.5);
+        sky(&mut server, "clear");
+        build_at(&mut server, corner);
+        light_at(&mut server, flue);
+        done(&client);
+        let east = corner + IVec3::new(4, 0, 2);
+        let mut column = server.world.remove(ColumnPos::new(1, 0)).unwrap();
+        std::sync::Arc::make_mut(&mut column).set_block(east, BlockId::AIR);
+        server.smoulder_changed(east);
+        let core = server.world.remove(ColumnPos::new(0, 0)).unwrap();
+        server.day += burn_ticks(&server) + 1.0;
+        server.tend_smoulders();
+        assert!(done(&client).is_empty(), "not told done while it may have been opened");
+        server.world.insert(ColumnPos::new(0, 0), core);
+        server.world.insert(ColumnPos::new(1, 0), column);
+        server.tend_smoulders();
+        assert!(server.smoulders.is_empty() && done(&client).is_empty(), "opened once loaded, never told done");
     }
 
     /// Its wood swapped for stone while it smoulders opens it, and the stone is left as it
