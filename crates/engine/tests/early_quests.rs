@@ -427,3 +427,236 @@ fn the_milk_pail_opens_at_the_hunter_level_its_cheapest_milker_asks() {
     }
     assert!(total >= need, "The Milk Pail opens with {total:.0} Hunter experience at the least, short of the {need:.0} Hunter {level} its cheapest milker asks");
 }
+
+/// Quests whose words name the level to train to first, kept so by design calls: Seed Mix
+/// (Cooking 8) and Under Lock and Key (Crafting 5).
+const TRAIN_FIRST: [&str; 2] = ["base:seed_mix", "base:under_lock_and_key"];
+
+/// A make a goal asks: what is counted, its skill, the level its cheapest way needs, the
+/// experience a make pays, the items a make gives, and how many the goal asks.
+type Make = (String, String, u8, f32, u32, u32);
+
+/// What the books surely pay: the sure-experience count the gap check and the level check
+/// share, read from the content as loaded (rewards through the book's scale).
+struct Books<'a> {
+    content: &'a Content,
+}
+
+impl<'a> Books<'a> {
+    fn local(name: &str) -> String {
+        name.rsplit(':').next().unwrap_or(name).to_owned()
+    }
+
+    fn skill(&self, name: &str) -> Option<voxmar_engine::skill::SkillId> {
+        let skills = &self.content.skills;
+        skills.ids().find(|&id| Self::local(&skills.get(id).name) == Self::local(name))
+    }
+
+    fn xp_for(&self, level: u8) -> f32 {
+        self.content.skills.xp_for(level) as f32 / 10.0
+    }
+
+    /// The make a goal asks, by its cheapest way (crafts, cooks and mines only).
+    fn make(&self, goal: &Goal) -> Option<Make> {
+        let content = self.content;
+        let skills = &content.skills;
+        let item = |name: &str| content.blocks.id(name).or_else(|| content.blocks.id(&format!("base:{name}")));
+        match goal {
+            Goal::Craft(name, n) if !name.starts_with("tag:") && name != "any" => {
+                let id = item(name)?;
+                let recipe = content.recipes.iter().filter(|r| r.output == id).min_by_key(|r| r.level)?;
+                Some((format!("craft {name}"), Self::local(&skills.get(recipe.skill?).name), recipe.level, recipe.xp, recipe.count.max(1) as u32, *n))
+            }
+            Goal::Cook(name, n) | Goal::CookAt(name, _, n) if !name.starts_with("tag:") && name != "any" => {
+                let id = item(name)?;
+                let recipe = content.cooking.iter().map(|(_, r)| r).filter(|r| r.output == id).min_by_key(|r| r.def.level)?;
+                Some((format!("cook {name}"), recipe.def.skill.as_deref().map_or("cooking".to_owned(), Self::local), recipe.def.level, recipe.def.xp, recipe.def.count.max(1) as u32, *n))
+            }
+            Goal::Mine(name, n) => {
+                let rule = content.tools.rule(item(name)?)?;
+                Some((format!("mine {name}"), Self::local(&skills.get(rule.skill?).name), rule.level, rule.xp, 1, *n))
+            }
+            _ => None,
+        }
+    }
+
+    /// What making `count` of `m` pays: a recipe pays per craft, not per item it gives.
+    fn paid(m: &Make, count: u32) -> f32 {
+        m.3 * count.div_ceil(m.4) as f32
+    }
+
+    /// Every quest that surely comes before `of` (an `a|b` either-or is not sure to be done).
+    fn chain(&self, of: &str) -> Vec<String> {
+        let mut before: Vec<String> = Vec::new();
+        let mut todo = vec![of.to_owned()];
+        while let Some(name) = todo.pop() {
+            for after in self.content.quests.get(&name).unwrap().after.iter().filter(|a| !a.contains('|')) {
+                if !before.contains(after) {
+                    before.push(after.clone());
+                    todo.push(after.clone());
+                }
+            }
+        }
+        before
+    }
+
+    /// A quest's least-giving task in a skill: the makes a player surely does for it.
+    fn least(&self, quest: &str, skill: &str) -> Vec<Make> {
+        let q = self.content.quests.get(quest).unwrap();
+        q.tasks
+            .iter()
+            .map(|t| t.iter().filter_map(|g| self.make(g)).filter(|m| m.1 == skill).collect::<Vec<_>>())
+            .min_by(|a, b| a.iter().map(|m| Self::paid(m, m.5)).sum::<f32>().total_cmp(&b.iter().map(|m| Self::paid(m, m.5)).sum::<f32>()))
+            .unwrap_or_default()
+    }
+
+    /// The most of each thing `quests` ask in `skill`: goals count what was ever made, so a
+    /// thing asked twice is made only as often as the larger count.
+    fn most<'q>(&self, quests: impl Iterator<Item = &'q String>, skill: &str) -> Vec<Make> {
+        let mut most: Vec<Make> = Vec::new();
+        for q in quests {
+            for m in self.least(q, skill) {
+                match most.iter_mut().find(|given| given.0 == m.0) {
+                    Some(given) => given.5 = given.5.max(m.5),
+                    None => most.push(m),
+                }
+            }
+        }
+        most
+    }
+
+    /// The experience in `skill` a player surely has when `quest` opens, and the most of each
+    /// thing its chain asked. Sure is the most of: the skill's start, or any `Level` goal in
+    /// the chain, plus what surely comes after that point: the rewards of the quest asking
+    /// that level and of every chain quest that follows it, and the makes the quests after
+    /// it ask beyond what was asked up to it (the level's own quest's makes may come first).
+    fn sure(&self, quest: &str, skill: &str) -> (f32, Vec<Make>) {
+        let content = self.content;
+        let before = self.chain(quest);
+        let start = self.xp_for(content.skills.get(self.skill(skill).unwrap()).start);
+        let mut floors: Vec<(f32, Option<String>)> = vec![(start, None)];
+        for q in before.iter().map(|n| content.quests.get(n).unwrap()) {
+            for g in q.tasks.iter().flatten() {
+                if let Goal::Level(s, n) = g
+                    && Self::local(s) == skill
+                {
+                    floors.push((self.xp_for(*n), Some(q.name.clone())));
+                }
+            }
+        }
+        let sure = floors
+            .into_iter()
+            .map(|(floor, from)| {
+                let (up_to, after): (Vec<&String>, Vec<&String>) = before.iter().partition(|q| match &from {
+                    None => false,
+                    Some(from) => *q == from || !self.chain(q).contains(from),
+                });
+                let rewards: f32 = before
+                    .iter()
+                    .filter(|q| from.as_ref().is_none_or(|from| *q == from || self.chain(q).contains(from)))
+                    .flat_map(|q| content.quests.get(q).unwrap().rewards.iter())
+                    .map(|r| match r {
+                        Reward::Xp(s, xp) if Self::local(s) == skill => *xp,
+                        _ => 0.0,
+                    })
+                    .sum();
+                let earlier = self.most(up_to.into_iter(), skill);
+                let made: f32 = self
+                    .most(after.into_iter(), skill)
+                    .iter()
+                    .map(|m| Self::paid(m, m.5.saturating_sub(earlier.iter().find(|e| e.0 == m.0).map_or(0, |e| e.5))))
+                    .sum();
+                floor + rewards + made
+            })
+            .fold(0.0, f32::max);
+        (sure, self.most(before.iter(), skill))
+    }
+}
+
+/// What each Nomad and Farm quest asks a skill for, against what its `after` chain surely
+/// gives (`Books::sure`). The quest's own task adds what it asks at a lower level beyond
+/// what the chain asked (First Ore's coal before its copper). A goal whose make needs more
+/// is a level the books never bring the player to, unless a `Level` goal in the same task
+/// tells the player to train first, or the quest is one of `TRAIN_FIRST`.
+fn shortfalls(content: &Content) -> Vec<String> {
+    let books = Books { content };
+    let mut short = Vec::new();
+    for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        // The quest is open to a player who can do any one of its tasks.
+        let worst: Vec<String> = quest
+            .tasks
+            .iter()
+            .map(|task| {
+                task.iter()
+                    .filter_map(|g| books.make(g).map(|m| (g, m)))
+                    .filter(|(_, m)| books.skill(&m.1).is_some() && !task.iter().any(|g| matches!(g, Goal::Level(s, n) if Books::local(s) == m.1 && *n >= m.2)) && !TRAIN_FIRST.contains(&quest.name.as_str()))
+                    .filter_map(|(g, (_, name, level, _, _, _))| {
+                        let (sure, ever) = books.sure(&quest.name, &name);
+                        // What its own task makes first, beyond what the chain ever asked.
+                        let own: f32 = task
+                            .iter()
+                            .filter_map(|g| books.make(g))
+                            .filter(|m| m.1 == name && m.2 < level && books.xp_for(m.2) <= sure)
+                            .map(|m| Books::paid(&m, m.5.saturating_sub(ever.iter().find(|e| e.0 == m.0).map_or(0, |e| e.5))))
+                            .sum();
+                        let (need, have) = (books.xp_for(level), sure + own);
+                        (need > have).then(|| format!("{g:?} needs {name} {level} ({need:.0} xp), the books surely give {have:.0}"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            })
+            .collect();
+        if worst.iter().all(|w| !w.is_empty()) {
+            short.push(format!("{}: {}", quest.name, worst.join(" | ")));
+        }
+    }
+    short
+}
+
+/// A `Level` goal the player surely has already when its quest opens asks nothing: each one
+/// is above what the books surely give by then (`Books::sure`, the gap check's count).
+#[test]
+fn no_early_level_goal_is_met_as_its_quest_opens() {
+    let content = content();
+    let books = Books { content: &content };
+    let mut met = Vec::new();
+    for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        for goal in quest.tasks.iter().flatten() {
+            let Goal::Level(skill, level) = goal else { continue };
+            let skill = Books::local(skill);
+            let (sure, _) = books.sure(&quest.name, &skill);
+            if sure >= books.xp_for(*level) {
+                let first = (*level..=99).find(|&n| books.xp_for(n) > sure).unwrap_or(99);
+                met.push(format!("{}: {skill} {level} ({:.0} xp) is surely had on opening ({sure:.0}); {skill} {first} is not", quest.name, books.xp_for(*level)));
+            }
+        }
+    }
+    assert!(met.is_empty(), "{met:#?}");
+}
+
+#[test]
+fn every_early_goal_is_within_the_level_its_books_bring() {
+    let short = shortfalls(&content());
+    assert!(short.is_empty(), "{short:#?}");
+}
+
+/// The check catches a gap: A Side of Beef with its Cooking 12 goal dropped asks for a beef
+/// roast its chain never trains the player for.
+#[test]
+fn a_goal_above_its_books_level_is_caught() {
+    use voxmar_engine::quest::QuestRegistry;
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+    let source = std::fs::read_to_string(base.join("quests.ron")).unwrap();
+    let nomad = QuestRegistry::read_named("base", "quests_nomad.ron", &std::fs::read_to_string(base.join("quests_nomad.ron")).unwrap()).unwrap();
+    let goal = r#"Level("cooking", 12), "#;
+    let at = source.find(r#"name: "a_side_of_beef""#).expect("A Side of Beef");
+    let level = at + source[at..].find(goal).expect("A Side of Beef asks for Cooking 12");
+    let untrained = format!("{}{}", &source[..level], &source[level + goal.len()..]);
+    let mut content = content();
+    // The book's scale too (`core/quests.ron` `pays`), so the gap is judged as paid.
+    let core = QuestRegistry::read("core", &std::fs::read_to_string(base.join("../core/quests.ron")).unwrap()).unwrap();
+    content.quests = std::sync::Arc::new(QuestRegistry::new(vec![core, QuestRegistry::read("base", &untrained).unwrap(), nomad]).unwrap());
+    assert_eq!(content.quests.pays(), self::content().quests.pays(), "the book's own scale");
+    let short = shortfalls(&content);
+    assert!(short.iter().any(|s| s.starts_with("base:a_side_of_beef") && s.contains("cooked_beef")), "{short:#?}");
+}

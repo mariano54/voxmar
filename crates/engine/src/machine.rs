@@ -479,6 +479,14 @@ impl Machine {
         }
     }
 
+    /// How many stacks it holds as a bin grown by a home's `store_room` (effects' modifier):
+    /// its own slots times it, rounded up, at most a store screen's and never fewer than
+    /// its own.
+    pub fn grown_bin(&self, room: f32) -> usize {
+        let own = self.bin_slots();
+        ((own as f32 * room.max(1.0)).ceil() as usize).clamp(own, crate::inventory::STORE_SLOTS.max(own))
+    }
+
     /// Whether it is a bin that takes `item`: anything, unless it `holds` only some things.
     pub fn bin_takes(&self, item: BlockId) -> bool {
         self.bin_slots() > 0 && self.holds.as_ref().is_none_or(|holds| holds.binary_search(&item).is_ok())

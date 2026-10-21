@@ -817,6 +817,27 @@ fn a_draughty_home_whistles_until_daubed() {
     assert!(gaps > 0.0 && open > 0.0, "open shutters (counting {gaps:.2}) play the draught at {open:.3}");
     let (gaps, shut) = heard(&windowed("base:oak_shuttered_window_shut"), IVec3::new(0, 11, 0), under_thatch);
     assert!(gaps == 0.0 && shut < 1e-3, "shuttered, the windows count {gaps:.2} and the draught plays at {shut:.3}");
+    // Curtains drawn across inside the wattle hush it: one, fainter; two, silent; drawn
+    // back, the whistle again.
+    let curtained = ambience.groups.iter().position(|g| g.name == "curtained").expect("a curtained group");
+    let hung = |curtain: &str, count: i32| {
+        let mut room = room("base:wattle_panel", true);
+        for x in 0..count {
+            room.set_block(IVec3::new(x - 1, 11, -2), id(curtain));
+        }
+        room
+    };
+    let hushed = |world: &VoxelWorld| {
+        let eye = IVec3::new(0, 11, 0);
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
+        let (draughty, hush) = (ambience.presence(group, found.groups[group]), ambience.presence(curtained, found.groups[curtained]));
+        let place = scene(&ambience, "home", &["forest"], &[night.as_slice(), &[("draughty", draughty), ("sheltered", under_thatch), ("curtained", hush)]].concat());
+        run(&ambience, &place, 20.0).1[draught]
+    };
+    let (one, two, back) = (hushed(&hung("base:red_curtain", 1)), hushed(&hung("base:red_curtain", 2)), hushed(&hung("base:red_curtain_open", 2)));
+    assert!(one < wattle && one > 0.0, "one drawn curtain plays the draught at {one:.3}, against {wattle:.3} with none");
+    assert!(two < 1e-3, "two drawn curtains still play the draught at {two:.3}");
+    assert!(back > 0.5 * full, "two curtains drawn back play the draught at only {back:.3}");
 }
 
 /// A roof block muffles the rain once: thatch, tagged `shelter:sound` for the home's walls,

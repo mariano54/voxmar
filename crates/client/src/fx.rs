@@ -55,7 +55,14 @@ pub(crate) struct Shows {
     pub(crate) effect: Option<String>,
     pub(crate) shown: Option<ShownBy>,
     pub(crate) none: bool,
+    /// Its effect waits for the server to turn the block aimed at, for an action the client
+    /// does not show itself (clay pressed on): refused, or not turned within
+    /// [`CONFIRM_WITHIN`], it shows nothing.
+    pub(crate) confirmed: bool,
 }
+
+/// How long a `confirmed` effect waits for the server to turn its block, in seconds.
+const CONFIRM_WITHIN: f32 = 1.5;
 
 /// Where an action's look comes from when not from an effect here.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -186,6 +193,9 @@ impl ActionFx {
             {
                 return Err(format!("{FILE}: `{name}` shows `{effect}`, which is no effect"));
             }
+            if shows.confirmed && shows.effect.is_none() {
+                return Err(format!("{FILE}: `{name}` is `confirmed` with no effect to wait with"));
+            }
         }
         for (name, effect) in &self.effects {
             let fine = (1..=64).contains(&effect.count)
@@ -215,7 +225,7 @@ impl ActionFx {
 
 /// The effect each action shows, by id, with its name.
 #[derive(Resource, Default)]
-struct Shown(Vec<(ActionId, String, Effect)>);
+struct Shown(Vec<(ActionId, String, Effect, bool)>);
 
 /// Particles each effect has spawned, by its name, for the gate to count.
 #[derive(Resource, Default)]
@@ -231,7 +241,7 @@ fn load(mut commands: Commands, launch: Res<Launch>) {
         .iter()
         .filter_map(|(name, shows)| {
             let effect = shows.effect.as_ref()?;
-            Some((launch.content.actions.id(name)?, effect.clone(), fx.effects.get(effect)?.clone()))
+            Some((launch.content.actions.id(name)?, effect.clone(), fx.effects.get(effect)?.clone(), shows.confirmed))
         })
         .collect();
     commands.insert_resource(Shown(shown));
@@ -252,6 +262,9 @@ struct Burst {
     face: Face,
     held: Option<BlockId>,
     when: f32,
+    /// For a `confirmed` effect: the block aimed at, what it held when proposed, and until
+    /// when it waits for that to change.
+    waits: Option<(IVec3, Option<BlockId>, f32)>,
 }
 
 /// Where an effect shows for an action aimed at `target`, and the cell and face it is of.
@@ -284,7 +297,7 @@ fn show_actions(net: Option<Res<Net>>, shown: Option<Res<Shown>>, player: Res<Lo
     let now = time.elapsed_secs();
     let held = player.inventory.slots.get(player.selected).copied().flatten().map(|stack| stack.item);
     for (action, target) in net.take_shown() {
-        let Some((_, name, effect)) = shown.0.iter().find(|(id, ..)| *id == action) else { continue };
+        let Some((_, name, effect, confirmed)) = shown.0.iter().find(|(id, ..)| *id == action) else { continue };
         if effect.at == At::Made {
             for slot in &slots {
                 glint(&mut glints, slot, effect);
@@ -292,10 +305,28 @@ fn show_actions(net: Option<Res<Net>>, shown: Option<Res<Shown>>, player: Res<Lo
             continue;
         }
         let Some((at, cell, face)) = place(effect, target, &player, &world) else { continue };
+        let waits = match target {
+            ActionTarget::Block { block, .. } if *confirmed => Some((block, world.block(block), now + CONFIRM_WITHIN)),
+            _ => None,
+        };
         for burst in 0..effect.bursts {
-            pending.0.push(Burst { name: name.clone(), effect: effect.clone(), at, cell, face, held, when: now + burst as f32 * effect.every });
+            pending.0.push(Burst { name: name.clone(), effect: effect.clone(), at, cell, face, held, when: now + burst as f32 * effect.every, waits });
         }
     }
+}
+
+/// Starts each `confirmed` burst whose block has turned since it was proposed, its bursts
+/// counted from now; drops one the server never turned in time.
+fn confirm(pending: &mut Vec<Burst>, now: f32, block: impl Fn(IVec3) -> Option<BlockId>) {
+    pending.retain_mut(|b| match b.waits {
+        Some((cell, before, until)) if block(cell) != before => {
+            b.when += now - (until - CONFIRM_WITHIN);
+            b.waits = None;
+            true
+        }
+        Some((.., until)) => now <= until,
+        None => true,
+    });
 }
 
 /// Spawns the bursts that are due.
@@ -311,7 +342,8 @@ fn spawn_pending(
     mut dice: Local<Dice>,
 ) {
     let now = time.elapsed_secs();
-    let (due, later): (Vec<Burst>, Vec<Burst>) = pending.0.drain(..).partition(|b| b.when <= now);
+    confirm(&mut pending.0, now, |cell| world.block(cell));
+    let (due, later): (Vec<Burst>, Vec<Burst>) = pending.0.drain(..).partition(|b| b.when <= now && b.waits.is_none());
     pending.0 = later;
     for burst in due {
         for particle in burst_particles(&burst, &world, &launch.content.blocks, pieces.as_deref(), particles.amount, &mut dice) {
@@ -499,6 +531,26 @@ mod tests {
         assert_eq!(at(&world, "settle"), Some((Vec3::new(3.5, 63.05, 0.5), IVec3::new(3, 63, 0))));
     }
 
+    /// A confirmed burst waits for its block to turn, then counts its bursts from then; one
+    /// whose block never turns (clay refused) is dropped once the wait runs out.
+    #[test]
+    fn a_confirmed_burst_waits_for_its_block() {
+        let content = content();
+        let fx = ActionFx::load(&content.files).unwrap();
+        assert!(fx.actions["base:coat"].confirmed, "clay pressed on shows once the server turns the panel");
+        let (panel, daubed) = (content.blocks.expect("base:oak_planks"), content.blocks.expect("base:stone"));
+        let cell = IVec3::new(0, 64, 0);
+        let burst = |when: f32| Burst { name: "settle".into(), effect: fx.effects["settle"].clone(), at: Vec3::ZERO, cell, face: Face::PosY, held: None, when, waits: Some((cell, Some(panel), 10.0 + CONFIRM_WITHIN)) };
+        let mut pending = vec![burst(10.0), burst(10.25)];
+        confirm(&mut pending, 10.5, |_| Some(panel));
+        assert!(pending.iter().all(|b| b.waits.is_some()), "still the panel: it waits");
+        confirm(&mut pending, 11.0, |_| Some(daubed));
+        assert_eq!(pending.iter().map(|b| (b.when, b.waits.is_none())).collect::<Vec<_>>(), vec![(11.0, true), (11.25, true)], "turned: counted from then");
+        let mut refused = vec![burst(10.0)];
+        confirm(&mut refused, 10.0 + CONFIRM_WITHIN + 0.1, |_| Some(panel));
+        assert!(refused.is_empty(), "never turned, it shows nothing");
+    }
+
     /// A burst gives its count at full particles, none with particles off, and its look:
     /// specks of the held item's colour, glowing sparks that add their light, steam that
     /// rises as a veil.
@@ -507,7 +559,7 @@ mod tests {
         let content = content();
         let fx = ActionFx::load(&content.files).unwrap();
         let world = ClientWorld::new(content.blocks.clone(), 2, crate::render::terrain::Terrain::detached());
-        let burst = |name: &str, held: Option<BlockId>| Burst { name: name.into(), effect: fx.effects[name].clone(), at: Vec3::new(0.5, 70.0, 0.5), cell: IVec3::new(0, 69, 0), face: Face::PosY, held, when: 0.0 };
+        let burst = |name: &str, held: Option<BlockId>| Burst { name: name.into(), effect: fx.effects[name].clone(), at: Vec3::new(0.5, 70.0, 0.5), cell: IVec3::new(0, 69, 0), face: Face::PosY, held, when: 0.0, waits: None };
         let bread = content.blocks.expect("base:cooked_small_game");
         let mut dice = Dice::default();
         let crumbs = burst_particles(&burst("crumbs", Some(bread)), &world, &content.blocks, None, 1.0, &mut dice);
@@ -565,7 +617,7 @@ mod tests {
         let mut sheet = image::RgbImage::from_pixel(cell * times.len() as u32, cell * rows, image::Rgb([28, 30, 36]));
         let mut dice = Dice::default();
         for (row, (name, effect)) in fx.effects.iter().enumerate() {
-            let burst = Burst { name: name.clone(), effect: effect.clone(), at: Vec3::new(0.5, 1.0, 0.5), cell: IVec3::ZERO, face: Face::PosY, held: Some(held), when: 0.0 };
+            let burst = Burst { name: name.clone(), effect: effect.clone(), at: Vec3::new(0.5, 1.0, 0.5), cell: IVec3::ZERO, face: Face::PosY, held: Some(held), when: 0.0, waits: None };
             // A Block look shows pieces; drawn here in the block's own colour.
             let mut look = effect.clone();
             if look.look == Seen::Block {

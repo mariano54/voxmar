@@ -221,6 +221,8 @@
                 (name: "basket", with: ["tag:basket"], sounds: ["sounds/store_basket_1.ogg", "sounds/store_basket_2.ogg"], volume: 0.7),
             ],
         ),
+        // Putting the pack away at home: the same lid, softer.
+        "base:put_away": (sounds: ["sounds/store_open_1.ogg", "sounds/store_open_2.ogg"], volume: 0.6),
         // The latch, then a slow creak on the hinges; quieter than the rest at its loudest, so
         // played louder.
         "base:open": (
