@@ -1300,6 +1300,20 @@ fn leaving_drops_the_surveys_still_out() {
     assert!(ambient.surveys.answers().is_empty(), "survey 7, of the world left, is taken in the next");
 }
 
+/// Leaving a game forgets the fires seen burning in it, so one there is not taken on the
+/// next game's first survey for a fire just gone out, and none ticks as it cools.
+#[test]
+fn leaving_forgets_the_fires_seen_burning() {
+    use bevy::ecs::system::RunSystemOnce;
+    let mut world = left_world();
+    let hearth = IVec3::new(1, 2, 3);
+    world.resource_mut::<super::Ambient>().gone_out.note(10.0, &[hearth].into_iter().collect(), 120.0);
+    world.run_system_once(super::leave).unwrap();
+    let mut ambient = world.resource_mut::<super::Ambient>();
+    ambient.gone_out.note(20.0, &Default::default(), 120.0);
+    assert!(ambient.gone_out.ago(21.0).is_empty(), "a fire of the world left cools in the next");
+}
+
 /// A world with the ambience playing in a game, about to be left.
 fn left_world() -> bevy::prelude::World {
     let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");

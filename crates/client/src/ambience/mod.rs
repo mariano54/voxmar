@@ -561,6 +561,10 @@ fn survey(
         ambient.roof.under = roof_over(|p| world.voxels.block(p), from, to, ambient.ambience.roofs.height, |b| defs::is_roof(&world.registry, b));
     }
 
+    // Fires going out are timed as they go, while dead too, not from the next survey.
+    if player.joined {
+        ambient.gone_out.note(time.elapsed_secs(), &world.fires, ambient.ambience.cools_longest());
+    }
     ambient.since_survey += dt;
     // None is taken of where a dead player lay: the next is of where they come back.
     if !player.joined || player.dead || ambient.surveys.out || ambient.since_survey < SURVEY_INTERVAL {
@@ -584,9 +588,7 @@ fn survey(
     }
     let (seed, generator) = ambient.generator.clone().expect("set above");
     let (kinds, content, tx, ambience) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.tx.clone(), ambient.ambience.clone());
-    let now = time.elapsed_secs();
-    ambient.gone_out.note(now, &world.fires, ambient.ambience.cools_longest());
-    let out = ambient.gone_out.ago(now);
+    let out = ambient.gone_out.ago(time.elapsed_secs());
     let fires = world.fires.clone();
     let smoulders = world.smoulders.clone();
     let random = mix(time.elapsed().as_nanos() as u64);
@@ -1008,4 +1010,6 @@ fn leave(
     ambient.surveys.leave(surroundings.started);
     ambient.env = Environment::new(axes);
     ambient.since_survey = SURVEY_INTERVAL;
+    // The fires seen burning were the world left's: none went out on the next's first look.
+    ambient.gone_out = GoneOut::default();
 }

@@ -97,8 +97,8 @@
         // ten blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth
         // (a structure's core) is heard only while its fire burns.
         (name: "fire", tags: ["campfire", "hearth", "pit_kiln"], range: (3, 10), lit: true),
-        // A kiln or a fire just gone out (the server no longer says it burns): its bricks
-        // or stones ticking as they cool, the kiln's for two minutes, a fire's for one. They
+        // A kiln or a hearth just gone out (the server no longer says it burns): its bricks
+        // or stones ticking as they cool, the kiln's for two minutes, a hearth's for one. They
         // select no blocks of their own: the cores of the lit group named, cooling.
         (name: "kiln_cooling", cools: ("kiln", 120), range: (1, 4)),
         (name: "fire_cooling", cools: ("fire", 60), range: (1, 4)),
@@ -586,7 +586,8 @@
             when: {"fire": (min: 0.6, fade: 0.55)},
         ),
         // A kiln gone out: its fired bricks ticking now and then as they cool, a small tink
-        // among them; a hearth or campfire gone out, its stones the same, lower and fewer.
+        // among them; a hearth gone out, its stones the same, lower and fewer. (Only a
+        // structure's core is told burning, so a campfire, never out, has none.)
         (
             name: "kiln_cooling", sound: Cooling, volume: 0.26, at: Block("kiln_cooling"), per_minute: 6, cooldown: 4,
             pitch: (0.9, 1.15), reach: 6,

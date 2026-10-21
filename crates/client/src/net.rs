@@ -428,7 +428,7 @@ pub(crate) fn receive(
                         if crate::sfx::catches(&launch.content.fire, old, block) && pos.as_vec3().distance(player.position) < SHOWN_WITHIN {
                             catches.write(crate::sfx::Catches { at: pos.as_vec3() + Vec3::splat(0.5) });
                         }
-                        // Work done nearby (a clamp's heaps burnt to charcoal).
+                        // Work done nearby (a skep filled, a station's load ready).
                         if let Some(old) = old
                             && pos.as_vec3().distance(player.position) < SHOWN_WITHIN
                         {

@@ -545,8 +545,7 @@ pub(crate) struct Recordings {
     /// replaces these.
     pub(crate) fire: FireSounds,
     /// Work done while nobody did anything, heard as the server changes a block nearby: a
-    /// station's load ready, a clamp burnt through, a skep filled. A later package that names
-    /// one replaces it.
+    /// station's load ready, a skep filled. A later package that names one replaces it.
     pub(crate) work_done: Vec<WorkDone>,
     /// How loud each kind of sound is, how many play at once and what the music makes
     /// room for (`mix`).
@@ -1240,7 +1239,7 @@ fn play_catches(
 }
 
 /// Plays work done nearby (`work_done`), from the block, as the server changes it: one of
-/// each a frame, the nearest, so a clamp's nine heaps turning to charcoal at once are one.
+/// each a frame, the nearest, so a row of skeps filling at once is one.
 fn play_work_done(
     mut commands: Commands,
     mut changed: MessageReader<Changed>,
