@@ -38,7 +38,7 @@
             when: Some(Wearing("charge_charm")), modifiers: (speed: 1.05)),
         // Sat by a fire or the hearth (`core:sit` on a seat): a Nomad's stool at the campfire
         // or a chair at home, the rest after a day out.
-        (name: "fireside", kind: Buff, title: "By the Fire", description: "Sat by a fire: you heal half as fast again, and it warms you.",
+        (name: "fireside", kind: Buff, title: "Fireside", description: "Sat by a fire: you heal half as fast again, and it warms you.",
             when: Some(All([Seated, Any([Near("fire", 3), Near("hearth", 3)])])), modifiers: (heal: 1.5, warmth: 4.0)),
         // Sat at a table: a meal eaten there does more (as a pantry's and a larder's do).
         (name: "at_table", kind: Buff, title: "At the Table", description: "Sat at a table: a meal heals a quarter more, and its good lasts a quarter longer.",
@@ -81,22 +81,22 @@
         (name: "hearthside", kind: Buff, title: "Hearthside", description: "Your hearth keeps the cold off: you heal a third faster here.", announce: true,
             next: "Next: wall it in and roof it over, even with hide or wattle, with your bed and two lights, to be snug.",
             when: Some(All([AtHome, HomeHas("hearth", 1)])),
-            replaces: ["camp"], modifiers: (heal: 1.33, warmth: 4.0)),
+            replaces: ["camp"], modifiers: (heal: 1.33, home_warmth: 4.0)),
         (name: "snug", kind: Buff, title: "Snug", description: "Walled in and roofed over: you heal half as fast again here.", announce: true,
             next: "Next: sound walls (logs, planks or stone) for most of the room, two seats, a table, two places to store things and a third light make it homely.",
             when: Some(All([AtHome, Indoors, HomeWalls(Draughty, 0.9), HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 2)])),
-            replaces: ["camp", "hearthside"], modifiers: (heal: 1.5, warmth: 6.0)),
+            replaces: ["camp", "hearthside"], modifiers: (heal: 1.5, home_warmth: 6.0)),
         (name: "homely", kind: Buff, title: "Homely", description: "Sound walls, and room to sit, work and store: 2° warmer, and you learn a twentieth more here.", announce: true,
             next: "Next: sound walls nearly all about, two rugs, two curtains, a cushion, three pieces of crockery and a fourth light make it cosy.",
             when: Some(All([AtHome, Indoors, HomeWalls(Draughty, 0.9), HomeWalls(Sound, 0.6), HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 3), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2)])),
-            replaces: ["camp", "hearthside", "snug"], modifiers: (heal: 1.5, warmth: 8.0, xp: 1.05)),
+            replaces: ["camp", "hearthside", "snug"], modifiers: (heal: 1.5, home_warmth: 8.0, xp: 1.05)),
         (name: "cosy", kind: Buff, title: "Cosy", description: "Soft, bright and close walled: 3° warmer, you heal faster and learn a tenth more here.", announce: true,
             next: "Next: fine walls (dressed stone, brick or glass) for half the room, a bookshelf, a stove or cauldron, a loom, spindle or quern, and a banner make it the heart of the home.",
             when: Some(All([AtHome, Indoors, HomeWalls(Sound, 0.9), HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 4), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2), HomeHas("rug", 2), HomeHas("curtain", 2), HomeHas("cushion", 1), HomeHas("crockery", 3)])),
-            replaces: ["camp", "hearthside", "snug", "homely"], modifiers: (heal: 1.75, warmth: 9.0, xp: 1.1)),
+            replaces: ["camp", "hearthside", "snug", "homely"], modifiers: (heal: 1.75, home_warmth: 9.0, xp: 1.1)),
         (name: "heart_of_the_home", kind: Buff, title: "Heart of the Home", description: "Everything a home needs, finely walled: 4° warmer, heal twice as fast, learn an eighth more.", announce: true,
             when: Some(All([AtHome, Indoors, HomeWalls(Fine, 0.5), HomeWalls(Sound, 0.9), HomeHas("hearth", 1), HomeHas("bed", 1), HomeHas("light", 4), HomeHas("seat", 2), HomeHas("table", 1), HomeHas("storage", 2), HomeHas("rug", 2), HomeHas("curtain", 2), HomeHas("cushion", 1), HomeHas("crockery", 3), HomeHas("books", 1), HomeHas("cooking", 1), HomeHas("workshop", 1), HomeHas("banner", 1)])),
-            replaces: ["camp", "hearthside", "snug", "homely", "cosy"], modifiers: (heal: 2.0, warmth: 10.0, xp: 1.125)),
+            replaces: ["camp", "hearthside", "snug", "homely", "cosy"], modifiers: (heal: 2.0, home_warmth: 10.0, xp: 1.125)),
         // Rooms: side branches of the ladder, each a different use of a home. A workbench and a
         // workshop lift crafting and building levels (`boosts`, which recipes' level checks
         // count; a recipe marked firm ignores them); a pantry and a larder make more of meals.
@@ -120,14 +120,14 @@
         // and the walls.
         (name: "soft_furnishings", kind: Buff, title: "Soft furnishings", description: "A rug underfoot and cloth hung on the wall keep the draught off: 1° warmer here.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("rug", 1), HomeHas("drape", 1)])),
-            replaces: [], modifiers: (warmth: 1.0)),
+            replaces: [], modifiers: (home_warmth: 1.0)),
         // A corner by the bed, a Nomad's first comfort before any roof: a seat and two lights
         // beside it keep the night warmer, and sleeping there is a better rest (the sleeps
         // rules below). A herb nook, the Farm age's: bunches drying overhead and a jar or crate
         // to keep them in, for a kitchen garden at the door and a brew at the bench.
         (name: "bedside", kind: Buff, title: "Bedside", description: "A seat and two lights by your bed: 2° warmer here, and a night's sleep is well rested.", announce: true,
             when: Some(All([AtHome, HomeHas("bed", 1), HomeHas("seat", 1), HomeHas("light", 2)])),
-            replaces: [], modifiers: (warmth: 2.0)),
+            replaces: [], modifiers: (home_warmth: 2.0)),
         (name: "herb_nook", kind: Buff, title: "Herb nook", description: "Herbs drying overhead: you farm and brew as if a level higher here, and a meal's good lasts a tenth longer.", announce: true,
             when: Some(All([AtHome, HomeHas("drying", 2), HomeHas("storage", 1)])),
             replaces: [], boosts: [("farming", 1), ("alchemy", 1)], modifiers: (meal_time: 1.1)),
@@ -142,12 +142,12 @@
         // to keep it fed.
         (name: "hearth_corner", kind: Buff, title: "Hearth corner", description: "A settle by the hearth and wood stacked to hand: 1° warmer here, and you heal a twentieth faster.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("settle", 1), HomeHas("woodpile", 1)])),
-            replaces: [], modifiers: (warmth: 1.0, heal: 1.05)),
+            replaces: [], modifiers: (home_warmth: 1.0, heal: 1.05)),
         // A bedchamber, the Farm age's first: a room to sleep in under the home's roof, the
         // bed with a blanket chest (`blanket_chest`), a washstand (`washstand`) and a rug.
         (name: "bedchamber", kind: Buff, title: "Bedchamber", description: "A bed, a blanket chest at its foot, a washstand and a rug under one roof: 1° warmer here, and you heal a tenth faster.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("bed", 1), HomeHas("blanket_chest", 1), HomeHas("washstand", 1), HomeHas("rug", 1)])),
-            replaces: [], modifiers: (warmth: 1.0, heal: 1.1)),
+            replaces: [], modifiers: (home_warmth: 1.0, heal: 1.1)),
         // A bee garden, the Farm age's: a skep with bees in it among flowers at home
         // (bees.ron). Its bees make the crops about it grow a quarter faster, which the
         // apiary does; the home itself heals a tenth faster and is sweeter to come back to.
@@ -178,14 +178,14 @@
         // it, the draughts and the dark stay out.
         (name: "door_shut", kind: Buff, title: "Door shut", description: "The door shut on the night: you heal a tenth faster here, and are 1° warmer.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("door_shut", 1)])),
-            replaces: [], modifiers: (heal: 1.1, warmth: 1.0)),
+            replaces: [], modifiers: (heal: 1.1, home_warmth: 1.0)),
         // An evening in: after dark (`Night`), indoors at home within a few blocks of a
         // fire to sit by (`campfire`: a campfire, the hearth, the stove; a torch is no
         // fireside), and that fire the home's own (`HomeHas`), not a neighbour's through a wall. The day's work done, the home is where to be. A time of day, not a step
         // to build toward: `ladder: "night"` keeps it out of `/home`'s steps.
         (name: "evening_in", kind: Buff, title: "Evening in", description: "In by your own fire after dark: you heal a fifth faster here, and are 2° warmer.", announce: true, ladder: "night",
             when: Some(All([Night, AtHome, Indoors, HomeHas("campfire", 1), Near("campfire", 4)])),
-            replaces: [], modifiers: (heal: 1.2, warmth: 2.0)),
+            replaces: [], modifiers: (heal: 1.2, home_warmth: 2.0)),
         (name: "kitchen_garden", kind: Buff, title: "Kitchen garden", description: "Greens growing by the door: meals heal a tenth more here.", announce: true,
             when: Some(All([AtHome, HomeHas("crop", 4)])),
             replaces: [], modifiers: (meal_heal: 1.1)),
@@ -240,7 +240,7 @@
         // quests (`Built("homecraft_banked_fire", 1)`).
         (name: "banked_fire", kind: Buff, title: "Banked fire", description: "A camp taught you to bank a fire: at home with a fire lit, 3° warmer.", announce: true, ladder: "homecraft",
             when: Some(All([Done("make_camp"), AtHome, Any([HomeHas("hearth", 1), HomeHas("heat", 1)])])),
-            replaces: [], modifiers: (warmth: 3.0)),
+            replaces: [], modifiers: (home_warmth: 3.0)),
         (name: "snowed_in", kind: Buff, title: "Snowed in", description: "Snug for winter: snow or hail outside, you heal and learn more at home.", announce: true, ladder: "homecraft",
             when: Some(All([Done("snug_for_winter"), AtHome, Sheltered(Any([Snow(0.1), Hail(0.1)]))])),
             replaces: [], modifiers: (heal: 1.15, xp: 1.1)),

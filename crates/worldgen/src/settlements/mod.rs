@@ -71,6 +71,8 @@ pub struct Building {
     /// Ground-floor room columns in world (x, z), clear of walls and exterior extras.
     /// Empty for buildings whose activity is outdoors.
     pub room: Vec<IVec2>,
+    /// The floor columns of its byre, behind the room, for the animals kept there.
+    pub byre: Vec<IVec2>,
     /// Where its path leaves the door, two blocks out, at the height of a foot standing there.
     pub door: Option<IVec3>,
     pub facing: Facing,
@@ -431,7 +433,8 @@ impl Settlements {
             spawn: std::sync::OnceLock::new(),
             promised: std::sync::OnceLock::new(),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            cells: Cache::new(MB),
+            // Pure functions of their cells, which the server's tick may read: copying.
+            cells: Cache::copying(MB),
             #[cfg(test)]
             planned: std::sync::atomic::AtomicUsize::new(0),
         }
@@ -716,6 +719,19 @@ impl Settlements {
         spawn
     }
 
+    /// Finds the squares in reach of the spawn and settles the spawn's square now, both made
+    /// once per world, as the server does before its first tick: a tick that came to
+    /// either while a streaming worker was making it would wait on that worker.
+    pub(crate) fn settle_spawn(&self, world: &Overworld) {
+        self.promised(world);
+        if let Some(fixed) = &self.fixed
+            && !(self.def.styles.is_empty() || self.def.sizes.is_empty())
+        {
+            let _stage = crate::stage::enter(crate::stage::Stage::Settlements);
+            self.spawn.get_or_init(|| self.spawn_square(world, fixed));
+        }
+    }
+
     /// The squares one of which may be settled for a new player (see `promised`).
     fn promised(&self, world: &Overworld) -> &[IVec2] {
         self.promised.get_or_init(|| if self.def.rules.spawn_settlement_within > 0 { self.in_reach(world.spawn_estimate()) } else { Vec::new() })
@@ -755,6 +771,12 @@ impl Settlements {
         self.slot(world, self.cell_of(x, z)).0.as_ref().is_some_and(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all())
     }
 
+    /// The height of the settlement whose plan covers (x, z), if one does (as `covers`).
+    pub fn height_covering(&self, world: &Overworld, x: i32, z: i32) -> Option<i32> {
+        let p = IVec2::new(x, z);
+        self.slot(world, self.cell_of(x, z)).0.as_ref().filter(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all()).map(|plan| plan.height)
+    }
+
     /// Whether any settlement's gate lies within `reach` blocks of the box from `min` to
     /// `max`.
     pub fn any_near(&self, world: &Overworld, min: IVec2, max: IVec2, reach: i32) -> bool {
@@ -791,6 +813,26 @@ impl Settlements {
             .collect();
         roofs.sort_unstable_by_key(|r| (r.0.y, r.0.x, r.0.z));
         Some(roofs)
+    }
+
+    /// As [`Settlements::planned`], the blocks set at a height over the ground of their
+    /// column rather than at one of their own (a lamp's torch on its post): each where
+    /// generation sets it, over the ground's top block as generation finds it.
+    pub fn planned_on_ground(&self, world: &Overworld, centre: IVec2, keep: &dyn Fn(BlockId) -> bool) -> Option<Vec<(IVec3, BlockId)>> {
+        let slot = self.slot(world, self.cell_of(centre.x, centre.y));
+        let plan = slot.0.as_ref().filter(|p| p.centre == centre)?;
+        let mut set: Vec<(IVec3, BlockId)> = plan
+            .voxels
+            .values()
+            .flatten()
+            .filter(|v| v.ground)
+            .filter_map(|v| match v.put {
+                Put::Set(b) if keep(b) => Some((IVec3::new(v.pos.x, world.geo_area(v.pos.x, v.pos.z, 1)[0].height + v.pos.y, v.pos.z), b)),
+                _ => None,
+            })
+            .collect();
+        set.sort_unstable_by_key(|r| (r.0.y, r.0.x, r.0.z));
+        Some(set)
     }
 
     /// What its flames are kept from (`rules.fire`).

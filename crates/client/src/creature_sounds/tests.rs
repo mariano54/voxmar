@@ -80,7 +80,7 @@ fn silent_runs_drain_and_play_nothing() {
         .init_resource::<Heard>()
         .add_message::<SoundCue>()
         .add_systems(Update, play);
-    let sound = CreatureSound { kind: Kind::Hurt, id: 1, species: rabbit, position: Vec3::ZERO, speed: 0.0, scale: 1.0, young: false, answering: false };
+    let sound = CreatureSound { kind: Kind::Hurt, id: 1, species: rabbit, position: Vec3::ZERO, speed: 0.0, scale: 1.0, young: false, answering: false, chatter: None };
     app.world_mut().resource_mut::<CreatureSounds>().push(sound);
     app.update();
     assert!(app.world().resource::<CreatureSounds>().0.is_empty());
@@ -97,6 +97,34 @@ fn an_answer_to_the_hand_is_never_thinned() {
     assert!(!super::thinned(0.7, false, || 0.5));
     assert!(!super::thinned(0.7, true, || 0.9));
     assert!(!super::thinned(1.0, false, || unreachable!("a sure sound draws nothing")));
+}
+
+/// Chatter is a call by the voice's share at the hour: never at a share of 0, always at 1.
+#[test]
+fn chatter_calls_by_the_hour() {
+    assert_eq!(super::chatter(0.25, 0.1), Kind::Call);
+    assert_eq!(super::chatter(0.25, 0.5), Kind::Idle);
+    assert_eq!(super::chatter(0.0, 0.0), Kind::Idle);
+    assert_eq!(super::chatter(1.0, 0.999), Kind::Call);
+}
+
+/// The farmyard and the wild keep their hours: the cock crows at dawn and is quiet at
+/// night, wolves howl and frogs croak after dark more than by day.
+#[test]
+fn the_shipped_voices_keep_their_hours() {
+    use super::defs::Part;
+    let content = content();
+    let bank = Bank::load(&content.files, &content.creatures).unwrap();
+    let calls = |name: &str| bank.voice(content.creatures.find(name).unwrap()).unwrap().calls;
+    let cock = calls("junglefowl");
+    assert!(cock.at(Part::Dawn) > 0.5 && cock.at(Part::Night) == 0.0, "{cock:?}");
+    for night_caller in ["wolf", "common_frog"] {
+        let calls = calls(night_caller);
+        assert!(calls.at(Part::Night) > calls.at(Part::Day), "{night_caller}: {calls:?}");
+    }
+    // A hound by a home barks, and seldom howls, least of all at night.
+    let (hound, wolf) = (calls("hound"), calls("wolf"));
+    assert!(hound.at(Part::Night) <= hound.at(Part::Day) && hound.at(Part::Night) < 0.05 && wolf.at(Part::Night) > 0.4, "{hound:?}");
 }
 
 /// `cargo test --profile iter -p voxmar_client creature_sound_preview -- --ignored` writes

@@ -17,6 +17,11 @@
 //   loud, a munch soft), `pitch: (low, high)` (the random spread), `range` (blocks at
 //   which it fades away; by default the event's usual reach) and `chance` (of sounding
 //   at all).
+// - `calls` says how much of a voice's chatter as it wanders is a call rather than an
+//   idle sound, through each part of the day (`dawn` and `dusk` straddle sunrise and
+//   sunset, `day` and `night` lie between); unset, a quarter at every hour. The cock
+//   crows at dawn, songbirds sing the dawn chorus, cattle low at dusk, wolves howl and
+//   frogs croak after dark.
 // - `ground: false` silences the ground underfoot for things that fly, float or slide;
 //   others' steps sound the block they walk on, as the player's do.
 // - `aether` (0..1) on a species makes it otherworldly: a shimmer, a glassy ring and a
@@ -61,6 +66,7 @@
         "cattle": (
             like: "grazer_large",
             size: 1.45,
+            calls: (dusk: 0.4),
             idle: (clips: ["sounds/creatures/cattle/idle_1.ogg", "sounds/creatures/cattle/idle_2.ogg", "sounds/creatures/cattle/idle_3.ogg", "sounds/creatures/cattle/idle_4.ogg"]),
             alert: (clips: ["sounds/creatures/cattle/alert_1.ogg", "sounds/creatures/cattle/alert_2.ogg"]),
             call: (clips: ["sounds/creatures/cattle/call_1.ogg", "sounds/creatures/cattle/call_2.ogg", "sounds/creatures/cattle/call_3.ogg"]),
@@ -121,6 +127,7 @@
         // Howls, growls, whines and yelps.
         "wolf": (
             size: 0.9,
+            calls: (dawn: 0.2, day: 0.05, dusk: 0.4, night: 0.45),
             idle: (clips: ["sounds/creatures/wolf/idle_1.ogg", "sounds/creatures/wolf/idle_2.ogg", "sounds/creatures/wolf/idle_3.ogg", "sounds/creatures/wolf/idle_4.ogg"]),
             alert: (clips: ["sounds/creatures/wolf/alert_1.ogg", "sounds/creatures/wolf/alert_2.ogg", "sounds/creatures/wolf/alert_3.ogg", "sounds/creatures/wolf/alert_4.ogg"]),
             rest: (clips: ["sounds/creatures/wolf/rest_1.ogg", "sounds/creatures/wolf/rest_2.ogg", "sounds/creatures/wolf/rest_3.ogg"]),
@@ -131,6 +138,13 @@
             warn: (clips: ["sounds/creatures/wolf/attack_1.ogg", "sounds/creatures/wolf/attack_2.ogg", "sounds/creatures/wolf/attack_3.ogg"], pitch: (0.74, 0.82), gain: 0.65, range: 24.0),
             hurt: (clips: ["sounds/creatures/wolf/hurt_1.ogg", "sounds/creatures/wolf/hurt_2.ogg", "sounds/creatures/wolf/hurt_3.ogg"]),
             death: (clips: ["sounds/creatures/wolf/death_1.ogg", "sounds/creatures/wolf/death_2.ogg"]),
+        ),
+        // A settlement's hound: a wolf's voice, but barking as it wanders and only now and
+        // then howling, by night least of all, so a hound by a home lets it sleep.
+        "hound": (
+            like: "wolf",
+            calls: (dawn: 0.05, day: 0.05, dusk: 0.05, night: 0.02),
+            idle: (clips: ["sounds/creatures/wolf/alert_1.ogg", "sounds/creatures/wolf/alert_2.ogg", "sounds/creatures/wolf/alert_3.ogg", "sounds/creatures/wolf/alert_4.ogg"], gain: 0.4),
         ),
         // Yips, barks and the vixen's scream.
         "fox": (
@@ -180,6 +194,7 @@
         // Clucks, alarm cackles and the cock's crow.
         "fowl": (
             size: 0.6,
+            calls: (dawn: 0.85, day: 0.15, dusk: 0.1, night: 0.0),
             idle: (clips: ["sounds/creatures/fowl/idle_1.ogg", "sounds/creatures/fowl/idle_2.ogg", "sounds/creatures/fowl/idle_3.ogg", "sounds/creatures/fowl/idle_4.ogg", "sounds/creatures/fowl/idle_5.ogg", "sounds/creatures/fowl/idle_6.ogg", "sounds/creatures/fowl/idle_7.ogg", "sounds/creatures/fowl/idle_8.ogg", "sounds/creatures/fowl/idle_9.ogg", "sounds/creatures/fowl/idle_10.ogg"]),
             alert: (clips: ["sounds/creatures/fowl/alert_1.ogg", "sounds/creatures/fowl/alert_2.ogg", "sounds/creatures/fowl/alert_3.ogg", "sounds/creatures/fowl/alert_4.ogg"]),
             call: (clips: ["sounds/creatures/fowl/call_1.ogg", "sounds/creatures/fowl/call_2.ogg", "sounds/creatures/fowl/call_3.ogg", "sounds/creatures/fowl/call_4.ogg"], range: 72.0),
@@ -222,12 +237,14 @@
         // Croaks.
         "frog": (
             size: 0.18,
+            calls: (dawn: 0.2, day: 0.1, dusk: 0.5, night: 0.6),
             idle: (clips: ["sounds/creatures/frog/idle_1.ogg", "sounds/creatures/frog/idle_2.ogg", "sounds/creatures/frog/idle_3.ogg", "sounds/creatures/frog/idle_4.ogg", "sounds/creatures/frog/idle_5.ogg", "sounds/creatures/frog/idle_6.ogg", "sounds/creatures/frog/idle_7.ogg"]),
             call: (clips: ["sounds/creatures/frog/call_1.ogg", "sounds/creatures/frog/call_2.ogg"]),
         ),
         // Trills and squeaks.
         "toad": (
             size: 0.2,
+            calls: (day: 0.1, dusk: 0.4, night: 0.5),
             idle: (clips: ["sounds/creatures/toad/idle_1.ogg"]),
             call: (clips: ["sounds/creatures/toad/call_1.ogg"]),
             hurt: (clips: ["sounds/creatures/toad/hurt_1.ogg", "sounds/creatures/toad/hurt_2.ogg", "sounds/creatures/toad/hurt_3.ogg", "sounds/creatures/toad/hurt_4.ogg", "sounds/creatures/toad/hurt_5.ogg"]),
@@ -370,6 +387,7 @@
         "songbird": (
             like: "wings",
             size: 0.3,
+            calls: (dawn: 0.7, day: 0.3, dusk: 0.3, night: 0.0),
             idle: (clips: ["sounds/creatures/quail/idle_1.ogg", "sounds/creatures/quail/idle_2.ogg", "sounds/creatures/quail/idle_3.ogg", "sounds/creatures/quail/idle_4.ogg"], gain: 0.6),
             call: (clips: ["sounds/creatures/quail/call_1.ogg", "sounds/creatures/quail/call_2.ogg", "sounds/creatures/quail/call_3.ogg", "sounds/creatures/quail/call_4.ogg", "sounds/creatures/quail/call_5.ogg"], gain: 0.6),
             hurt: (clips: ["sounds/creatures/quail/hurt_1.ogg"]),
@@ -515,6 +533,6 @@
         "hunter": (voice: "person", pitch: 0.92),
         "poacher": (voice: "person", pitch: 0.84),
         "captive": (voice: "person", pitch: 1.05),
-        "hound": (voice: "wolf", pitch: 1.35),
+        "hound": (voice: "hound", pitch: 1.35),
     },
 )

@@ -102,6 +102,10 @@ pub struct Modifiers {
     pub hurt_every: Option<f32>,
     /// Degrees (°C) added to how warm the player feels.
     pub warmth: f32,
+    /// Degrees a home adds (its steps and rooms), 0 or more: they lift how warm the player
+    /// feels only up to the top of the comfortable band (survival.ron's `comfort_top`),
+    /// never past it, so a cosy home never makes its owner hot (`Modifiers::felt`).
+    pub home_warmth: f32,
     /// Extra health points the player may have.
     pub max_health: i8,
     /// How much more (or less) health the player may have, as a share of what they would:
@@ -126,11 +130,20 @@ pub struct Modifiers {
 
 impl Default for Modifiers {
     fn default() -> Self {
-        Self { heal: 1.0, hurt_every: None, warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0 }
+        Self { heal: 1.0, hurt_every: None, warmth: 0.0, home_warmth: 0.0, max_health: 0, max_health_share: 1.0, speed: 1.0, mining: 1.0, xp: 1.0, fishing: 1.0, meal_heal: 1.0, meal_time: 1.0, finds: 0.0 }
     }
 }
 
 impl Modifiers {
+    /// How warm the player feels in air (and fire's heat) of `air` °C: `warmth` adds as it
+    /// is, then `home_warmth` lifts what that comes to toward `comfort_top` and no further.
+    /// What is already at or above the top is left as it is: a home warms a cold night and
+    /// adds nothing to a hot day.
+    pub fn felt(&self, air: f32, comfort_top: f32) -> f32 {
+        let base = air + self.warmth;
+        if base >= comfort_top { base } else { (base + self.home_warmth).min(comfort_top) }
+    }
+
     /// Several effects' modifiers together.
     pub fn combine<'a>(all: impl IntoIterator<Item = &'a Modifiers>) -> Modifiers {
         all.into_iter().fold(Modifiers::default(), |sum, m| Modifiers {
@@ -140,6 +153,7 @@ impl Modifiers {
                 (a, b) => a.or(b),
             },
             warmth: sum.warmth + m.warmth,
+            home_warmth: sum.home_warmth + m.home_warmth,
             max_health: sum.max_health.saturating_add(m.max_health),
             max_health_share: sum.max_health_share * m.max_health_share,
             speed: sum.speed * m.speed,
@@ -243,12 +257,45 @@ impl Condition {
         }
     }
 
+    /// The temperatures `FeltAbove` asks anywhere in this condition that feeling warmer
+    /// brings it on: not under a `Not`, where feeling warmer takes it away.
+    fn felt_above(&self, into: &mut Vec<f32>) {
+        match self {
+            Condition::FeltAbove(t) => into.push(*t),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.felt_above(into)),
+            Condition::Sheltered(c) => c.felt_above(into),
+            _ => {}
+        }
+    }
+
     /// The tags `HomeHas` asks of a home anywhere in this condition.
     fn home_tags<'a>(&'a self, into: &mut Vec<&'a str>) {
         match self {
             Condition::HomeHas(tag, _) => into.push(tag),
             Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.home_tags(into)),
             Condition::Not(c) | Condition::Sheltered(c) => c.home_tags(into),
+            _ => {}
+        }
+    }
+
+    /// Whether `survey` has what this condition's `HomeHas` asks, taking every other ask
+    /// (and anything under a `Not`) as met.
+    fn home_met(&self, survey: &HomeSurvey) -> bool {
+        match self {
+            Condition::HomeHas(tag, n) => survey.count(tag) >= *n,
+            Condition::All(list) => list.iter().all(|c| c.home_met(survey)),
+            Condition::Any(list) => list.iter().any(|c| c.home_met(survey)),
+            Condition::Sheltered(c) => c.home_met(survey),
+            _ => true,
+        }
+    }
+
+    /// The counts `HomeHas` asks of `tag` anywhere in this condition.
+    fn home_needs(&self, tag: &str, into: &mut Vec<u32>) {
+        match self {
+            Condition::HomeHas(t, n) if t == tag => into.push(*n),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.home_needs(tag, into)),
+            Condition::Not(c) | Condition::Sheltered(c) => c.home_needs(tag, into),
             _ => {}
         }
     }
@@ -689,6 +736,9 @@ impl EffectRegistry {
         }
         let (mut near, mut held, mut worn) = (Vec::new(), Vec::new(), Vec::new());
         for def in &defs {
+            if !(def.modifiers.home_warmth.is_finite() && def.modifiers.home_warmth >= 0.0) {
+                return Err(RegistryError(format!("effect `{}` adds {} home warmth: a home only warms, 0 or more", def.name, def.modifiers.home_warmth)));
+            }
             if !(def.lingers.is_finite() && def.lingers >= 0.0) || (def.lingers > 0.0 && def.when.is_none()) {
                 return Err(RegistryError(format!("effect `{}` lingers {} seconds: it takes 0 or more, and a `when` to linger after", def.name, def.lingers)));
             }
@@ -892,6 +942,63 @@ impl EffectRegistry {
         &self.home_tags
     }
 
+    /// The coolest a debuff comes on at as the player feels warmer (`FeltAbove`): Hot.
+    /// None when no debuff asks.
+    pub fn too_warm_at(&self) -> Option<f32> {
+        let mut at = Vec::new();
+        for def in self.defs.iter().filter(|d| d.kind == Kind::Debuff) {
+            for when in def.when.iter() {
+                when.felt_above(&mut at);
+            }
+        }
+        at.into_iter().reduce(f32::min)
+    }
+
+    /// The highest announced effect (the last listed) whose home asks the home met in
+    /// `before` and not in `after`, short in one of `tags`, with that tag and the count it
+    /// wants: what a home loses when its lights burn out. Only `HomeHas` asks are judged (the
+    /// rest, standing at home or a roof, are taken as met).
+    pub fn falls_short(&self, tags: &[&str], before: &HomeSurvey, after: &HomeSurvey) -> Option<(EffectId, String, u32)> {
+        self.ids()
+            .filter(|&id| self.get(id).announce && self.get(id).when.as_ref().is_some_and(|when| when.home_met(before) && !when.home_met(after)))
+            .filter_map(|id| Some((id, self.short_in(id, tags, after, |tag| before.count(tag))?)))
+            .last()
+            .map(|(id, (tag, need))| (id, tag, need))
+    }
+
+    /// Of the steps in `had`, the highest (the last listed) the home in `now` no longer
+    /// meets, short in one of `tags`, with that tag and the count it wants: what lights
+    /// burnt out while the player was away cost.
+    pub fn lost(&self, had: &[EffectId], tags: &[&str], now: &HomeSurvey) -> Option<(EffectId, String, u32)> {
+        self.ids()
+            .filter(|id| had.contains(id) && self.get(*id).when.as_ref().is_some_and(|when| !when.home_met(now)))
+            .filter_map(|id| Some((id, self.short_in(id, tags, now, |_| u32::MAX)?)))
+            .last()
+            .map(|(id, (tag, need))| (id, tag, need))
+    }
+
+    /// The announced steps asking a home for something (`HomeHas`) whose asks `survey` meets.
+    pub fn home_steps(&self, survey: &HomeSurvey) -> Vec<EffectId> {
+        self.ids()
+            .filter(|&id| {
+                let def = self.get(id);
+                def.announce && def.when.as_ref().is_some_and(|when| when.about_home() && when.home_met(survey))
+            })
+            .collect()
+    }
+
+    /// The first of `tags` effect `id` wants more of than `now` has (and no more than `had`
+    /// of it), with the most it wants.
+    fn short_in(&self, id: EffectId, tags: &[&str], now: &HomeSurvey, had: impl Fn(&str) -> u32) -> Option<(String, u32)> {
+        let when = self.get(id).when.as_ref()?;
+        let mut needs = Vec::new();
+        tags.iter().find_map(|&tag| {
+            needs.clear();
+            when.home_needs(tag, &mut needs);
+            needs.iter().copied().filter(|&n| now.count(tag) < n && n <= had(tag)).max().map(|n| (tag.to_owned(), n))
+        })
+    }
+
     /// Whether a home counts blocks with `tag` only under the open sky.
     pub fn outdoor(&self, tag: &str) -> bool {
         self.outdoor_tags.iter().any(|t| t == tag)
@@ -991,6 +1098,21 @@ impl EffectRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Warmth adds as it is; a home's warmth lifts what that comes to up to the top of the
+    /// comfortable band and no further, and adds nothing at or above it.
+    #[test]
+    fn a_homes_warmth_tops_out_at_the_comfortable_band() {
+        let home = Modifiers { home_warmth: 15.0, ..Default::default() };
+        assert_eq!(home.felt(0.0, 29.0), 15.0, "a cold night gets all of it");
+        assert_eq!(home.felt(20.0, 29.0), 29.0, "a mild day is lifted to the top, not past it");
+        assert_eq!(home.felt(29.0, 29.0), 29.0);
+        assert_eq!(home.felt(34.0, 29.0), 34.0, "a hot day is no hotter, nor cooler");
+        let soaked = Modifiers { warmth: -4.0, home_warmth: 2.0, ..Default::default() };
+        assert_eq!(soaked.felt(10.0, 29.0), 8.0, "plain warmth first, then the home's");
+        let combined = Modifiers::combine([&home, &soaked]);
+        assert_eq!((combined.warmth, combined.home_warmth), (-4.0, 17.0));
+    }
 
     /// A shelter tag always wins, furniture or not; a solid untagged block is draughty
     /// unless it is furniture; anything else is no wall.
@@ -1167,6 +1289,24 @@ mod tests {
 
     fn home_registry() -> EffectRegistry {
         EffectRegistry::new(vec![EffectRegistry::read("core", HOME).unwrap()]).unwrap()
+    }
+
+    /// Losing a block a home step counts names the highest step it then falls short of,
+    /// among those the home met; losing one more than any step needs, or one no step
+    /// counts, names none. On return, the steps once met and no longer are found the same way.
+    #[test]
+    fn a_home_falling_short_names_the_highest_step_lost() {
+        let effects = home_registry();
+        let (camp, snug) = (effects.id("core:camp").unwrap(), effects.id("core:snug").unwrap());
+        let survey = |bed: u32, seat: u32| HomeSurvey { counts: vec![("bed".into(), bed), ("seat".into(), seat)], ..Default::default() };
+        assert_eq!(effects.falls_short(&["seat"], &survey(1, 2), &survey(1, 1)), Some((snug, "seat".into(), 2)));
+        assert_eq!(effects.falls_short(&["bed"], &survey(1, 2), &survey(0, 2)), Some((snug, "bed".into(), 1)), "camp and snug both want it: the higher is named");
+        assert_eq!(effects.falls_short(&["bed", "seat"], &survey(1, 0), &survey(0, 0)), Some((camp, "bed".into(), 1)), "snug was never met");
+        assert_eq!(effects.falls_short(&["seat"], &survey(1, 4), &survey(1, 3)), None, "still enough");
+        assert_eq!(effects.falls_short(&["rug"], &survey(1, 2), &survey(0, 2)), None, "lost for want of what is not asked about");
+        assert_eq!(effects.home_steps(&survey(1, 2)), vec![camp, snug]);
+        assert_eq!(effects.lost(&[camp, snug], &["seat"], &survey(1, 0)), Some((snug, "seat".into(), 2)));
+        assert_eq!(effects.lost(&[camp], &["seat"], &survey(1, 0)), None, "snug was not had");
     }
 
     const KNOW_HOW: &str = r#"(effects: [

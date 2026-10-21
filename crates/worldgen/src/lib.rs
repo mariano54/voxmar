@@ -32,7 +32,7 @@ mod lattice;
 mod levels;
 mod noise;
 mod parallel;
-pub use parallel::set_helper_limit;
+pub use parallel::{mark_urgent, set_helper_limit};
 #[cfg(test)]
 mod perf;
 mod rarity;
@@ -267,6 +267,11 @@ pub struct Overworld {
     /// searches from the same lattice (a test's many biomes from the same places) work
     /// each out once.
     fields: water::cache::Cache<(IVec2, IVec2), Arc<[Point]>>,
+    /// Columns already generated, when a caller asked to keep them (`remember_columns`).
+    remembered: std::sync::OnceLock<water::cache::Cache<ColumnPos, Arc<Column>>>,
+    /// `spawn_search` without and with trails and settlements, each worked out once: a
+    /// shared generator gives every server on its world the spawn found by the first.
+    spawns: [std::sync::OnceLock<IVec3>; 2],
     seed: u64,
 }
 
@@ -335,7 +340,9 @@ impl Overworld {
             shape_surfaces,
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
-            fields: water::cache::Cache::new(FIELD_BUDGET),
+            fields: water::cache::Cache::copying(FIELD_BUDGET),
+            remembered: std::sync::OnceLock::new(),
+            spawns: Default::default(),
             seed: stream,
         }
     }
@@ -348,17 +355,44 @@ impl Overworld {
     /// another holds open (each gameplay test starts its own on one seed) finds the land
     /// round its spawn already planned rather than keeping its first player waiting.
     pub fn shared(seed: u64, content: &voxmar_engine::content::Content, world: &WorldContent) -> Arc<Self> {
-        type Held = ((u64, u64), std::sync::Weak<Overworld>);
-        static SHARED: std::sync::Mutex<Vec<Held>> = std::sync::Mutex::new(Vec::new());
         let key = (seed, content.fingerprint());
-        let mut shared = SHARED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        shared.retain(|(_, held)| held.strong_count() > 0);
-        if let Some(found) = shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade()) {
+        let mut shared = Self::held().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(found) = Self::find(&mut shared, key) {
             return found;
         }
         let made = Arc::new(Self::with_content(seed, content.blocks.clone(), world));
         shared.push((key, Arc::downgrade(&made)));
         made
+    }
+
+    /// As `shared`, reading the world content from `content` (outside the lock) only when
+    /// no generator for it is held: a server started beside another on its world reads none.
+    pub fn shared_loading(seed: u64, content: &voxmar_engine::content::Content) -> Result<Arc<Self>, ContentError> {
+        let key = (seed, content.fingerprint());
+        if let Some(found) = Self::find(&mut Self::held().lock().unwrap_or_else(|poisoned| poisoned.into_inner()), key) {
+            return Ok(found);
+        }
+        Ok(Self::shared(seed, content, &WorldContent::load(content)?))
+    }
+
+    /// The generators `shared` hands out, by seed and content fingerprint.
+    fn held() -> &'static std::sync::Mutex<Vec<((u64, u64), std::sync::Weak<Overworld>)>> {
+        static SHARED: std::sync::Mutex<Vec<((u64, u64), std::sync::Weak<Overworld>)>> = std::sync::Mutex::new(Vec::new());
+        &SHARED
+    }
+
+    fn find(shared: &mut Vec<((u64, u64), std::sync::Weak<Overworld>)>, key: (u64, u64)) -> Option<Arc<Self>> {
+        shared.retain(|(_, held)| held.strong_count() > 0);
+        shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade())
+    }
+
+    /// Keeps up to about `bytes` of the columns this generator makes, and hands out copies
+    /// of them when they are asked for again: for a process that starts many servers on
+    /// one world (a test run), each generating the land round the same spawn. A column is
+    /// a function of the seed, the content and its place, so a copy is what generating it
+    /// again would make. Only the first call sets the budget.
+    pub fn remember_columns(&self, bytes: usize) {
+        let _ = self.remembered.set(water::cache::Cache::new(bytes));
     }
 
     /// The biomes of this world.
@@ -533,9 +567,15 @@ impl Overworld {
 
     /// The ground at one position, with its rivers, lakes and trails.
     pub(crate) fn geo(&self, x: i32, z: i32) -> GeoSample {
+        self.geo_with(x, z, &mut geology::Corners::default())
+    }
+
+    /// [`Overworld::geo`], sharing the relief at lattice corners with other samples nearby
+    /// through `corners`: neighbouring positions read the same few corners.
+    pub(crate) fn geo_with(&self, x: i32, z: i32, corners: &mut geology::Corners) -> GeoSample {
         let sample = {
             let _stage = stage::enter(Stage::Rivers);
-            self.ground(x, z)
+            self.rivers.sample_with(self.stages(), x, z, true, corners)
         };
         let _stage = stage::enter(Stage::Trails);
         let sample = self.trails.apply(&self.land(), sample, x, z);
@@ -617,6 +657,16 @@ impl Overworld {
         self.lairs.defs()
     }
 
+    /// Whether a settlement's plan covers (x, z), out to a few blocks past its edge.
+    pub fn in_settlement(&self, x: i32, z: i32) -> bool {
+        self.settlement_covers(x, z)
+    }
+
+    /// The height of the settlement whose plan covers (x, z), if one does.
+    pub fn settlement_height(&self, x: i32, z: i32) -> Option<i32> {
+        self.settlements.height_covering(self, x, z)
+    }
+
     /// Whether a settlement's plan covers (x, z).
     pub(crate) fn settlement_covers(&self, x: i32, z: i32) -> bool {
         self.settlements.covers(self, x, z)
@@ -672,6 +722,12 @@ impl Overworld {
     /// sets, each where it goes.
     pub fn settlement_planned(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
         self.settlements.planned(self, centre, keep).unwrap_or_default()
+    }
+
+    /// As [`Overworld::settlement_planned`], the blocks set at a height over the ground of
+    /// their column (a lamp's torch on its post), each with its height over the ground.
+    pub fn settlement_planned_on_ground(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
+        self.settlements.planned_on_ground(self, centre, keep).unwrap_or_default()
     }
 
     /// Whether `block` is one of settlements' own flames (`rules.fire.flames`).
@@ -1124,7 +1180,10 @@ impl Generator for Overworld {
 
     fn generate(&self, pos: ColumnPos) -> Column {
         let _span = tracing::info_span!("generate_column").entered();
-        terrain::generate(self, pos)
+        match self.remembered.get() {
+            Some(remembered) => (*remembered.get(pos, || Arc::new(terrain::generate(self, pos)))).clone(),
+            None => terrain::generate(self, pos),
+        }
     }
 
     fn spawn_point(&self) -> IVec3 {
@@ -1133,6 +1192,14 @@ impl Generator for Overworld {
 }
 
 impl Overworld {
+    /// The spawn point, found with everything near it that is found once per world (the
+    /// spawn's estimate, the squares in reach, the spawn's square settled): the server
+    /// asks before its first tick, so no tick waits on a streaming worker's first search.
+    pub fn settle_spawn(&self) -> IVec3 {
+        self.settlements.settle_spawn(self);
+        self.spawn_search(true)
+    }
+
     /// Near where a new player spawns, from the land alone, before trails and
     /// settlements: the spawn point unless it would fall on a trail or in a settlement,
     /// and then a step or two along the same search. Settlements plan by it, so the
@@ -1144,7 +1211,13 @@ impl Overworld {
 
     /// Walks outwards on a spiral until it finds open, temperate grassland on dry land;
     /// `built`: also off trails and outside settlements, which plan by the search without.
+    /// Each is worked out once (`spawns`), so a search must never ask for its own kind's
+    /// spawn: it would wait on itself.
     fn spawn_search(&self, built: bool) -> IVec3 {
+        *self.spawns[built as usize].get_or_init(|| self.search_spawn(built))
+    }
+
+    fn search_spawn(&self, built: bool) -> IVec3 {
         for ring in 0..256 {
             for step in 0..(ring * 8).max(1) {
                 let (x, z) = spiral(ring, step);
@@ -1353,6 +1426,23 @@ mod tests {
     pub(crate) fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
         let positions: Vec<ColumnPos> = (0..count * count).map(|i| first.offset(i % count, i / count)).collect();
         generate_columns(world, &positions)
+    }
+
+    /// A generator keeping its columns (`remember_columns`) hands out exactly what one
+    /// that keeps none makes, asked once or again, and with too small a budget to keep them all.
+    #[test]
+    fn remembered_columns_are_the_columns() {
+        let registry = registry();
+        let fresh = Overworld::new(42, registry.clone());
+        let at: Vec<ColumnPos> = (0..6).map(|i| ColumnPos::new(i % 3 - 10, i / 3 - 3)).collect();
+        let made = generate_columns(&fresh, &at);
+        for budget in [64 << 20, 200 << 10] {
+            let kept = Overworld::new(42, registry.clone());
+            kept.remember_columns(budget);
+            for _ in 0..2 {
+                assert!(generate_columns(&kept, &at) == made, "a kept column differs from one made afresh (budget {budget})");
+            }
+        }
     }
 
     /// Rivers are traced region by region and cached; nothing may depend on which column,

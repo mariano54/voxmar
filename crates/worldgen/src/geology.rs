@@ -252,9 +252,11 @@ impl Geology {
             vertical: 0.6 + 0.4 * dials.mountain_height / 140.0,
             climate: Climate::new(seed, dials, &content.climate),
             shapes: Shapes::new(seed, dials, content, rocks),
-            lattice: Cache::new(16 << 20),
-            lattice_reliefs: Cache::new(8 << 20),
-            bases: Cache::new(4 << 20),
+            // Samples of the land, pure functions of their tiles, which the server's tick may
+            // read: copying.
+            lattice: Cache::copying(16 << 20),
+            lattice_reliefs: Cache::copying(8 << 20),
+            bases: Cache::copying(4 << 20),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
     }
@@ -655,13 +657,14 @@ impl Geology {
 
 /// Geology already sampled over a square of positions, which falls back to sampling
 /// anywhere else (and keeps those samples, since decorations reaching out of the column
-/// ask for the same few positions over and over).
+/// ask for the same few positions over and over, and the relief at the lattice corners
+/// around them, which positions a few blocks apart share).
 pub struct GeoGrid<'a> {
     world: &'a Overworld,
     min: (i32, i32),
     size: i32,
     samples: Vec<GeoSample>,
-    beyond: RefCell<FxHashMap<(i32, i32), GeoSample>>,
+    beyond: RefCell<(FxHashMap<(i32, i32), GeoSample>, Corners)>,
 }
 
 impl<'a> GeoGrid<'a> {
@@ -680,7 +683,8 @@ impl<'a> GeoGrid<'a> {
         if (0..self.size).contains(&i) && (0..self.size).contains(&j) {
             self.samples[(j * self.size + i) as usize]
         } else {
-            *self.beyond.borrow_mut().entry((x, z)).or_insert_with(|| self.world.geo(x, z))
+            let (beyond, corners) = &mut *self.beyond.borrow_mut();
+            *beyond.entry((x, z)).or_insert_with(|| self.world.geo_with(x, z, corners))
         }
     }
 
@@ -930,9 +934,9 @@ mod profile {
         let mut lanes = router.lanes();
         let mut sum = 0.0;
         for _ in 0..repeat {
-            for four in points.chunks(4) {
-                router.start(&mut lanes, four);
-                for k in 0..4 {
+            for some in points.chunks(crate::router::LANES) {
+                router.start(&mut lanes, some);
+                for k in 0..some.len() {
                     sum += router.get(&mut lanes, &world.geology, field, k);
                 }
             }

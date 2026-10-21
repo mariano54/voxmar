@@ -223,6 +223,55 @@ impl ClientWorld {
         self.visibility_dirty = true;
     }
 
+    /// Whether every column received that can be meshed (its neighbours received too) is
+    /// meshed, and nothing is being meshed: the land in has all been built (workers.rs).
+    pub fn caught_up(&self) -> bool {
+        self.in_flight.is_empty() && self.dirty.iter().all(|&pos| !self.voxels.contains(pos) || !self.meshable(pos))
+    }
+
+    /// Whether every column within `radius` of `center` has come.
+    pub fn all_in(&self, center: ColumnPos, radius: i32) -> bool {
+        (-radius..=radius).all(|dz| (-radius..=radius).all(|dx| self.voxels.contains(center.offset(dx, dz))))
+    }
+
+    /// Whether the land in view of `center` is all built: every column within the view
+    /// distance come, and every one inside its edge (whose neighbours have come too) meshed
+    /// and up to date. An edge waiting for neighbours is no hole; one inside it is.
+    pub fn built_in_view(&self, center: ColumnPos) -> bool {
+        let inner = self.view_distance - 1;
+        let built = |pos: ColumnPos| self.details.contains_key(&pos) && !self.dirty.contains(&pos);
+        self.in_flight.is_empty()
+            && self.all_in(center, self.view_distance)
+            && (-inner..=inner).all(|dz| (-inner..=inner).all(|dx| built(center.offset(dx, dz))))
+    }
+
+    /// How many columns straight ahead of `eye` along `forward` (on the ground plane) are
+    /// meshed before the first that is not, a strip three columns wide, up to the view
+    /// distance: the land a flight has in front of it, which falls short when streaming
+    /// falls behind (the capture's `ahead:` line).
+    pub fn meshed_ahead(&self, eye: Vec3, forward: Vec2) -> i32 {
+        self.ahead(eye, forward, |c| self.details.contains_key(&c))
+    }
+
+    /// As `meshed_ahead`, of the columns come from the server, meshed or not: with the two
+    /// alike, a flight outruns generation; with this one further, meshing.
+    pub fn received_ahead(&self, eye: Vec3, forward: Vec2) -> i32 {
+        self.ahead(eye, forward, |c| self.voxels.contains(c))
+    }
+
+    fn ahead(&self, eye: Vec3, forward: Vec2, has: impl Fn(ColumnPos) -> bool) -> i32 {
+        let forward = forward.normalize_or_zero();
+        let side = forward.perp();
+        let column = |at: Vec2| ColumnPos((at / CHUNK_SIZE as f32).floor().as_ivec2());
+        let start = eye.xz();
+        (1..=self.view_distance)
+            .find(|&d| {
+                let at = start + forward * (d * CHUNK_SIZE) as f32;
+                [-1.0, 0.0, 1.0].iter().any(|&s| !has(column(at + side * (s * CHUNK_SIZE as f32))))
+            })
+            .map_or(self.view_distance, |d| d - 1)
+    }
+
     pub fn insert_column(&mut self, pos: ColumnPos, column: Arc<Column>) {
         self.terrain.upload_column(pos, column.colors.clone());
         self.voxels.insert(pos, column);
@@ -368,7 +417,7 @@ fn dispatch_jobs(
                 Some(columns) => {
                     world.dirty.remove(&pos);
                     world.editing.insert(pos);
-                    start_job(world, pos, center, columns, Some(&*EDITS));
+                    start_job(world, pos, center, columns, Some(&*EDITS), None);
                 }
                 None => {
                     world.edited.insert(pos);
@@ -407,17 +456,20 @@ fn dispatch_jobs(
     let mut dispatched = 0;
     for pos in ready {
         let Some(columns) = world.neighborhood(pos) else { continue };
+        // Streaming on fewer workers than there are, once playing (workers.rs).
+        let Some(slot) = voxmar_engine::jobs::start(voxmar_engine::jobs::Kind::Meshes) else { break };
         dispatched += 1;
         world.dirty.remove(&pos);
-        start_job(world, pos, center, columns, None);
+        start_job(world, pos, center, columns, None, Some(slot));
     }
     world.stats.jobs_in_flight = world.in_flight.len();
     world.stats.pending_columns = meshable - dispatched;
 }
 
 /// Relights and remeshes `pos` from `columns` (it and its neighbours) on `pool`, or on the
-/// shared workers. It is the column's newest job: any older one's result is dropped.
-fn start_job(world: &mut ClientWorld, pos: ColumnPos, center: ColumnPos, columns: Neighborhood, pool: Option<&rayon::ThreadPool>) {
+/// shared workers, holding `slot` (a streaming job's, `voxmar_engine::jobs`) while it runs.
+/// It is the column's newest job: any older one's result is dropped.
+fn start_job(world: &mut ClientWorld, pos: ColumnPos, center: ColumnPos, columns: Neighborhood, pool: Option<&rayon::ThreadPool>, slot: Option<voxmar_engine::jobs::Slot>) {
     world.jobs += 1;
     let job = world.jobs;
     world.in_flight.insert(pos, job);
@@ -425,6 +477,7 @@ fn start_job(world: &mut ClientWorld, pos: ColumnPos, center: ColumnPos, columns
     let tx = world.results_tx.clone();
     let detail = detail_at(pos.distance(center), world.details.get(&pos).copied(), world.detail_range);
     let work = move || {
+        let _slot = slot;
         let region = LitRegion::compute(&registry, &columns);
         let chunks = (0..COLUMN_CHUNKS)
             .map(|cy| ChunkResult::new(mesh_chunk(&registry, &region, &columns[4], cy, detail)))
@@ -661,6 +714,58 @@ mod tests {
         assert_stats(&app, 10, 5);
         app.world_mut().resource_mut::<ClientWorld>().reset(3);
         assert_stats(&app, 0, 0);
+    }
+
+    /// Caught up only with every column whose neighbours have come meshed: one at the edge
+    /// of what has come waits for its neighbours and holds nothing up.
+    #[test]
+    fn caught_up_once_every_meshable_column_is_meshed() {
+        let mut world = test_world();
+        assert!(world.caught_up());
+        let column = Arc::new(Column::default());
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                world.insert_column(ColumnPos::new(dx, dz), column.clone());
+            }
+        }
+        assert!(!world.caught_up(), "the middle one can be meshed");
+        world.dirty.remove(&ColumnPos::new(0, 0));
+        assert!(world.caught_up(), "the rest wait for neighbours");
+        world.in_flight.insert(ColumnPos::new(0, 0), 1);
+        assert!(!world.caught_up(), "one being meshed");
+        world.in_flight.clear();
+        world.view_distance = 1;
+        assert!(world.all_in(ColumnPos::new(0, 0), 1));
+        assert!(!world.all_in(ColumnPos::new(1, 0), 1), "the next ring not come");
+        assert!(!world.built_in_view(ColumnPos::new(0, 0)), "the middle not meshed: a hole");
+        world.details.insert(ColumnPos::new(0, 0), 1);
+        assert!(world.built_in_view(ColumnPos::new(0, 0)), "the edge waits for neighbours");
+    }
+
+    #[test]
+    fn meshed_ahead_stops_at_the_first_hole() {
+        let mut world = test_world();
+        world.view_distance = 8;
+        // Meshed out to five columns east of the origin, three wide; a hole at the sixth.
+        for x in 0..=5 {
+            for z in -1..=1 {
+                world.details.insert(ColumnPos::new(x, z), 1);
+            }
+        }
+        world.details.remove(&ColumnPos::new(4, 1));
+        let eye = Vec3::new(8.0, 100.0, 8.0);
+        assert_eq!(world.meshed_ahead(eye, Vec2::X), 3, "the hole beside the path at four");
+        world.details.insert(ColumnPos::new(4, 1), 1);
+        assert_eq!(world.meshed_ahead(eye, Vec2::X), 5);
+        assert_eq!(world.meshed_ahead(eye, -Vec2::X), 0, "nothing west");
+        // Come out to seven, meshed or not.
+        for x in 0..=7 {
+            for z in -1..=1 {
+                world.voxels.insert(ColumnPos::new(x, z), Arc::new(Column::default()));
+            }
+        }
+        assert_eq!(world.received_ahead(eye, Vec2::X), 7);
+        assert_eq!(world.meshed_ahead(eye, Vec2::X), 5, "of what came, meshed");
     }
 
     #[test]

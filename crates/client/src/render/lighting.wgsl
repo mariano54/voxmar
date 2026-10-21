@@ -65,6 +65,19 @@ fn shade(
     return shade_normal(albedo, world, NORMALS[face], FACE_SHADE[face], sky, block, ao, foliage, soft);
 }
 
+// The block light a light held in the hand gives `world` (`atmosphere.held`): its level less
+// one a block, as light spreads, on faces turned towards it (none through a wall's back).
+fn held_light(world: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let held = atmosphere.held;
+    if held.w <= 0.0 {
+        return 0.0;
+    }
+    let to_light = held.xyz - world;
+    let reach = held.w - length(to_light) / 15.0;
+    let facing = smoothstep(-0.25, 0.25, dot(normal, normalize(to_light + vec3(0.0, 1e-4, 0.0))));
+    return max(reach, 0.0) * facing;
+}
+
 // Lit colour of any surface with a normal and an ambient shading factor, its shadows
 // `soft` or not (see `sun_shadow`).
 fn shade_normal(
@@ -100,7 +113,7 @@ fn shade_normal(
     // At dusk and dawn, faces turned towards the sun take the warmer sky on its side, those
     // turned away the cooler one.
     let ambient = lights.ambient_color.rgb * dusk_tint(atmosphere, normal * 0.5) * pow(sky, atmosphere.surface.x) * ambient_shade * occlusion;
-    let torch = BLOCK_LIGHT_COLOR * light_curve(block) * 1.4 * mix(ambient_shade, 1.0, 0.5) * ao;
+    let torch = BLOCK_LIGHT_COLOR * light_curve(max(block, held_light(world, normal))) * 1.4 * mix(ambient_shade, 1.0, 0.5) * ao;
     let floor = vec3(0.010, 0.010, 0.014) * ao;
     // Sunlight bounced off the sunlit ground around: a wall sees half ground, an underside
     // all of it. Without it the shaded side of a one-block step was lit by the sky alone,

@@ -35,6 +35,14 @@ pub(crate) struct SurvivalRules {
     pub heat_reach: i32,
     pub water_chill: f32,
     pub roof_scan: i32,
+    /// Rain at least this heavy (precipitation 0..1) puts out a light that `rain_douses`
+    /// with open sky over it (a torch).
+    pub douse_rain: f32,
+    /// A light that `gutters_to:` something does so in this last share of its burn (0..1).
+    pub gutter_share: f32,
+    /// A light that is `tended` (flame.rs) set down in a settlement, no more than this many
+    /// blocks above or below the settlement's height, is tended there and never burns out.
+    pub tend_height: i32,
     /// A home reaches this many blocks out on each side, this many up and this many down:
     /// the box its furnishings are counted in and a player must stand in to feel it.
     pub home_reach: i32,
@@ -53,6 +61,10 @@ pub(crate) struct SurvivalRules {
     /// The most health a second brings back by itself, however many heal buffs and prayers
     /// are on: eating stays the way to heal in a hurry.
     pub heal_most: f32,
+    /// The top of the comfortable band, °C: a home's warmth (effects.ron's `home_warmth`)
+    /// lifts how warm a player feels this far and no further. Below whatever makes a player
+    /// hot (`load_content` checks), so a cosy home never does.
+    pub comfort_top: f32,
 }
 
 /// One package's `survival.ron`: whichever numbers it sets.
@@ -73,6 +85,9 @@ struct SurvivalFile {
     heat_reach: Option<i32>,
     water_chill: Option<f32>,
     roof_scan: Option<i32>,
+    douse_rain: Option<f32>,
+    gutter_share: Option<f32>,
+    tend_height: Option<i32>,
     home_reach: Option<i32>,
     home_up: Option<i32>,
     home_down: Option<i32>,
@@ -81,6 +96,7 @@ struct SurvivalFile {
     sleep_threat_reach: Option<f32>,
     sleep_after_hurt: Option<f32>,
     heal_most: Option<f32>,
+    comfort_top: Option<f32>,
 }
 
 impl SurvivalRules {
@@ -96,7 +112,7 @@ impl SurvivalRules {
             macro_rules! later_wins {
                 ($($field:ident),*) => { $(if next.$field.is_some() { merged.$field = next.$field; set.push(stringify!($field)); })* };
             }
-            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most);
+            later_wins!(max_health, starter_kit, pack_end, kits_per_address, kit_window, safe_fall, burn, burn_every, void_below, heat_emission, heat, heat_reach, water_chill, roof_scan, douse_rain, gutter_share, tend_height, home_reach, home_up, home_down, home_furniture, meal_most, sleep_threat_reach, sleep_after_hurt, heal_most, comfort_top);
             laid.set(&file.package, FILE, "survival rules", set, notes);
         }
         macro_rules! set {
@@ -133,6 +149,9 @@ impl SurvivalRules {
             heat_reach: set!(heat_reach),
             water_chill: set!(water_chill),
             roof_scan: set!(roof_scan),
+            douse_rain: set!(douse_rain),
+            gutter_share: set!(gutter_share),
+            tend_height: set!(tend_height),
             home_reach: set!(home_reach),
             home_up: set!(home_up),
             home_down: set!(home_down),
@@ -141,6 +160,7 @@ impl SurvivalRules {
             sleep_threat_reach: set!(sleep_threat_reach),
             sleep_after_hurt: set!(sleep_after_hurt),
             heal_most: set!(heal_most),
+            comfort_top: set!(comfort_top),
         };
         let checks = [
             (rules.max_health > 0, "max_health must be above 0"),
@@ -153,6 +173,9 @@ impl SurvivalRules {
             ((0..=16).contains(&rules.heat_reach), "heat_reach must be 0 to 16 blocks"),
             (rules.water_chill.is_finite(), "water_chill must be a number"),
             ((1..=256).contains(&rules.roof_scan), "roof_scan must be 1 to 256 blocks"),
+            (rules.douse_rain.is_finite() && rules.douse_rain > 0.0 && rules.douse_rain <= 1.0, "douse_rain must be above 0, up to 1"),
+            (rules.gutter_share.is_finite() && (0.0..1.0).contains(&rules.gutter_share), "gutter_share must be 0 or more, below 1"),
+            ((0..=64).contains(&rules.tend_height), "tend_height must be 0 to 64 blocks"),
             ((1..=16).contains(&rules.home_reach), "home_reach must be 1 to 16 blocks"),
             ((0..=16).contains(&rules.home_up) && (0..=16).contains(&rules.home_down), "home_up and home_down must be 0 to 16 blocks"),
             (!rules.home_furniture.iter().any(|tag| tag.starts_with("shelter:")), "home_furniture names a shelter tag: a wall's, not furniture's"),
@@ -160,6 +183,7 @@ impl SurvivalRules {
             (rules.sleep_threat_reach.is_finite() && (0.0..=64.0).contains(&rules.sleep_threat_reach), "sleep_threat_reach must be 0 to 64 blocks"),
             (rules.sleep_after_hurt.is_finite() && (0.0..=600.0).contains(&rules.sleep_after_hurt), "sleep_after_hurt must be 0 to 600 seconds"),
             (rules.heal_most.is_finite() && rules.heal_most > 0.0, "heal_most must be above 0"),
+            (rules.comfort_top.is_finite(), "comfort_top must be a temperature"),
             (rules.pack_end.len() <= SLOTS - HOTBAR_SLOTS, "pack_end holds at most as many items as the pack has slots besides the hotbar"),
             (rules.new_inventory(true).is_some(), "pack_end and starter_kit together do not fit in an inventory"),
         ];
@@ -218,7 +242,7 @@ impl SurvivalRules {
     pub(crate) fn new_inventory(&self, kit: bool) -> Option<Inventory> {
         let mut inventory = Inventory::default();
         for (slot, &(item, count)) in (0..SLOTS).rev().zip(&self.pack_end) {
-            inventory.slots[slot] = Some(ItemStack { item, count });
+            inventory.slots[slot] = Some(ItemStack::new(item, count));
         }
         for &(item, count) in self.starter_kit.iter().filter(|_| kit) {
             if inventory.add(item, count) > 0 {
@@ -264,20 +288,55 @@ mod tests {
         assert!(load(&SHIPPED.replace("meal_most: 2.0", "meal_most: 0.5")).unwrap_err().contains("meal_most"), "a ceiling under 1 would make meals worse at home");
     }
 
+    /// A full home (every step and room on, by its own fire at night) warms a cold night
+    /// all it can, and in warm air leaves its owner comfortable, never Hot: its warmth tops
+    /// out at `comfort_top`, and on a day already that warm it adds nothing. The top must be
+    /// below Hot.
+    #[test]
+    fn a_full_home_in_warm_air_leaves_its_owner_comfortable_not_hot() {
+        use voxmar_engine::effect::{HomeSurvey, Shelter, Situation, Walls};
+        let content = voxmar_engine::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap();
+        let rules = SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).unwrap();
+        let effects = &content.effects;
+        let hot = effects.too_warm_at().expect("a debuff for feeling too warm");
+        assert!(crate::comfort_below_hot(&content, rules.comfort_top).is_ok());
+        assert!(crate::comfort_below_hot(&content, hot).unwrap_err().contains("comfort_top"), "a top at Hot is refused");
+        let survey = HomeSurvey { counts: effects.home_tags().iter().map(|tag| (tag.clone(), 99)).collect(), walls: Walls::all(Shelter::Fine, 60) };
+        let weather = voxmar_engine::weather::Weather::NONE;
+        let felt_in = |air: f32| {
+            let mut situation = Situation { felt: air, warmed: false, outdoors: false, weather: &weather, biome: "base:plains", biome_tags: &[], home: Some(&survey), done: &[], held: &[], near: effects.near_asks(), worn: &[], seated: false, night: true };
+            let first = effects.active(&situation, &[]);
+            let modifiers = effects.modifiers(&first);
+            situation.felt = modifiers.felt(air, rules.comfort_top);
+            let on: Vec<String> = effects.active(&situation, &[]).iter().map(|a| effects.get(a.effect).name.clone()).collect();
+            (modifiers, situation.felt, on)
+        };
+        let (modifiers, cold_night, on) = felt_in(0.0);
+        assert!(on.iter().any(|name| name == "base:heart_of_the_home") && on.iter().any(|name| name == "base:evening_in"), "the full home is on: {on:?}");
+        assert!(modifiers.home_warmth >= 15.0, "a full home warms by {}", modifiers.home_warmth);
+        assert_eq!(cold_night, modifiers.home_warmth, "a cold night gets all of it");
+        for air in [20.0, 25.0, 28.0, rules.comfort_top] {
+            let (_, felt, on) = felt_in(air);
+            assert!(felt <= rules.comfort_top && felt >= air, "{air} °C air feels {felt} °C at home");
+            assert!(!on.iter().any(|name| name == "core:hot" || name == "core:overheated"), "{air} °C air at home is not hot: {on:?}");
+        }
+        assert_eq!(felt_in(34.0).1, 34.0, "a day already hot is no hotter for a home, nor cooler");
+    }
+
     #[test]
     fn a_new_player_starts_with_the_purse_alone_and_a_kit_a_mod_gives_fills_the_hotbar_first() {
         let blocks = blocks();
         let rules = SurvivalRules::load(&[file("core", SHIPPED)], &blocks, &mut Vec::new()).unwrap();
         let id = |name: &str| blocks.id(name).unwrap();
         let inventory = rules.new_inventory(true).unwrap();
-        assert_eq!(inventory.slots.iter().flatten().collect::<Vec<_>>(), [&ItemStack { item: id("base:coin_purse"), count: 1 }], "nothing but the purse");
+        assert_eq!(inventory.slots.iter().flatten().collect::<Vec<_>>(), [&ItemStack::new(id("base:coin_purse"), 1)], "nothing but the purse");
         assert_eq!(inventory.slots[SLOTS - 1].map(|s| s.item), Some(id("base:coin_purse")), "the purse is in the last slot");
         let kit = file("mod", r#"(starter_kit: [("base:flint_pickaxe", 1), ("base:flint_axe", 1), ("base:bread", 4), ("base:torch", 8), ("base:oak_planks", 16)])"#);
         let rules = SurvivalRules::load(&[file("core", SHIPPED), kit], &blocks, &mut Vec::new()).unwrap();
         let inventory = rules.new_inventory(true).unwrap();
         let carried = |item| inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>();
         assert_eq!([carried(id("base:bread")), carried(id("base:torch")), carried(id("base:oak_planks"))], [4, 8, 16]);
-        assert_eq!(inventory.slots[SLOTS - 1], Some(ItemStack { item: id("base:coin_purse"), count: 1 }), "the purse is in the last slot");
+        assert_eq!(inventory.slots[SLOTS - 1], Some(ItemStack::new(id("base:coin_purse"), 1)), "the purse is in the last slot");
         assert_eq!(inventory.slots[..2].iter().flatten().map(|s| s.item).collect::<Vec<_>>(), [id("base:flint_pickaxe"), id("base:flint_axe")], "the tools come first, in the hotbar");
         assert_eq!(inventory.slots.iter().flatten().count(), 9, "a slot for each tool and loaf, the torches, the planks and the purse");
         assert_eq!(rules.new_inventory(false).unwrap().slots.iter().flatten().count(), 1, "no kit: the purse alone");

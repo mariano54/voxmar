@@ -160,6 +160,8 @@ impl Plugin for CapturePlugin {
             taken_at: None,
             saved: false,
             frame_times: Vec::new(),
+            ahead: Vec::new(),
+            received: Vec::new(),
             steady_times: Vec::new(),
             flicker: self.flicker.map(|kind| Flicker { kind, ..default() }),
             clip: self.clip.map(|seconds| Clip {
@@ -226,6 +228,10 @@ struct Capture {
     /// Whether the screenshot has been written, which can take a while on a busy machine.
     saved: bool,
     frame_times: Vec<f32>,
+    /// Columns meshed ahead of a flight in each of its frames (`ClientWorld::meshed_ahead`),
+    /// and come ahead (`ClientWorld::received_ahead`).
+    ahead: Vec<i32>,
+    received: Vec<i32>,
     /// Frame times while a still shot waits, after its first second.
     steady_times: Vec<f32>,
     flicker: Option<Flicker>,
@@ -785,6 +791,9 @@ fn capture(
         let _flight = info_span!("capture_flight").entered();
         fly(&time, &mut player, launch.content.movement.fly_sprint_speed);
         state.frame_times.push(frame_ms);
+        let forward = Vec2::new(-player.yaw.sin(), -player.yaw.cos());
+        state.ahead.push(world.meshed_ahead(player.position, forward));
+        state.received.push(world.received_ahead(player.position, forward));
         return;
     }
     if let Some(duration) = state.dig
@@ -796,6 +805,10 @@ fn capture(
     if !state.frame_times.is_empty() {
         let label = if state.dig.is_some() { "dig" } else { "flight" };
         info!("{label}: {}", frame_stats(std::mem::take(&mut state.frame_times)));
+        if !state.ahead.is_empty() {
+            let (meshed, received) = (std::mem::take(&mut state.ahead), std::mem::take(&mut state.received));
+            info!("ahead: {}", ahead_stats(meshed, received, world.view_distance));
+        }
     } else if !state.steady_times.is_empty() {
         info!("steady: {}", frame_stats(std::mem::take(&mut state.steady_times)));
     }
@@ -984,6 +997,27 @@ fn frame_stats(mut times: Vec<f32>) -> String {
         at(1.0),
         1000.0 / mean,
         1000.0 / low,
+    )
+}
+
+/// How far the land was meshed ahead of a flight, frame by frame, summed up: whether
+/// streaming kept up, which frame times do not tell (fewer workers can fly smoother into
+/// holes); and how far it had come, meshed or not, which tells which of generating and
+/// meshing fell behind.
+fn ahead_stats(mut ahead: Vec<i32>, mut received: Vec<i32>, view: i32) -> String {
+    ahead.sort_unstable();
+    received.sort_unstable();
+    let at = |series: &[i32], q: f32| series[((series.len() - 1) as f32 * q) as usize];
+    let short = ahead.iter().filter(|&&d| d * 2 < view).count();
+    format!(
+        "meshed {} columns ahead at the median, {} at the 5th percentile, {} at the least, of {view}; {:.1}% of frames under half; come {} at the median, {} at the 5th percentile, {} at the least",
+        at(&ahead, 0.5),
+        at(&ahead, 0.05),
+        ahead[0],
+        100.0 * short as f32 / ahead.len() as f32,
+        at(&received, 0.5),
+        at(&received, 0.05),
+        received[0],
     )
 }
 
