@@ -99,7 +99,7 @@ Built now (`engine::creature::brain::modules`):
 | curious | social | comes to look from a distance, backs off if you come closer |
 | warn | danger | every creature whose kind has a `warn`: stands its ground and warns a player before it attacks them (its stance and `warn` sound): a hunter those it would hunt, one that only defends itself those it sees within its radius, never one holding its food unless it hunts; goes for one who stays its seconds or comes within `near`, as if struck; lets be one who backs off first (see "Warnings" below) |
 | fire | danger | every creature whose kind has a `fire`: backs away from a player holding a fire at it (a torch), facing them, if it is one of its kind's `fear` share; at night walks out of a lit fire's ward; not once provoked, kept or on an errand (see "Fire" below) |
-| hide | danger | every creature whose kind has a `flush`: crouches still while a noticed player is beyond its `hold`; not once they flushed it, it is hurt, its kin are alarmed, they hold its favourite food, or it is kept or on an errand (see "Flush" below) |
+| hide | danger | every creature whose kind has a `flush`: crouches still while a noticed player is beyond its `hold` and within the distance it would otherwise flee at; not once they flushed it, it is hurt, its kin are alarmed, they hold its favourite food, or it is kept or on an errand (see "Flush" below) |
 | return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
 
 Planned (from the deep dive's library): cache food, drink, sleep, bask, seek shade, huddle,
@@ -197,11 +197,13 @@ back off, or to creep closer behind it. A blow skips the double take.
   `a_player_by_a_lit_hearth_is_let_be_at_night`; `wards_out_of_range_are_refused`.
 - **Flush** (Oct 21): a game bird whose kind has `flush` (creatures.ron) sits tight: a
   player it has noticed beyond its `hold` it lets be, crouched still (the `hide` module),
-  and a player within its `hold` it bursts away from (`Flee` takes `hold` as its distance)
-  at `burst` times its run for its first `seconds`, raising the alarm so its kin burst
+  as far out as it would otherwise flee at (its `Flee` radius by its fear); one further
+  off it does not hide from, and lives its day. A player within its `hold` it bursts away
+  from (`Flee` takes `hold` as its distance) at `burst` times its run for its first
+  `seconds`, raising the alarm so its kin burst
   with it. Flushed, it recalls being scared by them (`Memory::ScaredBy`, 10 s) and runs on
   at its kind's distance rather than settle again at the edge of its hold. Hurt, it flees
-  as any prey; kept or on an errand it sits tight for no one. A stalker who keeps coming
+  as any prey, with no burst; kept or on an errand it sits tight for no one. A stalker who keeps coming
   gets close, and is startled at the last. Refused at load: hold outside 1 to 6 blocks,
   burst outside 1 to 2.5, seconds outside 0.2 to 3, or a flush on a boss, a supernatural
   kind or one that attacks. Base game: pheasant (hold 3, burst 1.8, 1.2 s), quail (2.5,

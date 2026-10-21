@@ -283,7 +283,7 @@ struct Flee {
 
 impl Flee {
     fn threat(&self, ctx: &Ctx) -> Option<Seen> {
-        let radius = self.radius * (0.5 + ctx.mind.personality.fear());
+        let radius = flees_at(ctx, self.radius);
         ctx.attacker()
             .filter(|_| ctx.mind.fear > 0.0)
             .or_else(|| ctx.nearest().filter(|p| !p.tempting && ctx.distance(p.position) < sitting(ctx, p).map_or(radius, |f| f.hold)))
@@ -343,7 +343,8 @@ impl Module for Flee {
         // A bird takes wing and goes well clear before it settles again.
         let far = if flier(ctx) { 22.0 } else { 8.0 };
         // One that sat tight bursts away, its first seconds faster than it can run.
-        let burst = flush(ctx).filter(|f| mind.since < f.seconds).map_or(1.0, |f| f.burst);
+        // Not one that was hurt: it flees as any prey does.
+        let burst = flush(ctx).filter(|f| ctx.attacker().is_none() && mind.since < f.seconds).map_or(1.0, |f| f.burst);
         Decision { goal: Some(at.position + (away + side).normalize() * far), speed: run(ctx) * burst * winded(ctx, mind), pose: Pose::Alert, alarm: fresh, ..Default::default() }
     }
 }
@@ -354,6 +355,11 @@ fn flush(ctx: &Ctx) -> Option<crate::creature::Flush> {
     ctx.creature.def.flush.filter(|_| !ctx.at.kept && ctx.at.errand.is_none())
 }
 
+/// How near a player comes before it flees, its `Flee` radius by how fearful it is.
+fn flees_at(ctx: &Ctx, radius: f32) -> f32 {
+    radius * (0.5 + ctx.mind.personality.fear())
+}
+
 /// How it sits tight from `p` (`creature::Flush`): not once they flushed it, while it
 /// recalls being scared by them, so a flushed bird runs well clear and does not settle
 /// again at the edge of its `hold`.
@@ -361,9 +367,11 @@ fn sitting(ctx: &Ctx, p: &Seen) -> Option<crate::creature::Flush> {
     flush(ctx).filter(|_| !ctx.mind.recalls(Memory::ScaredBy(p.id)))
 }
 
-/// A game bird sits tight (`creature::Flush`): a player it has noticed, beyond its `hold`,
-/// it lets be, crouched still in the grass, facing nowhere in particular so as not to be
-/// seen looking. Not once it is hurt or its kin are alarmed: then it runs (`Flee`).
+/// A game bird sits tight (`creature::Flush`): a player it has noticed, beyond its `hold`
+/// and within the distance it would otherwise flee at (`flees_at`), it lets be, crouched
+/// still in the grass, facing nowhere in particular so as not to be seen looking; one
+/// further off, it lives its day. Not once it is hurt or its kin are alarmed: then it
+/// runs (`Flee`).
 #[derive(Debug)]
 struct Hide;
 
@@ -380,7 +388,11 @@ impl Module for Hide {
         if flush(ctx).is_none() || ctx.mind.fear >= 0.3 || ctx.attacker().is_some() {
             return None;
         }
-        let p = ctx.nearest().filter(|p| !p.tempting && sitting(ctx, p).is_some_and(|f| ctx.distance(p.position) >= f.hold))?;
+        let wary = ctx.creature.behaviours.iter().find_map(|b| match b.behaviour {
+            Behaviour::Flee { radius } => Some(flees_at(ctx, radius)),
+            _ => None,
+        })?;
+        let p = ctx.nearest().filter(|p| !p.tempting && sitting(ctx, p).is_some_and(|f| (f.hold..wary).contains(&ctx.distance(p.position))))?;
         Want::at(2.0, *p)
     }
 

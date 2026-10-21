@@ -1191,8 +1191,9 @@ pub(super) mod tests {
 
     /// A game bird that sits tight (`creature::Flush`) crouches still while a noticed
     /// player is beyond its `hold`, then bursts away when they come within it: its first
-    /// `seconds` at `burst` times its run, then at its run. Kept, it flees at its kind's
-    /// distance as ever. Bad numbers, or a flush on a kind that attacks, are refused.
+    /// `seconds` at `burst` times its run, then at its run. Hurt, it does not burst; beyond
+    /// its kind's flee distance it does not sit tight; kept, it flees at its kind's distance
+    /// as ever. Bad numbers, or a flush on a kind that attacks, are refused.
     #[test]
     fn a_game_bird_sits_tight_then_bursts_away() {
         let bird = species(&format!(
@@ -1217,6 +1218,16 @@ pub(super) mod tests {
         assert_eq!(ran, [200, 200, 200, 100, 100, 100], "{ran:?}");
         let _ = think(&bird, &mut mind, &situation(&far));
         assert_eq!(doing(&bird, &mind), "flee", "flushed, it runs clear and does not settle again at six blocks");
+        // Hurt, it flees as any prey does: no burst.
+        let mut hurt = Mind::new(&bird.def.temperament, 2);
+        hurt.hurt(&bird, Some(1), 0.9);
+        let ran: Vec<u32> = (0..3).map(|_| (think(&bird, &mut hurt, &situation(&near)).speed / full * 100.0).round() as u32).collect();
+        assert_eq!((doing(&bird, &hurt), ran), ("flee", vec![100; 3]), "a hurt bird does not burst");
+        // Beyond the distance it would flee at, it lives its day rather than sit tight.
+        let mut calm = Mind::new(&bird.def.temperament, 2);
+        let flees_at = 10.0 * (0.5 + calm.personality.fear());
+        let _ = think(&bird, &mut calm, &situation(&[player(Vec3::new(flees_at + 1.0, 0.0, 0.0))]));
+        assert_ne!(doing(&bird, &calm), "hide", "{:.1} blocks off, outside its flee distance", flees_at + 1.0);
         let mut kept = Mind::new(&bird.def.temperament, 2);
         let _ = think(&bird, &mut kept, &Situation { kept: true, ..situation(&far) });
         assert_eq!(doing(&bird, &kept), "flee", "a kept bird sits tight for no one");
