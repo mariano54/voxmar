@@ -51,7 +51,7 @@ fn a_swap_state_keeps_its_partners_colour_and_tags() {
 fn the_templates_make_every_family_in_full() {
     let content = content();
     let names: BTreeSet<String> = made(&content).into_iter().map(|id| content.blocks.def(id).name.clone()).collect();
-    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight"];
+    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight", "dresser", "pot_crane"];
     let cloth = ["cloth", "rug", "banner", "wall_hanging", "curtain", "paper_lantern", "cushion", "bunting", "awning"];
     let crockery = ["plate", "bowl", "jar", "jug", "basket"];
     let woods = ["birch", "oak", "dark_oak"];
@@ -65,7 +65,7 @@ fn the_templates_make_every_family_in_full() {
             }
         }
     }
-    assert_eq!(expected.len(), 3 * 23 + 12 * 9 + 3 * 5);
+    assert_eq!(expected.len(), 3 * 25 + 12 * 9 + 3 * 5);
     let missing: Vec<_> = expected.difference(&names).collect();
     let extra: Vec<_> = names.difference(&expected).collect();
     assert!(missing.is_empty() && extra.is_empty(), "missing {missing:?}, unexpected {extra:?}");
@@ -142,7 +142,7 @@ fn the_singles_load_and_can_be_made() {
     let obtained: BTreeSet<BlockId> = content.recipes.iter().map(|r| r.output).collect();
     let singles = [
         "candle", "brazier", "cauldron", "cottage_stove", "loom_frame", "spindle_stand", "quern_stones", "wind_flags", "stone_grave_slab", "mossy_grave_slab", "stone_headstone",
-        "mossy_headstone", "iron_hanging_lantern", "copper_hanging_lantern", "stone_lantern", "sandstone_lantern", "calcite_column", "sandstone_column", "stone_column", "window_box",
+        "mossy_headstone", "iron_hanging_lantern", "copper_hanging_lantern", "stone_lantern", "sandstone_lantern", "calcite_column", "sandstone_column", "stone_column", "window_box", "rush_mat",
     ];
     for name in singles {
         let id = content.blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("no {name}"));

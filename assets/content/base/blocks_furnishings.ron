@@ -72,6 +72,11 @@
             // little wooden stand, the poor home's candle (a `light` the home counts).
             (name: "{name}_rushlight", render: Model, shape: "rushlight", solid: false, light: 7, sound: Wood, textures: All("furniture_grain"), hardness: 0.3, color: (160, 120, 70), tags: ["furniture", "light", "rushlight", "decor", "wood"],
                 particles: [(style: Flame, rate: 6.0, at: (0.7, 0.84, 0.5), spread: 0.01, size: 0.6, height: 0.15, color: Some((240, 150, 40)))]),
+            // The kitchen wall: a dresser, a cupboard under a plate rack with its plates
+            // stood on show (`storage`, and `crockery` a cosy home counts); a pot crane, a
+            // post on the wall with an arm out of it and a pot hung from its hook.
+            (name: "{name}_dresser", render: Model, shape: "dresser", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "dresser", "storage", "crockery", "decor", "wood"]),
+            (name: "{name}_pot_crane", render: Model, shape: "pot_crane", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "pot_crane", "decor", "wood"]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
@@ -186,6 +191,11 @@
             drops: "core:air", hardness: 0.0, color: (110, 140, 70), tags: ["hanging", "drying", "decor"],
         ),
 
+        // A rush mat: rushes woven flat, the Nomad's rug before any loom or dye (`rug`).
+        (
+            name: "rush_mat", render: Model, shape: "rug", solid: false, sound: Grass, textures: All("basket_grey"), tint: Fixed(200, 182, 118),
+            hardness: 0.2, color: (200, 182, 118), tags: ["rug", "decor", "furnishing"],
+        ),
         // A window box: a trough of flowers on brackets, set against the wall outside under
         // a window or a sill. It is one block in every wood's stead, its own colours drawn
         // as they show (no tint), and set out under the sky it is a yard piece (`yard`).
