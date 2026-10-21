@@ -466,9 +466,10 @@ a yard, a neighbour's door) or working an `outdoor` work (field, orchard, pen, w
 go home instead; guards keep their rounds. Two neighbours out and about (no guards, no
 one afraid or greeting a player) within `chat` blocks who see each other stop and talk:
 both stand turned to each other for `chat_for` seconds with a contented hum, then go on
-with their day, and stop to talk again only after `chat_every`. At night (bound for bed
-or in it) one who sees a player inside their home tells them to leave, with a cry, and
-tells that player again only after `intruder_every`; by day a visitor is let be. Reaching
+with their day, and stop to talk again only after `chat_every`. At night (by the sky,
+bound for bed or in it) one who sees a player, within their sight, standing on the floor
+of their home tells them to leave, with a cry, and tells that player again only after
+`intruder_every`; by day, or from the roof, no one minds. Reaching
 their bed for the night, they sigh content once a night. A guard sent after a player who
 struck a villager (or killed one, in one blow or many) knows who they are after, whatever
 stands between them.
