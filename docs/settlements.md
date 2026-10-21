@@ -455,6 +455,18 @@ shape, including connected wings, with feet one block
 above the solid floor. Live block checks exclude furnishings and low headroom;
 porches, courtyard ground and exterior door steps are not indoor destinations.
 
+They react to what is about them (`react` in settlements.ron). A player within `greet`
+blocks of someone out on their day is greeted: they stop where they stand for `greet_for`
+seconds, face the player and say so, then greet that player again only after
+`greet_every`. Anything hostile (a monster, or a creature that hunts, not kept by a
+player) within `fear` blocks sends everyone but the guards home with an alarm, and they
+stay in for `afraid` seconds; a villager struck cries out once in the same span. When
+it rains harder than `rain`, people bound for the `shelter` places (the square, the well,
+a yard, a neighbour's door) or working an `outdoor` work (field, orchard, pen, woodyard)
+go home instead; guards keep their rounds. Reaching their bed for the night, they sigh
+content once a day. A guard sent after a player who struck a villager knows who they
+are after, whatever stands between them.
+
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter
 roles remain follow-ups. Single-valued people data and same-named routines follow the

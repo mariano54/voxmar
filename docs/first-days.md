@@ -463,6 +463,20 @@ the window from 360 s brings 7 new things (kiln bricks, charcoal, copper ore, in
 pickaxe, the crucible and its station); the longest wait with nothing new is about 150 s
 (firing clay); the longest single-action stretch is 39 to 40 s (17 firings in a row).
 
+### The kiln stretch filled (Oct 21)
+
+On main the window from 360 s held only 4 or 5 new things (the chest, kiln bricks,
+charcoal, the crucible and its station) and failed about one run in three, when the walk
+outlasted 540 s. The bot now does what the book has open
+between firings and while the clamp chars, all of it quests a player meets there:
+Earthenware (bowls and a jar) and A Table for Two (two stools and a table, set by the
+hearth), Straw for the Kiln and the tempered bricks; and once the bricks are shaped, the
+far side of The Kiln Ring, Shelves and Cupboards (a shelf and a cupboard) and A Place to
+Pray (cobblestone fired to stone in the free pit kiln, cut into stone bricks, an altar). The
+pit kiln fires a dozen clay at a time while the bot digs the next load. Six runs: the lit
+Crucible Kiln at 473 to 545 s; the window from 360 s brings 14 to 16 new things; the longest
+single-action stretch is 39 s (49 gravel dug in a row for the clamp's flint).
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`

@@ -99,6 +99,7 @@ Built now (`engine::creature::brain::modules`):
 | curious | social | comes to look from a distance, backs off if you come closer |
 | warn | danger | every creature whose kind has a `warn`: stands its ground and warns a player before it attacks them (its stance and `warn` sound): a hunter those it would hunt, one that only defends itself those it sees within its radius, never one holding its food unless it hunts; goes for one who stays its seconds or comes within `near`, as if struck; lets be one who backs off first (see "Warnings" below) |
 | fire | danger | every creature whose kind has a `fire`: backs away from a player holding a fire at it (a torch), facing them, if it is one of its kind's `fear` share; at night walks out of a lit fire's ward; not once provoked, kept or on an errand (see "Fire" below) |
+| hide | danger | every creature whose kind has a `flush`: crouches still while a noticed player is beyond its `hold`; not once they flushed it, it is hurt, its kin are alarmed, they hold its favourite food, or it is kept or on an errand (see "Flush" below) |
 | return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
 
 Planned (from the deep dive's library): cache food, drink, sleep, bask, seek shade, huddle,
@@ -126,7 +127,8 @@ blocks (it hears and smells them), when they hold its food within its hearing, o
 hurt it; a player it has noticed it keeps in mind for `keep` seconds out of sight (default 10, at most 60), so
 turning away does not drop a chase. Just noticing someone, it takes a double take of `react`
 seconds, facing them, alert, before it runs, hunts or comes to look: the moment a player has to
-back off, or to creep closer behind it. A blow skips the double take.
+back off, or to creep closer behind it. A blow skips the double take. What it then does starts
+afresh after the look, so prey that looks and then runs still raises the alarm to its kin.
 
 ## Aggression
 
@@ -150,8 +152,9 @@ back off, or to creep closer behind it. A blow skips the double take.
   taking over in that same decision. A warning only tells a hunt before it comes, and
   never changes whom a hunter goes for or when: it warns the one its hunt would go for (the
   nearest it would hunt, as far off, kept, frightened or on an errand as much as not) if
-  it sees them; one it does not see it has not noticed (unless they are close, hurt it or
-  hold its food), so it leaves them be. One that only defends itself (a badger, a bear)
+  it sees them, and goes unwarned for one it has noticed but cannot see now (one close,
+  its keeper, one who hurt it or holds its food, or one it saw within its `keep`); one it
+  does not see and has not noticed it leaves be. One that only defends itself (a badger, a bear)
   warns those it sees (in its field of view with a clear line from its eyes, the same
   `in_view` look it notices by) within its `radius`, and then defends
   its ground. No warning goes to a player holding the food that tempts it unless it hunts
@@ -194,6 +197,20 @@ back off, or to creep closer behind it. A blow skips the double take.
   Tests: the brain's `fire_keeps_the_wild_back` and `fire_out_of_range_is_refused`;
   the server's `a_torch_holds_a_wolf_off`, `wolves_keep_out_of_firelight_at_night` and
   `a_player_by_a_lit_hearth_is_let_be_at_night`; `wards_out_of_range_are_refused`.
+- **Flush** (Oct 21): a game bird whose kind has `flush` (creatures.ron) sits tight: a
+  player it has noticed beyond its `hold` it lets be, crouched still (the `hide` module),
+  and a player within its `hold` it bursts away from (`Flee` takes `hold` as its distance)
+  at `burst` times its run for its first `seconds`, raising the alarm so its kin burst
+  with it. Flushed, it recalls being scared by them (`Memory::ScaredBy`, 10 s) and runs on
+  at its kind's distance rather than settle again at the edge of its hold. Hurt, it flees
+  as any prey; kept or on an errand it sits tight for no one. A stalker who keeps coming
+  gets close, and is startled at the last. Refused at load: hold outside 1 to 6 blocks,
+  burst outside 1 to 2.5, seconds outside 0.2 to 3, or a flush on a boss, a supernatural
+  kind or one that attacks. Base game: pheasant (hold 3, burst 1.8, 1.2 s), quail (2.5,
+  2, 0.8 s), junglefowl (3.5, 1.6, 1 s). Tests: the brain's
+  `a_game_bird_sits_tight_then_bursts_away` and the server's of the same name (each bird,
+  walked up to in the open, crouches unmoved to half a block outside its hold, and one
+  step in it is fleeing faster than its run; with no burst it is not).
 - **Winded** (Oct 21): a creature whose kind has `tires` (creatures.ron) runs flat out
   from a threat for its `after` seconds, then winded at its `pace` of its run for `rest`
   seconds, then flat out again; time not spent fleeing gets its wind back a second for a
@@ -297,7 +314,12 @@ if it jumps, down no further than `SAFE_DROP` in a chase and otherwise no furthe
 it climbs back unless onto open ground (`Walker::drop`, `way_out`), at most 1500 cells within 24 blocks, again
 at most once a second and only when its goal has moved. It walks the cells' centres, still
 steering, so a wolf finds the doorway in a wall (a shut door is a wall) and a sheep after
-wheat follows the player through it. A creature is made facing open air, so none starts
+wheat follows the player through it. Before a gap barely wider than it that its box would
+not go straight through from where it is (a boar come along a fence to a gate), it first
+makes for the point square in front of the gap's middle, a cell back, and goes in from
+there; it does so only where it would go straight in from that point, so a step it climbs
+is no gap. Cattle broader than a block (an aurochs, a bison) fit no gate one wide; they
+are led through a double gate (`<timber>_double_gate`). A creature is made facing open air, so none starts
 with its head in a trunk. Next, from the deep dive:
 
 - A per-species movement profile for that search (step, jump, safe fall, media) and sparse

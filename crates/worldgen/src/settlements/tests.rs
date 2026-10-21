@@ -1689,8 +1689,14 @@ fn people_numbers_that_would_not_play_are_refused() {
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 7] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 13] = [
         ("newcomer in a fifth of a day", |p| p.newcomer = 0.2),
+        ("a greeting from below nothing", |p| p.react.greet = -1.0),
+        ("a greeting held as long as the wait to greet again", |p| p.react.greet_for = p.react.greet_every),
+        ("fear from below nothing", |p| p.react.fear = -1.0),
+        ("afraid for no time", |p| p.react.afraid = 0.0),
+        ("rain heavier than any", |p| p.react.rain = 1.5),
+        ("bed as a shelter from the rain", |p| p.react.shelter.push(super::people::Place::Sleep)),
         ("no newcomers a day", |p| p.newcomers_per_day = 0.0),
         ("a job chance of 1.5", |p| p.jobs[0].chance = 1.5),
         ("a folk weight below nothing", |p| p.folk[0].weight = -1.0),
@@ -1714,8 +1720,9 @@ fn people_name_villagers_and_works_there_are() {
     let world = crate::content::WorldContent::load(&content).unwrap();
     let (people, works) = (&world.settlements.people, world.settlements.works());
     assert!(people.check_against(&content.creatures, &works).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 5] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 6] = [
         ("an animal for a folk", |p| p.folk[0].species = "base:rabbit".into()),
+        ("rain kept off no such work", |p| p.react.outdoor.push("quarry".into())),
         ("no such guard", |p| p.guards[0].species = "base:gaurd".into()),
         ("a job at no such work", |p| p.jobs[0].at = "bakehouse".into()),
         ("folk working at no such work", |p| p.folk.iter_mut().find(|f| f.work.is_some()).expect("a folk works").work = Some("mine".into())),

@@ -73,7 +73,8 @@ pub struct GatePlugin {
 /// other action is proposed. Mariano's play builds lost blocks he broke to both: a server whose
 /// word came late (fixed in 17bf62f), and one stalled when the break was proposed, whose
 /// own clock then started late (fixed by the client's `Finished`).
-/// It runs behind only in the steps that play against it (`Step::lagged`).
+/// It runs behind only in the steps that play against it (`Step::lagged`): the world's
+/// load is not one, and runs against a server at full speed (no load check reads lag).
 pub const SERVER_LAG: Lag = Lag {
     per_tick: Duration::from_millis(60),
     stall: Duration::from_millis(400),
@@ -432,6 +433,9 @@ steps! {
     /// Raw rabbit used on a campfire comes back cooked (or burnt) into the inventory, and
     /// smoke and embers rise from the fire.
     Cook,
+    /// A pit kiln in the creatures pad, clay in hand: a right click loads it, the server
+    /// sends back the firing kiln, and twelve seconds on the fired one.
+    Kiln,
     /// A wheat held to quern stones and right-clicked grinds into flour (cooking.ron's
     /// stations: the Farm age's quern, spindle and loom work what is held, as a fire does).
     Quern,
@@ -472,6 +476,9 @@ steps! {
     /// with none of its flames in reach of its thatch, its jettied houses stand out on
     /// their beams, and its row houses stand wall to wall under one roof.
     Settlements,
+    /// Back at the settlement, the player steps up to one of its people, who greets them
+    /// unasked (`people.react`): a greeting heard of someone close by.
+    Greeting,
     /// The home with a byre nearest the walled town (in the nearest place that has one)
     /// stands as planned: earth floor, a trough, hay, one doorway through the wall across
     /// and a back door, the family's beds in the room before it.
@@ -717,6 +724,9 @@ struct Gate {
     motif_starts: u32,
     /// How many times the settlement motif had started before the step into a settlement.
     settlement_motif_starts: Option<u32>,
+    /// The settlement's people heard greeting the player since the Settlements step came
+    /// (each waits `people.react.greet_every` to greet them again).
+    settlement_greeters: rustc_hash::FxHashSet<u32>,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     /// The door step's ground lit by a campfire, kept to judge against it put out.
@@ -945,6 +955,10 @@ struct Gate {
     font: Option<crate::ui::skin::InterfaceFont>,
     /// Whether the taming food was moved into the hotbar, which earlier steps may have filled.
     food_moved: bool,
+    /// Where the kiln step found the player, to put them back.
+    kiln_from: Vec3,
+    /// Server seconds from loading the Kiln step's pit kiln to seeing it fired.
+    kiln_fired: f32,
     /// The Cook step's hearth or stove has raw rabbit selected and is being clicked.
     cook_started: bool,
     /// The campfire the weather step dries the player by, while it stands, and what the
@@ -1116,6 +1130,7 @@ impl Gate {
             motif_time: 0,
             motif_starts: 0,
             settlement_motif_starts: None,
+            settlement_greeters: Default::default(),
             window_lit: None,
             fire_lit: None,
             natural_before: Vec::new(),
@@ -1226,6 +1241,8 @@ impl Gate {
             fit_layout: ((Step::Load, 0), 0, false, 0, false, 0),
             font: None,
             food_moved: false,
+            kiln_from: Vec3::ZERO,
+            kiln_fired: 0.0,
             cook_started: false,
             dry_fire: None,
             rain_roof: None,
@@ -1857,6 +1874,7 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         Step::Kindle | Step::Blaze => STEP_LIMIT + 10.0,
         // The campfire, its smoke and the chimney's, then a cook at the hearth and the stove.
         Step::Cook => STEP_LIMIT + 30.0,
+        Step::Kiln => STEP_LIMIT,
         Step::Quern => STEP_LIMIT,
         // The roof and the night, then three steps in or out, each waited on.
         Step::HomeMotif => STEP_LIMIT + 3.0 * QUEST_WAIT,
@@ -1874,6 +1892,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => 2.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
+        // The people come again, then the greeting, then home.
+        Step::Greeting => SETTLEMENT_PEOPLE + GREETING_WAIT + 20.0 + STEP_LIMIT,
         // The look for a byre, a fresh area round it to generate, and the observer home.
         Step::Byres => BYRE_SEARCH + SETTLEMENT_LOAD + 20.0 + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
@@ -2197,6 +2217,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::ShotCancel => shot_cancel(world, gate),
         Step::Others => others(world, gate),
         Step::Cook => cook(world, gate, now, in_phase),
+        Step::Kiln => kiln(world, gate, now),
         Step::Quern => quern(world, gate, now),
         Step::HomeMotif => home_motif(world, gate, now, in_phase),
         Step::Dry => dry(world, gate, now),
@@ -2206,6 +2227,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Tarns => tarns(world, gate, now, in_phase),
         Step::Settlements => settlements(world, gate, now, in_phase),
+        Step::Greeting => greeting(world, gate, now, in_phase),
         Step::Byres => byres(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
@@ -5920,6 +5942,8 @@ struct BrandPlan {
     /// the phase) the one `base:cook` at the fire went out.
     proposals: u64,
     asked: Option<f32>,
+    /// How many times the sticks were cleared and one given again, more than one carried.
+    regiven: u32,
 }
 
 impl BrandPlan {
@@ -5932,10 +5956,10 @@ impl BrandPlan {
             }
             let fire = blocks.ids().find(|&b| {
                 let def = blocks.def(b);
-                def.has_tag(&recipe.def.station) && !def.has_tag("creative_only") && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
+                def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
             });
             if let Some(fire) = fire {
-                return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand), proposals: 0, asked: None });
+                return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand), proposals: 0, asked: None, regiven: 0 });
             }
         }
         Err("nothing in the content gives light held and burns, made at level 1 at a fire that can be set down".into())
@@ -6007,7 +6031,7 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // two in hand one catches and the brand goes where it fits, the other left in hand
         // (train 174): the sticks are cleared and the one given again.
         1 => {
-            let Some(plan) = gate.firebrand else { return };
+            let Some(mut plan) = gate.firebrand else { return };
             let burning = world.resource::<ClientWorld>().block(fire_at) == Some(plan.fire);
             let (sticks, slot) = holding(world, &name(plan.stick));
             if sticks > 1 && now - gate.tap_at >= TAP_EVERY {
@@ -6025,6 +6049,8 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("give {} 1", name(plan.stick)));
                 gate.tap_at = now;
                 gate.taps += 1;
+                plan.regiven += 1;
+                gate.firebrand = Some(plan);
             }
             if let (true, 1, Some(slot)) = (burning, sticks, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
                 world.resource_mut::<LocalPlayer>().selected = slot;
@@ -6045,6 +6071,14 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             let held = in_hand(world);
             let cook = content.actions.expect("base:cook");
+            // Another stick picked up since phase 1 would stack on the one in hand and repeat
+            // train 174: before any press, back to phase 1 to clear it.
+            if plan.asked.is_none() && holding(world, &name(plan.stick)).0 != 1 {
+                mouse(world, MouseButton::Right, false);
+                gate.phase = 0;
+                gate.advance(now);
+                return;
+            }
             if plan.asked.is_none() {
                 let aimed = world.resource::<crate::interact::Target>().hit.as_ref().is_some_and(|hit| hit.block == fire_at);
                 gate.tap(world, aimed && held.is_some_and(|s| s.item == plan.stick), now);
@@ -6059,7 +6093,7 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let held = in_hand(world);
             if held.is_some_and(|s| s.item == plan.brand) {
                 mouse(world, MouseButton::Right, false);
-                gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand, on click {}", name(plan.stick), name(plan.fire), name(plan.brand), gate.taps)));
+                gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand, on click {} after {} re-gives", name(plan.stick), name(plan.fire), name(plan.brand), gate.taps, plan.regiven)));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", fire_at.x, fire_at.y, fire_at.z));
                 gate.advance(now);
             } else if let Some(asked) = plan.asked {
@@ -6711,13 +6745,13 @@ fn clamp(world: &mut World, gate: &mut Gate, now: f32) {
         }
         4 => {
             aim_at(world, aim);
-            let lit = block(world, core) == Some(smoulder.burning);
+            let lit = block(world, core).is_some_and(|b| smoulder.is_burning(b));
             if lit && drawn(world, core) {
                 mouse(world, MouseButton::Right, false);
                 if gate.shot(world, "clamp-lit").is_none() {
                     return;
                 }
-                gate.check("clamp: lit", Ok(format!("lit from a {} in hand, the {}'s flue is a {}", name(plan.torch), structure.title, name(smoulder.burning))));
+                gate.check("clamp: lit", Ok(format!("lit from a {} in hand, the {}'s flue is a {}", name(plan.torch), structure.title, name(block(world, core).unwrap_or(smoulder.burning)))));
                 world.resource::<Net>().command(&format!("time add {}h", smoulder.hours.ceil()));
                 gate.advance(now);
             } else if waited {
@@ -18220,11 +18254,114 @@ fn cook(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         10 => {
             chimney_watch(world, gate, now, pot);
             if gate.chimney_since.is_none() {
-                gate.next(Step::Quern, now);
+                gate.next(Step::Kiln, now);
             }
         }
         _ => {}
     }
+}
+
+/// Where the kiln step sets its pit kiln, from the test ground's middle: inside the creatures
+/// pad (stone underfoot, air above), north-west of the Cook step's fire, stove and chimney,
+/// clear of them all; and where it stands, south of the kiln.
+const KILN_AT: IVec3 = IVec3::new(-4, 0, 18);
+const KILN_STAND: Vec3 = Vec3::new(-3.5, 0.0, 16.0);
+
+/// A pit kiln set down and clay in hand: a right click loads it (stations.ron), the block
+/// the server sends back is the firing kiln, and twelve server seconds on the fired one.
+/// The player is put back where the Cook step left them, for the home motif's walk.
+fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
+    let at = gate.feet + KILN_AT;
+    let shows = |world: &World, name: &str| {
+        let client = world.resource::<ClientWorld>();
+        client.registry.id(name).is_some_and(|b| client.block(at) == Some(b))
+    };
+    match gate.phase {
+        0 => {
+            // Room in the hotbar for the clay given and the fired clay taken.
+            if !hotbar_room(world, gate) {
+                if gate.server_in_phase() > 10.0 {
+                    gate.check("pit kiln", Err(format!("no room in the hotbar ({HOTBAR_ROOM} slots) after clearing the inventory")));
+                    end_kiln(world, gate, now);
+                }
+                return;
+            }
+            gate.kiln_from = world.resource::<LocalPlayer>().position;
+            let stand = gate.feet.as_vec3() + KILN_STAND;
+            let net = world.resource::<Net>();
+            for line in [
+                // Stone underfoot from the stand to the kiln, air above, whatever earlier
+                // steps left there.
+                format!("fill {} {} {} {} {} {} stone", at.x, at.y - 1, at.z - 2, at.x + 1, at.y - 1, at.z),
+                format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z - 2, at.x + 1, at.y + 2, at.z),
+                format!("setblock {} {} {} pit_kiln", at.x, at.y, at.z),
+                "clear clay".to_owned(),
+                "clear fired_clay".to_owned(),
+                "give clay 12".to_owned(),
+                format!("tp {} {} {}", stand.x, stand.y, stand.z),
+            ] {
+                net.command(&line);
+            }
+            gate.advance(now);
+        }
+        1 => {
+            if shows(world, "base:pit_kiln") && select(world, "base:clay") {
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                gate.check("pit kiln", Err("the pit kiln or clay in hand never came in 10 server seconds".into()));
+                end_kiln(world, gate, now);
+            }
+        }
+        2 => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            if shows(world, "base:pit_kiln_firing") {
+                mouse(world, MouseButton::Right, false);
+                gate.advance(now);
+            } else if gate.server_in_phase() > 10.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("pit kiln", Err(format!("right clicks on the pit kiln at {at} with clay in hand never loaded it in 10 server seconds")));
+                end_kiln(world, gate, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+        3 => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            if shows(world, "base:pit_kiln_fired") && drawn(world, at) && gate.shot(world, "pit_kiln").is_some() {
+                gate.kiln_fired = gate.server_in_phase();
+                gate.advance(now);
+            } else if gate.server_in_phase() > 15.0 {
+                gate.check("pit kiln", Err(format!("the loaded pit kiln at {at} never showed fired in 15 server seconds")));
+                end_kiln(world, gate, now);
+            }
+        }
+        // Taken as a player takes it: a right click on the fired kiln, which empties it.
+        _ => {
+            aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
+            let fired = carried_of(world, "base:fired_clay");
+            if shows(world, "base:pit_kiln") && fired == 12 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("pit kiln", Ok(format!("clay loaded into the pit kiln: the server sent back the firing kiln, then the fired one {:.1} server seconds on; a right click took the 12 fired clay", gate.kiln_fired)));
+                end_kiln(world, gate, now);
+            } else if gate.server_in_phase() > 10.0 {
+                mouse(world, MouseButton::Right, false);
+                gate.check("pit kiln", Err(format!("right clicks on the fired pit kiln at {at} left {fired} fired clay in hand, not 12, in 10 server seconds")));
+                end_kiln(world, gate, now);
+            } else {
+                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+            }
+        }
+    }
+}
+
+fn end_kiln(world: &mut World, gate: &mut Gate, now: f32) {
+    let (at, back) = (gate.feet + KILN_AT, gate.kiln_from);
+    let net = world.resource::<Net>();
+    net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    net.command("clear clay");
+    net.command("clear fired_clay");
+    net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
+    gate.next(Step::Quern, now);
 }
 
 /// Where the quern step sets its quern stones, from the test ground's middle: inside the
@@ -19550,6 +19687,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             // By day, from outside any settlement as the music last saw: the step in starts
             // the settlement motif.
             gate.settlement_motif_starts = crate::music::settlement_motif_heard(world).filter(|heard| heard.at.inside == Some(false)).map(|heard| heard.at.starts);
+            gate.settlement_greeters.clear();
             let net = world.resource::<Net>();
             net.command("time set noon");
             net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
@@ -19609,6 +19747,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.check("settlement sounds", heard);
             gate.check("settlement motif: starts", motif);
             // The nearest of them greets the player (`Server::bark`, by its command).
+            remember_greeters(world, gate);
             world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
             world.resource::<Net>().command("creatures bark greet");
             gate.advance(now);
@@ -19621,6 +19760,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             let greeted = settlement_greeted(world, &asked);
             gate.check("settlement bark", greeted);
+            remember_greeters(world, gate);
             let feet = gate.feet;
             world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
             // The observer looks for a town from where it is, the player going home.
@@ -19748,6 +19888,87 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                     gate.check("settlements: back", Err("the observer never came back over the test ground".into()));
                 }
                 gate.observer_home = None;
+                gate.next(Step::Greeting, now);
+            }
+        }
+    }
+}
+
+/// Server seconds a person stood beside has to greet the player unasked.
+const GREETING_WAIT: f32 = 10.0;
+
+/// Back in the settlement the Settlements step judged, the player stands where one of its
+/// people stands who has yet to greet them, and someone there greets them unasked
+/// (`people.react.greet`, a bark of the server's own, not `/creatures bark`). Then the
+/// player goes back to the test ground.
+fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    let feet = gate.feet;
+    let home = |world: &mut World| world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
+    match gate.phase {
+        0 => {
+            let at = gate.settlement;
+            if at == IVec3::ZERO {
+                gate.check("settlement greeting", Err("no settlement to be greeted in".into()));
+                gate.next(Step::Byres, now);
+                return;
+            }
+            // Only greetings from here on count, the Settlements step's asked one gone.
+            remember_greeters(world, gate);
+            world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
+            world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+            gate.advance(now);
+        }
+        // The nearest of its people drawn who has yet to greet the player (one who has waits
+        // `greet_every` to again), and the player where they stand.
+        1 => {
+            let content = world.resource::<Launch>().content.clone();
+            let feet = world.resource::<LocalPlayer>().position;
+            let nearest = world
+                .resource::<crate::creatures::Creatures>()
+                .views()
+                .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager && v.position.distance(feet) < 32.0)
+                .filter(|v| !gate.settlement_greeters.contains(&v.id))
+                .min_by(|a, b| a.position.distance(feet).total_cmp(&b.position.distance(feet)).then(a.id.cmp(&b.id)))
+                .map(|v| v.position);
+            let Some(to) = nearest else {
+                if gate.server_in_phase() > SETTLEMENT_PEOPLE {
+                    gate.check("settlement greeting", Err("no one of the settlement came to the player standing in its square".into()));
+                    home(world);
+                    gate.phase = 2;
+                    gate.advance(now);
+                }
+                return;
+            };
+            world.resource::<Net>().command(&format!("tp {} {} {}", to.x, to.y, to.z));
+            gate.advance(now);
+        }
+        // A greeting heard, unasked, of one of its people.
+        2 => {
+            let content = world.resource::<Launch>().content.clone();
+            let creatures = world.resource::<crate::creatures::Creatures>();
+            let greetings: Vec<String> = world
+                .resource::<crate::creature_sounds::Heard>()
+                .barks
+                .iter()
+                .filter(|b| b.1 == crate::creature_sounds::Kind::Greet)
+                .filter_map(|b| creatures.views().find(|v| v.id == b.0))
+                .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager)
+                .map(|v| content.creatures.get(v.species).def.name.clone())
+                .collect();
+            if greetings.is_empty() && gate.server_in_phase() < GREETING_WAIT {
+                return;
+            }
+            let ok = greetings.first().map(|name| format!("a {name} greeted the player unasked ({} greetings)", greetings.len()));
+            gate.check("settlement greeting", ok.ok_or_else(|| format!("no one of the settlement greeted the player in {GREETING_WAIT} server seconds beside one who had yet to ({} had)", gate.settlement_greeters.len())));
+            home(world);
+            gate.advance(now);
+        }
+        _ => {
+            let back = world.resource::<LocalPlayer>().position.xz().distance(gate.feet.xz().as_vec2() + 0.5) < 2.0;
+            if back || gate.server_in_phase() > 20.0 {
+                if !back {
+                    gate.check("settlement greeting: back", Err("the player never came back to the test ground".into()));
+                }
                 gate.next(Step::Byres, now);
             }
         }
@@ -19860,11 +20081,18 @@ fn settlement_motif_started(world: &World, before: Option<u32>) -> Result<String
     }
 }
 
+/// Remembers who has been heard greeting the player (`Gate::settlement_greeters`).
+fn remember_greeters(world: &World, gate: &mut Gate) {
+    let heard = world.resource::<crate::creature_sounds::Heard>();
+    gate.settlement_greeters.extend(heard.barks.iter().filter(|b| b.1 == crate::creature_sounds::Kind::Greet).map(|b| b.0));
+}
+
 /// Whether one of the settlement's people greeted, asking for its own voice's greeting
 /// clips (`creature_sounds.ron`'s `greet`, not a hum it falls back to).
 fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind, Vec<String>)]) -> Result<String, String> {
     use crate::creature_sounds::{Kind, Voices};
-    let Some((id, kind, clips)) = asked.first() else { return Err("no greeting was heard of anyone (asked with /creatures bark greet)".into()) };
+    // The greeting by its bark: an alarm or a sigh heard meanwhile is neither.
+    let Some((id, _, clips)) = asked.iter().find(|b| b.1 == Kind::Greet) else { return Err("no greeting was heard of anyone (asked with /creatures bark greet)".into()) };
     let content = &world.resource::<Launch>().content;
     let Some(view) = world.resource::<crate::creatures::Creatures>().views().find(|v| v.id == *id).copied() else {
         return Err(format!("creature {id} greeted but is not drawn"));
@@ -19872,9 +20100,7 @@ fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind
     let name = &content.creatures.get(view.species).def.name;
     let voices = world.get_resource::<Voices>().ok_or("no creature sound bank")?;
     let own: Vec<String> = voices.bank.voice(view.species).and_then(|v| v.events[Kind::Greet as usize].as_ref()).map(|e| e.clips.iter().map(|&i| voices.bank.clips[i].path.clone()).collect()).unwrap_or_default();
-    if *kind != Kind::Greet {
-        Err(format!("{name} was asked to greet but made {kind:?}"))
-    } else if own.is_empty() || *clips != own {
+    if own.is_empty() || *clips != own {
         Err(format!("{name} greeted with {clips:?}, not its voice's greeting {own:?}"))
     } else {
         Ok(format!("{name} greeted the player with its own clips ({})", clips.join(", ")))
@@ -20268,14 +20494,21 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     let planned_at: rustc_hash::FxHashSet<IVec3> = all_flames.iter().map(|r| r.0).filter(|p| (p.xz() - at.xz()).abs().max_element() <= TOWN_REACH + reach).collect();
     let on_ground: FxHashMap<IVec3, BlockId> = generator.settlement_planned_on_ground(at.xz(), &|b| generator.settlement_flame(b)).into_iter().collect();
     let mut flames = flames;
-    let mut looked: rustc_hash::FxHashSet<IVec3> = rustc_hash::FxHashSet::default();
+    // Each cell looked at once, kept in a flat grid over the box the look can reach rather
+    // than a set of every cell.
+    let (low_y, high_y) = planned.iter().fold((i32::MAX, i32::MIN), |(l, h), r| (l.min(r.0.y), h.max(r.0.y)));
+    let low = IVec3::new(at.x - TOWN_REACH - reach, low_y - reach, at.z - TOWN_REACH - reach);
+    let size = IVec3::new(2 * (TOWN_REACH + reach) + 1, high_y - low_y + 2 * reach + 1, 2 * (TOWN_REACH + reach) + 1);
+    let mut looked = vec![false; (size.x * size.y * size.z) as usize];
     let mut unplanned: Vec<String> = Vec::new();
     for &(r, _) in &planned {
         for z in -reach..=reach {
             for y in -reach..=reach {
                 for x in -reach..=reach {
                     let p = r + IVec3::new(x, y, z);
-                    if looked.insert(p)
+                    let d = p - low;
+                    let cell = &mut looked[((d.y * size.z + d.z) * size.x + d.x) as usize];
+                    if !std::mem::replace(cell, true)
                         && !planned_at.contains(&p)
                         && let Some(b) = observer.world.block(p).filter(|&b| generator.settlement_flame(b))
                     {
@@ -21573,7 +21806,7 @@ mod tests {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
         let plan = super::BrandPlan::of(&content).unwrap();
         let fire = content.blocks.def(plan.fire);
-        assert!(!fire.has_tag("creative_only"), "the firebrand step's fire is {}, creative only", fire.name);
+        assert!(!fire.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "the firebrand step's fire is {}, creative only", fire.name);
     }
 
     /// The Home step lays the crafting table from oak planks in the home barrel: the

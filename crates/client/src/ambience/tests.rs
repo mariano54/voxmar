@@ -1385,3 +1385,42 @@ fn a_towns_market_is_busier_than_a_villages() {
     let night = heard(90.0, -0.8);
     assert_eq!([night[0], night[3], night[4]], [0, 0, 0], "the tanner and the market at night: {night:?}");
 }
+
+/// Bench (silent; `cargo test -p voxmar_client --release big_town_sound_cost -- --ignored
+/// --nocapture`): a town of ninety at noon, every set of its buildings twenty times over
+/// round the player, run at 60 frames a second for ten minutes. Prints the mixer's cost a
+/// frame (mean, p99, worst), the one-shots it starts a minute, and the most playing at once
+/// (each as long as its longer variant) against the mix's Ambience cap.
+#[test]
+#[ignore]
+fn big_town_sound_cost() {
+    let ambience = base();
+    let set = [("settlement", 10.0), ("settlementedge", 0.0), ("settlementpeople", 90.0), ("sun", 0.8), ("grass", 0.6), ("timber", 0.8)];
+    let mut town = scene(&ambience, "town", &["plains", "temperate"], &set);
+    town.buildings = (0..ambience.buildings.len())
+        .map(|s| (0..20).map(|i| { let a = (s * 20 + i) as f32 * 0.7; Vec3::new(a.cos() * (8.0 + i as f32 * 2.0), 0.0, a.sin() * (8.0 + i as f32 * 2.0)) }).collect())
+        .collect();
+    let length: Vec<f32> = ambience.sounds.iter().map(|s| (0..2).map(|v| synth::one_shot(s.synth, v).0.len() as f32 / RATE as f32).fold(0.0, f32::max)).collect();
+    let mut mixer = Mixer::new(&ambience, 5);
+    let (mut cues, mut costs, mut playing, mut started, mut most) = (Vec::new(), Vec::new(), Vec::<f32>::new(), 0usize, 0usize);
+    let (dt, seconds) = (1.0 / 60.0, 600.0);
+    for frame in 0..(seconds / dt) as usize {
+        let now = frame as f32 * dt;
+        let begun = std::time::Instant::now();
+        mixer.update(&ambience, &town.env, &town.samples, &town.sky, &town.buildings, Vec3::ZERO, dt, |_, _| 2.0, (synth::BED_VARIANTS, synth::ONE_SHOT_VARIANTS), &mut cues);
+        costs.push(begun.elapsed().as_secs_f64() * 1e6);
+        playing.retain(|&end| end > now);
+        for cue in cues.drain(..) {
+            if let Cue::Sound { sound, .. } = cue {
+                started += 1;
+                playing.push(now + length[sound]);
+            }
+        }
+        most = most.max(playing.len());
+    }
+    costs.sort_by(f64::total_cmp);
+    let mean = costs.iter().sum::<f64>() / costs.len() as f64;
+    let (p99, worst) = (costs[costs.len() * 99 / 100], costs[costs.len() - 1]);
+    let cap = crate::sfx::Recordings::load(&voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap().files).map(|r| r.mix.voices.get(&crate::mix::Category::Ambience).copied()).ok().flatten();
+    println!("big town: mixer {mean:.1} us mean, p99 {p99:.1}, worst {worst:.1} a frame; {:.1} one-shots a minute; at most {most} at once (Ambience cap {cap:?})", started as f32 / (seconds / 60.0));
+}
