@@ -152,7 +152,7 @@ true)`, each optional: room from its width, shelter wanted, company if it is soc
             ),
             group: (size: (1, 3), structure: Family),
             temperament: (aggression: 0.0, fear: 0.9, curiosity: 0.3, sociability: 0.4, territory: 0.1),
-            senses: (sight: 16.0, hearing: 24.0, smell: 8.0, field: 170.0, close: 3.0, react: 0.3),
+            senses: (sight: 16.0, hearing: 24.0, field: 170.0, close: 3.0, react: 0.3, keep: 10.0),
             leash: 12.0,
             diet: (eats: ["tag:clover", "base:dandelion", "base:carrot", "base:wild_carrot"], favourite: ["base:carrot"]),
             behaviours: ["prey_small", "grazer"],  // sets from behaviours.ron, plus inline ones

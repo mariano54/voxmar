@@ -1171,10 +1171,13 @@ mod tests {
         }
         let movement = Movement { style: Style::Drifter, ..Movement::default() };
         let mut body = Body::new(Vec3::new(0.5, 5.6, 0.5), 0.0, (0.6, 0.8));
-        for _ in 0..100 {
-            step(&mut body, &Roof, &movement, Water::Land, Drive { wish: Vec3::ZERO, speed: 0.0, face: None }, 0.05);
-        }
-        assert!(body.position.y > 5.0, "it sank to the slab roof: at {}", body.position);
+        let lowest = (0..100)
+            .map(|_| {
+                step(&mut body, &Roof, &movement, Water::Land, Drive { wish: Vec3::ZERO, speed: 0.0, face: None }, 0.05);
+                body.position.y
+            })
+            .fold(f32::MAX, f32::min);
+        assert!(lowest > 5.0, "it sank toward the slab roof: down to {lowest}");
     }
 
     /// A wolf's shape under a roof a block up, with a step ahead whose top the roof leaves

@@ -644,7 +644,7 @@ fn strike(ctx: &Ctx, mind: &mut Mind, target: Option<Seen>, stalks: bool) -> Dec
     // Held off (`Mind::held_off`): while the player stays where it could not reach them,
     // it keeps out of their reach, facing them, on the side it stands (a keyed side when
     // right over them), and stands once there.
-    if mind.held_off.is_some_and(|at| at.distance(p.position) > HELD_OFF_MOVED) {
+    if mind.held_off.is_some_and(|(id, at)| id != p.id || at.distance(p.position) > HELD_OFF_MOVED) {
         mind.held_off = None;
     }
     if !close && def.boss && mind.held_off.is_some() {

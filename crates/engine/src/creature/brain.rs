@@ -45,9 +45,6 @@ pub const HOMEWARD: f32 = 20.0;
 /// How far past a player's reach (`physics::player::REACH`, from their eyes) a boss held
 /// off keeps its body: a player down a hole it cannot reach into strikes nothing from there.
 pub const KEEP_OFF: f32 = 0.5;
-/// Seconds a creature keeps a player it noticed in mind once it no longer sees them
-/// (`Mind::noticed`): turned away from one it has seen, it does not forget them.
-pub const NOTICED: f32 = 10.0;
 /// Seconds a creature remembers the player who hurt it (`Memory::HurtBy`).
 pub const HURT_REMEMBERED: f32 = 45.0;
 const ANGER_FADE: f32 = 1.0 / 45.0;
@@ -279,13 +276,13 @@ pub struct Mind {
     /// Where it was startled with no one to blame (a snare it slipped): while it recalls
     /// the fright (`Memory::Startled`) it runs from there, not toward home.
     pub startled_at: Option<Vec3>,
-    /// Where a boss's target stood when it came as near them as it could and still could
-    /// not reach them (a player down a hole too deep for it, or under a roof): while they
-    /// stay there it keeps off out of their reach, watching them (`KEEP_OFF`), and comes
-    /// on once they leave it.
-    pub held_off: Option<Vec3>,
+    /// The player a boss came as near as it could and still could not reach (one down a
+    /// hole too deep for it, or under a roof), and where they stood: while they stay there
+    /// it keeps off out of their reach, watching them (`KEEP_OFF`), and comes on once they
+    /// leave it. After anyone else, it holds off no longer.
+    pub held_off: Option<(u32, Vec3)>,
     /// The players it has noticed (`Senses`), each with the seconds it keeps them in mind
-    /// out of sight (`NOTICED`) and the seconds since it first noticed them (its double take,
+    /// out of sight (`Senses::keep`) and the seconds since it first noticed them (its double take,
     /// `Senses::react`).
     pub noticed: Vec<(u32, f32, f32)>,
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
@@ -432,6 +429,8 @@ pub struct Decision {
     /// It raises the alarm for kin nearby.
     pub alarm: bool,
     pub pose: Pose,
+    /// The player it acts on, if any (whom it chases, flees, comes to).
+    pub target: Option<u32>,
 }
 
 /// What a module reads when it decides whether it wants to run.
@@ -518,7 +517,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     // Whom it notices (`Senses`): those it sees where it looks, those close by, those
     // holding its food within its hearing (it smells it, wherever it looks: a sheep comes
     // round a wall to the wheat), those who hurt it and its keeper; it keeps them in mind a
-    // while out of sight (`NOTICED`), and senses no one else.
+    // while out of sight (`Senses::keep`), and senses no one else.
     for (_, left, since) in &mut mind.noticed {
         (*left, *since) = (*left - dt, *since + dt);
     }
@@ -528,13 +527,16 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         let smelt = p.tempting && d < def.senses.hearing;
         if p.friend || d <= def.senses.close || p.in_view && d < sight || smelt || mind.recalls(Memory::HurtBy(p.id)) {
             match mind.noticed.iter_mut().find(|n| n.0 == p.id) {
-                Some(n) => n.1 = NOTICED,
-                None => mind.noticed.push((p.id, NOTICED, 0.0)),
+                Some(n) => n.1 = def.senses.keep,
+                None => mind.noticed.push((p.id, def.senses.keep, 0.0)),
             }
         }
     }
-    let noticed: Vec<Seen> = at.players.iter().filter(|p| mind.noticed.iter().any(|n| n.0 == p.id)).copied().collect();
-    let at = &Situation { players: &noticed, ..*at };
+    // A list of its own only when it leaves someone out.
+    let known = |p: &Seen| mind.noticed.iter().any(|n| n.0 == p.id);
+    let all = at.players.iter().all(known);
+    let noticed: Vec<Seen> = if all { Vec::new() } else { at.players.iter().filter(|p| known(p)).copied().collect() };
+    let at = &Situation { players: if all { at.players } else { &noticed }, ..*at };
     let ctx = Ctx { creature, mind, at, lively, sight };
 
     let wants: Vec<(usize, Band, Want)> = creature
@@ -581,6 +583,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     let ctx = Ctx { creature, mind: &mind.clone(), at, lively, sight };
     let mut decision = creature.modules[index].0.act(&ctx, mind, want.target, fresh);
     decision.speed *= mind.personality.pace();
+    decision.target = want.target.map(|p| p.id);
     decision
 }
 
@@ -630,7 +633,7 @@ pub(super) mod tests {
 
     /// A player out of its view (`Seen::in_view`, judged by the server from where it
     /// looks) is no one to a deer until close (`Senses::close`), or until they hurt it; one
-    /// in view it notices, and keeps in mind a while once it has turned away (`NOTICED`).
+    /// in view it notices, and keeps in mind a while once it has turned away (`Senses::keep`).
     #[test]
     fn a_deer_notices_whom_it_sees_or_hears_close_by_and_keeps_them_in_mind() {
         let deer = species(&format!(

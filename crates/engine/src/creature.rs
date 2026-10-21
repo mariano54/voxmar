@@ -362,11 +362,14 @@ pub struct Senses {
     /// them (runs, chases, comes to look): a double take, the moment a player has to back
     /// off. Not for one who hurts it.
     pub react: f32,
+    /// Seconds it keeps a player it noticed in mind once it no longer senses them
+    /// (`brain::Mind::noticed`): turned away from one it has seen, it does not forget them.
+    pub keep: f32,
 }
 
 impl Default for Senses {
     fn default() -> Self {
-        Self { sight: 16.0, hearing: 12.0, field: 180.0, close: 3.0, react: 0.0 }
+        Self { sight: 16.0, hearing: 12.0, field: 180.0, close: 3.0, react: 0.0, keep: 10.0 }
     }
 }
 
@@ -381,12 +384,18 @@ impl Senses {
         if !(self.react.is_finite() && (0.0..=MOST_REACT).contains(&self.react)) {
             return Err(format!("`senses.react` is from 0 to {MOST_REACT} seconds, not {}", self.react));
         }
+        if !(self.keep > 0.0 && self.keep <= MOST_KEEP) {
+            return Err(format!("`senses.keep` is above 0 and up to {MOST_KEEP} seconds, not {}", self.keep));
+        }
         Ok(())
     }
 }
 
 /// The longest double take a creature's data may give it (`Senses::react`).
 pub const MOST_REACT: f32 = 2.0;
+
+/// The longest a creature's data may have it keep a player in mind (`Senses::keep`).
+pub const MOST_KEEP: f32 = 60.0;
 
 /// How it moves, in blocks per second and degrees per second.
 #[derive(Clone, Copy, Debug, Deserialize)]
