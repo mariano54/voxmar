@@ -24,6 +24,7 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use voxmar_engine::block::BlockId;
 use voxmar_engine::content::Content;
+use voxmar_engine::creature::Kind;
 use voxmar_engine::lang::{def_key, title_from_id};
 use voxmar_engine::quest::{Goal, QuestDef, QuestState, Reward};
 use voxmar_engine::quest_path::QuestPath;
@@ -2062,7 +2063,7 @@ fn track(
                     let ways = way_cache.0.entry(format!("{}/{goal:?}", quest.name)).or_insert_with(|| goal_ways(content, book, package(quest), goal));
                     match ways.first() {
                         Some(way) => Some((goal.clone(), Some(way.clone()))),
-                        None => creature_of(content, package(quest), goal).map(|_| (goal.clone(), None)),
+                        None => (!creature_lines(&locale, content, package(quest), goal).is_empty()).then(|| (goal.clone(), None)),
                     }
                 });
                 if let Some(shown) = first {
@@ -2178,27 +2179,34 @@ fn creature_of<'a>(content: &'a Content, package: &str, goal: &Goal) -> Option<&
 /// and, to tame or lure it, what to hold out to it.
 pub(crate) fn creature_lines(locale: &Locale, content: &Content, package: &str, goal: &Goal) -> Vec<String> {
     let Some(creature) = creature_of(content, package, goal) else { return Vec::new() };
-    let def = &creature.def;
-    let look = match super::journal::creature_home(locale, def) {
-        _ if def.boss => locale.get("journal.hint.bosses").to_owned(),
-        Some(home) => locale.format("journal.hint.lives_in", &[("biome", &home)]),
-        None if def.kind == voxmar_engine::creature::Kind::Monster => locale.get("journal.hint.monsters").to_owned(),
-        None => locale.get("journal.hint.animals").to_owned(),
-    };
-    let foods = |items: &[BlockId]| -> Vec<String> {
-        let blocks = &content.blocks;
-        items.iter().filter(|&&item| !blocks.def(item).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY)).take(3).map(|&item| locale.block(blocks.def(item))).collect()
-    };
+    let look = where_to_look(locale, &creature.def);
     let hold = match goal {
-        Goal::Tame(..) => foods(&creature.tame_food),
-        Goal::Lured(..) => foods(&creature.favourite),
-        _ => Vec::new(),
+        Goal::Tame(..) => hold_out(locale, content, &creature.tame_food),
+        Goal::Lured(..) => hold_out(locale, content, &creature.favourite),
+        _ => None,
     };
-    let mut lines = vec![look];
-    if !hold.is_empty() {
-        lines.push(locale.format("quest.tracker.hold", &[("list", &hold.join(locale.get("multiblock.fuel_or")))]));
+    look.into_iter().chain(hold).collect()
+}
+
+/// Where to look for a creature: where it lives, as the journal says; without a habitat, a
+/// monster comes in the dark and an animal is about in the wild, and a spirit (where the
+/// aether is high) or a villager (in a settlement) has no line.
+fn where_to_look(locale: &Locale, def: &voxmar_engine::creature::CreatureDef) -> Option<String> {
+    match super::journal::creature_home(locale, def) {
+        _ if def.boss => Some(locale.get("journal.hint.bosses").to_owned()),
+        Some(home) => Some(locale.format("journal.hint.lives_in", &[("biome", &home)])),
+        None if def.kind == Kind::Monster => Some(locale.get("journal.hint.monsters").to_owned()),
+        None if def.kind == Kind::Animal => Some(locale.get("journal.hint.animals").to_owned()),
+        None => None,
     }
-    lines
+}
+
+/// "Hold out: Carrot or Wild Carrot": the first three of `items` a player can get (none
+/// only for creative play), if any.
+fn hold_out(locale: &Locale, content: &Content, items: &[BlockId]) -> Option<String> {
+    let blocks = &content.blocks;
+    let names: Vec<String> = items.iter().filter(|&&item| !blocks.def(item).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY)).take(3).map(|&item| locale.block(blocks.def(item))).collect();
+    (!names.is_empty()).then(|| locale.format("quest.tracker.hold", &[("list", &names.join(locale.get("multiblock.fuel_or")))]))
 }
 
 /// How many pinned quests, from the top, show a way under their next goal.
@@ -2848,9 +2856,6 @@ pub(crate) mod tests {
         assert!(shown > 100, "{shown}");
     }
 
-    /// A tracked goal says under it how to meet it, in the recipe book's words: the rock's
-    /// tool, what a thing is made from, and how to get first what goes in that is not
-    /// carried; a goal to look up says nothing, for that is its lesson.
     /// Under a goal to fight, tame or lure a creature, the tracker says where it lives (a
     /// boss: in its lair), and to tame or lure it, what to hold out: for each shipped one.
     #[test]
@@ -2864,10 +2869,13 @@ pub(crate) mod tests {
                 seen += 1;
                 let lines = creature_lines(&locale, &content, package(quest), goal);
                 let def = &creature.def;
-                let look = if def.boss { locale.get("journal.hint.bosses").to_owned() } else { lines[0].clone() };
-                assert_eq!(lines[0], look, "{}: {goal:?}", quest.name);
-                if !def.boss && !def.habitat.biomes.is_empty() {
-                    assert!(lines[0].starts_with("Lives in "), "{}: {goal:?} reads {lines:?}", quest.name);
+                let hint = |key: &str| locale.get(&format!("journal.hint.{key}")).to_owned();
+                match (def.boss, def.habitat.biomes.is_empty(), def.kind) {
+                    (true, ..) => assert_eq!(lines[0], hint("bosses"), "{}: {goal:?}", quest.name),
+                    (false, false, _) => assert!(lines[0].starts_with("Lives in "), "{}: {goal:?} reads {lines:?}", quest.name),
+                    (false, true, Kind::Monster) => assert_eq!(lines[0], hint("monsters"), "{}: {goal:?}", quest.name),
+                    (false, true, Kind::Animal) => assert_eq!(lines[0], hint("animals"), "{}: {goal:?}", quest.name),
+                    (false, true, kind) => panic!("{}: {goal:?} on a {kind:?} with no habitat reads {lines:?}", quest.name),
                 }
                 let hold = matches!(goal, Goal::Tame(..) | Goal::Lured(..));
                 assert_eq!(lines.len(), 1 + hold as usize, "{}: {goal:?} reads {lines:?}", quest.name);
@@ -2882,8 +2890,23 @@ pub(crate) mod tests {
         assert_eq!(rabbit.len(), 2, "{rabbit:?}");
         assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("any".into(), 1)), Vec::<String>::new());
         assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("rootmother".into(), 1)), vec![locale.get("journal.hint.bosses").to_owned()]);
+        assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("cave_bat".into(), 1)), vec![locale.get("journal.hint.monsters").to_owned()]);
+        // A spirit with no habitat has no line, and leaves the goal to the next.
+        assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("wisp".into(), 1)), Vec::<String>::new());
+        // An animal with no habitat (a mod's) is about in the wild.
+        let mut homeless = content.creatures.get(content.creatures.find("base:rabbit").unwrap()).def.clone();
+        homeless.habitat.biomes.clear();
+        assert_eq!(where_to_look(&locale, &homeless), Some(locale.get("journal.hint.animals").to_owned()));
+        // What only creative play has is never held out.
+        let (root, carrot) = (content.blocks.id("base:hollow_root").unwrap(), content.blocks.id("base:carrot").unwrap());
+        assert!(content.blocks.def(root).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY));
+        assert_eq!(hold_out(&locale, &content, &[root, carrot]), Some("Hold out: Carrot".to_owned()));
+        assert_eq!(hold_out(&locale, &content, &[root]), None);
     }
 
+    /// A tracked goal says under it how to meet it, in the recipe book's words: the rock's
+    /// tool, what a thing is made from, and how to get first what goes in that is not
+    /// carried; a goal to look up says nothing, for that is its lesson.
     #[test]
     fn the_tracker_says_how_to_meet_a_goal() {
         let content = content();
