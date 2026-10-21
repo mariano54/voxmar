@@ -386,7 +386,7 @@ fn golden_areas(registry: &Arc<BlockRegistry>) -> Vec<[Arc<Column>; 9]> {
 
 /// The hash of the meshes of the centre columns of `golden_areas`, at every level of
 /// detail, as meshing makes them now.
-const MESH: u64 = 0xccb89e14dacaa092;
+const MESH: u64 = 0x9b18be208eeaef41;
 
 /// Meshing stays exactly as it was: every vertex, index, grass blade and the connectivity
 /// of each chunk of the centre columns of `golden_areas`, at every level of detail. When
