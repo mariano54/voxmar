@@ -101,7 +101,9 @@
 //   a place's middle they stand there. `react`: a player within `greet` is greeted (they
 //   stop, turn and hum for `greet_for`, once in `greet_every`); a monster or a hunter
 //   within `fear` sends them home crying out for `afraid` (guards stay); rain of at least
-//   `rain` sends them home from the `shelter` places and from work at the `outdoor` works.
+//   `rain` sends them home from the `shelter` places and from work at the `outdoor` works;
+//   two neighbours (no guards) within `chat` who see each other stop and talk for
+//   `chat_for`, each again no sooner than `chat_every` (`chat` no farther than `greet`).
 (
     grid: (spacing: 1024, chance: 0.45, margin: 160),
     // site: where a settlement stands (design wiki, settlements, draft 60).

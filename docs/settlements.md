@@ -463,8 +463,11 @@ player) within `fear` blocks sends everyone but the guards home with an alarm, a
 stay in for `afraid` seconds; a villager struck cries out once in the same span. When
 it rains harder than `rain`, people bound for the `shelter` places (the square, the well,
 a yard, a neighbour's door) or working an `outdoor` work (field, orchard, pen, woodyard)
-go home instead; guards keep their rounds. Reaching their bed for the night, they sigh
-content once a day. A guard sent after a player who struck a villager knows who they
+go home instead; guards keep their rounds. Two neighbours out and about (no guards, no
+one afraid or greeting a player) within `chat` blocks who see each other stop and talk:
+both stand turned to each other for `chat_for` seconds with a contented hum, then go on
+with their day, and stop to talk again only after `chat_every`. Reaching their bed for
+the night, they sigh content once a night. A guard sent after a player who struck a villager knows who they
 are after, whatever stands between them.
 
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
