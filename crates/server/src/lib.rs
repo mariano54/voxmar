@@ -1625,19 +1625,22 @@ pub(crate) fn test_server_on(content: Content) -> Server {
 mod tests {
     use super::*;
 
-    /// Every quest, on any path, asks to make only what its own goals and the quests it comes
-    /// after have taught the stations for: what it has the player make, cook, set down or
-    /// hold (of a tag: any one of what a player can hold of it) is got one of the recipe
-    /// book's ways, each worked only at a station (the crafting table, a recipe's `near`
-    /// block, a cooking station) one of those quests has the player make. A Craft goal is
-    /// met at the grid and a Cook goal by cooking (at its station, for CookAt). The
-    /// main-line walk puts down any station a recipe needs and walks only the main line, so
-    /// a side path asking for fired clay before the kiln got through (A Stove and a Quern's
-    /// workshop half, once 451 made its pieces take kiln output).
+    /// Every quest, on any path, has a route (one of its tasks) that asks to make only what
+    /// its own goals and the quests it comes after have taught the stations for, as the game
+    /// finishes a quest on any one of its tasks: what that route has the player make, cook,
+    /// set down or hold (of a tag: any one of what a player can hold of it) is got one of the
+    /// recipe book's ways that counts for the goal (`recipe_book::counts`, the quest book's
+    /// rule), each worked only at a station (the crafting table, a recipe's `near` block, a
+    /// cooking station, a home station) one of those quests has the player make. It prints
+    /// the route it found for each quest, and fails naming each quest with no such route and
+    /// what walls each of its routes. The main-line walk puts down any station a recipe
+    /// needs and walks only the main line, so a side path asking for fired clay before the
+    /// kiln got through (A Stove and a Quern's workshop half, once 451 made its pieces take
+    /// kiln output).
     #[test]
     fn a_quest_asks_only_for_what_its_stations_are_taught_for() {
         use voxmar_engine::quest::Goal;
-        use voxmar_engine::recipe_book::Method;
+        use voxmar_engine::recipe_book::{Method, counts};
         let content = test_content();
         let blocks = &content.blocks;
         // The book as the server has it: with what the world lays, found and broken loose.
@@ -1653,7 +1656,7 @@ mod tests {
             held.dedup();
             held
         };
-        let mut walls = Vec::new();
+        let mut walled = Vec::new();
         for quest in content.quests.iter() {
             // The quests it surely comes after ("a|b" makes sure of neither), and itself.
             let mut before: Vec<&voxmar_engine::quest::QuestDef> = Vec::new();
@@ -1678,26 +1681,80 @@ mod tests {
                 Method::Work { .. } | Method::Process { .. } | Method::Trap { .. } => method.stations(blocks).iter().any(|&s| taught.contains(&blocks.item_of(s))),
                 _ => true,
             };
-            for goal in quest.tasks.iter().flatten() {
-                // Which of the book's ways meet it.
-                let (item, way): (&String, &dyn Fn(&Method) -> bool) = match goal {
-                    Goal::Craft(item, _) => (item, &|m| matches!(m, Method::Craft { .. })),
-                    Goal::Cook(item, _) => (item, &|m| matches!(m, Method::Cook { .. })),
-                    Goal::CookAt(item, station, _) => (item, &move |m| matches!(m, Method::Cook { station: at, .. } if at == station)),
-                    Goal::Placed(item, _) | Goal::Have(item, _) => (item, &|_| true),
-                    _ => continue,
-                };
-                if item == "any" {
-                    continue;
-                }
-                let accepts = named(item);
-                assert!(!accepts.is_empty(), "{}: {goal:?} names nothing a player holds", quest.name);
-                if !accepts.iter().any(|&b| book.making(b).into_iter().any(|e| way(&e.method) && book.by(blocks, e, &worked))) {
-                    walls.push(format!("{}: {goal:?}", quest.name));
+            // Each route's goals that no way counting for them can be worked to, here.
+            let routes: Vec<Vec<String>> = quest
+                .tasks
+                .iter()
+                .map(|task| {
+                    task.iter()
+                        .filter_map(|goal| match goal {
+                            Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::CookAt(item, _, _) | Goal::Placed(item, _) | Goal::Have(item, _) if item != "any" => Some((goal, item)),
+                            _ => None,
+                        })
+                        .filter(|&(goal, item)| {
+                            let accepts = named(item);
+                            assert!(!accepts.is_empty(), "{}: {goal:?} names nothing a player holds", quest.name);
+                            !accepts.iter().any(|&b| book.making(b).into_iter().any(|e| counts(&content, goal, e) && works(&book, &content, e, &worked, &mut vec![e.output])))
+                        })
+                        .map(|(goal, _)| format!("{goal:?}"))
+                        .collect()
+                })
+                .collect();
+            match routes.iter().position(Vec::is_empty) {
+                Some(route) => println!("{}: route {} of {} is taught: {:?}", quest.name, route + 1, routes.len(), quest.tasks[route]),
+                None => {
+                    walled.push(format!("{}: {}", quest.name, routes.iter().enumerate().map(|(i, walls)| format!("route {} walled by {}", i + 1, walls.join(", "))).collect::<Vec<_>>().join("; ")))
                 }
             }
         }
-        assert!(walls.is_empty(), "these goals need a station no quest before them has the player make: {walls:#?}");
+        assert!(walled.is_empty(), "these quests have no route whose stations the quests before them have the player make: {walled:#?}");
+    }
+
+    /// Whether a player surely comes by `entry`'s output the book's ways, working only those
+    /// `worked` allows (where a quest has taught the station): from what the world lays,
+    /// breeds, grows and bites, then made from that. Gifts (a quest's reward, a chest, a
+    /// party on the road) are no sure way. `on` holds the items being made now, so a loop of
+    /// ways is no way. It ignores the tool a way needs (a `Break`, `Found` or `Product`
+    /// way's `tool`): a goal behind a tool no quest before it teaches still passes.
+    fn works(
+        book: &voxmar_engine::recipe_book::RecipeBook,
+        content: &Content,
+        entry: &voxmar_engine::recipe_book::Entry,
+        worked: &dyn Fn(&voxmar_engine::recipe_book::Method) -> bool,
+        on: &mut Vec<BlockId>,
+    ) -> bool {
+        use voxmar_engine::recipe_book::{Method, listed_as};
+        let blocks = &content.blocks;
+        let got = |item: BlockId, on: &mut Vec<BlockId>| {
+            let item = listed_as(blocks, item);
+            if on.contains(&item) {
+                return false;
+            }
+            on.push(item);
+            let found = book.making(item).into_iter().any(|e| works(book, content, e, worked, on));
+            on.pop();
+            found
+        };
+        if !worked(&entry.method) {
+            return false;
+        }
+        match &entry.method {
+            Method::Found { .. } | Method::Catch { .. } | Method::Drop { .. } | Method::Product { .. } => true,
+            Method::Harvest { from, forage, .. } => *forage || got(*from, on),
+            Method::Craft { variants, .. } => variants.iter().any(|cells| cells.iter().flatten().all(|&cell| got(cell, on))),
+            Method::Cook { input, with, .. } => got(*input, on) && with.iter().all(|&(item, _)| got(item, on)),
+            // A home station takes any of what its work accepts, though the book lists the
+            // work by the first of them only.
+            Method::Work { station, input, .. } => {
+                let work = content.stations.stations.iter().filter(|s| s.empty == *station).flat_map(|s| &s.works).filter(|w| w.output == entry.output);
+                got(*station, on) && std::iter::once(*input).chain(work.flat_map(|w| w.accepts.iter().copied())).any(|item| got(item, on))
+            }
+            Method::Process { machines, inputs, .. } => machines.iter().any(|&m| got(m, on)) && inputs.iter().all(|&(item, _)| got(item, on)),
+            Method::Break { block, .. } => book.laid(blocks, *block) || got(*block, on),
+            Method::Trap { trap, .. } => got(*trap, on),
+            Method::Bees { block, .. } => book.laid(blocks, *block) || got(*block, on),
+            Method::Chest { .. } | Method::Trade { .. } | Method::Reward { .. } => false,
+        }
     }
 
     /// Where a new world of `seed` wakes its first player, from the spawn column alone as

@@ -265,9 +265,16 @@ the Clay as well as Snug for Winter, since every workshop piece now takes kiln o
 spindle and loom fired clay, the quern stone, which is cobblestone fired in a pit kiln), and
 Hung to Dry comes after Crafting Table, as its rack is a 3 by 3 recipe. A content test
 (`a_quest_asks_only_for_what_its_stations_are_taught_for`) holds every quest on every path to
-this: what it has the player make is gathered, mined, or made at stations the quests before
-it have the player make. The main-line walk could not catch it: it walks only the main line,
-and it puts down whatever station a recipe needs.
+this: one of its routes (a quest finishes on any one of its tasks) has the player make only
+what is gathered, mined, or made at stations the quests before it have the player make,
+counting for each goal only the ways the quest book shows for it (`recipe_book::counts`). It
+prints the route it found for each quest. The main-line walk could not catch it: it walks
+only the main line, and it puts down whatever station a recipe needs. What it found: Stone
+in Hand has the player make the grindstone its stone heads are ground at, and A Full Stone
+Kit comes after it; A Fish Supper comes after First Night, which teaches its campfire; and
+the Nomad quests whose goals take hide (A Coin Purse, Pockets, A Stone's Throw, Hide Wraps)
+come after Hung to Dry, whose drying rack turns a hunt's raw hide into hide. The Farm book's
+hide quests come after Farm quests only, as every Farm quest does.
 
 ### Nomad paths, and quests in parts (Oct 14)
 

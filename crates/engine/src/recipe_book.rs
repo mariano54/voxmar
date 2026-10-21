@@ -449,49 +449,6 @@ impl RecipeBook {
         self.makes.get(&item).map_or_else(Vec::new, |found| found.iter().map(|&i| &self.entries[i]).collect())
     }
 
-    /// Whether a player surely comes by `item` the book's ways, working only those `worked`
-    /// allows (where a quest has taught the station): from what the world lays, breeds,
-    /// grows and bites, then made from that. Gifts (a quest's reward, a chest, a party on
-    /// the road) are no sure way.
-    pub fn within(&self, blocks: &crate::block::BlockRegistry, item: BlockId, worked: &dyn Fn(&Method) -> bool) -> bool {
-        self.making(item).into_iter().any(|entry| self.works(blocks, entry, worked, &mut vec![item]))
-    }
-
-    /// Whether `entry` can be worked, as [`Self::within`] has it.
-    pub fn by(&self, blocks: &crate::block::BlockRegistry, entry: &Entry, worked: &dyn Fn(&Method) -> bool) -> bool {
-        self.works(blocks, entry, worked, &mut vec![entry.output])
-    }
-
-    /// `on` holds the items being made now, so a loop of ways is no way.
-    fn works(&self, blocks: &crate::block::BlockRegistry, entry: &Entry, worked: &dyn Fn(&Method) -> bool, on: &mut Vec<BlockId>) -> bool {
-        let got = |item: BlockId, on: &mut Vec<BlockId>| {
-            let item = listed_as(blocks, item);
-            if on.contains(&item) {
-                return false;
-            }
-            on.push(item);
-            let found = self.making(item).into_iter().any(|e| self.works(blocks, e, worked, on));
-            on.pop();
-            found
-        };
-        let laid = |block: BlockId| self.laid.contains(&listed_as(blocks, block));
-        if !worked(&entry.method) {
-            return false;
-        }
-        match &entry.method {
-            Method::Found { .. } | Method::Catch { .. } | Method::Drop { .. } | Method::Product { .. } => true,
-            Method::Harvest { from, forage, .. } => *forage || got(*from, on),
-            Method::Craft { variants, .. } => variants.iter().any(|cells| cells.iter().flatten().all(|&cell| got(cell, on))),
-            Method::Cook { input, with, .. } => got(*input, on) && with.iter().all(|&(item, _)| got(item, on)),
-            Method::Work { station, input, .. } => got(*station, on) && got(*input, on),
-            Method::Process { machines, inputs, .. } => machines.iter().any(|&m| got(m, on)) && inputs.iter().all(|&(item, _)| got(item, on)),
-            Method::Break { block, .. } => laid(*block) || got(*block, on),
-            Method::Trap { trap, .. } => got(*trap, on),
-            Method::Bees { block, .. } => laid(*block) || got(*block, on),
-            Method::Chest { .. } | Method::Trade { .. } | Method::Reward { .. } => false,
-        }
-    }
-
     /// Everything `item` goes into: as an ingredient, a station or a tool.
     pub fn using(&self, item: BlockId) -> Vec<&Entry> {
         self.uses.get(&item).map_or_else(Vec::new, |found| found.iter().map(|&i| &self.entries[i]).collect())
@@ -503,6 +460,37 @@ impl RecipeBook {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+}
+
+/// Whether a way of getting an item counts for a quest goal, as the game counts it: a goal
+/// to cook, cooking at a station, or a home station's work that counts as cooking (the
+/// station it names, for one at a station); to craft, crafting (near the block it names,
+/// for one near a block); to catch, a line's catch; to pick or mine, breaking or
+/// harvesting; to carry or set down, any way but a quest's reward (the goal teaches the
+/// work itself); to look an item up, none, for looking it up is its lesson. The quest
+/// book shows a goal only these ways, and the content tests hold quests to them.
+pub fn counts(content: &Content, goal: &crate::quest::Goal, way: &Entry) -> bool {
+    use crate::quest::Goal;
+    let method = &way.method;
+    // Left to work in a home station whose work counts as cooking (an earth clamp's fired
+    // clay), at that station by its name.
+    let station_cooks = |at: Option<&str>| match method {
+        Method::Work { station, .. } => {
+            content.stations.stations.iter().any(|s| s.empty == *station && s.works.iter().any(|w| w.output == way.output && w.counts.as_deref() == Some("cooked")))
+                && at.is_none_or(|at| content.blocks.def(*station).name.rsplit(':').next() == Some(at))
+        }
+        _ => false,
+    };
+    match goal {
+        Goal::Cook(..) => matches!(method, Method::Cook { .. }) || station_cooks(None),
+        Goal::CookAt(_, at, _) => matches!(method, Method::Cook { station, .. } if station == at) || station_cooks(Some(at)),
+        Goal::Craft(..) => matches!(method, Method::Craft { .. }),
+        Goal::CraftNear(_, at, _) => matches!(method, Method::Craft { near: Some(near), .. } if near == at),
+        Goal::Catch(..) => matches!(method, Method::Catch { .. }),
+        Goal::Pick(..) | Goal::Mine(..) => matches!(method, Method::Break { .. } | Method::Harvest { .. } | Method::Found { .. }),
+        Goal::Have(..) | Goal::Placed(..) => !matches!(method, Method::Reward { .. }),
+        _ => false,
     }
 }
 
