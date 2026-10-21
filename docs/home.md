@@ -54,7 +54,7 @@ finds a Pantry made of a chest and a barrel by a campfire, "home: storage"); cro
 plates, bowls, jars, jugs, baskets and a dresser's plates on show; rugs include a rush mat
 (4 rushes, Crafting 1, a Nomad's first); cooking is the cottage stove and cauldron; workshop
 is the loom frame, spindle stand and quern. All are craftable in the first two ages
-(Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
+(Construction 1 to 8, Crafting 1 to 8), so each step is a few minutes of gathering and
 crafting, not a grind.
 
 ## Warm, never hot

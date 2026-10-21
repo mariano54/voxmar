@@ -71,7 +71,8 @@
             // A rushlight holder: a peeled rush dipped in fat, held burning in a clip on a
             // little wooden stand, the poor home's candle (a `light` the home counts). Its rush
             // burns a game day, faster than a candle (flame.rs), down to the bare holder; a
-            // fresh rush (`relight_with:reed`) in the clip lights it again.
+            // fresh reed of any kind (`relight_with:reed`: rush, cattail, papyrus or sugar cane)
+            // in the clip lights it again.
             (name: "{name}_rushlight", render: Model, shape: "rushlight", solid: false, light: 7, sound: Wood, textures: All("furniture_grain"), hardness: 0.3, color: (160, 120, 70), tags: ["furniture", "light", "rushlight", "decor", "wood", "burns_days:1", "burns_out_to:{name}_rushlight_spent", "tended"],
                 particles: [(style: Flame, rate: 6.0, at: (0.7, 0.84, 0.5), spread: 0.01, size: 0.6, height: 0.15, color: Some((240, 150, 40)))]),
             (name: "{name}_rushlight_spent", render: Model, shape: "rushlight_spent", solid: false, sound: Wood, textures: All("furniture_grain"), hardness: 0.3, color: (160, 120, 70), tags: ["furniture", "wood", "relights_to:{name}_rushlight", "relight_with:reed"]),
