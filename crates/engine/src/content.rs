@@ -653,6 +653,13 @@ impl Content {
             holds[machine.block.0 as usize] = machine.holds.clone();
         }
         crate::inventory::set_store_holds(holds);
+        // A block that shows what it holds is a store with a slot for each spot it shows.
+        for id in blocks.ids().filter(|&id| !blocks.def(id).shows.is_empty()) {
+            let spots = blocks.def(id).shows.len();
+            if !machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() >= spots) {
+                return Err(RegistryError(format!("block `{}` shows {spots} things, but is no store (machines.ron) with a slot for each", blocks.def(id).name)));
+            }
+        }
         // A furnishing gives itself back only where a player placed it: one that drops
         // nothing anyway has no business with the tag.
         if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag("furnishing") && (blocks.info(id).drops.is_air() || blocks.info(id).drop_count == 0)) {
