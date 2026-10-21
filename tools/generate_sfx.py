@@ -1129,6 +1129,34 @@ def seat_wood(rng):
     return out
 
 
+def rocking_chair(rng):
+    """Sitting in a rocking chair: the seat's knock and creak, then it rocking back and
+    forth twice on its runners, each rock softer, settling still."""
+    out = np.zeros(int(1.4 * RATE))
+    place(out, 0.0, seat_wood(rng), 1.0)
+    at, level = 0.45, 0.5
+    for _ in range(2):
+        place(out, at, creak(rng, rng.uniform(0.22, 0.3), 30, 60, rng.uniform(300, 380)), level)
+        place(out, at + 0.2, knock(rng, rng.uniform(110, 140)), level * 0.4)
+        at += rng.uniform(0.38, 0.45)
+        level *= 0.6
+    return out
+
+
+def rocker_place(rng):
+    """A rocking chair or cradle set down: a knock of its runners on the floor, then it
+    rocking to rest, a creak and a tap each way, smaller each time."""
+    out = np.zeros(int(0.55 * RATE))
+    place(out, 0.0, knock(rng, rng.uniform(130, 160)))
+    at, level = 0.08, 0.5
+    for _ in range(3):
+        place(out, at, creak(rng, rng.uniform(0.08, 0.11), 35, 70, rng.uniform(380, 460)), level * 0.6)
+        place(out, at + 0.07, knock(rng, rng.uniform(170, 210)), level * 0.5)
+        at += rng.uniform(0.14, 0.16)
+        level *= 0.6
+    return out
+
+
 def grind(rng):
     """A quern turned: the upper stone rumbling round on the lower, a turn and more of gritty,
     low grinding, and grain crunching between them."""
@@ -1295,6 +1323,7 @@ SOUNDS = {
     "materials/timber_step": (timber_step, 4),
     "materials/timber_place": (timber_place, 3),
     "materials/timber_break": (timber_break, 3),
+    "materials/rocker_place": (rocker_place, 3),
     "materials/thatch_step": (thatch_step, 4),
     "materials/thatch_place": (thatch_place, 3),
     "materials/thatch_break": (thatch_break, 3),
@@ -1348,6 +1377,7 @@ SOUNDS = {
     "store_basket": (store_basket, 2),
     "bed_frame": (bed_frame, 2),
     "seat_wood": (seat_wood, 2),
+    "rocking_chair": (rocking_chair, 2),
     "work/grind": (grind, 2),
     "work/spin": (spin, 2),
     "work/weave": (weave, 2),
