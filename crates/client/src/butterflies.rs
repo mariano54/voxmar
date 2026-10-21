@@ -480,7 +480,6 @@ fn wing_angle(b: &Butterfly) -> f32 {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Too many of a set (its hour passing, rain coming): the extra ones leave. One kept on purpose
 /// (`release`) stays its time out, wanted or not.
 fn send_off_extras(flying: &mut [Butterfly], wanted: &[(usize, usize)]) {
@@ -492,6 +491,7 @@ fn send_off_extras(flying: &mut [Butterfly], wanted: &[(usize, usize)]) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn fly(
     time: Res<Time>,
     mut butterflies: ResMut<Butterflies>,
