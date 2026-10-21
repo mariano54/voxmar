@@ -829,7 +829,7 @@ fn a_draughty_home_whistles_until_daubed() {
     };
     let hushed = |world: &VoxelWorld| {
         let eye = IVec3::new(0, 11, 0);
-        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, |_| None, &kinds, 1);
         let (draughty, hush) = (ambience.presence(group, found.groups[group]), ambience.presence(curtained, found.groups[curtained]));
         let place = scene(&ambience, "home", &["forest"], &[night.as_slice(), &[("draughty", draughty), ("sheltered", under_thatch), ("curtained", hush)]].concat());
         run(&ambience, &place, 20.0).1[draught]
