@@ -466,7 +466,9 @@ impl Server {
         let (mother, father) = (self.creatures.live[&a].genome.clone(), self.creatures.live[&b].genome.clone());
         // Mutations are likelier where aether is high (docs/breeding.md, "Mutation").
         let aether = self.overworld.site(at.x.floor() as i32, at.z.floor() as i32).aether;
-        let mutation = self.content.creatures.genetics().mutation_at(aether);
+        // A server set to a rate of its own (`ServerConfig::mutation`) uses it, otherwise the data's.
+        let genetics = self.config.mutation.map_or_else(|| *self.content.creatures.genetics(), |mutation| voxmar_engine::creature::Genetics { mutation });
+        let mutation = genetics.mutation_at(aether);
         let mut born = 0;
         for i in 0..count {
             // Each young's genes, looks and mind by the world's count of rolls, never by the

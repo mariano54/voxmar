@@ -32,7 +32,7 @@ mod lattice;
 mod levels;
 mod noise;
 mod parallel;
-pub use parallel::set_helper_limit;
+pub use parallel::{mark_urgent, set_helper_limit};
 #[cfg(test)]
 mod perf;
 mod rarity;
@@ -340,7 +340,7 @@ impl Overworld {
             shape_surfaces,
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
-            fields: water::cache::Cache::new(FIELD_BUDGET),
+            fields: water::cache::Cache::copying(FIELD_BUDGET),
             remembered: std::sync::OnceLock::new(),
             spawns: Default::default(),
             seed: stream,
@@ -567,9 +567,15 @@ impl Overworld {
 
     /// The ground at one position, with its rivers, lakes and trails.
     pub(crate) fn geo(&self, x: i32, z: i32) -> GeoSample {
+        self.geo_with(x, z, &mut geology::Corners::default())
+    }
+
+    /// [`Overworld::geo`], sharing the relief at lattice corners with other samples nearby
+    /// through `corners`: neighbouring positions read the same few corners.
+    pub(crate) fn geo_with(&self, x: i32, z: i32, corners: &mut geology::Corners) -> GeoSample {
         let sample = {
             let _stage = stage::enter(Stage::Rivers);
-            self.ground(x, z)
+            self.rivers.sample_with(self.stages(), x, z, true, corners)
         };
         let _stage = stage::enter(Stage::Trails);
         let sample = self.trails.apply(&self.land(), sample, x, z);
@@ -716,6 +722,12 @@ impl Overworld {
     /// sets, each where it goes.
     pub fn settlement_planned(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
         self.settlements.planned(self, centre, keep).unwrap_or_default()
+    }
+
+    /// As [`Overworld::settlement_planned`], the blocks set at a height over the ground of
+    /// their column (a lamp's torch on its post), each with its height over the ground.
+    pub fn settlement_planned_on_ground(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
+        self.settlements.planned_on_ground(self, centre, keep).unwrap_or_default()
     }
 
     /// Whether `block` is one of settlements' own flames (`rules.fire.flames`).

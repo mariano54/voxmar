@@ -446,6 +446,29 @@ mod tests {
         assert!((550..790).contains(&at_more), "{at_more} of 20000 mutated at 0.05");
     }
 
+    /// At a mutation rate of 1 every gene mutates: the father's allele is any of the gene's,
+    /// the mother's still one of hers, and numbers jump well past their parents' spread;
+    /// at 0 none does.
+    #[test]
+    fn mutation_draws_a_new_allele_and_a_jump() {
+        let defs = defs();
+        let plain = Genome(vec![Gene::Pair(0, 0), Gene::Number(1.0)]);
+        let (mut fathers, mut far) = ([0u32; 3], 0);
+        for seed in 0..600 {
+            let child = inherit(&defs, &plain, &plain, seed, 1.0);
+            let Gene::Pair(m, f) = child.0[0] else { panic!() };
+            assert_eq!(m, 0, "the mother's allele is hers");
+            fathers[f as usize] += 1;
+            let Gene::Number(n) = child.0[1] else { panic!() };
+            far += usize::from((n - 1.0).abs() > 0.06);
+            assert_eq!(inherit(&defs, &plain, &plain, seed, 0.0).0[0], Gene::Pair(0, 0), "no mutation at 0");
+        }
+        // Each allele a third of the time, as the draw is even over them.
+        assert!(fathers.iter().all(|&n| (140..260).contains(&n)), "the father's alleles drawn {fathers:?}");
+        // Beyond one spread in about half (a jump of two spreads' sd); a third at most without.
+        assert!(far > 250, "only {far} of 600 sizes jumped past a spread");
+    }
+
     #[test]
     fn breeds_are_known_by_their_genes() {
         let defs = defs();
