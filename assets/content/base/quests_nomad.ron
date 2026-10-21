@@ -224,7 +224,7 @@
             tasks: [[Stocked("tag:planks", "tag:storage", 32)]],
             after: ["from_the_shelves"],
             side: true,
-            rewards: [Xp("crafting", 30.0), Item("bread", 1)],
+            rewards: [Xp("crafting", 30.0), Item("oak_crate_stack", 1)],
         ),
         // Food: cooking, grain and the first fields.
         (
