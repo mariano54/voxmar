@@ -11,6 +11,8 @@
 //!   core, cold and warm;
 //! - `land_samples`: the cost of one sample of the land on the rivers' and trails' 8-block
 //!   grids, the work most of a new region's time goes to;
+//! - `distant_tiles`: the cost of one sample of the client's distant land round spawn,
+//!   stage by stage, cold and warm;
 //!
 //! next to `generation_speed`, `river_speed` and `column_timing` in the crate's tests.
 //! Times are thread CPU time where they can be, so they hold up on a busy machine; stage
@@ -318,4 +320,84 @@ fn light_is_unchanged() {
         }
     }
     assert_eq!(hash, LIGHT, "lighting changed. If that is deliberate, set LIGHT to {hash:#018x}");
+}
+
+/// `cargo test --release -p voxmar_worldgen distant_tiles -- --ignored --nocapture`
+/// samples what the client's distant land (`render::lod`) samples round the spawn of
+/// seed 1, on one thread: each tile's corner heights, then its sampler and each corner's
+/// surface, one at a time, on a world nothing has built, then again with the land's
+/// regions known; then as the client samples them, each corner's ground once for its
+/// height and its surface. It reports the time per sample, stage by stage. The rings are
+/// the client's:
+/// four, of cells 4 to 32 blocks, 13×13 tiles of 32×32 cells each, less what the finer
+/// ring covers.
+#[test]
+#[ignore]
+fn distant_tiles() {
+    use voxmar_engine::glam::IVec2;
+    const LEVELS: i32 = 4;
+    const FIRST_CELL: i32 = 4;
+    const CELLS: i32 = 32;
+    const RING: i32 = 6;
+    const W: i32 = CELLS + 3;
+    prefer_fast_cores();
+    let (content, world_content) = crate::full_content();
+    let world = Overworld::with_content(1, content.blocks.clone(), world_content);
+    let spawn = world.settle_spawn();
+    let camera = IVec2::new(spawn.x, spawn.z);
+    let mut tiles = Vec::new();
+    for level in 0..LEVELS {
+        let (cell, tile) = (FIRST_CELL << level, (FIRST_CELL << level) * CELLS);
+        let center = camera.div_euclid(IVec2::splat(tile));
+        let finer = camera.div_euclid(IVec2::splat(tile / 2));
+        let finer = ((finer - RING) * (tile / 2), (finer + RING + 1) * (tile / 2));
+        for z in center.y - RING..=center.y + RING {
+            for x in center.x - RING..=center.x + RING {
+                let low = IVec2::new(x, z) * tile;
+                if level == 0 || !(low.cmpge(finer.0).all() && (low + tile).cmple(finer.1).all()) {
+                    tiles.push((level, cell, low));
+                }
+            }
+        }
+    }
+    let samples = tiles.len() as f64 * (W * W) as f64;
+    let heights = |world: &Overworld| {
+        tiles.iter().map(|&(_, cell, origin)| (0..W * W).map(|i| world.height(origin.x + (i % W - 1) * cell, origin.y + (i / W - 1) * cell)).collect::<Vec<_>>()).collect::<Vec<_>>()
+    };
+    let surfaces = |world: &Overworld, heights: &[Vec<i32>]| {
+        for (&(_, cell, origin), heights) in tiles.iter().zip(heights) {
+            let sampler = world.sampler(origin - 2 * cell, origin + (CELLS + 2) * cell);
+            for i in 0..W * W {
+                std::hint::black_box(sampler.surface(origin.x + (i % W - 1) * cell, origin.y + (i / W - 1) * cell, heights[i as usize], 0));
+            }
+        }
+    };
+    let report = |label: &str, cpu: Duration, times: Times| {
+        let per = |d: Duration| d.as_secs_f64() * 1e6 / samples;
+        let stages: Vec<String> = Stage::ALL.iter().filter(|&&s| times.get(s) > Duration::from_millis(5)).map(|&s| format!("{s:?} {:.1}", per(times.get(s)))).collect();
+        eprintln!("{label}: {:.1} µs a sample ({:.1}s CPU), stages in µs: {}", per(cpu), cpu.as_secs_f64(), stages.join(", "));
+    };
+    eprintln!("seed 1: {} tiles, {} samples round spawn {spawn}", tiles.len(), samples);
+    for round in ["first", "again"] {
+        let started = thread_time();
+        let (h, times) = stage::measure(|| heights(&world));
+        report(&format!("{round}: heights"), thread_time() - started, times);
+        let started = thread_time();
+        let ((), times) = stage::measure(|| surfaces(&world, &h));
+        report(&format!("{round}: surfaces"), thread_time() - started, times);
+    }
+    // As the client samples them: the ground at each corner once, for its height and the
+    // surface on it.
+    let started = thread_time();
+    let ((), times) = stage::measure(|| {
+        for &(_, cell, origin) in &tiles {
+            let grounds = world.grounds((0..W * W).map(|i| (origin.x + (i % W - 1) * cell, origin.y + (i / W - 1) * cell)));
+            let sampler = world.sampler(origin - 2 * cell, origin + (CELLS + 2) * cell);
+            for (i, ground) in grounds.iter().enumerate() {
+                let i = i as i32;
+                std::hint::black_box(sampler.surface_on(ground, origin.x + (i % W - 1) * cell, origin.y + (i / W - 1) * cell, ground.height(), 0));
+            }
+        }
+    });
+    report("again: grounds once, then surfaces", thread_time() - started, times);
 }
