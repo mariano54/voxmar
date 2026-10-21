@@ -250,6 +250,16 @@ impl ClientWorld {
     /// distance: the land a flight has in front of it, which falls short when streaming
     /// falls behind (the capture's `ahead:` line).
     pub fn meshed_ahead(&self, eye: Vec3, forward: Vec2) -> i32 {
+        self.ahead(eye, forward, |c| self.details.contains_key(&c))
+    }
+
+    /// As `meshed_ahead`, of the columns come from the server, meshed or not: with the two
+    /// alike, a flight outruns generation; with this one further, meshing.
+    pub fn received_ahead(&self, eye: Vec3, forward: Vec2) -> i32 {
+        self.ahead(eye, forward, |c| self.voxels.contains(c))
+    }
+
+    fn ahead(&self, eye: Vec3, forward: Vec2, has: impl Fn(ColumnPos) -> bool) -> i32 {
         let forward = forward.normalize_or_zero();
         let side = forward.perp();
         let column = |at: Vec2| ColumnPos((at / CHUNK_SIZE as f32).floor().as_ivec2());
@@ -257,7 +267,7 @@ impl ClientWorld {
         (1..=self.view_distance)
             .find(|&d| {
                 let at = start + forward * (d * CHUNK_SIZE) as f32;
-                [-1.0, 0.0, 1.0].iter().any(|&s| !self.details.contains_key(&column(at + side * (s * CHUNK_SIZE as f32))))
+                [-1.0, 0.0, 1.0].iter().any(|&s| !has(column(at + side * (s * CHUNK_SIZE as f32))))
             })
             .map_or(self.view_distance, |d| d - 1)
     }
@@ -748,6 +758,14 @@ mod tests {
         world.details.insert(ColumnPos::new(4, 1), 1);
         assert_eq!(world.meshed_ahead(eye, Vec2::X), 5);
         assert_eq!(world.meshed_ahead(eye, -Vec2::X), 0, "nothing west");
+        // Come out to seven, meshed or not.
+        for x in 0..=7 {
+            for z in -1..=1 {
+                world.voxels.insert(ColumnPos::new(x, z), Arc::new(Column::default()));
+            }
+        }
+        assert_eq!(world.received_ahead(eye, Vec2::X), 7);
+        assert_eq!(world.meshed_ahead(eye, Vec2::X), 5, "of what came, meshed");
     }
 
     #[test]
