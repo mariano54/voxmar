@@ -509,6 +509,25 @@ mod tests {
         assert_eq!(stocked, Some(84), "what went in counts for a quest's Stocked, as a move in does");
     }
 
+    /// Planks put away with H into a home's store count for Put It Away, which asks for
+    /// planks in any store (`Stocked` by the store tag), however many kinds of store.
+    #[test]
+    fn planks_put_away_finish_put_it_away() {
+        let mut server = fixture();
+        home_barrel(&mut server, "base:oak_planks", 1);
+        // Open: From the Shelves, the quest before it, is done.
+        server.players.get_mut(&1).unwrap().quests_done.push("base:from_the_shelves".into());
+        give(&mut server, 12, "base:oak_planks", 20);
+        act(&mut server, "base:put_away", ActionTarget::None);
+        server.update_quests(1);
+        let done = |server: &Server| server.players[&1].quests_done.iter().any(|q| q == "base:put_it_away");
+        assert!(!done(&server), "done with twenty planks put away of thirty-two");
+        give(&mut server, 13, "base:oak_planks", 12);
+        act(&mut server, "base:put_away", ActionTarget::None);
+        server.update_quests(1);
+        assert!(done(&server), "thirty-two planks put away and Put It Away not done");
+    }
+
     /// A store with no room keeps what does not fit in the pack.
     #[test]
     fn putting_away_into_a_full_store_leaves_the_rest_in_the_pack() {
