@@ -9033,10 +9033,10 @@ impl Fresh {
         for (i, &ground) in grounds.iter().enumerate() {
             let last = i + 1 == grounds.len();
             let cell = ground + IVec3::Y;
-            // Open as the place action finds it: air, or a plant or snow a block replaces
+            // Open as the place action finds it: air, or a plant a block replaces
             // (not water), on solid ground.
             let open = |c: &Client| {
-                c.world.block(cell).is_some_and(|b| b == BlockId::AIR || (c.content.blocks.info(b).replaceable && c.content.blocks.info(b).fluid.is_none()))
+                c.world.block(cell).is_some_and(|b| c.content.blocks.info(b).gives_room())
                     && c.world.block(ground).is_some_and(|b| c.content.blocks.def(b).solid)
             };
             if !last && (!open(&self.c) || Self::creature_on(&self.c, cell)) {

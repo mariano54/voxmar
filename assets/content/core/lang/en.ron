@@ -578,6 +578,7 @@
     "quest.goal.fertilised": "Grow crops with {item}",
     "quest.goal.ate": "Eat {item}",
     "quest.goal.laid": "Lay {item} from your home's stores",
+    "quest.goal.put_away": "Put {item} away with the Put away key",
     "quest.goal.mended": "Mend {item}",
     "quest.goal.watering": "Set {item} by tilled ground to water it",
     "quest.goal.placed": "Set down {item}",
