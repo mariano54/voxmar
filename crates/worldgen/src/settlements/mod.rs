@@ -719,6 +719,19 @@ impl Settlements {
         spawn
     }
 
+    /// Finds the squares in reach of the spawn and settles the spawn's square now, both made
+    /// once per world, as the server does before its first tick: a tick that came to
+    /// either while a streaming worker was making it would wait on that worker.
+    pub(crate) fn settle_spawn(&self, world: &Overworld) {
+        self.promised(world);
+        if let Some(fixed) = &self.fixed
+            && !(self.def.styles.is_empty() || self.def.sizes.is_empty())
+        {
+            let _stage = crate::stage::enter(crate::stage::Stage::Settlements);
+            self.spawn.get_or_init(|| self.spawn_square(world, fixed));
+        }
+    }
+
     /// The squares one of which may be settled for a new player (see `promised`).
     fn promised(&self, world: &Overworld) -> &[IVec2] {
         self.promised.get_or_init(|| if self.def.rules.spawn_settlement_within > 0 { self.in_reach(world.spawn_estimate()) } else { Vec::new() })

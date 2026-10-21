@@ -600,6 +600,19 @@ impl Server {
         })
     }
 
+    /// Whether a creature with `body` sees a player with their feet at `to`: a clear line
+    /// from high in its body (its eyes) to their head or middle, through no solid block.
+    /// Land not loaded hides nothing, as it is no wall to a blow (`blow_open`).
+    pub(crate) fn in_sight(&self, body: &Body, to: Vec3) -> bool {
+        let blocks = &self.content.blocks;
+        let solid = |c: IVec3| self.block(c).is_some_and(|b| blocks.info(b).solid);
+        let eye = body.position + Vec3::Y * body.size.1 * 0.8;
+        [1.6, 0.9].into_iter().any(|h| {
+            let to = to + Vec3::Y * h;
+            voxmar_engine::physics::raycast(eye, to - eye, (to - eye).length(), solid).is_none()
+        })
+    }
+
     fn skill(&self, name: &str) -> Option<SkillId> {
         self.content.skills.id(name)
     }
@@ -674,7 +687,8 @@ impl Server {
     /// past its edge, has a way through the air (`blow_open`) to each `strikes` says it
     /// would strike at (in its reach and strike band), and its charge a way along the
     /// ground (`charge_open`) to each `charges` says only its charge fits: to no other is
-    /// it close to striking.
+    /// it close to striking. Each is taken as in its sight (`in_sight`): the caller judges
+    /// that for a kind that warns.
     fn seen_from(&self, body: &Body, reach: f32, strikes: impl Fn(Vec3) -> bool, charges: impl Fn(Vec3) -> bool, range: f32, tempts: &[BlockId], owner: Option<&str>) -> Vec<Seen> {
         let at = body.position;
         let mut seen: Vec<Seen> = self
@@ -694,6 +708,7 @@ impl Server {
                 } else {
                     !charges(p.position) || self.charge_open(body, p.position)
                 },
+                in_sight: true,
             })
             .collect();
         seen.sort_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at)));
@@ -751,7 +766,11 @@ impl Server {
                 let (phase, scale) = (creature.phase, creature.scale);
                 let strikes = |to: Vec3| strikes_from(species, phase, scale, position, to);
                 let charges = |to: Vec3| charges_from(species, phase, scale, position, to);
-                let players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, charges, range, &species.favourite, creature.owner.as_deref());
+                let mut players = self.seen_from(&creature.body, species.longest_reach(phase), strikes, charges, range, &species.favourite, creature.owner.as_deref());
+                // Whether it sees each matters only to its warning (`Warn`).
+                if species.def.warn.is_some() {
+                    players.iter_mut().for_each(|p| p.in_sight = self.in_sight(&creature.body, p.position));
+                }
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
                 // What it grazes, else, kept and hungry, a trough of its food by home.
@@ -5668,6 +5687,112 @@ mod fight_tests {
         for (i, &(far, round)) in circles.iter().enumerate() {
             assert!(far >= clear, "circle {i}: the wolf got only {far:.2} blocks from the player, {clear:.2} wanted: {circles:?}");
             assert!(round >= 15.0, "circle {i}: the wolf went only {round:.0} degrees round the player: {circles:?}");
+        }
+    }
+
+    /// A wolf warns a player who comes near before it goes for them (`creature::Warn`): it
+    /// stands its ground, head low, shown to players as warning (`Pose::Warning`), for its
+    /// `seconds`; then it goes for one who stayed and bites. One who backs off out of its
+    /// radius in time is let be, and it holds no grudge.
+    #[test]
+    fn a_wolf_warns_before_it_goes_for_a_player() {
+        for stays in [true, false] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+            let player = join(&mut server, stand);
+            // Within the least its hunt reaches (its liveliness, hunger and aggression at their
+            // lowest), outside its `near`.
+            let from = stand - Vec3::X * 5.0;
+            let id = put(&mut server, "base:wolf", from, Vec3::X);
+            let warn = server.content.creatures.get(server.creatures.live[&id].species).def.warn.expect("a wolf warns");
+            server.tick = 1000;
+            let (mut warning, mut bites) = (0u64, 0u32);
+            for _ in 0..6 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+                server.tick_fights();
+                server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+                let wolf = &server.creatures.live[&id];
+                if wolf.view(id).pose == brain::Pose::Warning {
+                    warning += 1;
+                    let moved = wolf.body.position.with_y(0.0).distance(from.with_y(0.0));
+                    assert!(moved < 0.5, "warning, the wolf stands its ground, but went {moved:.2} blocks (stays {stays})");
+                    assert_eq!(bites, 0, "it warned again once it had bitten");
+                }
+                bites += (wolf.winding && wolf.decision.attack.is_some()) as u32;
+                if !stays && warning == TICKS_PER_SECOND as u64 / 2 {
+                    server.players.get_mut(&player).unwrap().position = stand + Vec3::X * 16.0;
+                }
+            }
+            let wolf = &server.creatures.live[&id];
+            let warned = warning as f32 / TICKS_PER_SECOND as f32;
+            if stays {
+                assert!((warned - warn.seconds).abs() < 0.3, "the wolf warned {warned:.2} s, not its {} s", warn.seconds);
+                assert!(bites > 0, "the player stayed, and the wolf never bit");
+                assert_eq!(wolf.mind.attacker(), Some(player));
+            } else {
+                assert!((0.4..0.7).contains(&warned), "the wolf warned {warned:.2} s of a player who backed off at half a second");
+                assert_eq!((bites, wolf.mind.attacker()), (0, None), "the player backed off, and the wolf went for them anyway");
+            }
+        }
+    }
+
+    /// A brown bear and a badger, which warn one who comes too close, follow a player
+    /// holding their food without a warning, as before they warned at all: no warning
+    /// stance, no grudge, no blow, and they come nearer. The Nomad's luring quests lead them.
+    #[test]
+    fn lured_bears_and_badgers_follow_without_warning() {
+        for name in ["base:brown_bear", "base:badger"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            let stand = c.as_vec3() + Vec3::new(3.5, 0.0, 0.5);
+            let player = join(&mut server, stand);
+            let species = server.content.creatures.id(name).expect("species");
+            let food = *server.content.creatures.get(species).favourite.first().expect("a favourite food");
+            let held = server.players.get_mut(&player).unwrap();
+            held.inventory.add(food, 1);
+            held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == food)).expect("the food is held");
+            let from = stand - Vec3::X * 4.5;
+            let id = put(&mut server, name, from, Vec3::X);
+            server.tick = 1000;
+            for _ in 0..5 * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+                server.tick_fights();
+                let live = &server.creatures.live[&id];
+                assert_ne!(live.view(id).pose, brain::Pose::Warning, "{name} warned the player holding its food");
+                assert!(!live.winding, "{name} went for the player holding its food");
+            }
+            let live = &server.creatures.live[&id];
+            assert_eq!(live.mind.attacker(), None, "{name} holds a grudge against the player holding its food");
+            let (was, now) = (from.distance(stand), live.body.position.distance(stand));
+            assert!(now < was - 1.0, "{name} never came for its food: from {was:.2} to {now:.2} blocks off");
+        }
+    }
+
+    /// A badger warns only one it sees: behind a wall three high and thirteen long it lets
+    /// a player be, with the wall gone it warns them.
+    #[test]
+    fn a_badger_warns_only_one_it_sees() {
+        for walled in [true, false] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+            let _player = join(&mut server, stand);
+            if walled {
+                set(&mut server, "base:stone", (-6..=6).flat_map(|z| (0..3).map(move |y| c + IVec3::new(-1, y, z))));
+            }
+            // Within its radius at its least lively (a badger is about by night), outside its
+            // `near`.
+            let id = put(&mut server, "base:badger", stand - Vec3::X * 2.6, Vec3::X);
+            server.tick = 1000;
+            let warned = (0..3 * TICKS_PER_SECOND as u64).any(|_| {
+                server.tick += 1;
+                server.think_and_move();
+                server.creatures.live[&id].view(id).pose == brain::Pose::Warning
+            });
+            assert_eq!(warned, !walled, "walled {walled}: the badger warned {warned}");
         }
     }
 
