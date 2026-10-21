@@ -260,6 +260,15 @@ Along the bot's run the open quests are one head per path: the next main quest, 
 Cook, Far Horizons, First Harvest, Patient Angler, A Table for Two, Earthenware, Bigger
 Game, First Metal, Fired Whole and A Place to Pray.
 
+A path waits on the stations its goals need (Oct 21): A Stove and a Quern comes after Fire
+the Clay as well as Snug for Winter, since every workshop piece now takes kiln output (the
+spindle and loom fired clay, the quern stone, which is cobblestone fired in a pit kiln), and
+Hung to Dry comes after Crafting Table, as its rack is a 3 by 3 recipe. A content test
+(`a_quest_asks_only_for_what_its_stations_are_taught_for`) holds every quest on every path to
+this: what it has the player make is gathered, mined, or made at stations the quests before
+it have the player make. The main-line walk could not catch it: it walks only the main line,
+and it puts down whatever station a recipe needs.
+
 ### Nomad paths, and quests in parts (Oct 14)
 
 The Nomad tab opened ten quests at once on a new world (Wild Harvest, A Pile of Stone,

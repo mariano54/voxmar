@@ -538,9 +538,9 @@
         ),
         (
             name: "workshop_and_stove", age: "farm", branch: "rooms", title: "A Stove and a Quern",
-            why: "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four stones in a square under a stick (Crafting 5); a spindle stand is an oak plank, a stick, a fired clay and a twine in a square (Crafting 6); a loom frame is oak planks, sticks, a twine and a fired clay (Crafting 8). All at the crafting table.",
+            why: "A home that works for you. A stove is a campfire under a row of three cobblestones with one more on each side of it, five in all (Construction 5). For the workshop, make one of these: quern stones are four stones (cobblestone fired in a pit kiln) in a square under a stick (Crafting 5); a spindle stand is an oak plank, a stick, a fired clay and a twine in a square (Crafting 6); a loom frame is oak planks, sticks, a twine and a fired clay (Crafting 8). All at the crafting table.",
             tasks: [[Craft("cottage_stove", 1), Craft("tag:workshop", 1)]],
-            after: ["snug_for_winter"],
+            after: ["snug_for_winter", "fire_the_clay"],
             rewards: [Xp("construction", 80.0), Xp("crafting", 80.0)],
         ),
         (

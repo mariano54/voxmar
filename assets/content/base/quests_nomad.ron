@@ -274,7 +274,7 @@
             name: "hung_to_dry", age: "nomad", branch: "cooking", title: "Hung to Dry",
             why: "Meat keeps if you dry it. Lash four sticks and three twine into a drying rack (Crafting 3) and stand it under open sky. Right-click it with raw meat or fish in hand to hang up to eight; go gathering, and ten minutes later it is jerky, which heals 2 and, unlike cooked food, stacks in your pack. A fire within three blocks dries it twice as fast; a roof over it stops it. Make a rack and bring home four jerky.",
             tasks: [[Craft("drying_rack", 1), Have("jerky", 4)]],
-            after: ["meat_and_fire"],
+            after: ["meat_and_fire", "crafting_table"],
             rewards: [Xp("cooking", 80.0), Xp("crafting", 20.0)],
         ),
         (
