@@ -571,8 +571,8 @@ steps! {
     Kindle,
     /// A sleeping bag with a torch beside it, slept in, is a camp: the Camp chip comes on, the
     /// chat says so with what to add next, and the sleep is a rest. At home, what a barrel
-    /// there holds counts in the Can Make list, and Lay on a recipe fills the crafting grid
-    /// from it.
+    /// there holds counts in the Can Make list, the put away key moves planks from the pack
+    /// into it, and Lay on a recipe fills the crafting grid from it.
     Home,
     /// Walls make the home: the camp under a plank roof with a hearth and a second light is
     /// Hearthside while open to the outside, and `/home` asks for walls; walled in with
@@ -727,6 +727,8 @@ struct Gate {
     /// The settlement's people heard greeting the player since the Settlements step came
     /// (each waits `people.react.greet_every` to greet them again).
     settlement_greeters: rustc_hash::FxHashSet<u32>,
+    /// The one of them the Greeting step stood the player beside.
+    settlement_beside: Option<u32>,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     /// The door step's ground lit by a campfire, kept to judge against it put out.
@@ -1131,6 +1133,7 @@ impl Gate {
             motif_starts: 0,
             settlement_motif_starts: None,
             settlement_greeters: Default::default(),
+            settlement_beside: None,
             window_lit: None,
             fire_lit: None,
             natural_before: Vec::new(),
@@ -5956,7 +5959,8 @@ impl BrandPlan {
             }
             let fire = blocks.ids().find(|&b| {
                 let def = blocks.def(b);
-                def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
+                // A fire that burns set down alone: a hearthstone waits on its ring.
+                def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && !def.has_tag("multiblock_core") && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
             });
             if let Some(fire) = fire {
                 return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand), proposals: 0, asked: None, regiven: 0 });
@@ -6027,9 +6031,10 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             gate.advance(now);
         }
         // The one stick in hand and the fire there: held into the fire until it catches. A
-        // stick picked up meanwhile (one lying where the last step was) stacks on it, and of
-        // two in hand one catches and the brand goes where it fits, the other left in hand
-        // (train 174): the sticks are cleared and the one given again.
+        // stick picked up meanwhile (one lying where the last step was) stacks on it (train
+        // 174): the sticks are cleared and the one given again, so the step holds one stick
+        // as a player first does. One picked up during the hold the server answers itself:
+        // the brand is held up and the other stick put by (train 190).
         1 => {
             let Some(mut plan) = gate.firebrand else { return };
             let burning = world.resource::<ClientWorld>().block(fire_at) == Some(plan.fire);
@@ -6072,8 +6077,9 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let held = in_hand(world);
             let cook = content.actions.expect("base:cook");
             // Another stick picked up since phase 1 would stack on the one in hand and repeat
-            // train 174: before any press, back to phase 1 to clear it.
-            if plan.asked.is_none() && holding(world, &name(plan.stick)).0 != 1 {
+            // train 174: before any press, back to phase 1 to clear it. None left is no such
+            // case (it may be the brand already, checked below), and phase 1 gives none.
+            if plan.asked.is_none() && holding(world, &name(plan.stick)).0 > 1 {
                 mouse(world, MouseButton::Right, false);
                 gate.phase = 0;
                 gate.advance(now);
@@ -6153,7 +6159,8 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 let Some(slot) = slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS) else {
                     return fail(world, gate, "firebrand: burns out", format!("the {} is not in the hotbar", name(plan.brand)));
                 };
-                // Its slot named, so the wear needs no wait on the server hearing the hand.
+                // Its slot named for the wear; it burns its last second once the server hears
+                // it is the hand, as only the hand burns (waited on below).
                 world.resource_mut::<LocalPlayer>().selected = slot;
                 world.resource::<Net>().command(&format!("wear 1 {}", slot + 1));
                 gate.advance(now);
@@ -8121,8 +8128,11 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let recorded = crate::sfx::Recordings::load(&launch.content.files).unwrap_or_default();
             // A milestone without clips of its own rings as a level; a moment with none is silent.
             let milestone = if recorded.level_milestone.is_empty() { recorded.level_up.clone() } else { recorded.level_milestone };
+            // The quest of step 1 rings as a capstone if it is one (one without clips as a quest).
+            let first = launch.content.quests.iter().next().is_some_and(|q| q.capstone);
+            let quest = if first && !recorded.capstone_done.is_empty() { (UiSound::CapstoneDone, recorded.capstone_done) } else { (UiSound::QuestDone, recorded.quest_done) };
             let wanted: Vec<(UiSound, Vec<String>)> =
-                [(UiSound::Milestone, milestone), (UiSound::QuestDone, recorded.quest_done), (UiSound::LevelUp, recorded.level_up)].into_iter().filter(|(_, clips)| !clips.is_empty()).collect();
+                [(UiSound::Milestone, milestone), quest, (UiSound::LevelUp, recorded.level_up)].into_iter().filter(|(_, clips)| !clips.is_empty()).collect();
             let asked = world.resource::<JinglesAsked>().0.clone();
             if asked.len() < wanted.len() && in_phase < 0.5 {
                 return;
@@ -8711,8 +8721,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
             } else if !shown {
                 let within = world.resource::<crate::hud::inventory::InterfaceStyle>().home_hidden_within;
                 gate.check("home: near", Ok(format!("within {within} blocks of home the mark was gone")));
-                // A barrel at home, four planks in it and none in the pack.
+                // A barrel at home, four planks in it and none in the pack; the home Homely
+                // for a while, so the barrel holds twice its slots.
                 let net = world.resource::<Net>();
+                net.command("effect homely 120");
                 net.command("clear oak_planks");
                 net.command(&format!("give oak_planks {lay_planks}"));
                 net.command(&format!("setblock {} {} {} barrel", barrel.x, barrel.y, barrel.z));
@@ -8752,12 +8764,18 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             } else if stored == lay_planks && held == 0 && ready && counted >= lay_planks {
                 gate.check("home: can make", Ok(format!("with {stored} planks in the home barrel and none in the pack, the server counted {counted} and the Can Make plan (drawn under the open barrel) has the crafting table ready")));
-                // The crafting table's recipe in the viewer, over the open inventory.
-                // Opened as a click in it does: a trail with the viewer shut reads as Esc.
-                if let Some(table) = table {
-                    world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);
-                    world.resource_mut::<UiState>().recipes_open = true;
-                }
+                // Opened Homely, the barrel came as its slots times Homely's store_room.
+                let content = &world.resource::<Launch>().content;
+                let machine = content.blocks.id("base:barrel").and_then(|b| content.machines.get(b));
+                let room = content.effects.id("base:homely").map(|h| content.effects.get(h).modifiers.store_room);
+                let want = machine.zip(room).map(|(m, room)| (m.bin_slots(), m.grown_bin(room)));
+                let came = world.resource::<LocalPlayer>().inventory.store.as_ref().map(|s| s.slots.len());
+                gate.check("home: store room", match want {
+                    Some((own, grown)) if came == Some(grown) && grown > own => Ok(format!("the home barrel, opened Homely, held {grown} slots against its own {own}")),
+                    _ => Err(format!("the home barrel opened Homely with {came:?} slots, not its own and Homely's store_room ({want:?})")),
+                });
+                // More planks carried home, to be put away.
+                world.resource::<Net>().command(&format!("give oak_planks {PUT_PLANKS}"));
                 gate.advance(now);
             } else if waited > 10.0 && !(stored == lay_planks && held == 0) {
                 let open = player.inventory.store.is_some();
@@ -8768,8 +8786,10 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 leave(world, gate);
             } else if gate.server_now - gate.machines_asked >= 1.0 {
                 if player.inventory.store.is_none() {
-                    // Whatever is in hand: a store opens to anything but a machine.
-                    if world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
+                    // Whatever is in hand: a store opens to anything but a machine. Opened
+                    // once the server has the home Homely (its chip shows), so it grows.
+                    let homely = world.resource::<Launch>().content.effects.id("base:homely").is_some_and(|h| player.vitals.effects.iter().any(|a| a.effect == h));
+                    if homely && world.resource::<ClientWorld>().registry.id("base:barrel").is_some_and(|b| world.resource::<ClientWorld>().block(barrel) == Some(b)) {
                         world.resource_mut::<LocalPlayer>().store_asked = true;
                         let actions = world.resource::<crate::Actions>().0.clone();
                         world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open_store"), voxmar_engine::action::ActionTarget::Block { block: barrel, face: voxmar_engine::coords::Face::PosY });
@@ -8781,8 +8801,46 @@ fn home(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.machines_asked = gate.server_now;
             }
         }
-        // Lay pressed: the table's planks come out of the barrel into the grid.
+        // The planks carried home, moved off the hotbar into the pack, go into the barrel
+        // already holding planks when the put away key is pressed.
         8 => {
+            let put_away = world.resource::<crate::settings::Settings>().put_away_key.0;
+            key(world, put_away, false);
+            let planks = world.resource::<ClientWorld>().registry.id("base:oak_planks");
+            let player = world.resource::<LocalPlayer>();
+            let stored: u32 = player.inventory.store.as_ref().map_or(0, |s| s.slots.iter().flatten().filter(|x| Some(x.item) == planks).map(|x| x.count as u32).sum());
+            let free = (voxmar_engine::inventory::HOTBAR_SLOTS..voxmar_engine::inventory::SLOTS).find(|&slot| player.inventory.slots[slot].is_none());
+            let (held, slot) = holding(world, "base:oak_planks");
+            if stored == lay_planks + PUT_PLANKS && held == 0 {
+                gate.check("home: put away", Ok(format!("{PUT_PLANKS} planks carried in the pack went into the home barrel at the put away key; it holds {stored}")));
+                // The crafting table's recipe in the viewer, over the open inventory.
+                // Opened as a click in it does: a trail with the viewer shut reads as Esc.
+                if let Some(table) = world.resource::<ClientWorld>().registry.id("base:crafting_table") {
+                    world.resource_mut::<crate::hud::recipes::RecipeViewer>().open(table, false);
+                    world.resource_mut::<UiState>().recipes_open = true;
+                }
+                gate.advance(now);
+            } else if waited > 10.0 {
+                gate.check("home: put away", Err(format!("{waited:.1} server s on, the barrel holds {stored} planks (wanted {}), the pack {held} (first in slot {slot:?})", lay_planks + PUT_PLANKS)));
+                lay_done(world, barrel);
+                leave(world, gate);
+            } else if gate.server_now - gate.machines_asked >= 1.0 {
+                match slot {
+                    // On the hotbar it stays put: moved into the pack first, as a drag would.
+                    Some(slot) if slot < voxmar_engine::inventory::HOTBAR_SLOTS => {
+                        if let Some(to) = free {
+                            let actions = world.resource::<crate::Actions>().0.clone();
+                            world.resource::<Net>().propose(actions.expect("core:transfer"), voxmar_engine::action::ActionTarget::Slots { from: slot as u8, to: to as u8, count: held as u8 });
+                        }
+                    }
+                    Some(_) => key(world, put_away, true),
+                    None => {}
+                }
+                gate.machines_asked = gate.server_now;
+            }
+        }
+        // Lay pressed: the table's planks come out of the barrel into the grid.
+        9 => {
             let button = world.query::<(Entity, &crate::hud::recipes::LayButton, &InheritedVisibility)>().iter(world).find(|(_, lay, visible)| visible.get() && world.resource::<ClientWorld>().registry.id("base:crafting_table") == Some(lay.output)).map(|(entity, ..)| entity);
             if let Some(button) = button {
                 // The table's recipe drawn, with its Lay button, before it is pressed.
@@ -9274,7 +9332,8 @@ fn blaze(world: &mut World, gate: &mut Gate, now: f32) {
 const SEAT_WAIT: f32 = 8.0;
 
 /// A stool two blocks south of the test ground's feet (the door stood north), a campfire
-/// beside it, a table on its other side and a block over it two up, a house's roof; sat on
+/// beside it, a table on its other side (a bookshelf on it and a hide window on that, a
+/// reading nook) and a block over it two up, a house's roof; sat on
 /// from the feet by right clicks with a hand that places nothing, then stood up from with a
 /// step back.
 fn seat(world: &mut World, gate: &mut Gate, now: f32) {
@@ -9294,6 +9353,7 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
     };
     let fireside = |world: &World| has(world, "base:fireside");
     let at_table = |world: &World| has(world, "base:at_table");
+    let nook = |world: &World| has(world, "base:reading_nook");
     let standing_eye = |world: &World| {
         let player = world.resource::<LocalPlayer>();
         player.position.y + voxmar_engine::physics::player::EYE_HEIGHT
@@ -9327,6 +9387,8 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
             net.command(&format!("setblock {} {} {} campfire", fire.x, fire.y, fire.z));
             net.command(&format!("setblock {} {} {} stone", stool.x, stool.y + 2, stool.z));
             net.command(&format!("setblock {} {} {} oak_table", table.x, table.y, table.z));
+            net.command(&format!("setblock {} {} {} oak_bookshelf", table.x, table.y + 1, table.z));
+            net.command(&format!("setblock {} {} {} hide_window", table.x, table.y + 2, table.z));
             gate.advance(now);
         }
         // Right clicks on the stool's seat until the server sets the player on it.
@@ -9359,15 +9421,16 @@ fn seat(world: &mut World, gate: &mut Gate, now: f32) {
         2 => {
             let (eye, standing) = (world.resource::<LocalPlayer>().eye().y, standing_eye(world));
             let lower = eye < standing - 0.25;
-            if lower && fireside(world) && at_table(world) {
+            if lower && fireside(world) && at_table(world) && nook(world) {
                 if gate.shot(world, "seat-fire").is_none() {
                     return;
                 }
                 gate.check("seat: by the fire", Ok(format!("sat on a stool under a roof two up, by a campfire: the eye dropped {:.2} below standing there, and Fireside came on", standing - eye)));
                 gate.check("seat: at the table", Ok("sat with a table beside the stool, At the Table came on".into()));
+                gate.check("seat: reading nook", Ok("sat with a bookshelf beside the stool and a window over it, Reading Nook came on".into()));
                 gate.advance(now);
             } else if gate.waited_out(SEAT_WAIT) {
-                gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, Fireside {}, At the Table {}", fireside(world), at_table(world))));
+                gate.check("seat: by the fire", Err(format!("{SEAT_WAIT} server s sat on the stool: eye {eye:.2} against {standing:.2} standing, Fireside {}, At the Table {}, Reading Nook {}", fireside(world), at_table(world), nook(world))));
                 leave(world, gate);
             }
         }
@@ -10471,6 +10534,9 @@ fn lay_planks(content: &voxmar_engine::content::Content) -> u32 {
     // Each wood has its own table recipe (`{name}_planks`), so the one oak planks lay.
     content.recipes.iter().filter(|r| r.output == table).map(|r| r.alternatives().iter().flatten().filter(|accepts| accepts.contains(&planks)).count() as u32).max().unwrap_or(0)
 }
+
+/// The planks carried home and put away into the barrel with the put away key.
+const PUT_PLANKS: u32 = 6;
 
 /// After the lay: the viewer and inventory shut (the grid goes back to the pack), the
 /// barrel gone, and the planks the session carries before it given back.
@@ -12704,13 +12770,13 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// furnishings (blocks_furnishings.ron), in a facing or two. A piece that is not solid (a
 /// window seat or a settle, sat in as every seat is) passes stopping nothing; one that is
 /// not solid and no seat is a mistake.
-const PIECES: [&str; 45] = [
+const PIECES: [&str; 57] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
     "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing", "thatch_corner_east", "birch_shingles_inner_corner", "oak_fence",
     "birch_fence_corner_east", "dark_oak_fence_gate", "oak_ladder", "birch_hatch",
     "oak_hatch_open_east", "birch_stair_cupboard_east", "oak_window_seat", "dark_oak_sill_west", "oak_pantry_shelf",
-    "birch_settle", "oak_woodpile_east", "dark_oak_peg_rail", "oak_blanket_chest_south", "birch_washstand", "window_box_east", "dark_oak_dresser", "oak_pot_crane_west", "birch_rocking_chair_east", "oak_cradle_south",
+    "birch_settle", "oak_woodpile_east", "dark_oak_peg_rail", "oak_blanket_chest_south", "birch_washstand", "window_box_east", "dark_oak_dresser", "oak_pot_crane_west", "birch_rocking_chair_east", "oak_cradle_south", "dark_oak_mantel_shelf_east", "birch_fireside_bench", "oak_plate_rack_west", "oak_bedside_table_south", "birch_footstool", "dark_oak_spice_rack_east", "oak_candle_box_west", "birch_bread_bin_east", "dark_oak_candle_box", "oak_kindling_box_south", "birch_brace_east", "oak_brace_top",
 ];
 /// How many pieces the player judges from one spot before the middle one: three, so the
 /// crosshair turned to a piece beside it reaches it before crossing a neighbour.
@@ -18222,6 +18288,8 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
     };
     match gate.phase {
         0 => {
+            // Where the player is put back, even if the step ends here.
+            gate.kiln_from = world.resource::<LocalPlayer>().position;
             // Room in the hotbar for the clay given and the fired clay taken.
             if !hotbar_room(world, gate) {
                 if gate.server_in_phase() > 10.0 {
@@ -18230,7 +18298,6 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 }
                 return;
             }
-            gate.kiln_from = world.resource::<LocalPlayer>().position;
             let stand = gate.feet.as_vec3() + KILN_STAND;
             let net = world.resource::<Net>();
             for line in [
@@ -18261,12 +18328,12 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
             if shows(world, "base:pit_kiln_firing") {
                 mouse(world, MouseButton::Right, false);
                 gate.advance(now);
-            } else if gate.server_in_phase() > 10.0 {
+            } else if gate.waited_out(10.0) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("pit kiln", Err(format!("right clicks on the pit kiln at {at} with clay in hand never loaded it in 10 server seconds")));
                 end_kiln(world, gate, now);
             } else {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, true, now);
             }
         }
         3 => {
@@ -18279,6 +18346,17 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 end_kiln(world, gate, now);
             }
         }
+        KILN_TIDY => {
+            // The kiln gone as the client sees it, so what it held has fallen.
+            let gone = world.resource::<ClientWorld>().block(at).is_some_and(|b| b.is_air());
+            if gone || gate.server_in_phase() > 5.0 {
+                if !gone {
+                    info!("gate: kiln: the client never showed the pit kiln at {at} gone in five server seconds");
+                }
+                gate.advance(now);
+            }
+        }
+        KILN_PICK => kiln_tidy(world, gate, now),
         // Taken as a player takes it: a right click on the fired kiln, which empties it.
         _ => {
             aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
@@ -18287,21 +18365,53 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("pit kiln", Ok(format!("clay loaded into the pit kiln: the server sent back the firing kiln, then the fired one {:.1} server seconds on; a right click took the 12 fired clay", gate.kiln_fired)));
                 end_kiln(world, gate, now);
-            } else if gate.server_in_phase() > 10.0 {
+            } else if gate.waited_out(10.0) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("pit kiln", Err(format!("right clicks on the fired pit kiln at {at} left {fired} fired clay in hand, not 12, in 10 server seconds")));
                 end_kiln(world, gate, now);
             } else {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, true, now);
             }
         }
     }
 }
 
+/// The kiln step's tidy-up phases: the kiln seen gone (`KILN_TIDY`), then what it held, let
+/// fall as it went, picked up (`KILN_PICK`).
+const KILN_TIDY: u32 = 9;
+const KILN_PICK: u32 = KILN_TIDY + 1;
+
+/// The kiln goes, and whatever it still held (a failed load, or fired clay not taken) falls
+/// where it stood: the player stands on it to pick that up (`KILN_TIDY`), so nothing is
+/// left lying on the pad.
 fn end_kiln(world: &mut World, gate: &mut Gate, now: f32) {
-    let (at, back) = (gate.feet + KILN_AT, gate.kiln_from);
+    mouse(world, MouseButton::Right, false);
+    let at = gate.feet + KILN_AT;
     let net = world.resource::<Net>();
     net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+    gate.advance(now);
+    gate.phase = KILN_TIDY;
+}
+
+/// Once nothing of the kiln's lies near it (or after five more server seconds), the clay and
+/// fired clay are cleared from the pack and the player put back where the Cook step left
+/// them.
+fn kiln_tidy(world: &mut World, gate: &mut Gate, now: f32) {
+    let at = (gate.feet + KILN_AT).as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    let registry = &world.resource::<ClientWorld>().registry;
+    let ours = [registry.id("base:clay"), registry.id("base:fired_clay")];
+    let lying = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, pos)| ours.contains(&Some(stack.item)) && pos.distance(at) < 4.0).count();
+    // A drop goes out at the server's next tick, after the air it fell from: none lying is
+    // trusted only two ticks on.
+    if (lying > 0 || gate.server_in_phase() < 0.1) && gate.server_in_phase() <= 5.0 {
+        return;
+    }
+    if lying > 0 {
+        info!("gate: kiln: {lying} drops of clay or fired clay still lie by the kiln after five server seconds");
+    }
+    let back = gate.kiln_from;
+    let net = world.resource::<Net>();
     net.command("clear clay");
     net.command("clear fired_clay");
     net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
@@ -18784,13 +18894,17 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 }
                 gate.check("cooking pot", Ok("wheat put in a cooking pot beside the campfire, water near, set it simmering (shot `pot`)".into()));
                 gate.advance(now);
-            } else if waited {
+            } else if gate.waited_out(DRY_WAIT) {
                 mouse(world, MouseButton::Right, false);
                 let held = holding(world, "base:wheat");
                 gate.check("cooking pot", Err(format!("right clicks with wheat never set the pot simmering in {DRY_WAIT} server seconds (pot standing {stood}, wheat carried and first slot {held:?})")));
                 gate.advance(now);
             } else if select(world, "base:wheat") {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, true, now);
+            } else if gate.server_in_phase() > DRY_WAIT {
+                let held = holding(world, "base:wheat");
+                gate.check("cooking pot", Err(format!("the wheat never came to hand in {DRY_WAIT} server seconds, so the pot was never clicked (pot standing {stood}, wheat carried and first slot {held:?})")));
+                gate.advance(now);
             }
         }
         7 => {
@@ -19842,7 +19956,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 const GREETING_WAIT: f32 = 10.0;
 
 /// Back in the settlement the Settlements step judged, the player stands where one of its
-/// people stands who has yet to greet them, and someone there greets them unasked
+/// people stands who has yet to greet them, and that one greets them unasked
 /// (`people.react.greet`, a bark of the server's own, not `/creatures bark`). Then the
 /// player goes back to the test ground.
 fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
@@ -19873,8 +19987,8 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager && v.position.distance(feet) < 32.0)
                 .filter(|v| !gate.settlement_greeters.contains(&v.id))
                 .min_by(|a, b| a.position.distance(feet).total_cmp(&b.position.distance(feet)).then(a.id.cmp(&b.id)))
-                .map(|v| v.position);
-            let Some(to) = nearest else {
+                .map(|v| (v.id, v.position));
+            let Some((beside, to)) = nearest else {
                 if gate.server_in_phase() > SETTLEMENT_PEOPLE {
                     gate.check("settlement greeting", Err("no one of the settlement came to the player standing in its square".into()));
                     home(world);
@@ -19883,10 +19997,11 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 return;
             };
+            gate.settlement_beside = Some(beside);
             world.resource::<Net>().command(&format!("tp {} {} {}", to.x, to.y, to.z));
             gate.advance(now);
         }
-        // A greeting heard, unasked, of one of its people.
+        // A greeting heard, unasked, of the one the player stands beside.
         2 => {
             let content = world.resource::<Launch>().content.clone();
             let creatures = world.resource::<crate::creatures::Creatures>();
@@ -19894,7 +20009,7 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 .resource::<crate::creature_sounds::Heard>()
                 .barks
                 .iter()
-                .filter(|b| b.1 == crate::creature_sounds::Kind::Greet)
+                .filter(|b| b.1 == crate::creature_sounds::Kind::Greet && Some(b.0) == gate.settlement_beside)
                 .filter_map(|b| creatures.views().find(|v| v.id == b.0))
                 .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager)
                 .map(|v| content.creatures.get(v.species).def.name.clone())
@@ -19902,8 +20017,8 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             if greetings.is_empty() && gate.server_in_phase() < GREETING_WAIT {
                 return;
             }
-            let ok = greetings.first().map(|name| format!("a {name} greeted the player unasked ({} greetings)", greetings.len()));
-            gate.check("settlement greeting", ok.ok_or_else(|| format!("no one of the settlement greeted the player in {GREETING_WAIT} server seconds beside one who had yet to ({} had)", gate.settlement_greeters.len())));
+            let ok = greetings.first().map(|name| format!("the {name} the player stood beside greeted them unasked"));
+            gate.check("settlement greeting", ok.ok_or_else(|| format!("the one the player stood beside (creature {:?}, yet to greet them; {} had) did not greet them in {GREETING_WAIT} server seconds", gate.settlement_beside, gate.settlement_greeters.len())));
             home(world);
             gate.advance(now);
         }

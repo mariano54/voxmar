@@ -60,6 +60,13 @@ pub struct Body {
     pub bold: bool,
 }
 
+/// Whether a body of `size` (width, height) standing at `position` takes up any of `cell`,
+/// as the server judges a creature in the way of a block (a client judges it from what it
+/// is shown of the creature by the same rule).
+pub fn takes_cell(position: Vec3, size: (f32, f32), cell: IVec3) -> bool {
+    Aabb::standing(position, size.0, size.1).intersects(|at| at == cell)
+}
+
 impl Body {
     pub fn new(position: Vec3, yaw: f32, size: (f32, f32)) -> Self {
         Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0, lift: 0.0, bold: false }
@@ -67,6 +74,11 @@ impl Body {
 
     pub fn aabb(&self) -> Aabb {
         Aabb::standing(self.position, self.size.0, self.size.1)
+    }
+
+    /// Whether its body takes up any of `cell`: what keeps a block from being set there.
+    pub fn takes(&self, cell: IVec3) -> bool {
+        takes_cell(self.position, self.size, cell)
     }
 
     /// The direction it faces.

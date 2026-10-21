@@ -359,13 +359,13 @@ impl Neighbours {
 }
 
 impl Creatures {
-    /// Whether `player` was last told of creature `id`: it is in their sight.
     /// For tests: player `player` is shown creature `id`, as a sent view does.
     #[cfg(test)]
     pub(crate) fn show(&mut self, player: PlayerId, id: u32) {
         self.seen.entry(player).or_default().insert(id);
     }
 
+    /// Whether `player` was last told of creature `id`: it is in their sight.
     pub(crate) fn sees(&self, player: PlayerId, id: u32) -> bool {
         self.seen.get(&player).is_some_and(|seen| seen.contains(&id))
     }
@@ -1613,7 +1613,7 @@ impl Server {
         let Some(creature) = self.creatures.live.remove(&id) else { return };
         self.creatures.gone.push(CreatureGone { id, died: true });
         // One of a settlement's people: noted dead now, so no save misses it.
-        self.villager_died(id);
+        self.villager_died(id, creature.mind.attacker().map(|player| (player, creature.body.position)));
         self.wandering_died(id);
         self.lair_boss_died(id);
         let species = self.content.creatures.get(creature.species);
@@ -1672,7 +1672,7 @@ impl Server {
         }
         if self.creatures.live.remove(&id).is_some() {
             self.creatures.gone.push(CreatureGone { id, died: true });
-            self.villager_died(id);
+            self.villager_died(id, None);
             self.wandering_died(id);
             self.lair_boss_died(id);
         }
