@@ -156,19 +156,74 @@ fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHa
 /// planned; one dropped between two tests made the next plan the spawn village again, some
 /// 1.4 s of each join.
 fn keep_world(seed: u64, content: &Content) {
+    /// The columns of each held world kept for the next server on it, about 1100.
+    const REMEMBERED: usize = 128 << 20;
     static HELD: std::sync::Mutex<Vec<(u64, std::sync::Arc<voxmar_worldgen::Overworld>)>> = std::sync::Mutex::new(Vec::new());
     let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if held.iter().all(|(s, _)| *s != seed) {
         let world = voxmar_worldgen::WorldContent::load(content).expect("world content loads");
-        held.push((seed, voxmar_worldgen::Overworld::shared(seed, content, &world)));
+        let world = voxmar_worldgen::Overworld::shared(seed, content, &world);
+        // Most tests stand round the same spawn: each server's land is the last one's.
+        world.remember_columns(REMEMBERED);
+        held.push((seed, world));
     }
 }
 
 /// The game's content, loaded and checked once for the whole run: every server a test
-/// starts gets the same, as a player's game gives each world it opens.
+/// starts gets the same, as a player's game gives each world it opens. The item tables a
+/// load sets (stack limits, pouches, worn slots, store holds) are the process's own, so a
+/// test that loads other content checks it set the same tables (`load_other`).
 fn content() -> Content {
-    static LOADED: std::sync::OnceLock<Content> = std::sync::OnceLock::new();
-    LOADED.get_or_init(|| load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")).clone()
+    base().0.clone()
+}
+
+/// The game's content, and its item tables as its load set them.
+fn base() -> &'static (Content, BaseTables) {
+    static LOADED: std::sync::OnceLock<(Content, BaseTables)> = std::sync::OnceLock::new();
+    LOADED.get_or_init(|| {
+        let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+        let tables = BaseTables::read(&content);
+        (content, tables)
+    })
+}
+
+/// The item tables content sets for the whole process, read for the game's own blocks.
+#[derive(Debug, PartialEq)]
+struct BaseTables {
+    stacks: Vec<u8>,
+    pouches: Vec<Option<(voxmar_engine::block::BlockId, u16)>>,
+    worn: Vec<Option<usize>>,
+    /// Per store, what of every block it takes: the game's stores only, so a mod that makes
+    /// one of the game's other blocks a store is not caught.
+    holds: Vec<(voxmar_engine::block::BlockId, Vec<bool>)>,
+}
+
+impl BaseTables {
+    fn read(base: &Content) -> Self {
+        use voxmar_engine::inventory;
+        let ids: Vec<_> = base.blocks.ids().collect();
+        let stores = base.machines.iter().filter(|m| m.is_store()).map(|m| m.block).collect::<Vec<_>>();
+        Self {
+            stacks: ids.iter().map(|&id| inventory::max_stack(id)).collect(),
+            pouches: ids.iter().map(|&id| inventory::pouch_holding(id)).collect(),
+            worn: ids.iter().map(|&id| inventory::worn_slot(id)).collect(),
+            holds: stores.into_iter().map(|store| (store, ids.iter().map(|&id| inventory::store_takes(store, id)).collect())).collect(),
+        }
+    }
+}
+
+/// Loads the content under `assets` (a mod's, say) and checks the item tables it left are
+/// still the game's own, for its blocks: the tables are the process's, shared by every test
+/// running beside it. One such load at a time, each checked before the next, so a bad
+/// mod's tables are never covered by another load landing between.
+#[track_caller]
+fn load_other(assets: &std::path::Path) -> Content {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let (base, tables) = base();
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let content = load_content(assets).expect("content loads");
+    assert!(BaseTables::read(base) == *tables, "loading other content changed the game's item tables (stack limits, pouches, worn slots or store holds) for every test");
+    content
 }
 
 /// Opens and registers a local connection only once its Hello is ready.
@@ -1037,7 +1092,7 @@ fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
     let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound"]"#;
     assert!(source.contains(mossy));
     std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound", "tagged"]"#)).unwrap();
-    let tagged = load_content(&assets).expect("content loads");
+    let tagged = load_other(&assets);
     assert!(warned(tagged), "a block's tags changed");
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&assets).unwrap();
@@ -2645,7 +2700,7 @@ fn with_mod(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Content)
     for (file, source) in files {
         std::fs::write(package.join(file), source).unwrap();
     }
-    let content = load_content(&assets).expect("content loads");
+    let content = load_other(&assets);
     (assets, content)
 }
 
