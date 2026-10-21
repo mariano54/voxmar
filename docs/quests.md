@@ -81,8 +81,8 @@ it was paid then.
 
 The sounds: a jingle as a quest is finished and coins into the purse as it is claimed,
 played by the client as the server's states change (not for the states a session starts
-with). A path's capstone (the age's step: a homestead's hearth lit, a kiln fired) rings
-its own, warmer tune instead of the quest's. A skill's new level rings too, and every tenth
+with). A path's last quest (its capstone, `capstone: true`) rings its own, warmer tune
+instead of the quest's. A skill's new level rings too, and every tenth
 level a grander tune. They are recordings the base package's `sounds.ron` lists
 (`quest_done`, `quest_claim`, `level_up`, `level_milestone`, `capstone_done`), our own, composed by `tools/generate_jingles.py` (short brass fanfares
 played from the FluidR3 sound font, and synthesized coins); a later package that
