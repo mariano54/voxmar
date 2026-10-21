@@ -346,13 +346,13 @@ impl Neighbours {
 }
 
 impl Creatures {
-    /// Whether `player` was last told of creature `id`: it is in their sight.
     /// For tests: player `player` is shown creature `id`, as a sent view does.
     #[cfg(test)]
     pub(crate) fn show(&mut self, player: PlayerId, id: u32) {
         self.seen.entry(player).or_default().insert(id);
     }
 
+    /// Whether `player` was last told of creature `id`: it is in their sight.
     pub(crate) fn sees(&self, player: PlayerId, id: u32) -> bool {
         self.seen.get(&player).is_some_and(|seen| seen.contains(&id))
     }

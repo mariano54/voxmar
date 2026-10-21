@@ -189,8 +189,9 @@ struct Person {
     afraid_until: u64,
     /// Struck, they cry out again no sooner than this tick.
     alarm_after: u64,
-    /// The day after the last they sighed content reaching their bed (0: never).
-    sighed: u64,
+    /// The tick they last sighed content reaching their bed: once a night, however a
+    /// night's sleep runs past midnight (its trip planned again on the new day).
+    sighed: Option<u64>,
 }
 
 /// What came of looking for a way.
@@ -659,9 +660,9 @@ impl Server {
         if d < 0.9 && !last {
             trip.step += 1;
             trip.best = (f32::MAX, tick);
-        } else if d < 1.0 && last && trip.place == Place::Sleep && sighed != day + 1 {
+        } else if d < 1.0 && last && trip.place == Place::Sleep && sighed.is_none_or(|at| tick >= at + TICKS_PER_DAY as u64 / 2) {
             // In bed at last: a content sigh, once a night.
-            person.sighed = day + 1;
+            person.sighed = Some(tick);
             self.bark(id, Bark::Content);
         } else if d < 1.0 && last && trip.place == Place::Patrol && trip.next_spot.is_none() {
             // A patrol stops a moment at each stop, then walks on.
@@ -689,8 +690,11 @@ impl Server {
             let species = self.content.creatures.get(c.species);
             c.owner.is_none() && !c.companion && (species.def.kind == Kind::Monster || species.behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Hunt { .. })))
         };
-        // Abed, they sleep on (`place_now` keeps them there).
-        let abed = self.villagers.towns[&town].people[i].trip.as_ref().is_some_and(|t| t.place == Place::Sleep);
+        // Abed (in bed at last, not on the way to it), they sleep on; on the way, they take
+        // fright and hurry on to bed (`place_now` keeps them going there).
+        let abed = self.villagers.towns[&town].people[i].trip.as_ref().is_some_and(|t| {
+            t.place == Place::Sleep && t.step + 1 >= t.path.len() && t.path.last().is_some_and(|c| (c.as_vec3() + Vec3::new(0.5, 0.0, 0.5)).with_y(0.0).distance(at.with_y(0.0)) < 1.0)
+        });
         let frightened = !guard && !abed && self.creatures.live.iter().any(|(&other, c)| other != id && c.body.position.distance(at) <= react.fear && threat(c) && sees(c));
         let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
         if frightened {
@@ -1342,9 +1346,10 @@ mod tests {
         }
     }
 
-    /// A bark reaches the players within its `barking.range` who see the one barking, the
-    /// same bark to the same player once in `barking.every` (another bark, or another
-    /// player, waits on nothing), and an admin's `/creatures bark` heeds neither.
+    /// A bark reaches the players within its own `barking` range who see the one barking
+    /// (an alarm farther than a greeting), the same bark to the same player once in
+    /// `barking.every` (another bark, or another player, waits on nothing), and an admin's
+    /// `/creatures bark` heeds neither.
     #[test]
     fn a_bark_carries_its_range_and_waits_per_player() {
         use voxmar_protocol::ServerMessage;
@@ -1355,7 +1360,7 @@ mod tests {
         let barking = server.content.creatures.get(server.creatures.live[&id].species).def.barking;
         server.tick = 1_000;
         let mut ears = Vec::new();
-        for (n, off) in [(1u32, 2.0), (2, 3.0), (3, barking.range + 1.0)] {
+        for (n, off) in [(1u32, 2.0), (2, barking.greet - 1.0), (3, barking.greet + 1.0)] {
             let (client, connection) = voxmar_protocol::local_pair();
             let mut p = crate::player::Player::new(n, connection, at + Vec3::new(off, 0.0, 0.0), 2, server.tick, server.survival.max_health, &server.config.limits);
             p.joined = true;
@@ -1370,7 +1375,8 @@ mod tests {
         server.bark(id, Bark::Greet);
         server.bark(id, Bark::Greet);
         server.bark(id, Bark::Alarm);
-        assert_eq!(heard(&ears), [vec![Bark::Greet, Bark::Alarm], vec![Bark::Greet, Bark::Alarm], vec![]], "within range once each, beyond it nothing");
+        assert!(barking.alarm > barking.greet + 1.0, "an alarm carries no farther than a greeting");
+        assert_eq!(heard(&ears), [vec![Bark::Greet, Bark::Alarm], vec![Bark::Greet, Bark::Alarm], vec![Bark::Alarm]], "within range once each, a greeting's range out only the alarm");
         server.tick += ticks(barking.every) - 1;
         server.bark(id, Bark::Greet);
         assert_eq!(heard(&ears), [vec![], vec![], vec![]], "greeted again within `every`");
@@ -1407,6 +1413,64 @@ mod tests {
         // And one frightened before bedtime goes to bed when the day says, not home to stand.
         server.villagers.towns.get_mut(&1).unwrap().people[0].afraid_until = server.tick + 100;
         assert_eq!(server.place_now(1, 0, seed).0, Place::Sleep, "kept from bed by a fright");
+    }
+
+    /// Reaching their bed they sigh content once a night, though the night's sleep runs
+    /// past midnight and its trip is planned again on the new day.
+    #[test]
+    fn a_bedtime_sigh_comes_once_a_night() {
+        let mut server = fixture("base:villager", 1);
+        let seed = mix(server.villagers.towns[&1].info.people[0].seed, 0);
+        let night = (0..40).map(|step| TICKS_PER_DAY as f64 * step as f64 / 40.0).find(|&day| {
+            server.day = day;
+            server.place_now(1, 0, seed).0 == Place::Sleep
+        });
+        server.day = night.expect("never abed in a day");
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let live = server.live();
+        server.tick = 1_000;
+        for _ in 0..3 {
+            server.tick += 1;
+            server.follow_day(id, 1, 0, &live);
+        }
+        let first = server.villagers.towns[&1].people[0].sighed.expect("no sigh in bed");
+        // A new day's trip to the same bed, a moment on.
+        server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
+        server.day += 0.01 * TICKS_PER_DAY as f64;
+        for _ in 0..3 {
+            server.tick += 1;
+            server.follow_day(id, 1, 0, &live);
+        }
+        assert_eq!(server.villagers.towns[&1].people[0].sighed, Some(first), "sighed again the same night");
+    }
+
+    /// One still on the way to bed who sees a monster takes fright (and cries out), and
+    /// still goes to bed.
+    #[test]
+    fn a_monster_near_frightens_one_on_the_way_to_bed() {
+        let mut server = fixture("base:villager", 1);
+        let seed = mix(server.villagers.towns[&1].info.people[0].seed, 0);
+        let night = (0..40).map(|step| TICKS_PER_DAY as f64 * step as f64 / 40.0).find(|&day| {
+            server.day = day;
+            server.place_now(1, 0, seed).0 == Place::Sleep
+        });
+        server.day = night.expect("never abed in a day");
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let live = server.live();
+        server.tick = 1_000;
+        server.follow_day(id, 1, 0, &live);
+        // Out of the house, on the way back to bed.
+        let bed = server.villagers.towns[&1].people[0].trip.as_ref().and_then(|t| t.path.last().copied()).expect("a way to bed");
+        let away = bed.as_vec3() + Vec3::new(0.5, 0.0, 6.5);
+        server.creatures.live.get_mut(&id).unwrap().body.position = away;
+        let monster = server.content.creatures.id("base:shambler").expect("a monster");
+        server.place_creature(monster, away + Vec3::new(2.0, 0.0, 0.0), 9, 0.0).expect("placed");
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        assert!(server.villagers.towns[&1].people[0].afraid_until > server.tick, "one on the way to bed was not frightened");
+        assert_eq!(server.place_now(1, 0, seed).0, Place::Sleep, "frightened from going to bed");
     }
 
     /// A monster near but out of sight (under the floor, as in a cave below the square)

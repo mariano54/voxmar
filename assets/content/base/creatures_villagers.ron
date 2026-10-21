@@ -9,9 +9,10 @@
 // village's folk look like kin. Their mind is a routine (`Routine`): where their day sends
 // them, they go; struck, they run, and the guards come. Striking folk teaches nothing
 // (`xp.combat` 0): only guards, who fight back, give combat experience. Their barks (a
-// greeting, an alarm, a content sigh: creature_sounds.ron's voices) carry `barking.range`
-// blocks to players who see them, each bark to the same player once in `barking.every`
-// seconds (range 1 to 64, every 0 to 600, or the content fails to load).
+// greeting, an alarm, a content sigh: creature_sounds.ron's voices) carry their own
+// `barking` range (`greet`, `alarm`, `content`, in blocks) to players who see them, each
+// bark to the same player once in `barking.every` seconds (ranges 1 to 64, every 0 to
+// 600, or the content fails to load).
 (
     creatures: [
         // Folk at home.
@@ -48,7 +49,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -88,7 +89,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -128,7 +129,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -169,7 +170,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -210,7 +211,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -249,7 +250,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -288,7 +289,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -328,7 +329,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -367,7 +368,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -406,7 +407,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -446,7 +447,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -485,7 +486,7 @@
             movement: (style: Walker, walk: 1.4, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.5, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -523,7 +524,7 @@
             movement: (style: Walker, walk: 1.2, run: 3.0, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.3, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -561,7 +562,7 @@
             movement: (style: Walker, walk: 1.6, run: 4.2, turn: 360.0, jump: 7.5),
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.9, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),
@@ -606,7 +607,7 @@
             movement: (style: Walker, walk: 1.5, run: 4.8, turn: 360.0, jump: 7.5),
             temperament: (aggression: 0.3, fear: 0.0, nervousness: 0.2, curiosity: 0.3, sociability: 0.6, energy: 0.6, spread: 0.2),
             senses: (sight: 32.0, hearing: 24.0),
-            barking: (range: 24.0, every: 6.0),
+            barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Defend), (do: LookAround)],
         ),
     ],
