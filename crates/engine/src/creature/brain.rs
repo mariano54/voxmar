@@ -632,18 +632,18 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         !mind.recalls(Memory::HurtBy(p.id)) && mind.noticed.iter().any(|n| n.0 == p.id && n.2 < def.senses.react)
     });
     // A decision spent on anything but its warning, a double take too, runs the warning's
-    // lapse; one spent on anything but a flight, its rest.
+    // lapse.
     let warns = creature.modules[index].0.name() == "warn";
     if !warns {
         lapse_warning(mind, dt);
     }
-    // Not running, it gets its wind back (`Tires`): a double take is no run either.
-    if creature.modules[index].0.name() != "flee" {
-        rest(mind, dt);
-    }
     mind.looking = taking.is_some();
     if let Some(p) = taking {
         return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
+    }
+    // Not running, it gets its wind back (`Tires`).
+    if creature.modules[index].0.name() != "flee" {
+        rest(mind, dt);
     }
     let ctx = Ctx { creature, mind: &mind.clone(), at, lively, sight };
     let mut decision = creature.modules[index].0.act(&ctx, mind, want.target, fresh);
