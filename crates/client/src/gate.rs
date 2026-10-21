@@ -18243,7 +18243,7 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.check("pit kiln", Err(format!("right clicks on the pit kiln at {at} with clay in hand never loaded it in 10 server seconds")));
                 end_kiln(world, gate, now);
             } else {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, true, now);
             }
         }
         3 => {
@@ -18256,6 +18256,7 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 end_kiln(world, gate, now);
             }
         }
+        KILN_TIDY => kiln_tidy(world, gate, now),
         // Taken as a player takes it: a right click on the fired kiln, which empties it.
         _ => {
             aim_at(world, at.as_vec3() + Vec3::new(0.5, 0.6, 0.5));
@@ -18269,16 +18270,44 @@ fn kiln(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.check("pit kiln", Err(format!("right clicks on the fired pit kiln at {at} left {fired} fired clay in hand, not 12, in 10 server seconds")));
                 end_kiln(world, gate, now);
             } else {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, true, now);
             }
         }
     }
 }
 
+/// The kiln step's tidy-up phase: what the kiln held, let fall as it goes, picked up.
+const KILN_TIDY: u32 = 9;
+
+/// The kiln goes, and whatever it still held (a failed load, or fired clay not taken) falls
+/// where it stood: the player stands on it to pick that up (`KILN_TIDY`), so nothing is
+/// left lying on the pad.
 fn end_kiln(world: &mut World, gate: &mut Gate, now: f32) {
-    let (at, back) = (gate.feet + KILN_AT, gate.kiln_from);
+    mouse(world, MouseButton::Right, false);
+    let at = gate.feet + KILN_AT;
     let net = world.resource::<Net>();
     net.command(&format!("setblock {} {} {} air", at.x, at.y, at.z));
+    net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
+    gate.advance(now);
+    gate.phase = KILN_TIDY;
+}
+
+/// Once nothing of the kiln's lies near it (or after five server seconds), the clay and
+/// fired clay are cleared from the pack and the player put back where the Cook step left
+/// them.
+fn kiln_tidy(world: &mut World, gate: &mut Gate, now: f32) {
+    let at = (gate.feet + KILN_AT).as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+    let registry = &world.resource::<ClientWorld>().registry;
+    let ours = [registry.id("base:clay"), registry.id("base:fired_clay")];
+    let lying = world.resource::<crate::drops::Drops>().lying().filter(|(_, stack, pos)| ours.contains(&Some(stack.item)) && pos.distance(at) < 4.0).count();
+    if lying > 0 && gate.server_in_phase() <= 5.0 {
+        return;
+    }
+    if lying > 0 {
+        info!("gate: kiln: {lying} drops of clay or fired clay still lie by the kiln after five server seconds");
+    }
+    let back = gate.kiln_from;
+    let net = world.resource::<Net>();
     net.command("clear clay");
     net.command("clear fired_clay");
     net.command(&format!("tp {} {} {}", back.x, back.y, back.z));
@@ -18767,7 +18796,7 @@ fn dry(world: &mut World, gate: &mut Gate, now: f32) {
                 gate.check("cooking pot", Err(format!("right clicks with wheat never set the pot simmering in {DRY_WAIT} server seconds (pot standing {stood}, wheat carried and first slot {held:?})")));
                 gate.advance(now);
             } else if select(world, "base:wheat") {
-                mouse(world, MouseButton::Right, ((now - gate.since) * 2.0).fract() < 0.2);
+                gate.tap(world, true, now);
             }
         }
         7 => {
