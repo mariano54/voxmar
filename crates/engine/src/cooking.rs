@@ -57,6 +57,10 @@ pub struct RecipeDef {
     /// How many of `output` one go makes (what burns leaves one `burnt`).
     #[serde(default = "one")]
     pub count: u8,
+    /// The tag of a tool one go needs carried (in hand or the pack), not taken: an `axe` to
+    /// split a log on a chopping block. (Tool wear, once it lands, wears it a use a go.)
+    #[serde(default)]
+    pub tool: Option<String>,
 }
 
 fn one() -> u8 {
@@ -100,6 +104,12 @@ impl Recipe {
     /// Everything one go takes when `input` is held: that many of it, then the rest.
     pub fn ingredients(&self, input: BlockId) -> Vec<(BlockId, u8)> {
         std::iter::once((input, self.def.uses)).chain(self.with.iter().copied()).collect()
+    }
+
+    /// Whether `carried` (everything the cook carries) holds the tool it asks for, if any.
+    pub fn has_tool(&self, blocks: &BlockRegistry, carried: impl IntoIterator<Item = BlockId>) -> bool {
+        let Some(tag) = &self.def.tool else { return true };
+        carried.into_iter().any(|item| blocks.def(item).has_tag(tag))
     }
 
     /// The chance of burning it at `level`.
@@ -185,6 +195,11 @@ impl CookingRegistry {
                     return Err(error(format!("`with` takes `{name}` no times, twice, or as well as the input: count it once")));
                 }
                 with.push((item, *n));
+            }
+            if let Some(tag) = &def.tool
+                && (blocks.tagged(tag).next().is_none() || inputs.iter().chain(with.iter().map(|(item, _)| item)).any(|&item| blocks.def(item).has_tag(tag)))
+            {
+                return Err(error(format!("its `tool` `{tag}` is carried by nothing, or by what it cooks")));
             }
             let index = registry.recipes.len();
             for input in inputs {
@@ -320,6 +335,28 @@ mod tests {
         for refused in [r#"with: [("tin_ore", 0)]"#, r#"with: [("copper_ingot", 1)]"#, r#"with: [("tin_ore", 1), ("tin_ore", 1)]"#, r#"with: [("tag:ore", 1)]"#, r#"with: [("zinc", 1)]"#, "uses: 0", "count: 0"] {
             assert!(build(refused).is_err(), "{refused}");
         }
+    }
+
+    /// A recipe's `tool` is a tag something carries, and not what it cooks: split with an
+    /// axe about you, which is found in what is carried.
+    #[test]
+    fn a_recipe_tool_is_carried_by_something_other_than_what_it_cooks() {
+        let blocks = BlockRegistry::new(vec![
+            BlockDef { name: "base:oak_log".into(), tags: vec!["log".into()], ..Default::default() },
+            BlockDef { name: "base:firewood".into(), ..Default::default() },
+            BlockDef { name: "base:stone_axe".into(), tags: vec!["axe".into()], ..Default::default() },
+        ])
+        .unwrap();
+        let build = |tool: &str| {
+            let source = format!(r#"(recipes: [(input: "oak_log", output: "firewood", station: "chopping_block", xp: 1.0, stop_burning: 0, count: 2, tool: Some("{tool}"))])"#);
+            CookingRegistry::new(CookingRegistry::read("base", &source).unwrap(), &blocks, &SkillRegistry::default())
+        };
+        let registry = build("axe").unwrap();
+        let recipe = registry.for_item(BlockId(1), &["chopping_block".into()]).unwrap();
+        assert!(!recipe.has_tool(&blocks, [BlockId(1), BlockId(2)]));
+        assert!(recipe.has_tool(&blocks, [BlockId(1), BlockId(3)]));
+        assert!(build("saw").is_err(), "carried by nothing");
+        assert!(build("log").is_err(), "carried by what it cooks");
     }
 
     /// Two recipes for one item where one station block could cook both are refused, at

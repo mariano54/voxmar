@@ -45,6 +45,8 @@ pub struct Content {
     pub effects: Arc<EffectRegistry>,
     /// What tools do to breaking blocks, and what breaking them takes and teaches.
     pub tools: Arc<ToolRegistry>,
+    /// Placed lights that burn out and are lit again (`flame`).
+    pub flames: Arc<crate::flame::Flames>,
     /// Weapons, their classes and styles (`combat`).
     pub combat: Arc<crate::combat::CombatRegistry>,
     /// The prayer book (`prayer`): Magic's prayers, their points, and what altars take.
@@ -210,7 +212,7 @@ pub const READ_ELSEWHERE: &[&str] = &[
     "action_fx.ron", "ambience.ron", "ambient.ron", "biomes.ron", "cave_biomes.ron", "celebrations.ron", "climate.ron", "combat_fx.ron",
     "combat_hud.ron", "creature_motion.ron", "creature_sounds.ron", "cultures.ron", "decorations.ron", "hoards.ron",
     "interface.ron", "lairs.ron", "land.ron", "look.ron", "menu_bar.ron", "music.ron", "night_light.ron", "ores.ron", "plants.ron",
-    "player_look.ron", "quest_book.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "surfaces.ron",
+    "player_look.ron", "quest_book.ron", "refusals.ron", "rocks.ron", "settlements.ron", "sounds.ron", "spawn_kit.ron", "streaming.ron", "surfaces.ron",
     "survival.ron", "terrain.ron", "trails.ron", "trees.ron", "wear.ron",
 ];
 
@@ -231,6 +233,16 @@ fn letters_apart(a: &str, b: &str) -> usize {
 }
 
 impl Content {
+    /// The tags of blocks crafting looks for within reach: what recipes are made near (a
+    /// chopping block) and what tools are mended at, each once.
+    pub fn near_tags(&self) -> Vec<&str> {
+        let mut tags = self.recipes.near_tags();
+        tags.extend(self.tools.mend_tags());
+        tags.sort_unstable();
+        tags.dedup();
+        tags
+    }
+
     /// The least tool that is a `kind` of at least `tier`, by property: the lowest tier, then
     /// the lowest worth (value.rs), then the first in registry order. What a refusal names
     /// ("Needs a Flint Pickaxe or better").
@@ -517,6 +529,7 @@ impl Content {
         // Every kept animal needs water, met by a block tagged `drink` near its home.
         crate::creature::condition::check_drink(&blocks, !creatures.is_empty())?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
+        let flames = crate::flame::Flames::new(&blocks)?;
         let combat = crate::combat::CombatRegistry::new(combat, &blocks, &skills)?;
         let prayers = crate::prayer::PrayerRegistry::new(prayers, &blocks, &skills)?;
         let fishing = FishingRegistry::new(fishing, fishing_rules.value, &blocks, &skills)?;
@@ -528,6 +541,9 @@ impl Content {
             for &(fuel, count) in &structure.fuels {
                 if !machines.burn_seconds(fuel).is_some_and(|seconds| seconds.is_finite() && seconds > 0.0 && (seconds * count as f32).is_finite()) {
                     return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} needs a positive finite burn time in machines.ron", structure.name, blocks.def(fuel).name)));
+                }
+                if machines.fuel_heat(fuel).is_some_and(|heat| heat < structure.heat) {
+                    return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} burns cooler than the heat {} it asks", structure.name, blocks.def(fuel).name, structure.heat)));
                 }
             }
         }
@@ -652,7 +668,7 @@ impl Content {
                 return Err(RegistryError(format!("lang/{}.ron: a quest opens the age `{age}`, and `{key}` has no words", lang.code())));
             }
         }
-        Ok(Self {
+        let mut content = Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),
             commands: Arc::new(commands),
@@ -665,6 +681,7 @@ impl Content {
             recipes: Arc::new(recipes),
             effects: Arc::new(effects),
             tools: Arc::new(tools),
+            flames: Arc::new(flames),
             combat: Arc::new(combat),
             prayers: Arc::new(prayers),
             fishing: Arc::new(fishing),
@@ -685,7 +702,11 @@ impl Content {
             files: Arc::new(files),
             english: Arc::new(Lang::load(dir, ENGLISH)),
             notes: Arc::new(notes),
-        })
+        };
+        // Mending follows the recipes, which load after the tools.
+        let terms = ToolRegistry::link(&content)?;
+        Arc::get_mut(&mut content.tools).expect("only this has it").set_mend_terms(terms);
+        Ok(content)
     }
 
     /// Fingerprint used to check that client and server load the same content.
@@ -707,8 +728,9 @@ struct Stacking {
     single: Vec<String>,
 }
 
-/// Each item's most per stack: an item's own `stack:N` tag, else one for an item with a
-/// tag some package's `stacking.ron` lists as single, else a full stack.
+/// Each item's most per stack: an item's own `stack:N` tag, else one for an item that wears
+/// (`uses:N`, so each one wears on its own) or with a tag some package's `stacking.ron`
+/// lists as single, else a full stack.
 fn stack_limits(blocks: &BlockRegistry, files: &[String]) -> Result<Vec<u8>, RegistryError> {
     let mut single = Vec::new();
     for source in files {
@@ -720,7 +742,8 @@ fn stack_limits(blocks: &BlockRegistry, files: &[String]) -> Result<Vec<u8>, Reg
         .map(|id| {
             let tags = &blocks.def(id).tags;
             let own = tags.iter().find_map(|t| t.strip_prefix("stack:")?.parse::<u8>().ok()).filter(|&n| n > 0);
-            own.unwrap_or(if tags.iter().any(|t| single.contains(t)) { 1 } else { crate::inventory::MAX_STACK }).min(crate::inventory::MAX_STACK)
+            let wears = tags.iter().any(|t| t.starts_with("uses:") || t.starts_with("burns:"));
+            own.filter(|_| !wears).unwrap_or(if wears || tags.iter().any(|t| single.contains(t)) { 1 } else { crate::inventory::MAX_STACK }).min(crate::inventory::MAX_STACK)
         })
         .collect())
 }
@@ -883,7 +906,7 @@ mod tests {
 
     /// A recipe as the walk uses it: its skill, level and experience a batch, how many a
     /// batch makes, what each of its cells takes, and the station it needs (the crafting
-    /// table for a big grid, a cooking station's tag).
+    /// table for a big grid, a cooking station's tag). A smoulder counts as one too.
     struct Batch {
         skill: Option<SkillId>,
         level: u8,
@@ -961,10 +984,20 @@ mod tests {
                 let with = r.with.iter().flat_map(|&(item, n)| std::iter::repeat_n(vec![item], n as usize));
                 Some(Batch { skill: r.skill, level: r.def.level, xp: r.def.xp, count: r.def.count as u32, cells: held.chain(with).collect(), station: Some(r.def.station.clone()) })
             };
+            // A smoulder (the charcoal clamp): a batch is one structure, every piece it takes,
+            // making what each of its charred cells breaks into.
+            let smouldered = || {
+                content.multiblocks.iter().find_map(|m| {
+                    let s = m.smoulder.as_ref().filter(|s| content.blocks.info(s.done).drops == id)?;
+                    let count = s.wood.len() as u32 * content.blocks.info(s.done).drop_count as u32;
+                    let cells = m.pieces().into_iter().flat_map(|(accepts, n)| std::iter::repeat_n(accepts.to_vec(), n as usize)).collect();
+                    Some(Batch { skill: None, level: 0, xp: 0.0, count, cells, station: None })
+                })
+            };
             match way {
                 Way::Grid => grid(),
                 Way::Cooked | Way::CookedAt(_) => cooked(),
-                Way::Either => grid().or_else(cooked),
+                Way::Either => grid().or_else(cooked).or_else(smouldered),
             }
         }
 
@@ -1067,6 +1100,30 @@ mod tests {
                 ..self
             }
         }
+    }
+
+    /// A Fence and a Gate asks for six plain fences beside the gate: gates and corners carry
+    /// `fence` too, so seven gates set down (or one fence and six gates) are not the fences.
+    #[test]
+    fn a_fence_and_a_gate_wants_fences_not_gates() {
+        let content = Content::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).expect("the game's content loads");
+        let quest = content.quests.get("base:a_fence_and_a_gate").expect("A Fence and a Gate");
+        let done = |tallies: &[(&str, u32)]| {
+            let tallies: FxHashMap<String, u32> = tallies.iter().map(|(k, n)| (k.to_string(), *n)).collect();
+            let journal = crate::journal::Journal::default();
+            let has_tag = |name: &str, tag: &str| content.blocks.item_named(name).is_some_and(|id| content.blocks.def(id).has_tag(tag));
+            let progress = crate::quest::Progress { journal: &journal, tallies: &tallies, level: &|_| 1, carried: &|_| 0, has_tag: &has_tag, drops: &|_| None, thriving: &|_| 0, home: false };
+            quest.tasks.iter().any(|task| content.quests.task_done(task, &progress, &|_| true))
+        };
+        let (fence, gate) = ("base:oak_fence", "base:oak_fence_gate");
+        let both = |fences: u32, gates: u32| {
+            let keys = [format!("crafted:{fence}"), format!("crafted:{gate}"), format!("placed:{fence}"), format!("placed:{gate}")];
+            done(&[(keys[0].as_str(), fences), (keys[1].as_str(), gates), (keys[2].as_str(), fences), (keys[3].as_str(), gates)])
+        };
+        assert!(both(6, 1), "six fences and a gate made and set down");
+        assert!(!both(0, 7), "seven gates are no fences");
+        assert!(!both(1, 6), "one fence and six gates are not six fences");
+        assert!(!both(5, 1), "five fences are not six");
     }
 
     /// Each Farm path's capstone comes after every other quest of its path, directly or
@@ -1275,7 +1332,7 @@ mod tests {
                         Goal::Visit(_) | Goal::LookUp(_) => {}
                         // A rite asks for quests done, on whatever paths: nothing made.
                         Goal::QuestsDone(..) | Goal::Capstones(..) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Felt(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Mended(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {

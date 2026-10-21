@@ -50,6 +50,8 @@ struct Client {
     quick: bool,
     /// Console lines received.
     chat: Vec<(ChatKind, String)>,
+    /// The same, as the server's words before any language renders them.
+    said: Vec<voxmar_engine::lang::Words>,
     /// Refusals received, in English.
     refused: Vec<String>,
     /// The time of day and how fast it runs, as last told.
@@ -156,16 +158,74 @@ fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHa
 /// planned; one dropped between two tests made the next plan the spawn village again, some
 /// 1.4 s of each join.
 fn keep_world(seed: u64, content: &Content) {
+    /// The columns of each held world kept for the next server on it, about 1100.
+    const REMEMBERED: usize = 128 << 20;
     static HELD: std::sync::Mutex<Vec<(u64, std::sync::Arc<voxmar_worldgen::Overworld>)>> = std::sync::Mutex::new(Vec::new());
     let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if held.iter().all(|(s, _)| *s != seed) {
         let world = voxmar_worldgen::WorldContent::load(content).expect("world content loads");
-        held.push((seed, voxmar_worldgen::Overworld::shared(seed, content, &world)));
+        let world = voxmar_worldgen::Overworld::shared(seed, content, &world);
+        // Most tests stand round the same spawn: each server's land is the last one's.
+        world.remember_columns(REMEMBERED);
+        held.push((seed, world));
     }
 }
 
+/// The game's content, loaded and checked once for the whole run: every server a test
+/// starts gets the same, as a player's game gives each world it opens. The item tables a
+/// load sets (stack limits, pouches, worn slots, store holds) are the process's own, so a
+/// test that loads other content checks it set the same tables (`load_other`).
 fn content() -> Content {
-    load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads")
+    base().0.clone()
+}
+
+/// The game's content, and its item tables as its load set them.
+fn base() -> &'static (Content, BaseTables) {
+    static LOADED: std::sync::OnceLock<(Content, BaseTables)> = std::sync::OnceLock::new();
+    LOADED.get_or_init(|| {
+        let content = load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).expect("content loads");
+        let tables = BaseTables::read(&content);
+        (content, tables)
+    })
+}
+
+/// The item tables content sets for the whole process, read for the game's own blocks.
+#[derive(Debug, PartialEq)]
+struct BaseTables {
+    stacks: Vec<u8>,
+    pouches: Vec<Option<(voxmar_engine::block::BlockId, u16)>>,
+    worn: Vec<Option<usize>>,
+    /// Per store, what of every block it takes: the game's stores only, so a mod that makes
+    /// one of the game's other blocks a store is not caught.
+    holds: Vec<(voxmar_engine::block::BlockId, Vec<bool>)>,
+}
+
+impl BaseTables {
+    fn read(base: &Content) -> Self {
+        use voxmar_engine::inventory;
+        let ids: Vec<_> = base.blocks.ids().collect();
+        let stores = base.machines.iter().filter(|m| m.is_store()).map(|m| m.block).collect::<Vec<_>>();
+        Self {
+            stacks: ids.iter().map(|&id| inventory::max_stack(id)).collect(),
+            pouches: ids.iter().map(|&id| inventory::pouch_holding(id)).collect(),
+            worn: ids.iter().map(|&id| inventory::worn_slot(id)).collect(),
+            holds: stores.into_iter().map(|store| (store, ids.iter().map(|&id| inventory::store_takes(store, id)).collect())).collect(),
+        }
+    }
+}
+
+/// Loads the content under `assets` (a mod's, say) and checks the item tables it left are
+/// still the game's own, for its blocks: the tables are the process's, shared by every test
+/// running beside it. One such load at a time, each checked before the next, so a bad
+/// mod's tables are never covered by another load landing between.
+#[track_caller]
+fn load_other(assets: &std::path::Path) -> Content {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let (base, tables) = base();
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let content = load_content(assets).expect("content loads");
+    assert!(BaseTables::read(base) == *tables, "loading other content changed the game's item tables (stack limits, pouches, worn slots or store holds) for every test");
+    content
 }
 
 /// Opens and registers a local connection only once its Hello is ready.
@@ -258,6 +318,7 @@ impl Client {
             weather: None,
             quick: false,
             chat: Vec::new(),
+            said: Vec::new(),
             refused: Vec::new(),
             day: None,
             server_tick: 0,
@@ -409,7 +470,10 @@ impl Client {
                 self.weather = Some(weather);
                 self.quick = quick;
             }
-            ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
+            ServerMessage::Chat { kind, text } => {
+                self.chat.push((kind, self.content.english.render(&text, &self.content.blocks)));
+                self.said.push(text);
+            }
             ServerMessage::Refused { why } => self.refused.push(self.content.english.render(&why, &self.content.blocks)),
             ServerMessage::Time { tick, day, day_speed } => {
                 self.day = Some((day, day_speed));
@@ -543,6 +607,7 @@ impl Client {
     #[track_caller]
     fn command(&mut self, line: &str) -> Vec<(ChatKind, String)> {
         self.chat.clear();
+        self.said.clear();
         self.connection.send(ClientMessage::Command { line: line.into() });
         self.pump_until(|c| !c.chat.is_empty());
         std::mem::take(&mut self.chat)
@@ -728,7 +793,7 @@ fn broken_blocks_pop_out_items_that_are_picked_up_and_thrown_stacks_fly() {
     let before = client.inventory.get(0).unwrap();
     client.propose("core:drop", ActionTarget::Stack { slot: 0, count: 1 });
     client.pump_until(|c| c.inventory.get(0).map(|s| s.count) == Some(before.count - 1));
-    client.pump_until(|c| c.items.values().any(|i| i.stack == ItemStack { item: before.item, count: 1 } && i.velocity.z < -1.0));
+    client.pump_until(|c| c.items.values().any(|i| i.stack == ItemStack::new(before.item, 1) && i.velocity.z < -1.0));
 }
 
 #[test]
@@ -1036,7 +1101,7 @@ fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
     let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound"]"#;
     assert!(source.contains(mossy));
     std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound", "tagged"]"#)).unwrap();
-    let tagged = load_content(&assets).expect("content loads");
+    let tagged = load_other(&assets);
     assert!(warned(tagged), "a block's tags changed");
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&assets).unwrap();
@@ -1211,7 +1276,7 @@ fn what_chests_and_the_ground_held_of_merged_plants_comes_back_merged() {
     let held = machines.iter_mut().find(|m| m.position == [spot.x, spot.y, spot.z]).expect("the chest was saved");
     held.bin = vec![("base:oregano".into(), 3)];
     save.write_machines(&machines).unwrap();
-    save.write_items(&[SavedItem { item: "base:parsley".into(), count: 2, position: [feet.x + 4.5, feet.y + 1.0, feet.z], age: 0.0, owner: None, lifetime: None }]).unwrap();
+    save.write_items(&[SavedItem { item: "base:parsley".into(), count: 2, position: [feet.x + 4.5, feet.y + 1.0, feet.z], age: 0.0, owner: None, lifetime: None, wear: 0 }]).unwrap();
 
     let mut client = Client::join_with(config());
     client.pump_until(|c| c.world.block(spot) == Some(chest));
@@ -1581,7 +1646,8 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
 
 #[test]
 fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
-    let mut client = Client::join();
+    // No mutation, so the chick's genes are only its parents'.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, mutation: Some(0.0), ..Default::default() });
     let hen = client.content.creatures.find("junglefowl").expect("junglefowl in the content");
     let wheat = client.content.blocks.id("base:wheat").unwrap();
     client.ok("/summon junglefowl 2 ~ ~ ~");
@@ -1619,7 +1685,8 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
         client.pump_until(|_| Instant::now() > until);
     }
     // The chick inherits its plumage from its parents: each of its two alleles is one of
-    // theirs (no mutation is that likely here).
+    // theirs (mutation is off on this server; at the game's rate, a few chicks in a
+    // thousand would carry a new allele).
     let genes = &client.content.creatures.get(hen).def.genes;
     assert!(!genes.is_empty(), "junglefowl have genes");
     let alleles = |v: &voxmar_protocol::CreatureView| match voxmar_engine::genes::unpack(genes, &v.genes).0[0] {
@@ -1924,19 +1991,19 @@ fn the_count_of_goes_cooked_survives_leaving_and_joining_again() {
     let config = || ServerConfig { view_distance: 2, world: Some(dir.clone()), ..Default::default() };
     let cook = |client: &mut Client, times: u32| {
         let fire = client.position.floor().as_ivec3() + IVec3::new(3, 0, 0);
-        let charcoal = |c: &Client| {
-            let item = c.content.blocks.expect("base:charcoal");
+        let baked = |c: &Client| {
+            let item = c.content.blocks.expect("base:baked_potato");
             c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
         };
         client.clear();
-        for line in ["/setblock ~3 ~ ~ campfire", &format!("/give oak_log {times}"), "/skill cooking 99"] {
+        for line in ["/setblock ~3 ~ ~ campfire", &format!("/give potato {times}"), "/skill cooking 99"] {
             client.ok(line);
         }
         client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:campfire") && c.inventory.get(0).is_some_and(|s| s.count as u32 == times));
         client.send_position(client.position, false);
         for go in 1..=times {
             client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
-            client.pump_until(|c| charcoal(c) == go);
+            client.pump_until(|c| baked(c) == go);
         }
     };
     let saved = || voxmar_server::save::WorldSave::new(&dir).read_player("test", &content().blocks).unwrap().expect("the player was saved").draws.cooks;
@@ -2408,9 +2475,121 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     assert!(!client.claimed("base:first_ore"));
 }
 
+/// The Farm age's hand stations each beat the grid at what it already makes: a quern
+/// grinds one wheat to a flour that bakes into bread (a grid loaf takes two), a spindle
+/// spins a wool into three twine, and a loom weaves a wool into a
+/// plain cloth, or with a dye flower held, two cloth of its colour. Each only at its own
+/// station: wheat at the spindle is refused.
+#[test]
+fn the_quern_spindle_and_loom_grind_spin_and_weave() {
+    let mut client = Client::join();
+    let at = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let count = |c: &Client, name: &str| {
+        let item = c.content.blocks.expect(name);
+        c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
+    };
+    for line in ["/skill cooking 99", "/skill crafting 99", "/fill ~2 ~-1 ~ ~2 ~-1 ~ stone", "/fill ~2 ~ ~ ~2 ~1 ~ air"] {
+        client.ok(line);
+    }
+    // Each go: the station set, the inventory cleared and given what is held (first, so it
+    // is in hand) and what the pack carries, one click, and what comes of it.
+    let work = |client: &mut Client, station: &str, give: &[(&str, u32)], made: (&str, u32), gone: (&str, u32)| {
+        client.clear();
+        client.ok(&format!("/setblock ~2 ~ ~ {station}"));
+        for (item, n) in give {
+            client.ok(&format!("/give {item} {n}"));
+        }
+        let block = client.content.blocks.expect(&format!("base:{station}"));
+        client.pump_until(|c| c.world.block(at) == Some(block) && give.iter().all(|(item, n)| count(c, &format!("base:{item}")) == *n));
+        client.send_position(client.position, false);
+        client.propose("base:cook", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| count(c, &format!("base:{}", made.0)) == made.1);
+        assert_eq!(count(client, &format!("base:{}", gone.0)), gone.1, "{station}: what one go took");
+    };
+    work(&mut client, "quern_stones", &[("wheat", 2)], ("flour", 1), ("wheat", 1));
+    work(&mut client, "quern_stones", &[("rye", 1)], ("flour", 1), ("rye", 0));
+    work(&mut client, "campfire", &[("flour", 1)], ("bread", 1), ("flour", 0));
+    work(&mut client, "spindle_stand", &[("wool", 1)], ("twine", 3), ("wool", 0));
+    work(&mut client, "loom_frame", &[("wool", 2)], ("white_cloth", 1), ("wool", 1));
+    work(&mut client, "loom_frame", &[("poppy", 1), ("wool", 1)], ("red_cloth", 2), ("wool", 0));
+    assert_eq!(count(&client, "base:poppy"), 0, "the loom kept the dye flower");
+    // Each refuses and keeps the wheat: the spindle works only its own, a village's quern
+    // (its old_ twin) works nothing, and a quern below Cooking 3 nothing.
+    let refuses = |client: &mut Client, station: &str, why: &str| {
+        client.clear();
+        client.ok(&format!("/setblock ~2 ~ ~ {station}"));
+        client.ok("/give wheat 1");
+        let block = client.content.blocks.expect(&format!("base:{station}"));
+        client.pump_until(|c| c.world.block(at) == Some(block) && count(c, "base:wheat") == 1);
+        client.propose("base:cook", ActionTarget::Block { block: at, face: Face::PosY });
+        client.after_server_ticks(3 * TICKS_PER_SECOND as u64);
+        client.settle();
+        assert_eq!((count(client, "base:wheat"), count(client, "base:flour")), (1, 0), "{why}");
+    };
+    refuses(&mut client, "spindle_stand", "wheat was worked at a spindle");
+    refuses(&mut client, "old_quern_stones", "a village's quern ground flour");
+    client.ok("/skill cooking 2");
+    refuses(&mut client, "quern_stones", "a quern ground flour at Cooking 2");
+    // Broken, one the world set (an older world's village kept the real station) gives
+    // nothing; one a player set down drops itself.
+    for station in ["quern_stones", "spindle_stand", "loom_frame"] {
+        let block = client.content.blocks.expect(&format!("base:{station}"));
+        let loose = |c: &Client| count(c, &format!("base:{station}")) as usize + c.items.values().filter(|i| i.stack.item == block).map(|i| i.stack.count as usize).sum::<usize>();
+        client.clear();
+        client.ok(&format!("/setblock ~2 ~ ~ {station}"));
+        client.pump_until(|c| c.world.block(at) == Some(block) && c.inventory.slots.iter().all(Option::is_none));
+        client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+        assert_eq!(client.quiet(loose), 0, "a {station} the world set gave itself");
+        client.ok(&format!("/give {station} 1"));
+        client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == block));
+        client.propose("core:place", ActionTarget::Block { block: at - IVec3::Y, face: Face::PosY });
+        // Set down facing the player: one of its facings.
+        client.pump_until(|c| c.world.block(at).is_some_and(|b| c.content.blocks.def(b).name.starts_with(&format!("base:{station}"))));
+        client.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        client.pump_until(|c| c.world.block(at) == Some(BlockId::AIR));
+        assert_eq!(client.quiet(loose), 1, "a {station} a player set down did not drop itself");
+    }
+}
+
+/// A stick held in a campfire a player set down comes back a firebrand in the hand, as the
+/// gate's firebrand step does it: in its sealed stone room at midnight, the stick in a
+/// hotbar slot after another item, and what the client sends for one press let go at once
+/// (its hotbar slot, then the cook; a release sends nothing for a cook). Two sticks in hand
+/// cook one: the brand goes where it fits and the other stick stays in hand, which is what
+/// train 174's gate saw.
+#[test]
+fn a_stick_held_in_a_campfire_comes_back_a_firebrand() {
+    let mut client = Client::join();
+    let at = client.position.floor().as_ivec3() + IVec3::new(6, 0, 14);
+    let fire = at + IVec3::new(2, 0, 0);
+    let (stick, brand) = (client.content.blocks.expect("base:stick"), client.content.blocks.expect("base:firebrand"));
+    client.clear();
+    for line in ["/gamemode survival", "/time set midnight", "/creatures disperse", "/give dirt 1"] {
+        client.ok(line);
+    }
+    client.ok(&format!("/fill {} {} {} {} {} {} stone", at.x - 3, at.y - 1, at.z - 3, at.x + 3, at.y + 5, at.z + 3));
+    client.ok(&format!("/fill {} {} {} {} {} {} air", at.x - 2, at.y, at.z - 2, at.x + 2, at.y + 4, at.z + 2));
+    client.ok(&format!("/setblock {} {} {} campfire", fire.x, fire.y, fire.z));
+    client.tp(Vec3::new(at.x as f32 + 0.5, at.y as f32, at.z as f32 + 0.5));
+    let named = |c: &Client, slot: usize| c.inventory.get(slot).map(|s| c.content.blocks.def(s.item).name.clone());
+    for (sticks, hand_after) in [(1, "base:firebrand"), (2, "base:stick")] {
+        client.ok("/clear stick");
+        client.ok("/clear firebrand");
+        client.ok(&format!("/give stick {sticks}"));
+        client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == stick && s.count == sticks) && !c.inventory.slots.iter().flatten().any(|s| s.item == brand));
+        let slot = client.inventory.slots.iter().position(|s| s.is_some_and(|s| s.item == stick)).unwrap();
+        assert_eq!(slot, 1, "the stick after the dirt");
+        client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw: 0.0, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+        client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::NegX });
+        client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == brand) || c.chat.iter().any(|(_, t)| !t.is_empty()));
+        assert_eq!(named(&client, slot).as_deref(), Some(hand_after), "{sticks} sticks in hand; said: {:?}", client.chat);
+    }
+}
+
 /// The First Night contract uses real grid and cooking events, and both kinds of
-/// progress survive a restart before completion. Charcoal and food from another station
-/// cannot stand in for a meal at the campfire.
+/// progress survive a restart before completion. Clay fired at a kiln (what is not food,
+/// from another station) cannot stand in for a meal at the campfire.
 #[test]
 fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
     let dir = world_dir("first-night-food");
@@ -2423,20 +2602,13 @@ fn first_night_needs_a_crafted_campfire_and_food_cooked_on_it() {
         c.inventory.slots.iter().flatten().filter(|s| s.item == item).map(|s| s.count as u32).sum::<u32>()
     };
     client.clear();
-    for line in ["/setblock ~3 ~ ~ campfire", "/give oak_log 1", "/skill cooking 99"] { client.ok(line); }
-    client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:campfire") && count(c, "base:oak_log") == 1);
-    client.send_position(client.position, false);
-    client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
-    client.pump_until(|c| count(c, "base:charcoal") == 1);
-    client.wait_server(2);
-    assert!(!done(&client), "charcoal completed a food quest");
-    assert_eq!(client.quests.iter().find(|q| q.name == "base:first_night").unwrap().tasks, vec![vec![(0, 1), (0, 1)]], "charcoal supplied cooked-food progress");
-    client.clear();
-    for line in ["/setblock ~3 ~ ~ pit_kiln", "/give clay 1", "/skill crafting 99"] { client.ok(line); }
+    for line in ["/setblock ~3 ~ ~ pit_kiln", "/give clay 1", "/skill cooking 99", "/skill crafting 99"] { client.ok(line); }
     client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:pit_kiln") && count(c, "base:clay") == 1);
+    client.send_position(client.position, false);
     client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
     client.pump_until(|c| count(c, "base:fired_clay") == 1);
     client.wait_server(2);
+    assert!(!done(&client), "fired clay completed a food quest");
     assert_eq!(client.quests.iter().find(|q| q.name == "base:first_night").unwrap().tasks, vec![vec![(0, 1), (0, 1)]], "fired clay supplied cooked-food progress");
     client.ok("/setblock ~3 ~ ~ campfire");
     client.pump_until(|c| c.world.block(fire) == c.content.blocks.id("base:campfire"));
@@ -2617,7 +2789,7 @@ fn with_mod(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Content)
     for (file, source) in files {
         std::fs::write(package.join(file), source).unwrap();
     }
-    let content = load_content(&assets).expect("content loads");
+    let content = load_other(&assets);
     (assets, content)
 }
 
@@ -3506,6 +3678,17 @@ fn a_stone_hoe_reaps_the_ripe_crops_about_one() {
         lying + c.inventory.slots.iter().flatten().filter(|s| s.item == wheat || s.item == seeds).map(|s| s.count as u32).sum::<u32>()
     };
     for (hoe, reaped) in [("bare hand", 1), ("flint_knife", 1), ("stone_hoe", 9)] {
+        // The last round's harvest the player would take or draw in comes in once its pickup
+        // delay is out, which on a loaded server lands after the /clear and fills a slot the
+        // wait below wants empty: let it come in first, by the server's own rule. What came
+        // to rest beyond the magnet stays where it is.
+        client.pump_until(|c| {
+            c.items.values().all(|i| {
+                let item = voxmar_engine::dropped::Loose::new(i.position, i.velocity);
+                let settled = i.velocity.length() < 0.1 || voxmar_engine::dropped::middle(c.position).distance(item.centre()) >= voxmar_engine::dropped::CLAIM;
+                settled && item.pull(c.position) == voxmar_engine::dropped::Pull::Left
+            })
+        });
         client.ok("/clear");
         client.pump_until(|c| c.inventory.slots.iter().all(Option::is_none));
         // The tool in whatever slot it lands in, and a bare hand on an empty slot: the last
@@ -3814,9 +3997,42 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     eprintln!("VILLAGER lifecycle: {name} seed {} resting at {bed:?}", victim.seed);
     // Where they lie: a block to one side may be a wall.
     client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
-    client.pump_ticks(2 * TICKS_PER_SECOND as u64, |_| false);
-    let near = |c: &Client| -> Vec<u32> { villagers(c).into_iter().filter(|v| v.position.distance(bed) < 16.0).map(|v| v.seed).collect() };
-    let housemates = near(&client);
+    // Everyone of their kind in sight, once all have come out: a person comes out only onto
+    // land the server holds, and as its search allows, so the look waits until the server
+    // says everyone due out near the player is (`/creatures people`), then until the
+    // client holds every one of them the server tells it of.
+    let kind = |c: &Client| -> std::collections::BTreeSet<u32> { villagers(c).into_iter().filter(|v| species_name(c, v) == name).map(|v| v.seed).collect() };
+    let settle = |client: &mut Client| -> std::collections::BTreeSet<u32> {
+        use voxmar_engine::lang::Words;
+        client.land_within(SETTLEMENT_VIEW);
+        let mut said = String::new();
+        for _ in 0..60 {
+            said = client.ok("/creatures people");
+            // Read from the server's words, not from any language's rendering of them.
+            let Some(Words::Key(_, args)) = client.said.first().cloned() else { panic!("/creatures people: {said}") };
+            let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+            let number = |name: &str| match arg(name) {
+                Some(Words::Text(n)) => n.parse::<usize>().ok(),
+                _ => None,
+            };
+            let seen: Vec<u32> = match arg("seen") {
+                Some(Words::List(ids)) => ids.iter().filter_map(|w| if let Words::Text(id) = w { id.parse().ok() } else { None }).collect(),
+                _ => panic!("/creatures people named no one in sight: {said}"),
+            };
+            if let (Some(out), Some(due)) = (number("out"), number("due"))
+                && out == due
+                && due > 0
+            {
+                client.pump_ticks(10 * TICKS_PER_SECOND as u64, |c| seen.iter().all(|id| c.creatures.contains_key(id)));
+                assert!(seen.iter().all(|id| client.creatures.contains_key(id)), "the server told of people in sight the client never heard of: {said}");
+                return kind(client);
+            }
+            client.pump_ticks(TICKS_PER_SECOND as u64 / 2, |_| false);
+        }
+        panic!("the settlement's people never all came out: {said}");
+    };
+    let housemates = settle(&mut client);
+    assert!(housemates.contains(&victim.seed), "the {name} asleep was not among those in sight");
     arm_for_villager_death(&mut client);
     strike_until(&mut client, victim.id, 20, |c| !c.creatures.contains_key(&victim.id));
     assert!(!client.creatures.contains_key(&victim.id), "the {name} did not die");
@@ -3827,13 +4043,20 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     drop(client);
     assert!(dir.join("villagers.ron").is_file());
     let mut client = Client::join_with(config());
-    client.ok(&format!("/tp {} {} {}", bed.x + 1.0, bed.y + 1.0, bed.z));
-    client.pump_until(|c| !villagers(c).is_empty());
-    client.pump_ticks(4 * TICKS_PER_SECOND as u64, |_| false);
+    // From the same spot, settled the same way: a {name} never seen before is a newcomer.
+    client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
+    settle(&mut client);
+    // Everyone seen before but the dead one back, before anyone is judged a stranger: a
+    // look at no one would find no stranger.
+    let back: std::collections::BTreeSet<u32> = housemates.iter().copied().filter(|&s| s != victim.seed).collect();
+    client.pump_ticks(20 * TICKS_PER_SECOND as u64, |c| back.is_subset(&kind(c)));
+    let after = kind(&client);
+    assert!(back.is_subset(&after), "not everyone came back after the restart: {after:?} of {back:?}");
     assert!(gone(&client), "the {name} came back with a restart");
+    let strangers: Vec<u32> = after.iter().copied().filter(|s| !housemates.contains(s)).collect();
+    assert!(strangers.is_empty(), "a newcomer came the same night: {strangers:?} beside {housemates:?}");
     // `newcomer` days on (the base game's five), someone new lives there.
     let newcomer = |c: &Client| villagers(c).into_iter().any(|v| species_name(c, &v) == name && v.position.distance(bed) < 16.0 && !housemates.contains(&v.seed) && v.seed != victim.seed);
-    assert!(!newcomer(&client), "a newcomer came the same night");
     client.ok("/time add 6d");
     client.ok("/time set midnight");
     client.pump_ticks(6 * TICKS_PER_SECOND as u64, |c| newcomer(c));
@@ -8247,7 +8470,7 @@ impl Fresh {
                 let turn = |degrees: f32| Vec3::new(want.x * degrees.to_radians().cos() - want.z * degrees.to_radians().sin(), 0.0, want.x * degrees.to_radians().sin() + want.z * degrees.to_radians().cos());
                 let heading = [0.0, 45.0, -45.0, 90.0, -90.0, 135.0, -135.0].into_iter().map(turn).find(|&h| clear(me, h));
                 let Some(heading) = heading.filter(|_| steps < best.1 + 60) else {
-                    assert!(me.hop_near(goal, stop), "no way round to {goal:?} from {:?}, and no room near it", me.at);
+                    assert!(me.hop_near(goal, stop), "no way round to {goal:?} from {:?} ({:?} and {:?} from the plot's corner), and no room near it", me.at, goal - me.origin.as_vec3(), me.at - me.origin.as_vec3());
                     best = (f32::MAX, steps);
                     continue;
                 };
@@ -8305,12 +8528,16 @@ impl Fresh {
             self.walk_toward(beside, 0.05);
             return true;
         }
-        let spot = (1..=4)
+        // No floor under it and no bank about it: a drop down a hole rather than out on a
+        // pond, for the caller to step down for (or leave).
+        let Some(spot) = (1..=4)
             .flat_map(|ring| (0..16).map(move |i| (ring as f32 * 0.4, (i as f32 * 22.5).to_radians())))
             .map(|(r, a)| Vec3::new(p.x + r * a.cos(), self.at.y, p.z + r * a.sin()))
             .filter(|&q| self.has_room(q))
             .min_by(|a, b| across(*a, self.at).total_cmp(&across(*b, self.at)))
-            .unwrap_or_else(|| panic!("no bank in reach of the drop at {p:?}"));
+        else {
+            return false;
+        };
         if across(spot, self.at) > 0.3 {
             self.c.tp(spot);
             self.at = spot;
@@ -8820,10 +9047,7 @@ impl Fresh {
         c.fill(origin, v(-9, 0, -10), v(-9, 1, 0), "air");
         // Wild wheat growing by the lane's mouth, for A Tempting Bite.
         c.fill(origin, v(-7, 0, 2), v(-7, 0, 2), "wild_wheat");
-        // A low bank of dirt, eight blocks, for the earth clamp: the only dirt above the
-        // ground, so the bot finds it by looking (`Fresh::raised_dirt`).
-        c.fill(origin, v(-7, 0, 8), v(-4, 0, 9), "dirt");
-        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(-4, 0, 9), "base:dirt"), (v(9, 3, 12), "base:oak_leaves"), (v(11, 2, 12), "base:dead_log"), (v(24, 2, 17), "base:gravel"), (v(20, 0, -8), "base:granite"), (v(3, 0, 1), "base:sand")];
+        let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(9, 3, 12), "base:oak_leaves"), (v(11, 2, 12), "base:dead_log"), (v(24, 2, 17), "base:gravel"), (v(20, 0, -8), "base:granite"), (v(3, 0, 1), "base:sand")];
         c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
@@ -9042,14 +9266,11 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
 #[derive(Clone)]
 struct Site {
     table: IVec3,
-    /// The campfire First Night set down, and the pit kiln.
-    fire: IVec3,
+    /// The pit kiln.
     kiln: IVec3,
     /// The ponds' clay and the banks it is dug from.
     bed: Vec<IVec3>,
     banks: Vec<Vec3>,
-    /// The earth clamp, once An Earth Clamp has the player make one.
-    clamp: Option<IVec3>,
 }
 
 /// The Nomad age's main line, played with legitimate actions only, and the Farm age's first
@@ -9258,21 +9479,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
     f.walk_toward(Fresh::middle(kiln), 3.0);
     f.place("base:pit_kiln", kiln - up);
     f.mark("pit_kiln");
-    // An Earth Clamp, which Fire the Clay names: eight dirt dug from a bank of it on the farm
-    // plot round a log at the table (Construction 3), set down by the kiln and loaded with
-    // sixteen clay. It fires them, none cracked, while clay is fired by hand toward the
-    // twelve; what it gives goes to The Potter.
-    let ground = f.raised_dirt();
-    assert!(ground.len() >= 8, "the plot's dirt bank: {} blocks left of 8", ground.len());
-    f.gather("base:stone_shovel", ground, "base:dirt", 8);
-    f.at_table(table);
-    f.craft(&[(0, "base:dirt", 1), (1, "base:dirt", 1), (2, "base:dirt", 1), (3, "base:dirt", 1), (4, log, 1), (5, "base:dirt", 1), (6, "base:dirt", 1), (7, "base:dirt", 1), (8, "base:dirt", 1)], "base:earth_clamp", 1);
-    // Set down from two blocks south of it, wherever the dirt was dug: never from the cell itself.
-    f.walk_toward(Fresh::middle(f.rel(4, 0, 3)), 0.3);
-    let clamp = f.place("base:earth_clamp", f.rel(4, -1, 1));
-    f.mark("earth_clamp");
-    f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 28);
-    f.tend_clamp(clamp, Some(clay));
+    f.gather_from("base:stone_shovel", &banks, bed.clone(), clay, 16);
     f.walk_toward(Fresh::middle(kiln), 3.0);
     let fired = "base:fired_clay";
     while f.have(fired) < 12 {
@@ -9283,7 +9490,7 @@ fn the_first_days(f: &mut Fresh) -> Site {
         f.cook(kiln, clay, fired);
     }
     f.mark("fire_the_clay");
-    Site { table, fire, kiln, bed, banks, clamp: Some(clamp) }
+    Site { table, kiln, bed, banks }
 }
 
 /// The coal ores standing apart on the fresh plot, beyond the stone patch (x, z).
@@ -9322,8 +9529,8 @@ const QUEST_BOOK_ORDER: &[&str] = &[
 impl Fresh {
     /// More of the plot for the Farm age, east and north of the first days' ground: two more
     /// ponds like the first (two blocks wide, clay two deep under a block of water, a bank
-    /// each side), fourteen more oak trunks for charcoal, a copper vein's ten ores, and wild
-    /// wheat for straw.
+    /// each side), fourteen more oak trunks, a bank of dirt and a bed of gravel for the
+    /// charcoal clamp, a copper vein's ten ores, and wild wheat for straw.
     fn lay_out_the_farm(&mut self) {
         let (o, v) = (self.origin, IVec3::new);
         self.c.fill(o, v(21, 0, -11), v(30, 10, 13), "air");
@@ -9340,7 +9547,11 @@ impl Fresh {
         self.c.fill(o, v(18, 0, 7), v(19, 0, 11), "copper_ore");
         // Six tufts of wild wheat beyond the east pond, for straw.
         self.c.fill(o, v(29, 0, 8), v(30, 0, 10), "wild_wheat");
-        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(30, 0, 10), "base:wild_wheat")];
+        // A low bank of dirt, thirty-two blocks, for the charcoal clamp's walls and roof (24,
+        // with some to spare for a drop out of reach): the only dirt above the ground, so the
+        // bot finds it by looking (`Fresh::raised_dirt`).
+        self.c.fill(o, v(21, 0, -11), v(28, 0, -8), "dirt");
+        let probes = [(v(27, -1, 11), "base:water"), (v(15, 3, -9), "base:oak_log"), (v(19, 0, 11), "base:copper_ore"), (v(30, 0, 10), "base:wild_wheat"), (v(28, 0, -9), "base:dirt")];
         self.c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(o + at) == c.content.blocks.id(name)));
     }
 
@@ -9360,21 +9571,6 @@ impl Fresh {
     fn fire_clay(&mut self, site: &Site, need: u32) {
         let (clay, fired) = ("base:clay", "base:fired_clay");
         while self.have(fired) < need {
-            if let Some(clamp) = site.clamp {
-                // An empty clamp is loaded first: clay dug for it and for the hands.
-                let empty = self.c.world.block(clamp) == self.c.content.blocks.id("base:earth_clamp");
-                // Not for the last few: a load not taken before the line goes on is wasted.
-                let worth = need - self.have(fired) >= 16;
-                if empty && worth && self.have(clay) < 16 {
-                    // The ponds hold a little over what the line fires: no more than is wanted.
-                    let more = 16 + (need - self.have(fired) - 16).min(16);
-                    self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, more);
-                }
-                self.tend_clamp(clamp, worth.then_some(clay));
-                if self.have(fired) >= need {
-                    break;
-                }
-            }
             if self.have(clay) == 0 {
                 let more = (need - self.have(fired)).min(32);
                 self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, more);
@@ -9412,44 +9608,6 @@ impl Fresh {
         self.c.tp(back);
         self.at = back;
     }
-
-    /// Tends the earth clamp at `clamp` (stations.ron) on the way past: takes what it made
-    /// once it shows cooled, and loads it, empty, with `load` when sixteen are in hand (and a
-    /// load is still worth it). It smoulders a minute with nobody by it, so the player goes on
-    /// meanwhile.
-    fn tend_clamp(&mut self, clamp: IVec3, load: Option<&str>) {
-        let at = |c: &Client| c.world.block(clamp).map(|b| c.content.blocks.def(b).name.clone()).unwrap_or_default();
-        let here = at(&self.c);
-        let cooled = here == "base:earth_clamp_cooled";
-        let load = load.filter(|item| (cooled || here == "base:earth_clamp") && self.have(item) >= 16);
-        if !cooled && load.is_none() {
-            return;
-        }
-        if across(self.at, Self::middle(clamp)) > 3.5 {
-            self.walk_toward(Self::middle(clamp), 3.0);
-        }
-        if cooled {
-            self.propose("base:use_station", ActionTarget::Block { block: clamp, face: Face::PosY });
-            self.wait(5.0, "taking what the clamp made", |c| at(c) == "base:earth_clamp");
-        }
-        if let Some(load) = load {
-            self.hold(load);
-            self.propose("base:use_station", ActionTarget::Block { block: clamp, face: Face::PosY });
-            self.wait(5.0, &format!("loading the clamp with {load}"), |c| at(c) == "base:earth_clamp_lit");
-        }
-    }
-
-    /// Burns logs down at the campfire until `need` charcoal are in hand.
-    fn burn_charcoal(&mut self, site: &Site, need: u32) {
-        if self.have("base:charcoal") >= need {
-            return;
-        }
-        self.walk_toward(Self::middle(site.fire), 2.5);
-        while self.have("base:charcoal") < need {
-            assert!(self.have("base:oak_log") > 0, "out of logs for charcoal");
-            self.cook(site.fire, "base:oak_log", "base:charcoal");
-        }
-    }
 }
 
 /// A new player's first two ages, played from nothing by what the quest book says: each
@@ -9469,7 +9627,7 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let mut f = Fresh::lay_out(c);
     f.lay_out_the_farm();
     let o = f.origin;
-    let (log, charcoal) = ("base:oak_log", "base:charcoal");
+    let (log, charcoal, stick) = ("base:oak_log", "base:charcoal", "base:stick");
     let (fired, bricks) = ("base:fired_clay", "base:kiln_bricks");
     let (straw, tempered) = ("base:straw", "base:tempered_kiln_bricks");
 
@@ -9489,15 +9647,6 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         }
     }
 
-    // Six tufts of wild wheat beyond the east pond, picked for the straw that tempers the
-    // Crucible Kiln's bricks (one a tuft) and the seeds a field would take.
-    for tuft in (8..=10).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, 0, z))) {
-        f.walk_toward(Fresh::middle(tuft), 1.3);
-        f.propose("core:mine", ActionTarget::Block { block: tuft, face: Face::PosY });
-        f.wait(5.0, "picking the wild wheat", |c| c.world.block(tuft) == Some(BlockId::AIR));
-    }
-    f.collect(straw, 6);
-
     // The Potter: six clay pots at the table, five fired clay round an empty top middle
     // making two (Crafting 2).
     f.fire_clay(&site, 15);
@@ -9506,38 +9655,74 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.mark("the_potter");
 
     // Fuel to Hand: forty logs carried at once, past its thirty-two, for the clamp's charcoal
-    // and the planks of a chest; the rest of the trunks are felled for the kiln's charge.
+    // and the planks of a chest, and what the clamp is built of.
     let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
-    f.gather("base:stone_axe", trunks.clone(), log, 40);
+    f.gather("base:stone_axe", trunks, log, 40);
     f.wait(5.0, "the server counting the logs carried", |c| quest_status(c, "fuel_to_hand").0);
     f.mark("fuel_to_hand");
-    // Charcoal: sixteen logs burnt down.
-    // The earth clamp from Fire the Clay, taken of its clay and loaded with sixteen logs. It
-    // chars them while clay is fired by hand toward A Kiln Load; Charcoal is done when it
-    // is taken.
-    let clamp = site.clamp.expect("the clamp set down for Fire the Clay");
-    f.tend_clamp(clamp, Some(log));
-    while f.have(charcoal) < 16 {
-        let more = f.have(fired) + 1;
-        f.fire_clay(&Site { clamp: None, ..site.clone() }, more);
-        f.tend_clamp(clamp, Some(log));
-        // The charcoal must come from taking it (which counts it cooked), not from a clamp
-        // broken open.
-        let stands = f.c.world.block(clamp).map(|b| f.c.content.blocks.def(b).name.clone()).unwrap_or_default();
-        assert!(stands.starts_with("base:earth_clamp"), "the clamp at {clamp} is {stands} at {:.1} s, with {} charcoal", f.secs(), f.have(charcoal));
+    // Charcoal, from a clamp as the quest says, of the logs carried: one for the chopping
+    // block, five split on it into ten firewood (nine laid), one for sticks. The chopping
+    // block is a flint over a log (Crafting 2), the flint dug from what the first days left
+    // of the gravel bank.
+    let gravel = (10..=24).flat_map(|x| (0..=2).flat_map(move |y| [14, 17].map(move |z| o + IVec3::new(x, y, z)))).collect();
+    f.gather_chance("base:stone_shovel", gravel, "base:flint", f.have("base:flint") + 1);
+    f.craft(&[(0, "base:flint", 1), (3, log, 1)], "base:chopping_block", 1);
+    let block = f.rel(30, 0, -4);
+    f.walk_toward(Fresh::middle(block - IVec3::X), 0.3);
+    f.place("base:chopping_block", block - IVec3::Y);
+    // A log held to it, the stone axe carried: two firewood a log.
+    while f.have("base:firewood") < 9 {
+        f.cook(block, log, "base:firewood");
     }
-    f.mark("charcoal");
+    // Kindling of three sticks for the flue.
+    if f.have(stick) < 3 {
+        f.craft(&[(0, log, 1)], "base:oak_planks", 4);
+        f.craft(&[(0, "base:oak_planks", 1), (3, "base:oak_planks", 1)], stick, 4);
+    }
+    f.craft(&[(0, stick, 1), (1, stick, 1), (3, stick, 1)], "base:kindling", 1);
+    // Twenty-four dirt for the walls and roof, from the bank.
+    let bank = f.raised_dirt();
+    f.gather("base:stone_shovel", bank, "base:dirt", 24);
+    // The clamp as multiblocks.ron draws it, on the farm plot's ground: the firewood three
+    // by three, walled round with dirt and roofed with it, the kindling on the roof's middle.
+    // Laid from its north side, then from its south (round its east end).
+    let corner = f.rel(22, 0, -6);
+    let cell = move |x: i32, y: i32, z: i32| corner + IVec3::new(x, y, z);
+    let inner = |x: i32, z: i32| (1..4).contains(&x) && (1..4).contains(&z);
+    let piece = |x: i32, y: i32, z: i32| match (y, inner(x, z)) {
+        (0, true) => "base:firewood",
+        (1, true) if (x, z) == (2, 2) => "base:kindling",
+        _ => "base:dirt",
+    };
+    for (stand, rows) in [(cell(2, 0, 5), 2..5), (cell(2, 0, -2), 0..2)] {
+        if stand.z < corner.z {
+            f.walk_toward(Fresh::middle(cell(6, 0, 5)), 0.3);
+            f.walk_toward(Fresh::middle(cell(6, 0, -2)), 0.3);
+        }
+        f.walk_toward(Fresh::middle(stand), 0.05);
+        for y in 0..2 {
+            for z in rows.clone() {
+                for x in (0..5).filter(|&x| y == 0 || inner(x, z)) {
+                    if f.c.world.block(cell(x, y, z)) == Some(BlockId::AIR) {
+                        f.place(piece(x, y, z), cell(x, y - 1, z));
+                    }
+                }
+            }
+        }
+    }
+    // Lit from a torch in hand at the kindling: it smoulders two game hours, nobody by it,
+    // while clay is put by in store, then fired by hand toward A Kiln Load's forty, open
+    // since The Potter.
+    let flue = cell(2, 1, 2);
+    f.hold("base:torch");
+    f.propose("base:light", ActionTarget::Block { block: flue, face: Face::PosY });
+    let flue_is = |c: &Client, name: &str| c.world.block(flue) == c.content.blocks.id(name);
+    f.wait(5.0, "lighting the clamp", |c| flue_is(c, "base:clamp_flue"));
+    let spent = move |c: &Client| c.world.block(flue) == Some(BlockId::AIR);
+    // Clay in Store, while it smoulders: thirty-two clay dug (Clay Banks on the way), and a
+    // chest by the pit kiln, eight planks round an empty middle at the table, with them put
+    // by in it.
     f.make_room(8);
-    // Plans for the Kiln, with fuel coming: the crucible and tempered kiln bricks looked up.
-    for item in ["base:crucible", "base:tempered_kiln_bricks"] {
-        let item = f.c.content.blocks.expect(item);
-        f.c.connection.send_at(ClientMessage::LookedUp { item }, f.now());
-    }
-    f.wait(5.0, "the server counting the plans looked up", |c| quest_status(c, "kiln_plans").0);
-    f.mark("kiln_plans");
-
-    // Clay in Store: thirty-two clay dug (Clay Banks on the way), and a chest by the pit
-    // kiln, eight planks round an empty middle at the table, with them put by in it.
     let clay = "base:clay";
     f.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, 32);
     f.wait(5.0, "the server counting the clay carried", |c| quest_status(c, "clay_banks").0);
@@ -9567,43 +9752,99 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     f.propose("core:stow", ActionTarget::None);
     f.wait(5.0, "the server counting the clay put by", |c| quest_status(c, "a_clay_store").0);
     f.mark("a_clay_store");
-
-    // A Kiln Load: forty clay fired in all.
-    while !quest_status(&f.c, "a_kiln_load").0 {
-        let more = f.have(fired) + 1;
-        f.fire_clay(&site, more);
+    // While it smoulders, as Brick by Brick says, the pit kiln kept going: clay fired to A
+    // Kiln Load's forty, then First Bricks, the straw picked, and the rest shaped between
+    // firings (Crafting 5): seven plain, as the book counts them (A Kiln Load's four were
+    // given, not shaped), then twelve tempered, two from four fired clay and a straw at the
+    // table. What is left when it is spent waits for the charcoal.
+    let shaped = |f: &Fresh| f.c.quests.iter().find(|q| q.name == "base:brick_by_brick").and_then(|q| q.tasks.first().map(|t| (t[0].0, t[1].0))).unwrap_or((0, 0));
+    let brick_work = |f: &mut Fresh| {
+        let (plain, done_tempered) = shaped(f);
+        if !quest_status(&f.c, "a_kiln_load").0 {
+            let more = f.have(fired) + 12;
+            f.fire_clay(&site, more);
+            if quest_status(&f.c, "a_kiln_load").0 {
+                f.mark("a_kiln_load");
+            }
+        } else if !quest_status(&f.c, "first_bricks").0 {
+            // First Bricks: four kiln bricks, two from four fired clay in the grid, with
+            // sixteen more fired clay kept for the next.
+            f.fire_clay(&site, 24);
+            f.craft(&[(0, fired, 2), (1, fired, 2), (3, fired, 2), (4, fired, 2)], bricks, 4);
+            f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
+            f.mark("first_bricks");
+        } else if f.have(straw) < 6 && done_tempered < 12 {
+            // Straw for the Kiln: six tufts of wild wheat beyond the east pond, picked for the
+            // straw that tempers the ring's bricks (one a tuft) and the seeds a field would take.
+            for tuft in (8..=10).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, 0, z))) {
+                if f.c.world.block(tuft) != Some(BlockId::AIR) {
+                    f.walk_toward(Fresh::middle(tuft), 1.3);
+                    f.propose("core:mine", ActionTarget::Block { block: tuft, face: Face::PosY });
+                    f.wait(5.0, "picking the wild wheat", |c| c.world.block(tuft) == Some(BlockId::AIR));
+                }
+            }
+            f.collect(straw, 6);
+        } else if f.have(fired) < 4 {
+            let more = f.have(fired) + 12;
+            f.fire_clay(&site, more);
+        } else if plain < 7 {
+            f.craft(&[(0, fired, 1), (1, fired, 1), (3, fired, 1), (4, fired, 1)], bricks, 2);
+        } else {
+            f.at_table(site.table);
+            f.craft(&[(0, fired, 1), (1, fired, 1), (3, fired, 1), (4, fired, 1), (2, straw, 1)], tempered, 2);
+            if quest_status(&f.c, "brick_by_brick").0 {
+                f.mark("brick_by_brick");
+            }
+        }
+    };
+    let bricks_done = |f: &Fresh| quest_status(&f.c, "brick_by_brick").0;
+    while !spent(&f.c) {
+        if bricks_done(&f) {
+            f.wait(500.0, "the clamp charring", spent);
+        } else {
+            brick_work(&mut f);
+        }
     }
-    f.mark("a_kiln_load");
-    // First Bricks: four kiln bricks, two from four fired clay in the grid (Crafting 5),
-    // with sixteen more fired clay kept for the next.
-    f.fire_clay(&site, 24);
-    f.craft(&[(0, fired, 2), (1, fired, 2), (3, fired, 2), (4, fired, 2)], bricks, 4);
-    f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
-    f.mark("first_bricks");
-    // Brick by Brick: seven plain kiln bricks shaped in all, as the book counts them (A
-    // Kiln Load's four were given, not shaped), and twelve tempered, two from four fired
-    // clay and a straw, at the table (five cells).
-    let shaped = f.c.quests.iter().find(|q| q.name == "base:brick_by_brick").and_then(|q| q.tasks.first()?.first().map(|&(have, _)| have)).unwrap_or(0);
-    let crafts = 7u32.saturating_sub(shaped).div_ceil(2);
-    f.fire_clay(&site, crafts * 4 + 24);
-    let k = crafts as u8;
-    f.craft(&[(0, fired, k), (1, fired, k), (3, fired, k), (4, fired, k)], bricks, crafts * 2);
-    f.at_table(site.table);
-    f.craft(&[(0, fired, 6), (1, fired, 6), (3, fired, 6), (4, fired, 6), (2, straw, 6)], tempered, 12);
-    f.mark("brick_by_brick");
+    // Opened (roof and walls dug away), its charcoal heaps broken: four charcoal a heap.
+    let earth: Vec<IVec3> = (0..5).flat_map(|x| (0..5).map(move |z| (x, z))).flat_map(|(x, z)| [(x, 0, z), (x, 1, z)]).filter(|&(x, y, z)| piece(x, y, z) == "base:dirt" && (y == 0 || inner(x, z))).map(|(x, y, z)| cell(x, y, z)).collect();
+    let dirt = f.have("base:dirt") + earth.len() as u32;
+    f.gather("base:stone_shovel", earth, "base:dirt", dirt);
+    let heaps: Vec<IVec3> = (1..4).flat_map(|x| (1..4).map(move |z| cell(x, 0, z))).filter(|&p| f.c.world.block(p) == f.c.content.blocks.id("base:charcoal_heap")).collect();
+    // Enough for Charcoal's sixteen, and for the line after it: three copper ingots and the
+    // kiln's thirty-two, less The Crucible's sixteen, is nineteen.
+    assert!(heaps.len() * 4 >= 19, "rain spoiled the clamp: {} heaps of charcoal of nine", heaps.len());
+    let more = f.have(charcoal) + heaps.len() as u32 * 4;
+    f.gather("base:stone_shovel", heaps, charcoal, more);
+    f.mark("charcoal");
+    f.make_room(8);
+    // Plans for the Kiln, with fuel coming: the crucible and tempered kiln bricks looked up.
+    for item in ["base:crucible", "base:tempered_kiln_bricks"] {
+        let item = f.c.content.blocks.expect(item);
+        f.c.connection.send_at(ClientMessage::LookedUp { item }, f.now());
+    }
+    f.wait(5.0, "the server counting the plans looked up", |c| quest_status(c, "kiln_plans").0);
+    f.mark("kiln_plans");
+
+    // A Kiln Load, First Bricks and Brick by Brick finished, if the clamp was spent first.
+    while !bricks_done(&f) {
+        brick_work(&mut f);
+    }
+    // A quest the server counted only after the work's own look, and has not yet claimed
+    // (a claim on the way can be refused, a full pack turning A Kiln Load's bricks away),
+    // is marked and claimed now, before the crucible needs its Engineering.
+    for quest in ["a_kiln_load", "brick_by_brick"] {
+        if !f.c.claimed(&format!("base:{quest}")) {
+            f.mark(quest);
+        }
+    }
 
     // The Crucible: seven kiln bricks round a clay pot at the table (Engineering 10), done
     // once it is set down in the kiln's middle.
     f.at_table(site.table);
     f.craft(&[(0, bricks, 1), (2, bricks, 1), (3, bricks, 1), (4, "base:clay_pot", 1), (5, bricks, 1), (6, bricks, 1), (7, bricks, 1), (8, bricks, 1)], "base:crucible", 1);
 
-    // A Full Charge: thirty-two charcoal held at once, from the rest of the trunks.
-    let short = 32u32.saturating_sub(f.have(charcoal) + f.have(log));
-    if short > 0 {
-        let more = f.have(log) + short;
-        f.gather("base:stone_axe", trunks, log, more);
-    }
-    f.burn_charcoal(&site, 32);
+    // A Full Charge: thirty-two charcoal held at once, from the clamp.
+    assert!(f.have(charcoal) >= 32, "the clamp's charcoal fell short of the kiln's charge: {}", f.have(charcoal));
     f.wait(5.0, "the server counting the charge carried", |c| quest_status(c, "the_kiln_charge").0);
     f.mark("the_kiln_charge");
     // The Kiln Ring, then the crucible set down in its middle, and the kiln lit: eight

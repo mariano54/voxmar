@@ -4,6 +4,11 @@
 // (an item, `tag:TAG`, or `a|b`), `.` anything and a space only air. `core` is the block
 // a player right clicks to light it (tagged `multiblock_core`); `hint` is what they are
 // told when it does not stand yet, and `home` makes it their home, where they wake.
+// `fuels` are charges one of which lights it, each at least the `heat` it asks (machines.ron's
+// fuel heat). One `lit_by` an item tagged so in hand uses nothing up; one that `smoulder`s
+// chars its `wood` cells for `hours` of game time into `done` (`early` if it was opened
+// first, `spoiled` for the share of the burn rain fell on its open core), its core
+// `burning` meanwhile and `spent` after (engine/src/multiblock.rs, server smoulder.rs).
 (
     multiblocks: [
         // The Homestead Hearth, the Nomad age's gate: a hearthstone in a ring of stone, a
@@ -27,7 +32,7 @@
             name: "crucible_kiln", title: "Crucible Kiln",
             // Progression design's two implemented fuel routes; burn times are shared
             // with machines.ron. Hold the whole stack and light the standing core.
-            fuels: [("charcoal", 32), ("coal_ore", 24)],
+            fuels: [("charcoal", 32), ("coal_ore", 24)], heat: 3,
             hint: "The kiln needs tempered kiln bricks all round the crucible and a pillar of them on each corner. Tempered bricks take straw from a grain harvest.",
             layers: [
                 ["kkk", "kCk", "kkk"],
@@ -35,6 +40,24 @@
             ],
             key: {'k': "tempered_kiln_bricks", 'C': "crucible"},
             core: 'C',
+        ),
+        // A charcoal clamp: nine firewood laid three by three, walled and roofed with earth,
+        // kindling in place of the roof's middle earth for a flue. Lit there from a torch, a
+        // firebrand or a campfire carried (`firelighter`), it smoulders
+        // two game hours, nobody by it, and leaves charcoal where the firewood was (four a
+        // heap: thirty-six, a kiln's charge). Opened early the wood is part-burnt; rain on the
+        // open flue spoils to ash the share of the burn it fell for, so roof it over.
+        (
+            name: "charcoal_clamp", title: "Charcoal Clamp",
+            hint: "A clamp is nine firewood laid three by three on the ground, walled round and roofed over with earth, with kindling in place of the roof's middle earth for a flue. Light the kindling from a torch, a firebrand or a campfire.",
+            lit_by: Some("firelighter"),
+            smoulder: Some((hours: 2.0, wood: 'F', done: "charcoal_heap", early: "charred_wood_heap", spoiled: "ash_heap", burning: "clamp_flue", spent: "core:air")),
+            layers: [
+                ["sssss", "sFFFs", "sFFFs", "sFFFs", "sssss"],
+                [".....", ".sss.", ".sKs.", ".sss.", "....."],
+            ],
+            key: {'F': "firewood", 's': "tag:soil", 'K': "kindling|clamp_flue"},
+            core: 'K',
         ),
     ],
 )
