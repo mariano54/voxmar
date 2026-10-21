@@ -10,7 +10,7 @@
 use glam::{IVec3, Vec3};
 
 use crate::movement::Surroundings;
-use crate::physics::{Aabb, move_and_slide};
+use crate::physics::{Aabb, move_and_slide, player};
 
 /// Width and height of a dropped item's box (Minecraft's 0.25).
 pub const SIZE: f32 = 0.25;
@@ -44,9 +44,31 @@ pub const LIFETIME: f32 = 1800.0;
 /// Items within this many blocks of a player's middle, and free to be picked up, drift
 /// towards them.
 pub const MAGNET: f32 = 2.5;
+/// Players within this many blocks of an item, middle to its centre, are in the running
+/// for it: the nearest of them with room for it is the one it goes to.
+pub const CLAIM: f32 = MAGNET + 1.0;
+/// How far a player's box reaches for items, across and up and down (Minecraft's 1 and
+/// 0.5).
+pub const REACH: Vec3 = Vec3::new(1.0, 0.5, 1.0);
 
 /// Speed a thrown stack leaves the hand at, in blocks per second (Minecraft's 0.3 a tick).
 pub const THROW_SPEED: f32 = 6.0;
+
+/// What a player does to an item free to be picked up that is theirs to have.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pull {
+    /// Nothing: it lies where it is.
+    Left,
+    /// Drifts towards them.
+    Drawn,
+    /// Goes into their inventory.
+    Taken,
+}
+
+/// The middle of a player standing at `feet`, where items are measured from.
+pub fn middle(feet: Vec3) -> Vec3 {
+    feet + Vec3::Y * player::HEIGHT * 0.5
+}
 
 /// The moving state of a dropped item.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -64,6 +86,27 @@ impl Loose {
 
     pub fn aabb(&self) -> Aabb {
         Aabb::standing(self.position, SIZE, SIZE)
+    }
+
+    pub fn centre(&self) -> Vec3 {
+        self.position + Vec3::Y * SIZE / 2.0
+    }
+
+    /// What a player standing at `feet` does to it: takes it where it touches their box
+    /// grown by `REACH`, draws it in within `MAGNET` of their middle, and otherwise leaves
+    /// it. The server's one rule, which a test waiting out a pickup asks too.
+    pub fn pull(&self, feet: Vec3) -> Pull {
+        let mut reach = Aabb::standing(feet, player::WIDTH, player::HEIGHT);
+        reach.min -= REACH;
+        reach.max += REACH;
+        let body = self.aabb();
+        if body.min.cmple(reach.max).all() && body.max.cmpge(reach.min).all() {
+            Pull::Taken
+        } else if middle(feet).distance(self.centre()) < MAGNET {
+            Pull::Drawn
+        } else {
+            Pull::Left
+        }
     }
 
     /// Lying still on the ground: nothing moves it until the ground goes or something
@@ -185,6 +228,27 @@ mod tests {
         fn water(&self, aabb: &Aabb) -> (f32, Vec2) {
             (self.water.map_or(0.0, |surface| (surface - aabb.min.y).max(0.0)), Vec2::ZERO)
         }
+    }
+
+    /// A player takes an item touching their box grown by `REACH`, draws in one within
+    /// `MAGNET` of their middle, and leaves one beyond both, however near `CLAIM` it lies.
+    #[test]
+    fn a_player_takes_what_touches_their_reach_and_draws_in_what_lies_within_the_magnet() {
+        let feet = Vec3::new(0.5, 0.0, 0.5);
+        let half = player::WIDTH / 2.0;
+        let at = |dx: f32, y: f32| Loose::new(feet + Vec3::new(dx, y, 0.0), Vec3::ZERO);
+        // The box's edge across, at the floor: the item's near side at it.
+        let edge = half + REACH.x + SIZE / 2.0;
+        assert_eq!(at(edge - 0.01, 0.0).pull(feet), Pull::Taken);
+        assert_eq!(at(edge + 0.01, 0.0).pull(feet), Pull::Drawn);
+        // Over the head: the item's bottom at the top of the reach.
+        assert_eq!(at(0.0, player::HEIGHT + REACH.y - 0.01).pull(feet), Pull::Taken);
+        assert_eq!(at(0.0, player::HEIGHT + REACH.y + 0.01).pull(feet), Pull::Drawn);
+        // The magnet's edge, level with the middle.
+        let level = player::HEIGHT * 0.5 - SIZE / 2.0;
+        assert_eq!(at(MAGNET - 0.01, level).pull(feet), Pull::Drawn);
+        assert_eq!(at(MAGNET + 0.01, level).pull(feet), Pull::Left);
+        assert_eq!(at(CLAIM - 0.01, level).pull(feet), Pull::Left);
     }
 
     fn run(item: &mut Loose, world: &impl Surroundings, seconds: f32) {

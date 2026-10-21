@@ -45,6 +45,15 @@
         // carried, four at a time (one step, no blend). Metal never burns.
         (input: "copper_ore", output: "copper_ingot", station: "crucible", skill: "core:engineering", level: 5, xp: 8.0, stop_burning: 0),
         (input: "copper_ingot", uses: 3, with: [("tin_ore", 1)], output: "bronze_ingot", count: 4, station: "crucible", skill: "core:engineering", level: 12, xp: 88.0, stop_burning: 0),
+        // A stick held in any fire (a campfire, a torch, a brazier) catches: a firebrand, the
+        // light before coal. It takes no skill and teaches none.
+        (input: "stick", output: "firebrand", station: "fire", level: 1, xp: 0.0, stop_burning: 0),
+        // A torch's stub, picked up burnt down, held in any fire catches again: a torch.
+        (input: "torch_stub", output: "torch", station: "fire", level: 1, xp: 0.0, stop_burning: 0),
+        // A log split on a chopping block (Construction), with an axe about you: two
+        // firewood, which burn hotter and longer than the log (machines.ron) and stack into
+        // a charcoal clamp (multiblocks.ron). The axe is not taken.
+        (input: "tag:log", output: "firewood", count: 2, station: "chopping_block", skill: "core:construction", level: 1, xp: 2.0, stop_burning: 0, tool: "axe"),
         // The Farm age's hand stations (blocks_furnishings.ron), each a better way to do what
         // the grid does: a quern grinds a wheat or rye to a flour that bakes into bread (half
         // the grain of a grid loaf), a spindle spins a wool into three twine, and a loom
@@ -68,7 +77,5 @@
         (input: "tag:dye:light_blue", with: [("wool", 1)], output: "sky_cloth", count: 2, station: "loom", skill: "core:crafting", level: 8, xp: 4.0, stop_burning: 0),
         (input: "tag:dye:cyan", with: [("wool", 1)], output: "teal_cloth", count: 2, station: "loom", skill: "core:crafting", level: 8, xp: 4.0, stop_burning: 0),
         (input: "tag:dye:green", with: [("wool", 1)], output: "green_cloth", count: 2, station: "loom", skill: "core:crafting", level: 8, xp: 4.0, stop_burning: 0),
-        // A log left in the fire burns down to charcoal, for torches; it never fails.
-        (input: "tag:log", output: "charcoal", level: 1, xp: 5.0, stop_burning: 0),
     ],
 )

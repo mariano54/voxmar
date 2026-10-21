@@ -12,7 +12,7 @@ use voxmar_engine::glam::{IVec2, IVec3, Vec2};
 
 use super::canvas::{Canvas, Facing, Frame, Palette, Put, unit};
 use super::culture::{Culture, Listing, Script, Site};
-use super::def::{CentreKind, Extra, Form, KanaJoin, LanesDef, Lever, Levers, Prop, PropKind, Roof, RulesDef, SettlementsDef, Shape, Special, Spot, StyleDef, fill};
+use super::def::{BYRE_KEEPS, CentreKind, Extra, Form, KanaJoin, LanesDef, Lever, Levers, Prop, PropKind, Roof, RulesDef, SettlementsDef, Shape, Special, Spot, StyleDef, fill};
 use super::house::{self, Fixed, Kind, Mats, Spec};
 use super::centre;
 use super::{Building, Plan, Raster};
@@ -2151,6 +2151,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
             max: lot.rect.max,
             floor: lot.floor + lot.spec.stilts,
             room: lot.spec.room(&lot.frame),
+            byre: lot.spec.byre_room(&lot.frame),
             // Two blocks out from the door: on its porch, or on the step below the top
             // one when it stands on stilts.
             door: lot.door.map(|(d, _)| {
@@ -2460,7 +2461,7 @@ fn special_spec(kind: Kind, w: i32, d: i32, kit: &Kit, levers: &Levers, rng: &mu
         form: Form::Box,
         inside: Vec::new(),
         centre: None,
-        seed: rng.next_u64(), row: None,
+        seed: rng.next_u64(), row: None, byre: 0,
     }
 }
 
@@ -2762,6 +2763,15 @@ fn house_spec(town: &mut Town, want: &Want, kind: Kind, rng: &mut Rng, near_wate
     let wing = (boxy && (rng.chance(h.wing) || extras.contains(&Extra::Wing))).then(|| (3 + rng.below(2), 3 + rng.below(3))).filter(|(ww, _)| *ww < w - 1);
     let shed = if boxy && extras.contains(&Extra::Shed) && d >= 5 { 3 + rng.below((d - 4).min(3) as u32) } else { 0 };
     let door = if levers.get(Lever::Order) > rules.middle_door || !boxy { w / 2 } else { rng.range(1, w - 1) };
+    // A byre at the back of a home of one storey on the ground, keeping its people's rows.
+    let stilts = h.stilts.unwrap_or(style.stilts) as i32;
+    let byre = match h.byre {
+        Some(b) if kind == Kind::House && storeys == 1 && wing.is_none() && stilts == 0 && rng.chance(b.chance) => {
+            let rows = between(rng, b.rows).min(d - BYRE_KEEPS as i32 - 3);
+            if rows >= b.rows.0 as i32 { rows } else { 0 }
+        }
+        _ => 0,
+    };
     let ridge_x = match (h.form, roof) {
         (Form::AFrame, _) => false,
         (_, Roof::Saltbox) => true,
@@ -2786,14 +2796,14 @@ fn house_spec(town: &mut Town, want: &Want, kind: Kind, rng: &mut Rng, near_wate
         door,
         shed,
         wing,
-        stilts: h.stilts.unwrap_or(style.stilts) as i32,
+        stilts,
         regular: levers.get(Lever::Order) > rules.regular,
         window_chance: (style.window_chance * (rules.windows.0 + rules.windows.1 * levers.get(Lever::Wealth))).min(rules.windows.2),
         form: h.form,
         // Interiors affect chimney/stair adaptation and drawing, after placement.
         inside: Vec::new(),
         centre: None,
-        seed: rng.next_u64(), row: None,
+        seed: rng.next_u64(), row: None, byre,
     };
     Some((spec, index))
 }
@@ -2940,6 +2950,10 @@ fn grow_row(town: &mut Town, ground: &mut Ground, lots: &mut Vec<Lot>, occupied:
     let mut base = spec.clone();
     // As tall as its place's size asks (a town's terraces are of town houses).
     base.storeys = base.storeys.max(row.storeys_at(town.size) as i32);
+    // A byre is only for a home of one storey: the stair of a taller one stands at the back.
+    if base.storeys > 1 {
+        base.byre = 0;
+    }
     base.extras.retain(|e| !matches!(e, Extra::Porch | Extra::OutsideStair | Extra::Woodpile | Extra::RainBarrel));
     base.shed = 0;
     let runs_on = matches!(base.roof, Roof::Gable | Roof::Gambrel | Roof::Flat) || (base.roof == Roof::Saltbox && base.ridge_x);
@@ -2957,6 +2971,12 @@ fn grow_row(town: &mut Town, ground: &mut Ground, lots: &mut Vec<Lot>, occupied:
     let (floor, mats, door, yard, house) = {
         let l = &lots[index];
         (l.floor, l.mats.clone(), l.door, l.yard, l.house)
+    };
+    // How far the first's door stands from the street, for its row to keep to.
+    let first_off = {
+        let outside = lots[index].frame.at(base.door, 0, -2);
+        let outside = Vec2::new(outside.x as f32, outside.z as f32);
+        lanes.iter().map(|l| l.distance(outside)).fold(f32::MAX, f32::min)
     };
     // Built on to the right while it can be, then to the left of the first.
     let mut built = 1;
@@ -2996,8 +3016,13 @@ fn grow_row(town: &mut Town, ground: &mut Ground, lots: &mut Vec<Lot>, occupied:
             }
             let outside = frame.at(next.door, 0, -2);
             let outside = IVec2::new(outside.x, outside.z);
+            // Its path runs out to the street where the first's does, moved along it: on the
+            // lane still, and its door no farther from the lane than the first's (two blocks
+            // more at most), or the row ends here: a lane that bends away, or one a little
+            // off square that the row's square steps would walk away from.
             let to = door.map(|(d, to)| to + dir * (outside - d).as_vec2().dot(dir)).unwrap_or(outside.as_vec2());
-            if (ground.at(to.round().as_ivec2()).height - floor).abs() > rules.lots.road {
+            let off = |p: Vec2| lanes.iter().map(|l| l.distance(p)).fold(f32::MAX, f32::min);
+            if !lanes.iter().any(|l| l.distance(to) <= l.half) || off(outside.as_vec2()) > first_off + 2.0 || (ground.at(to.round().as_ivec2()).height - floor).abs() > rules.lots.road {
                 break;
             }
             // The end it is built on against: no eave or window on that side now.

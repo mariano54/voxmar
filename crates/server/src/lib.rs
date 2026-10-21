@@ -14,6 +14,7 @@ mod cooking;
 mod creatures;
 mod fight;
 mod fishing;
+mod flames;
 mod death;
 #[cfg(test)]
 mod doors;
@@ -37,6 +38,7 @@ mod prayers;
 mod process;
 mod rules;
 mod laying;
+mod smoulder;
 mod stations;
 mod traps;
 mod stores;
@@ -47,6 +49,7 @@ mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
+mod tool_wear;
 mod wear;
 
 use std::collections::VecDeque;
@@ -130,6 +133,10 @@ pub struct ServerConfig {
     /// game days in, when a test slowed by load is still running; `/wander start` and
     /// the wandering tests start theirs by hand either way.
     pub wandering_starts: bool,
+    /// The chance a gene mutates in a birth, in place of `genes::MUTATION` (aether still
+    /// raises it). `None` but in tests, which set 0 where a birth must take only its
+    /// parents' genes.
+    pub mutation: Option<f32>,
 }
 
 /// How much any one connection may ask of the server: a server operator's numbers, read
@@ -255,6 +262,7 @@ impl Default for ServerConfig {
             draw_key: None,
             lockstep: false,
             wandering_starts: true,
+            mutation: None,
         }
     }
 }
@@ -551,6 +559,9 @@ impl Drop for ServerHandle {
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
         }
+        // Stopped, it says no more whether its players' land is missing: left set, a later
+        // world in the process, on a server elsewhere, would stream unlimited throughout.
+        voxmar_engine::jobs::set_land_missing(false);
     }
 }
 
@@ -601,14 +612,21 @@ pub fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<Serv
 /// client's `priority.rs`), said outright, since whether a new thread takes its creator's
 /// class is not promised. Never below them: in a single-player game the server runs the
 /// world, and at the default class, on a machine at a load of 70-90, the gate's creatures
-/// stood still for seconds while the frames went on. `VOXMAR_THREAD_PRIORITY=off` leaves it
-/// as it starts, as it does the client's threads.
+/// stood still for seconds while the frames went on. On every platform it is marked urgent
+/// for world generation, which then never has it wait on a background worker's build
+/// (`voxmar_worldgen::mark_urgent`). `VOXMAR_THREAD_PRIORITY=off` leaves its class as it
+/// starts, as it does the client's threads; it is urgent all the same.
 fn frame_class() {
-    #[cfg(target_os = "macos")]
-    if std::env::var("VOXMAR_THREAD_PRIORITY").map_or(true, |v| v != "off") {
-        // SAFETY: only changes the scheduling class of the current thread.
-        unsafe { libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0) };
+    // Never waiting on a region a streaming worker is building.
+    voxmar_worldgen::mark_urgent();
+    if std::env::var("VOXMAR_THREAD_PRIORITY").is_ok_and(|v| v == "off") {
+        return;
     }
+    // SAFETY: only changes the scheduling class of the current thread.
+    #[cfg(target_os = "macos")]
+    unsafe {
+        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE, 0)
+    };
 }
 
 /// The world `config` asks for: the one saved in `config.world` (created if missing), or
@@ -720,6 +738,8 @@ pub(crate) struct Server {
     /// Lit multiblocks, by core cell: a kiln burning its fuel charge, a hearth (which needs
     /// none) until it breaks.
     lit: FxHashMap<IVec3, hearth::Lit>,
+    /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
+    smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
     /// Whose each home hearth is (a player's key, or no one's for one lit before fires were
     /// kept by owner), by core cell: set when it is first lit, kept while its fire is out or
     /// a piece of it is broken, forgotten only when its owner breaks its hearthstone or lights
@@ -739,6 +759,8 @@ pub(crate) struct Server {
     /// Picked wild plants waiting to grow back (see `regrow`), and plants a herb planter
     /// grew back, whose picking pays the planter's experience.
     regrowing: FxHashMap<IVec3, regrow::Regrowing>,
+    /// Lights set down and burning, by where they stand (`flames`).
+    flames: FxHashMap<IVec3, flames::Flame>,
     /// Blocks waiting to catch fire or to burn out (see `blaze`).
     blazes: FxHashMap<IVec3, blaze::Blaze>,
     /// Blocks set smouldering this tick, for telling whoever's change did it (`blaze_hint`).
@@ -829,6 +851,9 @@ pub(crate) struct Server {
 }
 
 const MAX_GENERATING: usize = 64;
+/// Columns on each side of a player's whose land must be in for streaming to stay capped
+/// (`voxmar_engine::jobs`); as the client's `workers.rs` has it.
+const LAND_AROUND: i32 = 2;
 const COLUMNS_PER_TICK: usize = 48;
 
 impl Server {
@@ -872,6 +897,7 @@ impl Server {
         let placed = meta.placed.iter().map(|&p| IVec3::from_array(p)).collect();
         let quest_placed = quests::restore_placed(&meta.quest_placed, &content.blocks, &content.quests);
         let regrowing = regrow::restore(&meta.regrowing, |name| content.blocks.id(name));
+        let flames = flames::restore(&meta.flames, |name| content.blocks.id(name), |block| content.flames.burn_life(block) > 0);
         let blazes = blaze::restore(&meta.blazes);
         let lairs = lairs::Lairs::restore(&meta.lairs);
         let planter_grown = meta.planter_grown.iter().map(|&p| IVec3::from_array(p)).collect();
@@ -881,6 +907,7 @@ impl Server {
         let lit = meta.lit.iter().filter(|fire| fire.until > tick && content.multiblocks.get(&fire.structure).is_some())
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect::<FxHashMap<_, _>>();
         let hearth_owners = hearth::HearthOwner::restore(&meta.hearth_owners, &lit, |name| content.multiblocks.get(name).is_some_and(|m| m.home));
+        let smoulders = smoulder::restore(&meta.smoulders, |name| content.multiblocks.get(name).is_some_and(|m| m.smoulder.is_some()));
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
@@ -898,11 +925,13 @@ impl Server {
             farm,
             factory: voxmar_engine::factory::Factory::default(),
             lit,
+            smoulders,
             hearth_owners,
             fires_sent: Vec::new(),
             placed,
             quest_placed,
             regrowing,
+            flames,
             blazes,
             blaze_risked: Vec::new(),
             smoulders_sent: Vec::new(),
@@ -1086,6 +1115,7 @@ impl Server {
         self.fluids.column_loaded(&self.content.blocks, &self.world, pos, self.tick, loaded.saved);
         self.show_grown_crops(pos);
         self.reconcile_machines(pos, loaded.saved);
+        self.flames_loaded(pos);
     }
 
     fn handle_messages(&mut self) {
@@ -1149,6 +1179,7 @@ impl Server {
             age: 0.0,
             owner: None,
             lifetime: None,
+            wear: stack.wear,
         }));
         saved
     }
@@ -1173,6 +1204,10 @@ impl Server {
         self.blaze();
         self.watch_stores();
         self.replicate_owned_traits();
+        // Loading again around any player whose land is missing (one just come, or gone
+        // beyond their view): every worker streams until it has come (voxmar_engine::jobs).
+        let missing = self.players.values().any(|p| p.joined && self.land_missing_around(p.position));
+        voxmar_engine::jobs::set_land_missing(missing);
         let ids: Vec<PlayerId> = self.players.keys().copied().collect();
         for &id in &ids {
             self.stream_columns(id);
@@ -1281,6 +1316,7 @@ impl Server {
         quest_placed.sort();
         meta.quest_placed = quest_placed;
         meta.regrowing = self.saved_regrowing();
+        meta.flames = self.saved_flames();
         meta.blazes = self.saved_blazes();
         let mut grown: Vec<[i32; 3]> = self.planter_grown.iter().map(|p| p.to_array()).collect();
         grown.sort();
@@ -1292,6 +1328,7 @@ impl Server {
         (meta.standing_traps, meta.trap_serials) = self.catches.saved_traps();
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
+        meta.smoulders = self.saved_smoulders();
         meta.hearth_owners = hearth::HearthOwner::saved(&self.hearth_owners);
         meta.day = Some(self.day as u64);
         meta.day_speed = self.day_speed;
@@ -1374,6 +1411,12 @@ impl Server {
         }
     }
 
+    /// Whether a column within `LAND_AROUND` of `position`'s is not loaded.
+    fn land_missing_around(&self, position: Vec3) -> bool {
+        let center = ColumnPos::of_block(position.floor().as_ivec3());
+        (-LAND_AROUND..=LAND_AROUND).any(|dz| (-LAND_AROUND..=LAND_AROUND).any(|dx| !self.world.contains(center.offset(dx, dz))))
+    }
+
     /// Sends loaded columns nearest-first and requests generation of missing ones.
     fn stream_columns(&mut self, id: PlayerId) {
         let Some(player) = self.players.get_mut(&id) else { return };
@@ -1451,6 +1494,11 @@ impl Server {
         self.players.values().any(|p| p.joined && p.health.alive() && p.aabb().intersects(|c| c == cell))
     }
 
+    /// Whether a live creature's body is in `cell`.
+    pub(crate) fn creature_in(&self, cell: IVec3) -> bool {
+        self.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+    }
+
     /// Whether putting `block` at `cell` would shut a player inside it: a solid block where
     /// a player stands, which no hand may place. Admin fills leave such a cell as it is
     /// (`/fill`, `/setblock`); regrowth brings back only plants that are not solid.
@@ -1486,7 +1534,9 @@ impl Server {
                 self.station_changed(pos, old, block);
                 self.trap_changed(pos, block);
                 self.fire_changed(pos);
+                self.smoulder_changed(pos);
                 self.home_changed(pos, block);
+                self.flame_changed(pos, block);
                 self.blaze_changed(pos, block);
             }
         }
@@ -1526,7 +1576,9 @@ impl Server {
             self.station_changed(pos, old, block);
             self.trap_changed(pos, block);
             self.fire_changed(pos);
+            self.smoulder_changed(pos);
             self.home_changed(pos, block);
+            self.flame_changed(pos, block);
             self.blaze_changed(pos, block);
             for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
                 player.connection.send(ServerMessage::BlockChanged { pos, block });
@@ -1610,7 +1662,9 @@ pub(crate) fn test_server_on(content: Content) -> Server {
     // each shares (`Overworld::shared`), with the land round spawn planned once rather than
     // again for each (1.7 s a server; a test that made 34 took 75 s).
     static HELD: std::sync::OnceLock<Arc<Overworld>> = std::sync::OnceLock::new();
-    // Its columns too, about 1100 of them: every test server stands round the same spawn.
+    // Its columns too, about 1170 of them: every test server stands round the same spawn.
+    // Servers sharing one held world wait on its inner caches less than servers on worlds
+    // of their own would; worldgen's own thread tests still cover that contention.
     HELD.get_or_init(|| {
         let world = Overworld::shared(meta.seed, &content, &WorldContent::load(&content).expect("checked by load_content"));
         world.remember_columns(128 << 20);
@@ -1771,6 +1825,10 @@ mod tests {
             Method::Break { block, .. } => book.laid(blocks, *block) || got(*block, on),
             Method::Trap { trap, .. } => got(*trap, on),
             Method::Bees { block, .. } => book.laid(blocks, *block) || got(*block, on),
+            // What is left when a thing burns out comes of having the thing; what it is lit
+            // again into, of it and an item of the tag lighting it uses up.
+            Method::Burn { from, fuel, .. } => got(*from, on) && fuel.as_deref().is_none_or(|tag| blocks.tagged(tag).any(|item| got(item, on))),
+            Method::Smoulder { from, .. } => got(*from, on),
             Method::Chest { .. } | Method::Trade { .. } | Method::Reward { .. } => false,
         }
     }
@@ -1930,7 +1988,7 @@ mod tests {
         let mut server = Server::new(config, meta, Some(save), save::WorldState::default(), content.clone(), incoming, console);
         let slime = content.blocks.expect("base:lumen_slime");
         let at = Vec3::new(3.5, 70.0, -2.5);
-        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack { item: slime, count: 2 }, voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
+        server.creatures.falling_loot.push((server.tick + 100, voxmar_engine::inventory::ItemStack::new(slime, 2), voxmar_engine::dropped::Loose::new(at, Vec3::Y)));
         server.save();
         let saved = WorldSave::new(&dir).read_items().unwrap();
         assert_eq!(saved.len(), 1, "{saved:?}");

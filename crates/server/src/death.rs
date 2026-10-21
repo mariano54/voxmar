@@ -85,21 +85,23 @@ impl Server {
 
 /// Splits an inventory into what is kept (the `keep` most valuable single items, and a
 /// grave-ward amulet besides when `warded`) and the stacks that are left behind.
-fn split(inventory: &Inventory, keep: usize, warded: bool, mut value: impl FnMut(BlockId) -> u32) -> (Inventory, Vec<ItemStack>) {
+pub(crate) fn split(inventory: &Inventory, keep: usize, warded: bool, mut value: impl FnMut(BlockId) -> u32) -> (Inventory, Vec<ItemStack>) {
     use voxmar_engine::inventory::{CURSOR, LAST, WORN};
     // Everything carried: the inventory, the pointer, the crafting grid and what is worn.
     let mut carried: Vec<ItemStack> = (0..=CURSOR + voxmar_engine::craft::GRID).chain(WORN..=LAST).filter_map(|slot| inventory.get(slot)).collect();
     carried.extend(inventory.pouched.iter().flat_map(|&(item, count)| {
-        (0..count.div_ceil(64)).map(move |i| ItemStack { item, count: (count - i * 64).min(64) as u8 })
+        (0..count.div_ceil(64)).map(move |i| ItemStack::new(item, (count - i * 64).min(64) as u8))
     }));
     // The amulet is kept besides the others.
     let mut kept = Inventory::default();
     let mut budget = keep + usize::from(warded);
     while budget > 0 {
-        let Some((index, _)) = carried.iter().enumerate().filter(|(_, s)| s.count > 0).max_by_key(|(_, s)| value(s.item)) else { break };
-        let item = carried[index].item;
+        // Of tools worth the same, the least worn.
+        let Some((index, _)) = carried.iter().enumerate().filter(|(_, s)| s.count > 0).max_by_key(|(_, s)| (value(s.item), std::cmp::Reverse(s.wear))) else { break };
+        // A worn tool is kept as worn as it was.
+        let one = ItemStack { count: 1, ..carried[index] };
         carried[index].count -= 1;
-        kept.add(item, 1);
+        kept.add_stack(one);
         budget -= 1;
     }
     (kept, carried.into_iter().filter(|s| s.count > 0).collect())
@@ -119,7 +121,7 @@ mod tests {
         let (kept, left) = split(&inventory, 3, false, value);
         let count = |inv: &Inventory, id: u16| inv.slots.iter().flatten().filter(|s| s.item == BlockId(id)).map(|s| s.count).sum::<u8>();
         assert_eq!((count(&kept, 2), count(&kept, 3), count(&kept, 1)), (2, 1, 0));
-        assert_eq!(left, [ItemStack { item: BlockId(1), count: 10 }]);
+        assert_eq!(left, [ItemStack::new(BlockId(1), 10)]);
     }
 
     #[test]
@@ -135,7 +137,7 @@ mod tests {
         for (name, n) in [("iron_ingot", 5), ("bread", 3), ("iron_pickaxe", 1), ("iron_sword", 1), ("dirt", 40)] {
             inventory.add(id(name), n);
         }
-        inventory.worn[1] = Some(ItemStack { item: id("chainmail_shirt"), count: 1 });
+        inventory.worn[1] = Some(ItemStack::new(id("chainmail_shirt"), 1));
         let (kept, left) = split(&inventory, 3, false, &mut value);
         for name in ["chainmail_shirt", "iron_pickaxe", "iron_sword"] {
             assert_eq!(count(&kept, id(name)), 1, "{name} is kept: {kept:?}");
