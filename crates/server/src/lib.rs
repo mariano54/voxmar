@@ -324,6 +324,16 @@ fn heal_most_below_food(content: &Content, heal_most: f32) -> Result<(), String>
     }
 }
 
+/// A home's warmth tops out at `comfort_top` (`survival.ron`), which must be below the
+/// coolest a debuff comes on at as a player feels warmer (Hot's `FeltAbove`): a cosy home
+/// never makes its owner hot.
+fn comfort_below_hot(content: &Content, comfort_top: f32) -> Result<(), String> {
+    match content.effects.too_warm_at() {
+        Some(hot) if comfort_top >= hot => Err(format!("survival.ron's comfort_top ({comfort_top} °C) must be below {hot} °C, where a debuff comes on as a player feels warmer")),
+        _ => Ok(()),
+    }
+}
+
 /// Loads every content package under `assets/content`, and checks the world
 /// generator's definitions in them, so a broken package fails at startup.
 /// How each block (by id) shelters as a wall of a home's room, as `Server::room_walls`
@@ -352,6 +362,7 @@ pub fn load_content(assets: &Path) -> Result<Content, Box<dyn std::error::Error>
     let mut notes = Vec::new();
     let survival = rules::SurvivalRules::load(&content.files, &content.blocks, &mut notes)?;
     heal_most_below_food(&content, survival.heal_most)?;
+    comfort_below_hot(&content, survival.comfort_top)?;
     survival.check_shelters(&content.blocks)?;
     std::sync::Arc::make_mut(&mut content.notes).extend(notes);
     for fluid in content.blocks.fluids().iter().filter(|fluid| !swum_or_burns(&content.blocks, fluid)) {
@@ -1686,6 +1697,160 @@ pub(crate) fn test_server_on(content: Content) -> Server {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every quest, on any path, has a route (one of its tasks) that asks to make only what
+    /// its own goals and the quests it comes after have taught the stations for, as the game
+    /// finishes a quest on any one of its tasks: what that route has the player make, cook,
+    /// set down or hold (of a tag: any one of what a player can hold of it) is got one of the
+    /// recipe book's ways that counts for the goal (`recipe_book::counts`, the quest book's
+    /// rule), each worked only at a station (the crafting table, a recipe's `near` block, a
+    /// cooking station, a home station) one of those quests has the player make, and a drop
+    /// only from a creature every player meets: not one that comes only with a wandering
+    /// party or in a lair, nor a boss, unless one of those quests has the player kill it (a
+    /// raider's hide is no sure way). It prints the route it found for each quest, and fails
+    /// naming each quest with no such route and what walls each of its routes. The main-line
+    /// walk puts down any station a recipe needs and walks only the main line, so a side path
+    /// asking for fired clay before the kiln got through (A Stove and a Quern's workshop
+    /// half, once 451 made its pieces take kiln output).
+    #[test]
+    fn a_quest_asks_only_for_what_its_stations_are_taught_for() {
+        use voxmar_engine::quest::Goal;
+        use voxmar_engine::recipe_book::{Method, counts};
+        let content = test_content();
+        let blocks = &content.blocks;
+        // The book as the server has it: with what the world lays, found and broken loose.
+        let book = recipe_book_of(&content, &WorldContent::load(&content).expect("checked by load_content"));
+        let id = |name: &str| blocks.id(name).or_else(|| blocks.id(&format!("base:{name}")));
+        // What a goal names, as held: an item, or what a player can hold with a tag.
+        let named = |item: &str| -> Vec<BlockId> {
+            let mut held: Vec<BlockId> = match item.strip_prefix("tag:") {
+                Some(tag) => blocks.tagged(tag).filter(|&b| blocks.holdable(b) && !blocks.def(b).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY)).map(|b| blocks.item_of(b)).collect(),
+                None => id(item).map(|b| blocks.item_of(b)).into_iter().collect(),
+            };
+            held.sort();
+            held.dedup();
+            held
+        };
+        let mut walled = Vec::new();
+        for quest in content.quests.iter() {
+            // The quests it surely comes after ("a|b" makes sure of neither), and itself.
+            let mut before: Vec<&voxmar_engine::quest::QuestDef> = Vec::new();
+            let mut next = vec![quest];
+            while let Some(q) = next.pop() {
+                if before.iter().any(|b| b.name == q.name) {
+                    continue;
+                }
+                before.push(q);
+                next.extend(q.after.iter().filter(|a| !a.contains('|')).map(|a| content.quests.get(a).unwrap_or_else(|| panic!("{} comes after {a}, which is no quest", q.name))));
+            }
+            // A station is taught by a goal that has the player make, set down or hold it by name.
+            let taught: Vec<BlockId> = before.iter().flat_map(|q| q.tasks.iter().flatten()).filter_map(|g| match g {
+                Goal::Craft(item, _) | Goal::Placed(item, _) | Goal::Have(item, _) if !item.starts_with("tag:") => id(item).map(|b| blocks.item_of(b)),
+                _ => None,
+            }).collect();
+            // The creatures a goal has the player kill by name.
+            let killed: Vec<_> = before
+                .iter()
+                .flat_map(|q| q.tasks.iter().flatten())
+                .filter_map(|g| match g {
+                    Goal::Kill(name, _) => content.creatures.id(name),
+                    _ => None,
+                })
+                .collect();
+            let tagged = |tag: &str| taught.iter().any(|&b| blocks.def(b).has_tag(tag));
+            let small = |cells: &[Option<BlockId>; voxmar_engine::craft::GRID]| cells.iter().enumerate().all(|(i, c)| c.is_none() || voxmar_engine::craft::SMALL.contains(&i));
+            let worked = |method: &Method| match method {
+                Method::Craft { variants, near, .. } => (variants.iter().any(small) || tagged("crafting_table")) && near.as_deref().is_none_or(tagged),
+                Method::Cook { station, .. } => tagged(station),
+                Method::Work { .. } | Method::Process { .. } | Method::Trap { .. } => method.stations(blocks).iter().any(|&s| taught.contains(&blocks.item_of(s))),
+                // What a creature a player may never meet drops (one that comes only with a
+                // wandering party or in a lair, `party_only`, or a boss) is no sure way, but
+                // for one a goal has them kill.
+                Method::Drop { creature, .. } => {
+                    let def = &content.creatures.get(*creature).def;
+                    !(def.habitat.party_only || def.boss) || killed.contains(creature)
+                }
+                _ => true,
+            };
+            // Each route's goals that no way counting for them can be worked to, here.
+            let routes: Vec<Vec<String>> = quest
+                .tasks
+                .iter()
+                .map(|task| {
+                    task.iter()
+                        .filter_map(|goal| match goal {
+                            Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::CookAt(item, _, _) | Goal::Placed(item, _) | Goal::Have(item, _) if item != "any" => Some((goal, item)),
+                            _ => None,
+                        })
+                        .filter(|&(goal, item)| {
+                            let accepts = named(item);
+                            assert!(!accepts.is_empty(), "{}: {goal:?} names nothing a player holds", quest.name);
+                            !accepts.iter().any(|&b| book.making(b).into_iter().any(|e| counts(&content, goal, e) && works(&book, &content, e, &worked, &mut vec![e.output])))
+                        })
+                        .map(|(goal, _)| format!("{goal:?}"))
+                        .collect()
+                })
+                .collect();
+            match routes.iter().position(Vec::is_empty) {
+                Some(route) => println!("{}: route {} of {} is taught: {:?}", quest.name, route + 1, routes.len(), quest.tasks[route]),
+                None => {
+                    walled.push(format!("{}: {}", quest.name, routes.iter().enumerate().map(|(i, walls)| format!("route {} walled by {}", i + 1, walls.join(", "))).collect::<Vec<_>>().join("; ")))
+                }
+            }
+        }
+        assert!(walled.is_empty(), "these quests have no route whose stations the quests before them have the player make: {walled:#?}");
+    }
+
+    /// Whether a player surely comes by `entry`'s output the book's ways, working only those
+    /// `worked` allows (where a quest has taught the station): from what the world lays,
+    /// breeds, grows and bites, then made from that. Gifts (a quest's reward, a chest, a
+    /// party on the road) are no sure way. `on` holds the items being made now, so a loop of
+    /// ways is no way. It ignores the tool a way needs (a `Break`, `Found` or `Product`
+    /// way's `tool`): a goal behind a tool no quest before it teaches still passes.
+    fn works(
+        book: &voxmar_engine::recipe_book::RecipeBook,
+        content: &Content,
+        entry: &voxmar_engine::recipe_book::Entry,
+        worked: &dyn Fn(&voxmar_engine::recipe_book::Method) -> bool,
+        on: &mut Vec<BlockId>,
+    ) -> bool {
+        use voxmar_engine::recipe_book::{Method, listed_as};
+        let blocks = &content.blocks;
+        let got = |item: BlockId, on: &mut Vec<BlockId>| {
+            let item = listed_as(blocks, item);
+            if on.contains(&item) {
+                return false;
+            }
+            on.push(item);
+            let found = book.making(item).into_iter().any(|e| works(book, content, e, worked, on));
+            on.pop();
+            found
+        };
+        if !worked(&entry.method) {
+            return false;
+        }
+        match &entry.method {
+            Method::Found { .. } | Method::Catch { .. } | Method::Drop { .. } | Method::Product { .. } => true,
+            Method::Harvest { from, forage, .. } => *forage || got(*from, on),
+            Method::Craft { variants, .. } => variants.iter().any(|cells| cells.iter().flatten().all(|&cell| got(cell, on))),
+            Method::Cook { input, with, .. } => got(*input, on) && with.iter().all(|&(item, _)| got(item, on)),
+            // A home station takes any of what its work accepts, though the book lists the
+            // work by the first of them only.
+            Method::Work { station, input, .. } => {
+                let work = content.stations.stations.iter().filter(|s| s.empty == *station).flat_map(|s| &s.works).filter(|w| w.output == entry.output);
+                got(*station, on) && std::iter::once(*input).chain(work.flat_map(|w| w.accepts.iter().copied())).any(|item| got(item, on))
+            }
+            Method::Process { machines, inputs, .. } => machines.iter().any(|&m| got(m, on)) && inputs.iter().all(|&(item, _)| got(item, on)),
+            Method::Break { block, .. } => book.laid(blocks, *block) || got(*block, on),
+            Method::Trap { trap, .. } => got(*trap, on),
+            Method::Bees { block, .. } => book.laid(blocks, *block) || got(*block, on),
+            // What is left when a thing burns out comes of having the thing; what it is lit
+            // again into, of it and an item of the tag lighting it uses up.
+            Method::Burn { from, fuel, .. } => got(*from, on) && fuel.as_deref().is_none_or(|tag| blocks.tagged(tag).any(|item| got(item, on))),
+            Method::Smoulder { from, .. } => got(*from, on),
+            Method::Chest { .. } | Method::Trade { .. } | Method::Reward { .. } => false,
+        }
+    }
 
     /// Where a new world of `seed` wakes its first player, from the spawn column alone as
     /// `Server::new` loads it, and the block they stand on.

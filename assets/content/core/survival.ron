@@ -67,4 +67,9 @@
     // are on. Eating stays the way to heal in a hurry: at load this must be below what the
     // slowest food heals a second, eaten bite after bite.
     heal_most: 1.0,
+    // The top of the comfortable band, °C. What a home adds (effects.ron's `home_warmth`:
+    // its steps and rooms) lifts how warm a player feels up to this and no further, and
+    // nothing at all on a day already this warm: a cosy home never makes its owner hot. At
+    // load this must be below where a debuff comes on as a player feels warmer (Hot).
+    comfort_top: 29.0,
 )
