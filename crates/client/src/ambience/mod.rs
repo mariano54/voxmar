@@ -271,6 +271,35 @@ struct Ambient {
     logged: String,
     /// The home ladder's effects, lowest first, for the `home` axis.
     home: Vec<voxmar_engine::effect::EffectId>,
+    /// Fires seen to go out, for the groups that hear them cool.
+    gone_out: GoneOut,
+}
+
+/// The fires the server said burn (`ClientWorld::fires`), as last seen, and when each one
+/// since seen to stop burning went out, kept as long as some group hears it cooling.
+#[derive(Default)]
+struct GoneOut {
+    burning: rustc_hash::FxHashSet<IVec3>,
+    at: rustc_hash::FxHashMap<IVec3, f32>,
+}
+
+impl GoneOut {
+    /// Notes the fires burning `now` (seconds); those burning before and not now went out
+    /// now, and one lit again is burning. Forgets those out over `keep` seconds.
+    fn note(&mut self, now: f32, burning: &rustc_hash::FxHashSet<IVec3>, keep: f32) {
+        if *burning != self.burning {
+            for &core in self.burning.difference(burning) {
+                self.at.insert(core, now);
+            }
+            self.burning.clone_from(burning);
+        }
+        self.at.retain(|core, out| now - *out <= keep && !burning.contains(core));
+    }
+
+    /// How many seconds ago, at `now`, each remembered fire went out.
+    fn ago(&self, now: f32) -> rustc_hash::FxHashMap<IVec3, f32> {
+        self.at.iter().map(|(&core, &out)| (core, now - out)).collect()
+    }
 }
 
 #[derive(Component)]
@@ -395,6 +424,7 @@ impl Ambient {
             cues: Vec::new(),
             placed: unbounded(),
             logged: String::new(),
+            gone_out: GoneOut::default(),
         }
     }
 
@@ -429,6 +459,7 @@ fn kinds(ambience: &Ambience, registry: &BlockRegistry, multiblocks: &voxmar_eng
         wall_group: ambience.wall_groups(walls),
         group,
         lit_only,
+        cooling: ambience.cooling(),
         groups: ambience.groups.len(),
         walls: ambience.shelter.walls,
         roof: ambience.shelter.roof,
@@ -553,12 +584,15 @@ fn survey(
     }
     let (seed, generator) = ambient.generator.clone().expect("set above");
     let (kinds, content, tx, ambience) = (ambient.kinds.clone(), ambient.content.clone(), ambient.surveys.tx.clone(), ambient.ambience.clone());
+    let now = time.elapsed_secs();
+    ambient.gone_out.note(now, &world.fires, ambient.ambience.cools_longest());
+    let out = ambient.gone_out.ago(now);
     let fires = world.fires.clone();
     let smoulders = world.smoulders.clone();
     let random = mix(time.elapsed().as_nanos() as u64);
     ambient.surveys.out = true;
     rayon::spawn(move || {
-        let enclosure = enclosure::scan(eye, |p| snapshot.block(p), |p| fires.contains(&p) || smoulders.contains(&p), &kinds, random);
+        let enclosure = enclosure::scan(eye, |p| snapshot.block(p), |p| fires.contains(&p) || smoulders.contains(&p), |p| out.get(&p).copied(), &kinds, random);
         let generator = generator.get_or_init(|| match WorldContent::load(&content) {
             Ok(world) => Some(Overworld::shared(seed, &content, &world)),
             Err(e) => {

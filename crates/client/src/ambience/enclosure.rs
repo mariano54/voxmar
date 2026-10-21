@@ -75,6 +75,9 @@ pub struct Kinds {
     pub group: Vec<Option<u8>>,
     /// A structure's core whose group counts it only while its fire burns.
     pub lit_only: Vec<bool>,
+    /// By group: where a lit group's cores count once their fire has gone out, and for how
+    /// many seconds after (a kiln's bricks ticking as they cool).
+    pub cooling: Vec<Option<(u8, f32)>>,
     /// Each block's wall group, if any (a home's walls by their shelter), counted besides
     /// its `group`, and never as the floor under a cell.
     pub wall_group: Vec<Option<u8>>,
@@ -110,8 +113,9 @@ struct Roof {
 
 /// Floods from `eye` through blocks `kinds` marks open. `block` gives the block at a
 /// position, `None` where the world is not loaded (treated as a wall); `burning` whether a
-/// fire burns at a structure's core. `seed` makes the sample choice.
-pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl Fn(IVec3) -> bool, kinds: &Kinds, seed: u64) -> Enclosure {
+/// fire burns at a structure's core, `out` how many seconds ago one there went out (`None`:
+/// not lately). `seed` makes the sample choice.
+pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl Fn(IVec3) -> bool, out: impl Fn(IVec3) -> Option<f32>, kinds: &Kinds, seed: u64) -> Enclosure {
     let origin = eye - IVec3::splat(SIDE / 2);
     let index = |p: IVec3| {
         let l = p - origin;
@@ -169,7 +173,13 @@ pub fn scan(eye: IVec3, block: impl Fn(IVec3) -> Option<BlockId>, burning: impl 
     };
     let mut meet = |found: &mut Enclosure, p: IVec3, b: BlockId, d: i32, floor: bool| {
         let wall = kinds.wall_group[b.0 as usize].filter(|_| !floor);
-        let own = kinds.group[b.0 as usize].filter(|_| !kinds.lit_only[b.0 as usize] || burning(p));
+        let own = match kinds.group[b.0 as usize] {
+            Some(group) if kinds.lit_only[b.0 as usize] && !burning(p) => {
+                // Gone out lately, it counts as cooling a while, if its group says.
+                kinds.cooling[group as usize].filter(|&(_, seconds)| out(p).is_some_and(|ago| ago < seconds)).map(|(cooling, _)| cooling)
+            }
+            own => own,
+        };
         for group in [own, wall].into_iter().flatten() {
             count(found, p, group, d);
         }
@@ -267,6 +277,7 @@ mod tests {
             // Groups: 0 rock, 1 leaves, 2 water, 3 grass.
             group: vec![None, Some(0), Some(1), Some(2), Some(3)],
             lit_only: vec![false; 5],
+            cooling: vec![None; 4],
             wall_group: vec![None; 5],
             groups: 4,
             walls: 6,
@@ -283,10 +294,31 @@ mod tests {
         let mut kinds = kinds();
         kinds.lit_only[STONE.0 as usize] = true;
         let room = |p: IVec3| Some(if p.max_element() > 2 || p.min_element() < -2 { STONE } else { AIR });
-        let cold = scan(IVec3::ZERO, room, |_| false, &kinds, 1);
-        let lit = scan(IVec3::ZERO, room, |p| p.x == 3, &kinds, 1);
+        let cold = scan(IVec3::ZERO, room, |_| false, |_| None, &kinds, 1);
+        let lit = scan(IVec3::ZERO, room, |p| p.x == 3, |_| None, &kinds, 1);
         assert_eq!(cold.groups[0], 0.0, "a cold core was heard");
         assert!(lit.groups[0] > 0.0 && lit.samples[0].iter().all(|p| p.x == 3), "only the burning cores are heard: {:?}", lit.samples[0]);
+    }
+
+    /// A core whose fire went out lately counts for its group's cooling group (here grass's)
+    /// until that group's seconds are up, then for nothing; one burning for its own group.
+    #[test]
+    fn a_core_gone_out_cools_a_while() {
+        let mut kinds = kinds();
+        kinds.lit_only[STONE.0 as usize] = true;
+        kinds.cooling[0] = Some((3, 60.0));
+        let room = |p: IVec3| Some(if p.max_element() > 2 || p.min_element() < -2 { STONE } else { AIR });
+        let heard = |burning: bool, ago: Option<f32>| {
+            let found = scan(IVec3::ZERO, room, |p| burning && p.x == 3, |p| ago.filter(|_| p.x == 3), &kinds, 1);
+            (found.groups[0], found.groups[3])
+        };
+        let (lit, _) = heard(true, None);
+        assert!(lit > 0.0, "a burning core is its own group's");
+        let (own, cooling) = heard(false, Some(10.0));
+        assert!(own == 0.0 && cooling > 0.0, "gone out lately: cooling, {cooling}, not burning, {own}");
+        assert_eq!(heard(false, Some(61.0)), (0.0, 0.0), "cooled");
+        assert_eq!(heard(false, None), (0.0, 0.0), "never lit");
+        assert_eq!(scan(IVec3::ZERO, room, |_| false, |_| Some(10.0), &self::kinds(), 1).groups[3], 0.0, "a group without cooling");
     }
 
     fn field(p: IVec3) -> Option<BlockId> {
@@ -299,7 +331,7 @@ mod tests {
 
     #[test]
     fn open_field_is_open_to_the_sky() {
-        let found = scan(IVec3::new(0, 65, 0), field, |_| true, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), field, |_| true, |_| None, &kinds(), 1);
         assert!(found.air > 0.9, "{}", found.air);
         assert_eq!(found.sky, 1.0);
         assert_eq!(found.canopy, 0.0);
@@ -326,7 +358,7 @@ mod tests {
             })
         };
         let covered = |x: i32| (2..=6).contains(&x) || (-6..=-3).contains(&x);
-        let found = scan(IVec3::new(0, 65, 0), porch, |_| true, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), porch, |_| true, |_| None, &kinds(), 1);
         let grass: Vec<_> = found.samples[3].iter().zip(&found.open_to_sky[3]).collect();
         let (under_roof, under_leaves) = (grass.iter().any(|(p, _)| (2..=6).contains(&p.x)), grass.iter().any(|(p, _)| (-6..=-3).contains(&p.x)));
         assert!(under_roof && under_leaves && grass.iter().any(|(p, _)| !covered(p.x)), "{grass:?}");
@@ -354,24 +386,24 @@ mod tests {
     #[test]
     fn a_hut_is_indoors_with_its_door_open() {
         let eye = IVec3::new(0, 65, 0);
-        let shut = scan(eye, hut(false, false), |_| false, &kinds(), 1);
+        let shut = scan(eye, hut(false, false), |_| false, |_| None, &kinds(), 1);
         assert_eq!((shut.shelter, shut.roof), (1.0, 1.0));
-        let open = scan(eye, hut(true, true), |_| false, &kinds(), 1);
+        let open = scan(eye, hut(true, true), |_| false, |_| None, &kinds(), 1);
         assert!(open.shelter > 0.85, "{}", open.shelter);
         assert_eq!(open.roof, 1.0);
         // The fill leaks out of the door, so by sky and air alone it is half outdoors.
         assert!(open.air > shut.air && open.sky > 0.0, "{} {}", open.air, open.sky);
         // Standing in the doorway is on the way out; a step outside is outdoors.
-        let doorway = scan(IVec3::new(3, 65, 0), hut(true, true), |_| false, &kinds(), 1);
+        let doorway = scan(IVec3::new(3, 65, 0), hut(true, true), |_| false, |_| None, &kinds(), 1);
         assert!(doorway.shelter < open.shelter, "{}", doorway.shelter);
-        let outside = scan(IVec3::new(5, 65, 0), hut(true, true), |_| false, &kinds(), 1);
+        let outside = scan(IVec3::new(5, 65, 0), hut(true, true), |_| false, |_| None, &kinds(), 1);
         assert_eq!((outside.shelter, outside.roof), (0.0, 0.0));
     }
 
     #[test]
     fn a_roof_on_posts_is_heard_in_the_rain_but_is_not_indoors() {
         let porch = |p: IVec3| Some(if p.x.abs() <= 3 && p.z.abs() <= 3 && p.y == 67 { STONE } else { field(p).unwrap() });
-        let found = scan(IVec3::new(0, 65, 0), porch, |_| false, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), porch, |_| false, |_| None, &kinds(), 1);
         assert_eq!((found.shelter, found.roof), (0.0, 1.0));
     }
 
@@ -379,7 +411,7 @@ mod tests {
     fn a_closed_room_is_small_and_dark() {
         // A 5×3×5 room cut into stone.
         let room = |p: IVec3| Some(if p.x.abs() <= 2 && p.z.abs() <= 2 && (64..67).contains(&p.y) { AIR } else { STONE });
-        let found = scan(IVec3::new(0, 65, 0), room, |_| true, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), room, |_| true, |_| None, &kinds(), 1);
         assert!(found.air < 0.02, "{}", found.air);
         assert_eq!(found.sky, 0.0);
         assert!(found.groups[0] > 300.0, "close rock all around: {}", found.groups[0]);
@@ -399,14 +431,14 @@ mod tests {
                 STONE
             })
         };
-        let found = scan(IVec3::new(2, 65, 0), hill, |_| true, &kinds(), 1);
+        let found = scan(IVec3::new(2, 65, 0), hill, |_| true, |_| None, &kinds(), 1);
         assert!(found.sky > 0.2 && found.sky < 0.9, "{}", found.sky);
     }
 
     #[test]
     fn under_a_canopy_is_still_outdoors() {
         let forest = |p: IVec3| Some(if (70..74).contains(&p.y) { LEAVES } else { field(p).unwrap() });
-        let found = scan(IVec3::new(0, 65, 0), forest, |_| true, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), forest, |_| true, |_| None, &kinds(), 1);
         assert_eq!(found.sky, 1.0);
         assert!(found.canopy > 0.9, "{}", found.canopy);
         assert!(found.groups[1] > 100.0);
@@ -417,14 +449,14 @@ mod tests {
     #[test]
     fn water_is_heard_through_and_counted() {
         let shore = |p: IVec3| Some(if p.x > 3 && p.y == 64 { WATER } else { field(p).unwrap() });
-        let found = scan(IVec3::new(0, 65, 0), shore, |_| true, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), shore, |_| true, |_| None, &kinds(), 1);
         assert!(found.groups[2] > 50.0);
         assert!(found.samples[2].iter().all(|p| p.x > 3));
     }
 
     #[test]
     fn unloaded_space_is_a_wall() {
-        let found = scan(IVec3::new(0, 65, 0), |p| (p.x < 4).then(|| field(p).unwrap()), |_| true, &kinds(), 1);
+        let found = scan(IVec3::new(0, 65, 0), |p| (p.x < 4).then(|| field(p).unwrap()), |_| true, |_| None, &kinds(), 1);
         assert!(found.air > 0.2 && found.air < 0.9);
     }
 }

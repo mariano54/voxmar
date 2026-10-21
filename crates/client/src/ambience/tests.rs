@@ -489,7 +489,7 @@ fn ambience_survey() {
         world
     };
     let report = |name: &str, world: &VoxelWorld, eye: IVec3| {
-        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, |_| None, &kinds, 1);
         let place = super::place(&generator, eye, &[]);
         let groups: Vec<String> = ambience
             .groups
@@ -779,7 +779,7 @@ fn a_draughty_home_whistles_until_daubed() {
     let soft = ambience.roofs.patters.iter().position(|p| p == "roof_soft");
     let night = [("wind", 12.0), ("sun", -0.6), ("raining", 0.0), ("air", 0.1), ("sky", 0.0)];
     let heard = |world: &VoxelWorld, eye: IVec3, sheltered: f32| {
-        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, &kinds, 1);
+        let found = super::enclosure::scan(eye, |p| world.block(p), |_| true, |_| None, &kinds, 1);
         let draughty = ambience.presence(group, found.groups[group]);
         let place = scene(&ambience, "home", &["forest"], &[night.as_slice(), &[("draughty", draughty), ("sheltered", sheltered)]].concat());
         (draughty, run(&ambience, &place, 20.0).1[draught])
@@ -878,7 +878,7 @@ fn thatch_hisses_as_it_smoulders_and_crackles_thinner_as_it_burns_out() {
     };
     let night = [("sun", -0.6), ("air", 0.8), ("sky", 0.9), ("wind", 1.0), ("raining", 0.0)];
     let heard = |world: &VoxelWorld, smoulders: bool, listen: usize| {
-        let found = super::enclosure::scan(IVec3::new(0, 10, 0), |p| world.block(p), |_| smoulders, &kinds, 1);
+        let found = super::enclosure::scan(IVec3::new(0, 10, 0), |p| world.block(p), |_| smoulders, |_| None, &kinds, 1);
         let axes = [("smoulder", ambience.presence(smoulder, found.groups[smoulder])), ("blaze", ambience.presence(blaze, found.groups[blaze]))];
         let place = scene(&ambience, "yard", &["plains"], &[night.as_slice(), &axes].concat());
         run(&ambience, &place, 20.0).1[listen]
@@ -1004,6 +1004,42 @@ fn a_nightjar_churrs_on_warm_open_nights_and_the_ice_sings() {
     let (dark, noon) = (ice(-0.6), ice(0.8));
     assert!(dark > 0 && noon < dark, "the ice sings most after dark: {dark} at night, {noon} at noon");
     assert_eq!(played("ice_sing", &frozen, &[("snowpack", 1.0), ("sun", -0.6), ("temperature", -12.0)]), 0, "snow but no ice");
+}
+
+/// A kiln or a fire gone out ticks as it cools, the kiln longer by its group's seconds,
+/// and never while it burns or once cold; the client remembers when each went out.
+#[test]
+fn a_fire_gone_out_ticks_as_it_cools() {
+    let ambience = base();
+    let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
+    let played = |name: &str, set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "farm", &["plains", "temperate"], set), 300.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound(name))).count()
+    };
+    assert!(played("kiln_cooling", &[("kiln_cooling", 1.0)]) > 0, "a kiln gone out");
+    assert_eq!(played("kiln_cooling", &[("kiln", 1.0)]), 0, "a kiln burning");
+    assert!(played("hearth_cooling", &[("fire_cooling", 1.0)]) > 0, "a fire gone out");
+    assert_eq!(played("hearth_cooling", &[("fire", 1.0)]), 0, "a fire burning");
+    // The groups cool the shipped lit groups, the kiln's the longer.
+    let group = |name: &str| ambience.groups.iter().position(|g| g.name == name).unwrap();
+    let (kiln, fire) = (ambience.groups[group("kiln_cooling")].cools.unwrap(), ambience.groups[group("fire_cooling")].cools.unwrap());
+    assert!(kiln.0 == group("kiln") && fire.0 == group("fire") && kiln.1 > fire.1, "{kiln:?} {fire:?}");
+
+    // A fire seen burning and then not went out then; lit again it burns; one never seen
+    // burning never went out; past the longest cooling it is forgotten.
+    let (a, b) = (IVec3::new(1, 2, 3), IVec3::new(4, 5, 6));
+    let mut out = super::GoneOut::default();
+    let set = |cores: &[IVec3]| cores.iter().copied().collect::<rustc_hash::FxHashSet<IVec3>>();
+    out.note(0.0, &set(&[a, b]), 120.0);
+    assert!(out.ago(1.0).is_empty(), "both burning");
+    out.note(10.0, &set(&[b]), 120.0);
+    assert_eq!(out.ago(15.0).get(&a), Some(&5.0));
+    out.note(20.0, &set(&[a, b]), 120.0);
+    assert!(out.ago(21.0).is_empty(), "lit again");
+    out.note(30.0, &set(&[]), 120.0);
+    assert_eq!(out.ago(40.0).len(), 2);
+    out.note(151.0, &set(&[]), 120.0);
+    assert!(out.ago(151.0).is_empty(), "cooled and forgotten");
 }
 
 /// A village at work by day: the anvil ringing at the smithy, the mill wheel turning, logs

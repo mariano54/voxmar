@@ -186,11 +186,14 @@ pub enum Synth {
     /// Ice on frozen water settling as the night cools: a deep thoom and the eerie,
     /// falling "pew" of the sound running away through the sheet.
     IceSing,
+    /// Fired brick or hearthstone cooling after the fire is out: a few dry ticks, irregular,
+    /// now and then a small bright tink as it contracts.
+    Cooling,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 64] = [
+    pub const ALL: [Synth; 65] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -255,6 +258,7 @@ impl Synth {
         Synth::Coins,
         Synth::Churr,
         Synth::IceSing,
+        Synth::Cooling,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -360,6 +364,7 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Coins => coins(&mut noise),
         Synth::Churr => churr(&mut noise),
         Synth::IceSing => ice_sing(&mut noise),
+        Synth::Cooling => cooling(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -2063,6 +2068,30 @@ fn ice_sing(noise: &mut Noise) -> Vec<f32> {
             let frequency = to + (from - to) * (-local * fall).exp();
             gain * osc.next(frequency) * (local / 0.004).min(1.0) * (-local * 2.2).exp()
         });
+    }
+    out
+}
+
+/// Brick or stone cooling: three to seven dry ticks over a couple of seconds at uneven
+/// gaps, each a hair's click of a crack, and sometimes a small ringing tink among them.
+fn cooling(noise: &mut Noise) -> Vec<f32> {
+    let mut out = vec![0.0f32; seconds(2.8)];
+    let mut t = between(noise, 0.02, 0.1);
+    for _ in 0..3 + (noise.unit() * 5.0) as usize {
+        if t > 2.3 {
+            break;
+        }
+        let gain = between(noise, 0.25, 0.7);
+        crack(&mut out, noise, t, (0.0015, 0.004), (2200.0, 4200.0), gain);
+        if noise.unit() < 0.3 {
+            let ring = between(noise, 1800.0, 2800.0);
+            let mut osc = Osc::default();
+            add_at(&mut out, t + 0.002, seconds(0.25), |j| {
+                let local = j as f32 / SR;
+                0.18 * gain * osc.next(ring) * (-local * 22.0).exp()
+            });
+        }
+        t += between(noise, 0.12, 0.6);
     }
     out
 }
