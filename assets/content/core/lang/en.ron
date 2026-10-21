@@ -498,6 +498,7 @@
     "item.flame": "Set down, burns {left} of {days} game days",
     "item.flame.tended": "Tended inside a settlement: it never goes out there",
     "item.mend": "Mend with {item} at a {station}",
+    "tool.nearly_worn": "Your {item} is nearly worn out. {how} before it breaks.",
     "item.slot.charm": "Charm",
     "item.slot.empty": "Wear a piece here: Shift-click it, or drop it in",
     "item.weight.light": "Light",

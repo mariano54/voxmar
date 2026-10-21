@@ -34,11 +34,13 @@
             ],
         ),
         // A torch: a stick with a burning tip, to light the night. Its flame flickers, and
-        // the odd ember and wisp of smoke rise from it.
+        // the odd ember and wisp of smoke rise from it. Carried in hand it lights the way
+        // (`held_light:N`, a little less than set down) and burns nothing down: the steady
+        // light after the firebrand, which burns out in the hand.
         (
             name: "torch", render: Plant, solid: false, sound: Wood, textures: All("torch_lit"),
             light: 14, hardness: 0.0, color: (250, 180, 60), wall: "wall_torch",
-            tags: ["light", "fire", "firelighter", "kindles", "burns_days:1", "burns_out_to:torch_stub", "rain_douses", "gutters_to:torch_guttering", "tended"],
+            tags: ["light", "fire", "firelighter", "kindles", "held_light:12", "burns_days:1", "burns_out_to:torch_stub", "rain_douses", "gutters_to:torch_guttering", "tended"],
             particles: [
                 (style: Flame, rate: 26.0, at: (0.5, 0.78, 0.5), spread: 0.04, size: 1.6, height: 0.35, color: Some((240, 128, 20))),
                 (style: Ember, rate: 0.5, at: (0.5, 0.75, 0.5), spread: 0.04, size: 0.7, height: 2.0, color: Some((226, 84, 16))),

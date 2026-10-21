@@ -44,18 +44,19 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
-Seats are stools, chairs, rocking chairs, benches, settles, cushions and window seats; tables include desks
-and counters; storage is whatever a home keeps things in or on: chests, blanket chests,
-cupboards, dressers and wardrobes, stair cupboards, window seats, shelves (pot shelves,
-pantry shelves and bookshelves too), crate stacks, barrel racks, jars and baskets, and a
-village's barrels and crates (every store a player opens counts but the feed trough, which
-is the pen's: test `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step
-finds a Pantry made of a chest and a barrel by a campfire, "home: storage"); crockery is
-plates, bowls, jars, jugs, baskets and a dresser's plates on show; rugs include a rush mat
-(4 rushes, Crafting 1, a Nomad's first); cooking is the cottage stove and cauldron; workshop
-is the loom frame, spindle stand and quern. All are craftable in the first two ages
-(Construction 1 to 8, Crafting 1 to 8), so each step is a few minutes of gathering and
-crafting, not a grind.
+Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, footstools,
+cushions and window seats; tables include desks and counters; storage is whatever a home
+keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
+shelves, plate racks, spice racks, candle boxes, bread bins, bedside tables, stair
+cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves too), crate
+stacks, barrel racks, jars and baskets, and a village's barrels and crates (every store a player opens
+counts but the feed trough, which is the pen's: test
+`every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
+of a chest and a barrel by a campfire, "home: storage"); crockery is plates, bowls, jars,
+jugs, baskets and a dresser's plates on show; rugs include a rush mat (4 rushes, Crafting 1,
+a Nomad's first); cooking is the cottage stove and cauldron; workshop is the loom frame,
+spindle stand and quern. All are craftable in the first two ages (Construction 1 to 8,
+Crafting 1 to 8), so each step is a few minutes of gathering and crafting, not a grind.
 
 ## Warm, never hot
 
@@ -552,7 +553,9 @@ asks for one made and set down where it keeps tilled ground moist (`Watering`).
 
 Lit, the Homestead Hearth cooks what a campfire cooks: raw meat, fish or an egg in hand, a right
 click on the standing hearth (its ring and chimney whole, `station_stands`) cooks one, with an
-empty hand still lighting it. The Cottage Stove (Farm, five cobblestone round a campfire) is
+empty hand still lighting it. A stick held in it catches into a firebrand and a torch's stub
+lights again, as at any fire (cooking.ron's `hearth` recipes: the hearthstone itself is no
+`fire`). The Cottage Stove (Farm, five cobblestone round a campfire) is
 the campfire built in: it cooks the same, holds a cooking pot (`hob`), and warms and lights the
 room as a fire does (`heat`, `fire`, light 12, which survival.ron's `heat_emission` counts),
 smoking from its flue. So the home's own fire is where supper is made, and nobody keeps a
