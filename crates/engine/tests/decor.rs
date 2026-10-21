@@ -117,7 +117,7 @@ fn a_placed_piece_gives_itself_back_and_a_village_one_nothing() {
     }
 }
 
-/// Every recipe's own ingredients, laid out as the book and the lay button lay them, are
+/// Every recipe's own ingredients, laid out as the book shows them (`Recipe::cells`), are
 /// matched by a recipe with the same output: none is shadowed by another that takes the same
 /// things (six twine laid as a sack once made thatch, `tag:fibre`).
 #[test]

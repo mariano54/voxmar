@@ -196,7 +196,7 @@
     "skill.core.crafting.description": ("Making materials, cloth, leather and fine things.", "素材、布、革、細工物を作る。"),
     "skill.core.crafting.guide.0": ("Planks and sticks from logs; bricks and sandstone", "原木から板材と棒、レンガと砂岩"),
     "skill.core.crafting.guide.1": ("Mossy stonework", "苔むした石材"),
-    "skill.core.crafting.guide.2": ("Grain sacks and baskets woven of twine", "より糸で編む穀物袋とかご"),
+    "skill.core.crafting.guide.2": ("Grain sacks woven of twine", "より糸で編む穀物袋"),
     "skill.core.crafting.guide.3": ("Rope and twine from fibre (to come)", "繊維から縄とより糸（予定）"),
     "skill.core.crafting.guide.4": ("Wool cloth and beds (to come)", "毛織物とベッド（予定）"),
     "skill.core.crafting.guide.5": ("Leather from hides (to come)", "皮から革（予定）"),
