@@ -63,7 +63,7 @@
             side: true,
             why: "Logs stacked by the door keep dry and to hand. Three logs of one wood and two sticks make a woodpile (Construction 1), the logs held between two stakes. Set one down by your hearth, under your roof: with a settle beside it, that is a hearth corner, and the room is a little warmer for it.",
             tasks: [[Placed("tag:woodpile", 1)]],
-            after: ["charcoal"],
+            after: ["a_table_for_two"],
             rewards: [Xp("construction", 40.0)],
         ),
         (
