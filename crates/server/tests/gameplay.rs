@@ -54,6 +54,8 @@ struct Client {
     said: Vec<voxmar_engine::lang::Words>,
     /// Refusals received, in English.
     refused: Vec<String>,
+    /// The other players the server has named to us, until it says they left.
+    others: std::collections::HashMap<PlayerId, String>,
     /// The time of day and how fast it runs, as last told.
     day: Option<(u64, f32)>,
     /// The server's tick, as it last told (once a second): the clock waits are judged by.
@@ -320,6 +322,7 @@ impl Client {
             chat: Vec::new(),
             said: Vec::new(),
             refused: Vec::new(),
+            others: Default::default(),
             day: None,
             server_tick: 0,
             creatures: Default::default(),
@@ -533,6 +536,17 @@ impl Client {
                     self.items.remove(&gone.id);
                     if gone.collector == Some(self.id) {
                         self.collected.push(gone.id);
+                    }
+                }
+            }
+            ServerMessage::Players { seen, names, .. } => {
+                let named = seen.into_iter().filter_map(|view| Some((view.id, view.name?)));
+                for (id, name) in named.chain(names) {
+                    // A name told empty is one who left the server.
+                    if name.is_empty() {
+                        self.others.remove(&id);
+                    } else {
+                        self.others.insert(id, name);
                     }
                 }
             }
@@ -2002,10 +2016,16 @@ fn troughs_saved(dir: &std::path::Path, name: &str) -> Option<(u32, Vec<[i32; 3]
     Some((count, cells))
 }
 
-/// Waits, up to five of the server's seconds, for the save `name` left to read `want`.
-fn await_troughs(server: &mut Client, dir: &std::path::Path, name: &str, want: (u32, Vec<[i32; 3]>), why: &str) {
-    server.pump_ticks(5 * TICKS_PER_SECOND as u64, |_| troughs_saved(dir, name).as_ref() == Some(&want));
-    assert_eq!(troughs_saved(dir, name), Some(want), "{why}");
+/// Drops `leaver` and waits for the save they left: the server saves as one leaves, before
+/// telling the others they are gone, so once `watcher` is told it reads `want`.
+#[track_caller]
+fn leave_and_check_troughs(watcher: &mut Client, leaver: Client, dir: &std::path::Path, want: (u32, Vec<[i32; 3]>), why: &str) {
+    let (id, name) = (leaver.id, leaver.name.clone());
+    // Told of them first, or there is no leaving to be told of.
+    watcher.pump_until(|c| c.others.contains_key(&id));
+    drop(leaver);
+    watcher.pump_until(|c| !c.others.contains_key(&id));
+    assert_eq!(troughs_saved(dir, &name), Some(want), "{why}");
 }
 
 #[test]
@@ -2044,28 +2064,23 @@ fn a_placed_block_another_player_breaks_comes_off_its_owners_tally() {
     let mut ada = breaker.another("ada");
     let cell = place_a_trough(&mut ada);
     clear_cell(&mut breaker, cell);
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she played");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (0, vec![]), "broken while she played");
     // Ada away: Bob breaks it, and she finds it off her count when she comes back.
     let mut ada = breaker.another("ada");
     let cell = place_a_trough(&mut ada);
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (1, vec![cell.to_array()]), "set down, as she left");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (1, vec![cell.to_array()]), "set down, as she left");
     clear_cell(&mut breaker, cell);
     let ada = breaker.another("ada");
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she was away");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (0, vec![]), "broken while she was away");
     // Ada left dead: the same, as she comes back to life.
     let mut ada = breaker.another("ada");
     let cell = place_a_trough(&mut ada);
     ada.ok("/kill");
     ada.pump_until(|c| c.health == 0);
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (1, vec![cell.to_array()]), "set down, as she left dead");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (1, vec![cell.to_array()]), "set down, as she left dead");
     clear_cell(&mut breaker, cell);
     let ada = breaker.another("ada");
-    drop(ada);
-    await_troughs(&mut breaker, &dir, "ada", (0, vec![]), "broken while she lay dead away");
+    leave_and_check_troughs(&mut breaker, ada, &dir, (0, vec![]), "broken while she lay dead away");
     drop(breaker);
     std::fs::remove_dir_all(&dir).unwrap();
 }
@@ -6604,14 +6619,20 @@ fn wait_server(client: &mut Client, seconds: u64) {
 /// looks only at land the server holds).
 #[track_caller]
 fn machine_says(client: &mut Client, at: &str, want: &str, seconds: u64) -> String {
+    machine_shows(client, at, want, seconds, |said| said.contains(want))
+}
+
+/// As `machine_says`, until what `/machine` says passes `shows` (described as `what`).
+#[track_caller]
+fn machine_shows(client: &mut Client, at: &str, what: &str, seconds: u64, shows: impl Fn(&str) -> bool) -> String {
     client.land_round();
     let started = client.server_tick;
     loop {
         let said = client.ok(&format!("/machine {at}"));
-        if said.contains(want) {
+        if shows(&said) {
             return said;
         }
-        assert!(server_seconds(client, started) < seconds, "/machine {at} never said `{want}`: {said}");
+        assert!(server_seconds(client, started) < seconds, "/machine {at} never said `{what}`: {said}");
         wait_server(client, 1);
     }
 }
@@ -8053,8 +8074,10 @@ fn an_hv_hall_runs_a_processing_array_and_an_induction_smelter_on_one_cable() {
         part.strip_prefix("at ").and_then(|p| p.strip_suffix("% power")).or_else(|| part.strip_suffix("% done"))
             .and_then(|n| n.parse::<f32>().ok()).is_some_and(|n| n > 0.0)
     });
-    assert!(powered(&machine_says(&mut client, &at(array), "making", 20)));
-    assert!(powered(&machine_says(&mut client, &at(smelter), "making", 20)));
+    // Until each says it is powered: one look can come as it starts an item, at 0% done.
+    for target in [array, smelter] {
+        machine_shows(&mut client, &at(target), "making, powered", 20, |said| said.contains("making") && powered(said));
+    }
 }
 
 // A fresh survival player's first day, played with legitimate actions only and timed by the
