@@ -78,6 +78,8 @@ pub enum Pose {
     Attacking,
     /// Crouched low: stalking, or about to pounce.
     Crouched,
+    /// Warning a player off before it attacks (`Warn`): in its warning stance, facing them.
+    Warning,
 }
 
 /// A player as a creature sees them.
@@ -249,6 +251,18 @@ pub enum Memory {
     Startled,
 }
 
+/// Seconds a creature has warned (`Warn`), and seconds since it last did: past
+/// `WARN_LAPSE` without warning, the warning is over and any next starts afresh.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Warning {
+    pub seconds: f32,
+    pub lapse: f32,
+}
+
+/// Seconds a warning holds over decisions spent on anything else (a step out of sight, a
+/// look about), so it neither flickers nor starts over.
+pub const WARN_LAPSE: f32 = 0.5;
+
 /// A creature's state of mind, kept between decisions.
 #[derive(Clone, Debug)]
 pub struct Mind {
@@ -271,6 +285,8 @@ pub struct Mind {
     /// Seconds left of circling its target between blows (`Attack::circle`), counted from
     /// the end of its recovery (held till then, it does not think).
     pub circling: f32,
+    /// A warning it is giving (`Warn`): one clock for whoever it warns.
+    pub warning: Option<Warning>,
     /// Zigzag side when fleeing, and other modules' small counters.
     pub zig: f32,
     /// Where it was startled with no one to blame (a snare it slipped): while it recalls
@@ -305,6 +321,7 @@ impl Mind {
             pause: 0.0,
             cooldown: 0.0,
             circling: 0.0,
+            warning: None,
             seed,
             zig: 1.0,
             startled_at: None,
@@ -368,6 +385,14 @@ impl Mind {
         if creature.def.boss || !self.recalls(Memory::NoWay) {
             self.memories.retain(|(m, _)| !matches!(m, Memory::GaveUp | Memory::Homeward));
         }
+    }
+
+    /// A player it warned off (`Warn`) stayed: it goes for them as if they had struck it,
+    /// held against them as a blow would be, though nothing hurt it.
+    pub fn provoked(&mut self, by: u32) {
+        self.warning = None;
+        self.anger = 1.0;
+        self.remember(Memory::HurtBy(by), HURT_REMEMBERED);
     }
 
     /// Gives up the chase: its anger and grudges go, for `GAVE_UP` seconds it hunts no one
@@ -548,6 +573,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     let Some(top) = wants.iter().map(|w| w.1).max() else {
         let pose = modules::resting_pose(&ctx);
         mind.doing = None;
+        lapse_warning(mind, dt);
         return Decision { pose, ..Default::default() };
     };
     let band: Vec<&(usize, Band, Want)> = wants.iter().filter(|w| w.1 == top).collect();
@@ -580,11 +606,30 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     if let Some(p) = taking {
         return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
     }
+    let warns = creature.modules[index].0.name() == "warn";
+    if !warns {
+        lapse_warning(mind, dt);
+    }
     let ctx = Ctx { creature, mind: &mind.clone(), at, lively, sight };
     let mut decision = creature.modules[index].0.act(&ctx, mind, want.target, fresh);
+    // Provoked by its warning, it goes for them in this same decision.
+    if warns && mind.warning.is_none() && mind.anger > 0.0 {
+        mind.doing = None;
+        return think(creature, mind, &Situation { dt: 0.0, ..*at });
+    }
     decision.speed *= mind.personality.pace();
     decision.target = want.target.map(|p| p.id);
     decision
+}
+
+/// Doing anything but warn, a warning lapses (`WARN_LAPSE`).
+fn lapse_warning(mind: &mut Mind, dt: f32) {
+    if let Some(warning) = &mut mind.warning {
+        warning.lapse += dt;
+        if warning.lapse > WARN_LAPSE {
+            mind.warning = None;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -781,6 +826,179 @@ pub(super) mod tests {
         mind.hurt(&boar, Some(1), 0.9);
         let decision = think(&boar, &mut mind, &situation(&near));
         assert_eq!((doing(&boar, &mind), decision.attack), ("defend", Some(1)));
+    }
+
+    /// A hunter that warns stands and warns a player its hunt would go for rather than
+    /// going straight for them; they stay its `seconds` and it goes for them, its hunt
+    /// taking over in that same decision. A decision spent on anything else does not start
+    /// the warning over; backed off for longer, they are let be, and a later warning starts
+    /// afresh. One who steps within `near` provokes it at once; a blow, as ever. Holding its
+    /// food changes nothing: its chase outranked the food before.
+    #[test]
+    fn a_warning_hunter_warns_then_goes_for_one_who_stays() {
+        let wolf = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (near: 3.0, seconds: 1.0, stance: (nod: 0.4)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 16.0))])])"
+        ));
+        let at = [player(Vec3::new(6.0, 0.0, 0.0))];
+        let tempting = [Seen { tempting: true, ..at[0] }];
+        for at in [&at, &tempting] {
+            let mut mind = Mind::new(&wolf.def.temperament, 2);
+            // dt 0.2: five looks warn, the sixth runs out its second.
+            for _ in 0..5 {
+                let decision = think(&wolf, &mut mind, &situation(at));
+                assert_eq!((doing(&wolf, &mind), decision.pose, decision.goal, decision.face), ("warn", Pose::Warning, None, Some(at[0].position)));
+            }
+            let decision = think(&wolf, &mut mind, &situation(at));
+            assert_eq!((mind.attacker(), mind.anger, doing(&wolf, &mind)), (Some(1), 1.0, "hunt"), "it stayed: provoked, and hunting at once");
+            assert_eq!((decision.goal, decision.pose), (Some(at[0].position), Pose::Idle), "and goes for them");
+        }
+
+        // One it does not see, beyond close range and unhurt, it has not noticed and leaves
+        // alone: it warns the farther one who stands in sight, and goes for them alone.
+        let hidden = [Seen { in_view: false, ..at[0] }, Seen { id: 2, position: Vec3::new(8.0, 0.0, 0.0), ..at[0] }];
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        for _ in 0..5 {
+            let decision = think(&wolf, &mut mind, &situation(&hidden));
+            assert_eq!(
+                (doing(&wolf, &mind), decision.pose, decision.goal, decision.face, decision.attack, mind.attacker()),
+                ("warn", Pose::Warning, None, Some(hidden[1].position), None, None),
+                "the seen one at 8 warned, the unseen one at 6 not hunted"
+            );
+        }
+        let decision = think(&wolf, &mut mind, &situation(&hidden));
+        assert_eq!((mind.attacker(), doing(&wolf, &mind), decision.goal), (Some(2), "hunt", Some(hidden[1].position)), "the warned one stayed: it goes for them, not the unseen one");
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let _ = think(&wolf, &mut mind, &Situation { kept: true, ..situation(&at) });
+        assert_eq!(doing(&wolf, &mind), "warn", "kept, it hunts as before, with its warning");
+
+        // Hunting near and far (a mod's kind), it warns as far as its widest hunt.
+        let pack = species(&format!(
+            "(creatures: [(name: \"wolf\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (near: 3.0, seconds: 1.0, stance: (nod: 0.4)), temperament: (aggression: 0.9), behaviours: [(do: Hunt(radius: 8.0)), (do: Hunt(radius: 16.0))])])"
+        ));
+        let mut mind = Mind::new(&pack.def.temperament, 2);
+        let _ = think(&pack, &mut mind, &situation(&[player(Vec3::new(12.0, 0.0, 0.0))]));
+        assert_eq!(doing(&pack, &mind), "warn", "past its near hunt, within its far one");
+
+        // Backed off out of its reach, they are let be; come back, the warning starts again.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        for _ in 0..4 {
+            let _ = think(&wolf, &mut mind, &situation(&at));
+        }
+        let away = [player(Vec3::new(40.0, 0.0, 0.0))];
+        for _ in 0..3 {
+            let _ = think(&wolf, &mut mind, &situation(&away));
+            assert_ne!(doing(&wolf, &mind), "hunt");
+        }
+        assert_eq!((mind.warning, mind.attacker()), (None, None), "let be");
+        for _ in 0..5 {
+            let _ = think(&wolf, &mut mind, &situation(&at));
+            assert_eq!(doing(&wolf, &mind), "warn", "warned afresh");
+        }
+
+        // Stepping within `near`, at once.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let close = [player(Vec3::new(1.0, 0.0, 0.0))];
+        let decision = think(&wolf, &mut mind, &situation(&close));
+        assert_eq!((mind.attacker(), decision.attack), (Some(1), Some(1)), "too close: it strikes");
+        // A player it would leave be, it does not warn either.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        let _ = think(&wolf, &mut mind, &situation(&[Seen { combat_level: 12, ..at[0] }]));
+        assert_eq!(doing(&wolf, &mind), "nothing");
+        // Struck, no warning: it fights.
+        let mut mind = Mind::new(&wolf.def.temperament, 2);
+        mind.hurt(&wolf, Some(1), 0.9);
+        let _ = think(&wolf, &mut mind, &situation(&at));
+        assert_eq!(doing(&wolf, &mind), "hunt");
+    }
+
+    /// One that only defends itself and warns (a badger) warns a player it sees within its
+    /// radius, and once provoked defends its ground in that same decision. One who steps a
+    /// little past the radius is still warned (`WARN_EXIT`), so the edge does not flicker;
+    /// further, and they are let be. One out of its sight, or holding the food that tempts
+    /// it, it does not warn: the food leads it as before.
+    #[test]
+    fn a_defender_that_warns_defends_its_ground() {
+        let badger = species(&format!(
+            "(creatures: [(name: \"badger\", health: 10, {BODY}, attack: (damage: (1, 2)), warn: (radius: 5.0, near: 1.5, seconds: 0.6), temperament: (fear: 0.2), behaviours: [(do: Wander(radius: 6.0)), (do: Tempted(radius: 10.0)), (do: Defend)])])"
+        ));
+        let at = [player(Vec3::new(3.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&badger.def.temperament, 3);
+        for _ in 0..3 {
+            let decision = think(&badger, &mut mind, &situation(&at));
+            assert_eq!((doing(&badger, &mind), decision.pose), ("warn", Pose::Warning));
+        }
+        let _ = think(&badger, &mut mind, &situation(&at));
+        assert_eq!((doing(&badger, &mind), mind.attacker()), ("defend", Some(1)));
+
+        // One decision away (out of sight) keeps the warning's clock.
+        let mut mind = Mind::new(&badger.def.temperament, 3);
+        let hidden = [Seen { in_view: false, ..at[0] }];
+        for _ in 0..2 {
+            let _ = think(&badger, &mut mind, &situation(&at));
+        }
+        let _ = think(&badger, &mut mind, &situation(&hidden));
+        assert!(mind.warning.is_some(), "a moment out of sight starts nothing over");
+        let _ = think(&badger, &mut mind, &situation(&at));
+        assert_eq!(doing(&badger, &mind), "warn");
+        let _ = think(&badger, &mut mind, &situation(&at));
+        assert_eq!(doing(&badger, &mind), "defend", "its seconds ran out, the moment away not counted");
+
+        // A step past the edge, still warned; well past it, let be.
+        let mut mind = Mind::new(&badger.def.temperament, 3);
+        let _ = think(&badger, &mut mind, &situation(&at));
+        let _ = think(&badger, &mut mind, &situation(&[player(Vec3::new(6.0, 0.0, 0.0))]));
+        assert_eq!(doing(&badger, &mind), "warn", "a step past the edge");
+        let _ = think(&badger, &mut mind, &situation(&[player(Vec3::new(7.0, 0.0, 0.0))]));
+        assert_ne!(doing(&badger, &mind), "warn", "well past it");
+        assert_eq!(mind.attacker(), None);
+
+        // Out of its sight, or tempting it, no warning; the tempted one follows the food.
+        for (seen, doing_now) in [(Seen { in_view: false, ..at[0] }, None), (Seen { tempting: true, ..at[0] }, Some("tempted"))] {
+            let mut mind = Mind::new(&badger.def.temperament, 3);
+            for _ in 0..6 {
+                let _ = think(&badger, &mut mind, &situation(&[seen]));
+                assert_ne!(doing(&badger, &mind), "warn", "{seen:?}");
+                if let Some(doing_now) = doing_now {
+                    assert_eq!(doing(&badger, &mind), doing_now);
+                }
+            }
+            assert_eq!(mind.attacker(), None);
+        }
+        // Kept, it warns no one.
+        let mut mind = Mind::new(&badger.def.temperament, 3);
+        let _ = think(&badger, &mut mind, &Situation { kept: true, ..situation(&at) });
+        assert_ne!(doing(&badger, &mind), "warn");
+    }
+
+    /// What `warn` may say is checked at load: an attack to follow it, no boss, a radius
+    /// only for one that does not hunt, and each number in its range.
+    #[test]
+    fn warnings_out_of_range_are_refused() {
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        let defends = "attack: (damage: (1, 2)), behaviours: [(do: Defend)]";
+        let hunts = "attack: (damage: (1, 2)), behaviours: [(do: Hunt(radius: 10.0))]";
+        assert_eq!(build(&format!("{defends}, warn: (radius: 5.0, near: 1.5, seconds: 0.6)")), Ok(()));
+        assert_eq!(build(&format!("{hunts}, warn: (near: 3.0, seconds: 1.5)")), Ok(()));
+        for (creature, refused) in [
+            ("warn: (radius: 5.0, near: 1.5, seconds: 0.6)".to_owned(), "no `attack`"),
+            (format!("boss: true, {defends}, warn: (radius: 5.0, near: 1.5, seconds: 0.6)"), "a boss warns no one"),
+            (format!("{hunts}, warn: (radius: 8.0, near: 3.0, seconds: 1.5)"), "no `radius`"),
+            (format!("{defends}, warn: (near: 1.5, seconds: 0.6)"), "needs a `radius`"),
+            (format!("{defends}, warn: (radius: 5.0, near: 4.5, seconds: 0.6)"), "near 0.5"),
+            (format!("{defends}, warn: (radius: 5.0, near: 6.0, seconds: 0.6)"), "near 0.5"),
+            (format!("{defends}, warn: (radius: 1.0, near: 0.5, seconds: 0.6)"), "radius 2"),
+            (format!("{defends}, warn: (radius: 20.0, near: 1.5, seconds: 0.6)"), "radius 2"),
+            (format!("{defends}, warn: (radius: 5.0, near: 1.5, seconds: 0.0)"), "seconds 0.5"),
+            (format!("{defends}, warn: (radius: 5.0, near: 1.5, seconds: -1.0)"), "seconds 0.5"),
+            (format!("{defends}, warn: (radius: 5.0, near: 1.5, seconds: 5.0)"), "seconds 0.5"),
+            (format!("{defends}, warn: (radius: 5.0, near: 1.5, seconds: 0.6, stance: (rear: 1.5))"), "stance 0 to 1"),
+        ] {
+            let built = build(&creature);
+            assert!(built.as_ref().is_err_and(|e| e.contains(refused)), "{creature}: {built:?}");
+        }
     }
 
     #[test]
