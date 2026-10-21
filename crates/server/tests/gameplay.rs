@@ -3896,6 +3896,7 @@ fn a_settlement_come_back_to_holds_its_people_once() {
         before = now;
     }
     assert!(settled, "the people never held still: {before:?}");
+    let seen_before: Vec<String> = villagers(&client).iter().map(|v| format!("{} {} {:?} at {:.1}", species_name(&client, v), v.seed, v.pose, v.position)).collect();
     // Away past `release` (well inside `forget`): the server lets them go.
     let far = client.position + Vec3::new(400.0, 0.0, 0.0);
     client.ok(&format!("/tp {} {}", far.x as i32, far.z as i32));
@@ -3911,7 +3912,8 @@ fn a_settlement_come_back_to_holds_its_people_once() {
             once.dedup();
             assert_eq!(&once, seeds, "{species} twice over: {seeds:?}");
         }
-        assert_eq!(after, before, "the people came back other than they were");
+        let seen_after: Vec<String> = villagers(&client).iter().map(|v| format!("{} {} {:?} at {:.1}", species_name(&client, v), v.seed, v.pose, v.position)).collect();
+        assert_eq!(after, before, "the people came back other than they were: before {seen_before:?}, after {seen_after:?}");
     }
 }
 
@@ -3979,8 +3981,13 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
         let mut said = String::new();
         for _ in 0..60 {
             said = client.ok("/creatures people");
-            // Read from the server's words, not from any language's rendering of them.
-            let Some(Words::Key(_, args)) = client.said.first().cloned() else { panic!("/creatures people: {said}") };
+            // Read from the server's words, not from any language's rendering of them, and
+            // from its answer, not whatever else came first.
+            let answer = client.said.iter().find_map(|w| match w {
+                Words::Key(key, args) if key == "command.creatures.people" => Some(args.clone()),
+                _ => None,
+            });
+            let Some(args) = answer else { panic!("/creatures people: {said}") };
             let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
             let number = |name: &str| match arg(name) {
                 Some(Words::Text(n)) => n.parse::<usize>().ok(),
@@ -3994,13 +4001,17 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
                 && out == due
                 && due > 0
             {
-                client.pump_ticks(10 * TICKS_PER_SECOND as u64, |c| seen.iter().all(|id| c.creatures.contains_key(id)));
-                assert!(seen.iter().all(|id| client.creatures.contains_key(id)), "the server told of people in sight the client never heard of: {said}");
-                return kind(client);
+                // Everyone the server named, held; someone who walked out of sight since
+                // is asked about again.
+                client.pump_ticks(2 * TICKS_PER_SECOND as u64, |c| seen.iter().all(|id| c.creatures.contains_key(id)));
+                if seen.iter().all(|id| client.creatures.contains_key(id)) {
+                    return kind(client);
+                }
+                continue;
             }
             client.pump_ticks(TICKS_PER_SECOND as u64 / 2, |_| false);
         }
-        panic!("the settlement's people never all came out: {said}");
+        panic!("the settlement's people never all came out and were all held: {said}");
     };
     let housemates = settle(&mut client);
     assert!(housemates.contains(&victim.seed), "the {name} asleep was not among those in sight");
@@ -4064,8 +4075,18 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     client.ok(&format!("/tp {} {} {}", at.x, at.y, at.z));
     client.ok(&format!("/tp bystander {} {} {}", at.x, at.y, at.z));
     bystander.pump_until(|c| c.teleported.is_some() && c.health > 0);
+    let (blows_before, refused_before, started) = (client.damage.len(), client.refused.len(), client.server_tick);
     strike_until(&mut client, villager.id, 10, |c| c.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health));
-    assert!(client.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health), "no blow landed on the villager");
+    let now = client.creatures.get(&villager.id).map(|v| format!("{} health {} at {:.1} {:?} ({:.1} off)", species_name(&client, v), v.health, v.position, v.pose, v.position.distance(client.position)));
+    assert!(
+        client.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health),
+        "no blow landed on the villager {} in {} ticks: now {now:?}; our blows {:?}; refused {:?}; the player at {:.1}",
+        villager.id,
+        client.server_tick - started,
+        &client.damage[blows_before..],
+        &client.refused[refused_before..],
+        client.position
+    );
     // Step beside the called guard without striking it. This checks whom the alarm
     // selects; the blocked-route and give-up test checks an unreachable quarry.
     let at = client.creatures[&guard.id].position;
@@ -4076,7 +4097,8 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     let struck_by_a_guard = |c: &Client| c.hurt[hurt_before..].iter().any(|&(damage, _)| damage > 0) && guards(c).iter().any(|g| g.position.distance(c.position) < 3.0);
     client.pump_ticks(20 * TICKS_PER_SECOND as u64, struck_by_a_guard);
     let hit = struck_by_a_guard(&client);
-    assert!(hit, "no called guard struck a reachable quarry in 20 seconds");
+    let seen: Vec<String> = guards(&client).iter().map(|g| format!("{} at {:.1} {:?} ({:.1} off)", g.id, g.position, g.pose, g.position.distance(client.position))).collect();
+    assert!(hit, "no called guard struck a reachable quarry in 20 seconds: the player at {:.1}, hurt {:?}; guards {seen:?} (called {})", client.position, &client.hurt[hurt_before..], guard.id);
     // The bystander, the while and a few seconds more.
     client.pump_ticks(5 * TICKS_PER_SECOND as u64, |_| false);
     bystander.drain();

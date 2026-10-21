@@ -475,6 +475,39 @@ pub struct Senses {
     pub keep: f32,
 }
 
+/// How one of a settlement's people barks (`Server::bark`): heard by players within
+/// `range` blocks who see them, each bark to the same player no more than once in `every`
+/// seconds (a greeting, an alarm and a sigh each keep their own).
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Barking {
+    pub range: f32,
+    pub every: f32,
+}
+
+/// The farthest, in blocks, a bark carries.
+pub const MOST_BARK_RANGE: f32 = 64.0;
+/// The longest, in seconds, between one bark and the same again to the same player.
+pub const MOST_BARK_EVERY: f32 = 600.0;
+
+impl Default for Barking {
+    fn default() -> Self {
+        Self { range: 24.0, every: 6.0 }
+    }
+}
+
+impl Barking {
+    pub fn check(&self) -> Result<(), String> {
+        if !(self.range >= 1.0 && self.range <= MOST_BARK_RANGE) {
+            return Err(format!("`barking.range` is from 1 to {MOST_BARK_RANGE} blocks, not {}", self.range));
+        }
+        if !(self.every.is_finite() && (0.0..=MOST_BARK_EVERY).contains(&self.every)) {
+            return Err(format!("`barking.every` is from 0 to {MOST_BARK_EVERY} seconds, not {}", self.every));
+        }
+        Ok(())
+    }
+}
+
 impl Default for Senses {
     fn default() -> Self {
         Self { sight: 16.0, hearing: 12.0, field: 180.0, close: 3.0, react: 0.0, keep: 10.0 }
@@ -716,6 +749,9 @@ pub struct CreatureDef {
     pub temperament: Temperament,
     #[serde(default)]
     pub senses: Senses,
+    /// How far its barks carry and how often it makes one to the same player.
+    #[serde(default)]
+    pub barking: Barking,
     /// How far from home it roams before turning back, in blocks.
     #[serde(default = "leash")]
     pub leash: f32,
@@ -1218,6 +1254,7 @@ impl CreatureRegistry {
             }
             def.death.check().map_err(error)?;
             def.senses.check().map_err(error)?;
+            def.barking.check().map_err(error)?;
             if def.flees_below.is_some_and(|f| !(0.0..=1.0).contains(&f)) {
                 return Err(error(format!("`flees_below` is a share of its health, 0 to 1, not {:?}", def.flees_below)));
             }
@@ -1433,6 +1470,23 @@ mod tests {
     use super::*;
     use crate::block::BlockDef;
     use crate::content::Settable;
+
+    /// Barking in range passes; a range or wait out of it on either side is refused.
+    #[test]
+    fn barking_out_of_range_is_refused() {
+        let good = Barking::default();
+        assert!(good.check().is_ok());
+        let broken = [
+            Barking { range: 0.5, ..good },
+            Barking { range: MOST_BARK_RANGE + 1.0, ..good },
+            Barking { every: -1.0, ..good },
+            Barking { every: MOST_BARK_EVERY + 1.0, ..good },
+            Barking { every: f32::NAN, ..good },
+        ];
+        for b in broken {
+            assert!(b.check().is_err_and(|e| e.contains("barking")), "{b:?} was let through");
+        }
+    }
 
     /// A circle in range passes; each number out of its range on either side is refused,
     /// naming `circle`.
