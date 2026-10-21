@@ -4130,15 +4130,17 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     // This checks whom the alarm calls the guards to, not a novice's fist: one that lands
     // a third of its blows, at part strength when the clock bunches them under load, now
     // and then hurt no one in all of its ten seconds. A practised fist lands nearly every
-    // blow and kills no grown villager in one (its max hit 8 against their 12; a sword
+    // blow and kills no grown villager in one (at most 10 against their 12; a sword
     // did).
     client.ok("/skill attack 60");
     let guards = |c: &Client| -> Vec<voxmar_protocol::CreatureView> { villagers(c).into_iter().filter(|v| species_name(c, v) == "base:guard").collect() };
     // The closest pair, with a stable tie-break: hash-map order used to pick a distant
     // worker whose guard had no way through the intervening buildings.
-    // Grown folk only: one the practised fist (max hit 8) cannot kill in one blow, so it is
-    // seen hurt.
-    let pick = |c: &Client| villagers(c).into_iter().filter(|v| species_name(c, v) != "base:guard" && c.content.creatures.get(v.species).def.health > 8)
+    // Grown folk only: one the practised fist cannot kill in one blow, so it is seen hurt.
+    // Its max hit at Attack 60 is 8 (1, and one for every eight levels above the first),
+    // and a flourish (the one bonus for a player who neither blocks nor falls: 20%) raises a
+    // blow to at most 10.
+    let pick = |c: &Client| villagers(c).into_iter().filter(|v| species_name(c, v) != "base:guard" && c.content.creatures.get(v.species).def.health > 10)
         .flat_map(|v| guards(c).into_iter().map(move |g| { let d = g.position.distance(v.position); (v.clone(), g, d) }))
         .filter(|(_, _, d)| *d < 30.0)
         .min_by(|a, b| a.2.total_cmp(&b.2).then(a.0.id.cmp(&b.0.id)).then(a.1.id.cmp(&b.1.id)));

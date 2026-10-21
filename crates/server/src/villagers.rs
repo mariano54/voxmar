@@ -1519,6 +1519,7 @@ mod tests {
             server.creatures.live.get_mut(&ids[1]).unwrap().body.position = at;
             server.tick += ticks(react.chat_every) + 1;
             assert!(!server.talk(ids[0], 1, 0, at, &never, true), "talked with a chat of 0");
+            assert!(server.talk(ids[0], 1, 0, at, &react, true), "side by side with the real settings, no talk");
         }
     }
 
