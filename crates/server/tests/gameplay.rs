@@ -9934,9 +9934,14 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // Load's four were given, not shaped), then twelve tempered, two from four fired clay
     // and a straw at the table. What is left when it is spent waits for the charcoal.
     // Earthenware, open since The Potter: two bowls and a jar of fired clay in the grid
-    // (Crafting 2 and 3).
-    let bowls = |f: &mut Fresh| f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
+    // (Crafting 2 and 3), at the table: between loads the player may be off digging clay.
+    let table = site.table;
+    let bowls = |f: &mut Fresh| {
+        f.at_table(table);
+        f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
+    };
     let jar = |f: &mut Fresh| {
+        f.at_table(table);
         f.craft(&[(1, fired, 1), (3, fired, 1), (4, fired, 1)], "base:earthen_jar", 1);
         f.wait(5.0, "the server counting the crockery", |c| quest_status(c, "earthenware").0);
     };
