@@ -155,10 +155,12 @@
             name: "wooden_door_open_top", render: Model, shape: "door_open", facing: true, solid: false, support: Below, sound: Wood, textures: All("oak_planks"),
             swaps: "wooden_door_top", drops: "core:air", hardness: 1.5, color: (150, 110, 65), tags: ["door", "door_open", "wood", "building"],
         ),
-        // A bale of straw, tied in two places.
+        // A bale of straw, tied in two places: nine straw bound (recipes.ron). One a player
+        // set down comes apart into the nine when broken (no recipe unbinds it, so straw
+        // stays a thing only a harvest gives); a village's gives nothing (`furnishing`).
         (
             name: "hay_bale", sound: Grass, textures: Column(end: "hay_bale_top", side: "hay_bale_side"),
-            drops: "core:air", hardness: 0.5, color: (200, 170, 70), tags: ["creative_only", "hay", "farm", "decor", "yard", "building", "shelter:draughty"],
+            drops: "straw", drop_count: 9, hardness: 0.5, color: (200, 170, 70), tags: ["hay", "farm", "decor", "yard", "building", "shelter:draughty", "furnishing"],
         ),
         // A barrel of staves held by two iron hoops.
         (
