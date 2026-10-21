@@ -381,6 +381,7 @@
     "block.base.{name}_stool": "{name} Stool",
     "block.base.{name}_chair": "{name} Chair",
     "block.base.{name}_bench": "{name} Bench",
+    "block.base.{name}_log_bench": "{name} Log Bench",
     "block.base.{name}_table": "{name} Table",
     "block.base.{name}_bed": "{name} Bed",
     "block.base.{name}_shelf": "{name} Shelf",

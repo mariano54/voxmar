@@ -1156,12 +1156,13 @@ fn a_village_hay_bale_gives_nothing_but_a_players_breaks_into_nine_straw_across_
     furnishing_drops_across_restarts("hay-bale", "hay_bale", "straw", 9);
 }
 
-/// Every village prop (settlements.ron's furnishings) that a player's own copy breaks into
-/// something gives nothing where the world set it: each is set as a village sets it and
-/// broken, and nothing of what it drops comes to hand or lies loose.
+/// Every village prop (settlements.ron's furnishings, and the furnishings its `blocks` props
+/// are made of) that a player's own copy breaks into something gives nothing where the
+/// world set it: each is set as a village sets it and broken, and nothing of what it drops
+/// comes to hand or lies loose.
 #[test]
 fn village_props_set_by_the_world_give_nothing() {
-    use voxmar_worldgen::{Select, WorldContent};
+    use voxmar_worldgen::{Select, SettlementPropKind, WorldContent};
     let mut client = Client::join();
     let world = WorldContent::load(&client.content).expect("world content");
     let f = &world.settlements.furnishings;
@@ -1175,6 +1176,12 @@ fn village_props_set_by_the_world_give_nothing() {
             }
         }
     }
+    // The furnishings a package's own props are made of (the log bench) too.
+    for prop in &world.settlements.props {
+        if let SettlementPropKind::Blocks(_, cells) = &prop.kind {
+            props.extend(cells.iter().map(|(_, name)| blocks.expect(name)).filter(|&id| blocks.def(id).has_tag("furnishing")));
+        }
+    }
     props.sort();
     props.dedup();
     let giving: Vec<(String, BlockId)> = props
@@ -1183,6 +1190,7 @@ fn village_props_set_by_the_world_give_nothing() {
         .map(|id| (blocks.def(id).name.trim_start_matches("base:").to_owned(), blocks.info(id).drops))
         .collect();
     assert!(giving.iter().any(|(name, _)| name == "hay_bale"), "no village prop gives anything: {giving:?}");
+    assert!(giving.iter().any(|(name, _)| name == "oak_log_bench"), "the log bench is not among the props: {giving:?}");
     let spot = client.position.floor().as_ivec3() + IVec3::new(1, 0, 1);
     for line in ["/clear", "/fill ~1 ~-1 ~1 ~1 ~-1 ~1 stone", "/fill ~1 ~ ~1 ~1 ~1 ~1 air"] {
         client.ok(line);

@@ -930,6 +930,23 @@ fn plans_keep_to_their_squares_and_rules() {
     assert!(chapels > 0 && shrines > 0, "{chapels} chapels and {shrines} shrines to look in");
 }
 
+/// A village's log bench is the shaped piece a player makes at home, two set end to end
+/// along the lane, not two stripped logs standing: what a village builds is what a home
+/// can have.
+#[test]
+fn a_village_log_bench_is_the_piece_a_player_makes() {
+    use super::def::PropKind;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let bench = world_content.settlements.props.iter().find(|p| p.kind.label() == "log_bench").expect("villages build log benches");
+    let PropKind::Blocks(_, blocks) = &bench.kind else { panic!("the log bench is a package's prop of blocks") };
+    let placed: Vec<(IVec3, &str)> = blocks.iter().map(|(at, name)| (*at, name.as_str())).collect();
+    assert_eq!(placed, [(IVec3::new(0, 1, 0), "base:oak_log_bench"), (IVec3::new(1, 1, 0), "base:oak_log_bench")]);
+    let piece = content.blocks.expect("base:oak_log_bench");
+    assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the bench a village builds");
+}
+
 /// The settlements of a few squares, held fixed: a change to planning that moves a single
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
