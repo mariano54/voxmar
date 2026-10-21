@@ -157,7 +157,8 @@ placed it, and a multiblock counts towards `built:` quests once per standing str
 
 Fuels: the last entry in `fuels` naming an item says how long it burns, else the last tag
 taking it, so a tag never shortens an item's own entry and a later package can change any of
-them.
+them. Every survival item a fuel entry takes is tagged `fuel` (refused at load otherwise), so
+a store keeping `tag:fuel` takes whatever a fire burns.
 
 Fuel heat. Each fuel has a `heat` (1 when unsaid; 0 is refused): logs and planks 1, firewood
 and charred wood 2, coal, charcoal and coke 3. A machine or multiblock with a `heat` takes

@@ -43,7 +43,9 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Plate rack | `<wood>_plate_rack` (furnishings) | a post at each end, a low ledge and a front rail on the wall, showing the four things stood on its ledge (a store of 4 slots, `shows`) | faces the placer, its back to the wall | 2 planks and 4 sticks (3) |
 | Bedside and chair | `<wood>_bedside_table`, `<wood>_footstool`, `<wood>_spice_rack` (furnishings) | a little table on four legs with a drawer, showing the two things stood on its top (a store of 2, `shows`); a low footstool, its top woven of rushes (a seat); a back board, ledge and rail on the wall that keeps only herbs and shows the three in it (a store of 3, holds `tag:herb`) | the table and rack face the placer, the rack its back to the wall | a stool and a plank (3); a stool and 2 rushes (2); a plank and 2 sticks (2) |
 | By the hearth | `<wood>_candle_box`, `<wood>_bread_bin`, `<wood>_kindling_box` (furnishings) | an open box with a low front on a back board on the wall that keeps only candles and shows the two standing in it (a store of 2, holds `tag:candle`); a box on the floor under a lid with a knob, keeping the loaves under it (a store of 4, holds `tag:baked`); an open box on the floor, its front lower than its back, keeping only what burns and showing the top two things in it (a store of 4, holds `tag:fuel`) | all face the placer, the candle box its back to the wall | a slab and a plank (2); 3 planks and a slab (2); 2 planks and a slab (2) |
-| Fisher's net | `fishing_net` (furnishing) | a net with cork floats hung to dry from the block above, as a fisher's cottage hangs one; given back whole where a player hung it, nothing where a village did | hangs from the block above | 4 twine and a stick (Crafting 3) |
+| Grain sack | `sack` (furnishing) | a sack of grain with its neck tied off, as a village's farmers and millers keep; a store of 4 that holds only `tag:grain`, home storage; given back whole where a player set it, nothing where a village did | stands on the floor | 6 twine (Crafting 2) |
+| Fishing net | `fishing_net` (furnishing) | a net with cork floats hung to dry from the block above, as a village hangs one on a frame by the water; given back whole where a player hung it, nothing where a village did | hangs from the block above | 4 twine and a stick (Crafting 3) |
+| Log bench | `<wood>_log_bench` (furnishing) | a split log laid flat on two short stumps, as a village sets one by its lanes; a seat | faces the placer | 2 stripped logs (2); a village's gives nothing when broken, a player's comes back |
 | Hatch | `<timber>_hatch` (`_open`) | boards across the top of the cell over two battens; open, hung against the back of the cell no deeper than a ladder's rungs | faces the placer; a right click opens and shuts it | 2 slabs on 2 sticks make 2 (2) |
 | Newel post | `<timber>_newel_post` | a post five texels square with a cap | | a slab on a post makes 1 (3) |
 | Landing | `<timber>_landing` | boards across the top of the cell on two joists, level with a stair's top | joists run away from the placer | 3 slabs on 2 beams make 3 (3) |
@@ -118,8 +120,8 @@ ladder is (`climbable`, a draughty face to the room below), so a ladder under it
 back the same way, climbs on up through it and out onto the loft floor
 (`a_ladder_climbs_through_an_open_hatch_into_a_loft_and_a_shut_one_stops_it`; the gate's
 Pieces step judges one shut and one open).
-The home's load check (`Rules::check_shelters`) holds every solid building or roof block
-but furniture to exactly one grade.
+The home's load check (`Rules::check_shelters`) holds every solid building or roof block,
+and every solid shaped piece, but furniture to exactly one grade.
 
 Chimney pieces (`chimney_piece`: the stone and brick flues, the hood, the pot) carry a
 hearth's smoke up through a roof: stacked straight over the hearth's chimney (or over any
