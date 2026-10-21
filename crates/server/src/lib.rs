@@ -1631,12 +1631,14 @@ mod tests {
     /// set down or hold (of a tag: any one of what a player can hold of it) is got one of the
     /// recipe book's ways that counts for the goal (`recipe_book::counts`, the quest book's
     /// rule), each worked only at a station (the crafting table, a recipe's `near` block, a
-    /// cooking station, a home station) one of those quests has the player make. It prints
-    /// the route it found for each quest, and fails naming each quest with no such route and
-    /// what walls each of its routes. The main-line walk puts down any station a recipe
-    /// needs and walks only the main line, so a side path asking for fired clay before the
-    /// kiln got through (A Stove and a Quern's workshop half, once 451 made its pieces take
-    /// kiln output).
+    /// cooking station, a home station) one of those quests has the player make, and a drop
+    /// only from a creature every player meets: not one that comes only with a wandering
+    /// party or in a lair, nor a boss, unless one of those quests has the player kill it (a
+    /// raider's hide is no sure way). It prints the route it found for each quest, and fails
+    /// naming each quest with no such route and what walls each of its routes. The main-line
+    /// walk puts down any station a recipe needs and walks only the main line, so a side path
+    /// asking for fired clay before the kiln got through (A Stove and a Quern's workshop
+    /// half, once 451 made its pieces take kiln output).
     #[test]
     fn a_quest_asks_only_for_what_its_stations_are_taught_for() {
         use voxmar_engine::quest::Goal;
@@ -1673,12 +1675,28 @@ mod tests {
                 Goal::Craft(item, _) | Goal::Placed(item, _) | Goal::Have(item, _) if !item.starts_with("tag:") => id(item).map(|b| blocks.item_of(b)),
                 _ => None,
             }).collect();
+            // The creatures a goal has the player kill by name.
+            let killed: Vec<_> = before
+                .iter()
+                .flat_map(|q| q.tasks.iter().flatten())
+                .filter_map(|g| match g {
+                    Goal::Kill(name, _) => content.creatures.id(name),
+                    _ => None,
+                })
+                .collect();
             let tagged = |tag: &str| taught.iter().any(|&b| blocks.def(b).has_tag(tag));
             let small = |cells: &[Option<BlockId>; voxmar_engine::craft::GRID]| cells.iter().enumerate().all(|(i, c)| c.is_none() || voxmar_engine::craft::SMALL.contains(&i));
             let worked = |method: &Method| match method {
                 Method::Craft { variants, near, .. } => (variants.iter().any(small) || tagged("crafting_table")) && near.as_deref().is_none_or(tagged),
                 Method::Cook { station, .. } => tagged(station),
                 Method::Work { .. } | Method::Process { .. } | Method::Trap { .. } => method.stations(blocks).iter().any(|&s| taught.contains(&blocks.item_of(s))),
+                // What a creature a player may never meet drops (one that comes only with a
+                // wandering party or in a lair, `party_only`, or a boss) is no sure way, but
+                // for one a goal has them kill.
+                Method::Drop { creature, .. } => {
+                    let def = &content.creatures.get(*creature).def;
+                    !(def.habitat.party_only || def.boss) || killed.contains(creature)
+                }
                 _ => true,
             };
             // Each route's goals that no way counting for them can be worked to, here.

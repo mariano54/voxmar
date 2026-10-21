@@ -309,8 +309,8 @@
         ),
         (
             name: "bigger_game", age: "farm", branch: "hunter", title: "Bigger Game",
-            why: "Sheep, deer, boar and cattle give more meat and better hides, but they fight back: wear your hide wraps and keep your sword sharp. Red deer and wild boar keep to the woods, aurochs to the plains, mouflon to the mountains. Cook the haunch: mutton at Cooking 5, pork at 8, venison at 15.",
-            tasks: [[Kill("mouflon", 2)], [Kill("red_deer", 1)], [Kill("wild_boar", 1)], [Kill("aurochs", 1)]],
+            why: "Sheep, deer, boar and cattle give more meat and better hides, but they fight back: wear your hide wraps and keep your sword sharp. Red deer and wild boar keep to the woods, aurochs to the plains, mouflon to the mountains. Cook the haunch: mutton at Cooking 5, pork at 8, venison at 15. Their raw hide turns to hide hung a while on a drying rack: four sticks and three twine at the crafting table make one (Crafting 1). Make a rack.",
+            tasks: [[Kill("mouflon", 2), Craft("drying_rack", 1)], [Kill("red_deer", 1), Craft("drying_rack", 1)], [Kill("wild_boar", 1), Craft("drying_rack", 1)], [Kill("aurochs", 1), Craft("drying_rack", 1)]],
             after: ["the_farm_age"],
             rewards: [Xp("hunter", 200.0), Xp("attack", 100.0)],
         ),
@@ -505,7 +505,7 @@
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
             why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3; raw hide hung a while on a drying rack turns to hide), a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
-            after: ["shelves_and_cupboards"],
+            after: ["shelves_and_cupboards", "bigger_game"],
             rewards: [Xp("crafting", 60.0)],
         ),
         (
@@ -547,7 +547,7 @@
             name: "books_and_banners", age: "farm", branch: "home", title: "Books and Banners",
             why: "A bookshelf (planks and hides, Construction 8) and a banner (cloth and a stick, Crafting 5) say whose home this is. Make one of each.",
             tasks: [[Craft("tag:books", 1), Craft("tag:banner", 1)]],
-            after: ["a_rug_underfoot"],
+            after: ["a_rug_underfoot", "bigger_game"],
             rewards: [Xp("construction", 120.0), Xp("crafting", 80.0)],
         ),
         (
@@ -561,7 +561,7 @@
             name: "light_in_the_window", age: "farm", branch: "home", title: "Light in the Window",
             why: "A lit home shows at night: a window glows by the light of the room behind it. A hide window is a hide in a frame of eight sticks (Construction 3), two at a time. Make two and set them in the walls of your lit home, then look back at it after dark.",
             tasks: [[Craft("hide_window", 2), Placed("hide_window", 2)]],
-            after: ["a_homely_home"],
+            after: ["a_homely_home", "bigger_game"],
             rewards: [Xp("construction", 120.0)],
         ),
         (
@@ -730,7 +730,7 @@
             side: true,
             why: "A home with bees draws the beekeeper by day, to look over your skeps and walk your garden with you; three honey buys a spare skep for a second hive. Beeswax makes the best light a Farm home has before coal: a wick of twine over a cake of wax gives three candles. Meet the beekeeper and make three candles, or, with no visit yet, keep two cakes of wax and make six.",
             tasks: [[Met("beekeeper", 1), Craft("candle", 3)], [Have("beeswax", 2), Craft("candle", 6)]],
-            after: ["smoke_that_clings"],
+            after: ["smoke_that_clings", "bigger_game"],
             rewards: [Xp("farming", 200.0), Xp("crafting", 60.0), Item("skep", 1)],
         ),
         (

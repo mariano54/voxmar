@@ -273,8 +273,12 @@ only the main line, and it puts down whatever station a recipe needs. What it fo
 in Hand has the player make the grindstone its stone heads are ground at, and A Full Stone
 Kit comes after it; A Fish Supper comes after First Night, which teaches its campfire; and
 the Nomad quests whose goals take hide (A Coin Purse, Pockets, A Stone's Throw, Hide Wraps)
-come after Hung to Dry, whose drying rack turns a hunt's raw hide into hide. The Farm book's
-hide quests come after Farm quests only, as every Farm quest does.
+come after Hung to Dry, whose drying rack turns a hunt's raw hide into hide. The Farm book
+teaches its own rack, as a Farm quest comes after Farm quests only: Bigger Game has the player
+make one, and the Farm quests that take hide (Full Hide Wraps, Light in the Window, Books and
+Banners, Candlelight, The Beekeeper Calls) come after it. A drop counts only from a creature
+every player meets: the raiders and jailers that also drop hide come only with rare
+wandering parties, and a boss's drop counts once a quest before has the player kill it.
 
 ### Nomad paths, and quests in parts (Oct 14)
 
