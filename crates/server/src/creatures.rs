@@ -5928,6 +5928,36 @@ mod fight_tests {
         assert!(bites > 0, "the torch put away, the wolf never bit");
     }
 
+    /// A rabbit and a red deer outrun a sprinting player (7.0 and 8.5 blocks a second to
+    /// 6.1), but tire (`creature::Tires`): chased straight at a sprint across open ground,
+    /// each is winded and run down within 20 s.
+    #[test]
+    fn a_sprinting_hunter_runs_down_winded_prey() {
+        const SPRINT: f32 = 6.1;
+        for name in ["base:rabbit", "base:red_deer"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 48);
+            let id = put(&mut server, name, c.as_vec3() + Vec3::new(4.5, 0.0, 0.5), Vec3::X);
+            let player = join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+            let (mut winded, mut caught) = (false, None);
+            for tick in 0..20 * TICKS_PER_SECOND as u64 {
+                let (at, prey) = (server.players[&player].position, server.creatures.live[&id].body.position);
+                let gap = Vec2::new(prey.x - at.x, prey.z - at.z);
+                if gap.length() <= 1.5 {
+                    caught = Some(tick as f32 / TICKS_PER_SECOND as f32);
+                    break;
+                }
+                let step = gap.normalize() * (SPRINT / TICKS_PER_SECOND as f32).min(gap.length());
+                server.players.get_mut(&player).unwrap().position = Vec3::new(at.x + step.x, at.y, at.z + step.y);
+                server.tick += 1;
+                server.tick_creatures();
+                winded |= server.creatures.live[&id].mind.winded > 0.0;
+            }
+            assert!(caught.is_some(), "{name} was not run down in 20 s");
+            assert!(winded, "{name} was never winded");
+        }
+    }
+
     /// At night a wolf in a campfire's ward (`BlockDef::ward`) walks out of it. Not by day,
     /// nor a kept one.
     #[test]

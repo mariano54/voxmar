@@ -308,6 +308,10 @@ pub struct Mind {
     /// The individual's own hash, for choices that stay its own (which of its kin it keeps
     /// near, how far it likes to stray).
     pub seed: u64,
+    /// Seconds it has run flat out lately (`creature::Tires`), back down as it rests.
+    pub sprinted: f32,
+    /// Seconds left of running winded (`creature::Tires::rest`), slowed.
+    pub winded: f32,
 }
 
 impl Mind {
@@ -329,6 +333,8 @@ impl Mind {
             seed,
             zig: 1.0,
             startled_at: None,
+            sprinted: 0.0,
+            winded: 0.0,
         }
     }
 
@@ -551,6 +557,7 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         let pose = modules::resting_pose(&ctx);
         mind.doing = None;
         lapse_warning(mind, dt);
+        rest(mind, dt);
         return Decision { pose, ..Default::default() };
     };
     let band: Vec<&(usize, Band, Want)> = wants.iter().filter(|w| w.1 == top).collect();
@@ -579,6 +586,10 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     if !warns {
         lapse_warning(mind, dt);
     }
+    // Not running, it gets its wind back (`Tires`).
+    if creature.modules[index].0.name() != "flee" {
+        rest(mind, dt);
+    }
     let ctx = Ctx { creature, mind: &mind.clone(), at, lively, sight };
     let mut decision = creature.modules[index].0.act(&ctx, mind, want.target, fresh);
     // Provoked by its warning, it goes for them in this same decision.
@@ -588,6 +599,13 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     }
     decision.speed *= mind.personality.pace();
     decision
+}
+
+/// Not fleeing, it gets its wind back (`creature::Tires`): its sprint and any time it had
+/// left winded run down a second for a second.
+fn rest(mind: &mut Mind, dt: f32) {
+    mind.sprinted = (mind.sprinted - dt).max(0.0);
+    mind.winded = (mind.winded - dt).max(0.0);
 }
 
 /// Doing anything but warn, a warning lapses (`WARN_LAPSE`).
@@ -1000,6 +1018,41 @@ pub(super) mod tests {
         assert_ne!(doing(&badger, &mind), "warn", "a defender warns no one in the light");
         let _ = think(&badger, &mut mind, &situation(&[Seen { warded: false, ..near[0] }]));
         assert_eq!(doing(&badger, &mind), "warn", "out of it, as ever");
+    }
+
+    /// Prey that tires (`creature::Tires`) runs flat out its `after` seconds, then winded at
+    /// its `pace` for `rest` seconds, then flat out again; kept, it runs as ever. Bad
+    /// numbers are refused on load.
+    #[test]
+    fn prey_that_tires_runs_winded_after_a_sprint() {
+        let rabbit = species(&format!(
+            "(creatures: [(name: \"rabbit\", health: 3, {BODY}, movement: (walk: 2.0, run: 7.0), tires: (after: 1.0, pace: 0.5, rest: 2.0), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 10.0))])])"
+        ));
+        let near = [player(Vec3::new(2.0, 0.0, 0.0))];
+        let speeds = |at: &Situation| {
+            let mut mind = Mind::new(&rabbit.def.temperament, 2);
+            let full = 7.0 * mind.personality.pace();
+            (0..20)
+                .map(|_| {
+                    let decision = think(&rabbit, &mut mind, at);
+                    assert_eq!(doing(&rabbit, &mind), "flee");
+                    (decision.speed / full * 100.0).round() as u32
+                })
+                .collect::<Vec<_>>()
+        };
+        // Thinking every 0.2 s: five flat out, ten winded, then flat out again.
+        let ran = speeds(&situation(&near));
+        assert_eq!(ran, [[100; 5].as_slice(), &[50; 10], &[100; 5]].concat(), "{ran:?}");
+        assert_eq!(speeds(&Situation { kept: true, ..situation(&near) }), [100; 20], "kept, it is not run down");
+
+        let build = |tires: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, tires: {tires})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("(after: 3.0, pace: 0.5, rest: 4.0)"), Ok(()));
+        for bad in ["(after: 0.5, pace: 0.5, rest: 4.0)", "(after: 3.0, pace: 1.0, rest: 4.0)", "(after: 3.0, pace: 0.1, rest: 4.0)", "(after: 3.0, pace: 0.5, rest: 40.0)"] {
+            assert!(build(bad).is_err_and(|e| e.contains("`tires` needs")), "{bad}");
+        }
     }
 
     #[test]

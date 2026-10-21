@@ -182,6 +182,18 @@ curse spread, aura, molt rebirth, dream walk.
   Tests: the brain's `fire_keeps_the_wild_back` and `fire_out_of_range_is_refused`;
   the server's `a_torch_holds_a_wolf_off`, `wolves_keep_out_of_firelight_at_night` and
   `a_player_by_a_lit_hearth_is_let_be_at_night`; `wards_out_of_range_are_refused`.
+- **Winded** (Oct 21): a creature whose kind has `tires` (creatures.ron) runs flat out
+  from a threat for its `after` seconds, then winded at its `pace` of its run for `rest`
+  seconds, then flat out again; time not spent fleeing gets its wind back a second for a
+  second (`Mind::sprinted`, `Mind::winded`). A kept animal or one on an errand runs as
+  ever. The base game sets it on the prey faster than a sprinting player (6.1 blocks a
+  second): rabbit (3 s, 0.4, 4 s), hare (2.5, 0.35, 5), red squirrel (2.5, 0.5, 4), red
+  deer (3, 0.4, 5), reindeer (4, 0.45, 5), wild horse (4, 0.35, 6) and gazelle (3, 0.35,
+  6), each averaging under a sprint over a sprint and a rest, so a first hunt on foot ends
+  in a catch: first-days.md's slowest wait was the chase for the bed's hides. Tests: the
+  brain's `prey_that_tires_runs_winded_after_a_sprint`; the server's
+  `a_sprinting_hunter_runs_down_winded_prey` (a rabbit and a red deer run down within 20 s
+  on open ground; without `tires` the rabbit is not).
 
 ## Roaming
 
