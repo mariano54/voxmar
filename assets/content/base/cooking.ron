@@ -39,7 +39,8 @@
         // player's own pit kiln is loaded and left (stations.ron); no block works these.
         (input: "clay", output: "fired_clay", station: "village_kiln", skill: "core:crafting", level: 1, xp: 6.0, stop_burning: 12, burnt: "clay"),
         // Cobblestone fired smooth again (Construction), as the potters do it: the stone that
-        // stone bricks, an altar, lanterns and graves are cut from. It never cracks.
+        // stone bricks, an altar, lanterns and graves are cut from; it is never spoiled
+        // (`stop_burning: 0`). A player's own pit kiln fires it too (stations.ron).
         (input: "cobblestone", output: "stone", station: "village_kiln", skill: "core:construction", level: 1, xp: 1.0, stop_burning: 0),
         // Smelted in the Crucible Kiln (Engineering), which must stand round its crucible:
         // copper ingots from ore, and bronze from three copper ingots held and a tin ore
@@ -51,6 +52,10 @@
         (input: "stick", output: "firebrand", station: "fire", level: 1, xp: 0.0, stop_burning: 0),
         // A torch's stub, picked up burnt down, held in any fire catches again: a torch.
         (input: "torch_stub", output: "torch", station: "fire", level: 1, xp: 0.0, stop_burning: 0),
+        // The same at a standing home hearth, whoever's it is (its hearthstone is no `fire`,
+        // so nothing else takes it for a loose flame): a light to go out into the night with.
+        (input: "stick", output: "firebrand", station: "hearth", level: 1, xp: 0.0, stop_burning: 0),
+        (input: "torch_stub", output: "torch", station: "hearth", level: 1, xp: 0.0, stop_burning: 0),
         // A log split on a chopping block (Construction), with an axe about you: two
         // firewood, which burn hotter and longer than the log (machines.ron) and stack into
         // a charcoal clamp (multiblocks.ron). The axe is not taken.

@@ -779,6 +779,9 @@ mod tests {
         let burnt = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Burn { from, relit, .. } = m { Some((from, relit)) } else { None }).collect::<Vec<_>>();
         assert_eq!(burnt("base:torch_stub"), [(id("base:torch"), false)]);
         assert_eq!(burnt("base:charred_stick"), [(id("base:firebrand"), false)]);
+        // And its charred end tips a torch, one to a stick, before there is coal.
+        let tipped = book.using(id("base:charred_stick")).into_iter().filter(|e| matches!(e.method, Method::Craft { .. }) && e.output == id("base:torch")).map(|e| e.count).collect::<Vec<_>>();
+        assert_eq!(tipped, [(1, 1)], "one torch from a charred stick");
         assert_eq!(burnt("base:clay_oil_lamp"), [(id("base:clay_oil_lamp_empty"), true)]);
         assert!(burnt("base:torch_guttering").is_empty());
         // A clamp's firewood, charred through, is charcoal; opened early, charred wood.

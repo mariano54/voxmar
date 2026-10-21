@@ -294,7 +294,7 @@ pub struct FiguresPlugin;
 impl Plugin for FiguresPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Figures>()
-            .add_systems(Update, show.after(crate::drops::show).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, show.after(crate::drops::shelf_things).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut figures: ResMut<Figures>, mut skins: ResMut<Assets<SkinMaterial>>, mut images: ResMut<Assets<Image>>| {
                 for (_, figure) in figures.shown.drain() {
                     forget(&figure, &mut skins, &mut images);
@@ -367,7 +367,7 @@ fn figure_material(body: &SpeciesBody, skin: Handle<Image>, atmosphere: Buffer) 
     SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin, frame, atmosphere } }
 }
 
-fn show(
+pub(crate) fn show(
     mut commands: Commands,
     time: Res<Time>,
     look: Res<PlayerLook>,

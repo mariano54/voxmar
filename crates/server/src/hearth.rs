@@ -592,8 +592,9 @@ mod tests {
         assert!(matches!(told.as_slice(), [Words::Key(key, _)] if key == "multiblock.cold"), "told {told:?}");
     }
 
-    /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks; a
-    /// hearthstone with no ring round it does not, and says what it lacks.
+    /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks, and the
+    /// hearth lights a firebrand or a torch's stub as any fire does; a hearthstone with no
+    /// ring round it does not, and says what it lacks.
     #[test]
     fn the_hearth_and_the_stove_cook_as_a_campfire_does() {
         let mut server = crate::test_server();
@@ -631,6 +632,13 @@ mod tests {
         assert_eq!(cook(&mut server, core), Some(cooked), "the standing hearth cooked nothing");
         assert_eq!(cook(&mut server, stove), Some(cooked), "the stove cooked nothing");
         assert_eq!(server.players[&1].tallies["cooked_at:campfire:base:cooked_small_game"], 2, "counted as campfire cooking, for First Night");
+        // A stick held in it catches, and a torch's stub lights again, as at any fire.
+        for (held, lit) in [("base:stick", "base:firebrand"), ("base:torch_stub", "base:torch")] {
+            server.players.get_mut(&1).unwrap().inventory.slots.iter_mut().for_each(|slot| *slot = None);
+            server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(block(&server, held), 1));
+            server.cook(1, core);
+            assert_eq!(server.players[&1].inventory.get(0).map(|s| s.item), Some(block(&server, lit)), "{held} at the hearth");
+        }
         // The stove is a fire: it warms, and holds a pot.
         let def = server.content.blocks.def(block(&server, "base:cottage_stove"));
         assert!(def.has_tag("hob") && def.has_tag("heat"));
