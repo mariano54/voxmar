@@ -513,13 +513,13 @@ mod tests {
         server.cook(1, at);
         assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(stick, 1)), "no fire, no firebrand");
         // What tops up a stack already carried goes there, not into the emptied hand.
-        let (mut server, _client) = holding("base:cobblestone", 0);
-        let stone = server.content.blocks.expect("base:stone");
-        server.players.get_mut(&1).unwrap().inventory.slots[5] = Some(ItemStack::new(stone, 3));
-        let at = put(&mut server, "base:pit_kiln");
+        let (mut server, _client) = holding("base:torch_stub", 0);
+        let torch = server.content.blocks.expect("base:torch");
+        server.players.get_mut(&1).unwrap().inventory.slots[5] = Some(ItemStack::new(torch, 3));
+        let at = put(&mut server, "base:campfire");
         server.cook(1, at);
         let inventory = &server.players[&1].inventory;
-        assert_eq!((inventory.slots[0], inventory.slots[5]), (None, Some(ItemStack::new(stone, 4))));
+        assert_eq!((inventory.slots[0], inventory.slots[5]), (None, Some(ItemStack::new(torch, 4))));
     }
 
     /// A firebrand burns a second at a time wherever it is carried, held or not, and burnt

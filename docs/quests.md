@@ -405,7 +405,7 @@ only crafted.
 | Path | Quests to the kiln | Ways round |
 |---|---|---|
 | Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
-| Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
+| Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone); side quests Opened Too Soon (four part-burnt wood from a clamp opened early, after A Second Clamp) and, after Charcoal on the Home path, A Woodpile (a woodpile set down by the hearth, half a Hearth corner) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
 | Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp | |
 | Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln; side quests A Keen Edge (a copper tool mended at the grindstone, after Copper Kit) and A Bronze Edge (a bronze pickaxe, after First Bronze and A Keen Edge) | |
 
@@ -441,9 +441,9 @@ names cooked fish alone:
 
 | Quest | After | Teaches | Pays |
 |---|---|---|---|
-| Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
+| Salt and Sardines | Patient Angler, Camp Cook | Sardines bite only in the sea: four caught and cooked (Cooking 5) | Fishing 80, 2 bread |
 | Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, 2 bread |
-| Cold Water Trout | Still Water Perch | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked | Fishing 120, 4 bread |
+| Cold Water Trout | Still Water Perch, A Hearty Stew | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked (Cooking 15) | Fishing 120, 4 bread |
 | Three Waters | Salt and Sardines, Still Water Perch | A fourth kind past minnow, sardine and perch: a trout or a cod | Fishing 150, 4 bread |
 | Fish on the Table | Salt and Sardines | A lit hearth, eight fish cooked and six eaten | Cooking 120, 4 bread |
 
@@ -457,10 +457,10 @@ cloth and dyes. Each pays in bread:
 
 | Quest | After | Teaches | Pays |
 |---|---|---|---|
-| Fang and Stick | The Farm Age | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
+| Fang and Stick | Earthenware | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
 | Lanterns of Cloth | A Rug Underfoot | Paper lanterns (Crafting 6): two made and set down at home, each a light | Crafting 60, 2 bread |
 | A Dooryard | Lanterns of Cloth | An awning and bunting made, then the Dooryard felt (an awning and two yard things under open sky) | Crafting 100, 4 bread |
-| Five Colours | A Rug Underfoot | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
+| Five Colours | A Rug Underfoot, A Kiln Load | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
 
 ## About camp in the Nomad book (Oct 20)
 
@@ -535,7 +535,7 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 | Mining | A Pile of Stone (Nomad) | Stone and coal at 1, copper 5, tin 10 | Wooden to stone pickaxe (Stone in Hand), then copper (Red Metal) |
 | Cooking | First Night (Nomad) | Campfire meat and fish at 1, carrots 2, mutton 5, seed mix 8 | Campfire to cottage stove (Workshop and Stove) |
 | Engineering | Crafting Table (Nomad) | Tools at 1, copper ingots and tools 5, crucible 10, bronze 12 | The crafting table, then the Crucible Kiln |
-| Crafting | Look It Up and Twine and Thong (Nomad) | Pouches 3, kiln bricks and workshop pieces 5, loom 8; fired clay cracks until 12 | The pit kiln (A Pit Kiln) |
+| Crafting | Look It Up and Twine and Thong (Nomad) | Pouches 3, kiln bricks and workshop pieces 5, loom 8 | The pit kiln (A Pit Kiln) |
 | Construction | Homestead Hearth (Nomad) | Stool 1, table 3, bed and altar 5, bookshelf 8 | A workbench at home (A Bench to Work At) |
 | Fishing | Rod and Line (Nomad) | Minnows at 1, sardines 5, perch 10 | The fishing rod |
 | Attack | Something to Swing (Nomad) | Stone weapons at 1, copper 5 | Fist to stone sword or bone club, then copper (Copper Arms) |
@@ -582,6 +582,7 @@ that quest needs.
 | A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
 | Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
 | Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+| A pit kiln firing | 12 s a load | Fire the Clay | Digging the next load, tending the charcoal clamp |
 | A charcoal clamp smouldering | 2 game hours (about 150 s of the quest-book bot's time, which runs about 75 s a game hour) | Charcoal | Brick by Brick: firing clay at the pit kiln to A Kiln Load's forty and crafting kiln bricks; A Second Clamp |
 | A drying rack drying | 10 min (5 by a fire) | Hung to Dry | Hunting for the next load; Trail Rations |
 | A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed, the compost's next part |

@@ -12,7 +12,9 @@
 //   comfort it slows, to a stop 5 °C or 0.3 moisture beyond; dry or plain ground slows
 //   it too (engine/src/crop.rs).
 // - `harvest` is what a ripe one gives, broken or (for those with `regrow`) picked by hand,
-//   which takes it back to that stage to fruit again. Each find has a chance; uncommon and
+//   which takes it back to that stage to fruit again. The grains (wheat, rye, rice) leave
+//   straw for the Crucible Kiln's tempered bricks: one or two a sown plant, one a wild tuft
+//   picked, so the first kiln waits on no field's growing. Each find has a chance; uncommon and
 //   rarer finds come up to half again as often with level.
 // - `wild` names wild plants that are this crop gone wild, and `forage` what each gives.
 //   Most crops are rare; their wild forms are where seeds come from first. A ripe crop
@@ -26,9 +28,9 @@
         (
             name: "wheat", level: 1, xp: (plant: 2.0, harvest: 9.0, forage: 2.0), minutes: 12.0,
             comfort: (temperature: (2.0, 28.0), moisture: (0.25, 1.5)),
-            harvest: [(item: "wheat", count: (1, 2)), (item: "wheat_seeds", count: (1, 3), chance: 0.95)],
+            harvest: [(item: "wheat", count: (1, 2)), (item: "wheat_seeds", count: (1, 3), chance: 0.95), (item: "straw", count: (1, 2))],
             wild: ["wild_wheat"],
-            forage: [(item: "wheat_seeds", count: (1, 2)), (item: "wheat", chance: 0.6)],
+            forage: [(item: "wheat_seeds", count: (1, 2)), (item: "wheat", chance: 0.6), (item: "straw")],
         ),
         (
             name: "carrot", seed: "carrot", level: 5, xp: (plant: 3.0, harvest: 11.0, forage: 2.0), minutes: 14.0,
@@ -45,7 +47,7 @@
         (
             name: "rye", seed: "rye", level: 3, xp: (plant: 2.5, harvest: 10.0), minutes: 12.0,
             comfort: (temperature: (-12.0, 6.0), moisture: (0.2, 1.4)),
-            harvest: [(item: "rye", count: (2, 3))],
+            harvest: [(item: "rye", count: (2, 3)), (item: "straw", count: (1, 2))],
         ),
         (
             name: "chickpea", seed: "chickpea", level: 7, xp: (plant: 3.0, harvest: 13.0, forage: 2.0), minutes: 14.0,
@@ -57,9 +59,9 @@
         (
             name: "rice", seed: "rice", level: 10, rarity: Uncommon, water: true, xp: (plant: 3.5, harvest: 16.5, forage: 2.0), minutes: 15.0,
             comfort: (temperature: (18.0, 34.0), moisture: (1.3, 3.0)),
-            harvest: [(item: "rice", count: (2, 3))],
+            harvest: [(item: "rice", count: (2, 3)), (item: "straw", count: (1, 2))],
             wild: ["wild_rice"],
-            forage: [(item: "rice", count: (1, 2), chance: 0.5)],
+            forage: [(item: "rice", count: (1, 2), chance: 0.5), (item: "straw")],
         ),
         (
             name: "taro", seed: "taro", level: 11, rarity: Uncommon, xp: (plant: 4.0, harvest: 17.0, forage: 2.0), minutes: 16.0,

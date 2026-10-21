@@ -480,6 +480,17 @@ fn wing_angle(b: &Butterfly) -> f32 {
     }
 }
 
+/// Too many of a set (its hour passing, rain coming): the extra ones leave. One kept on purpose
+/// (`release`) stays its time out, wanted or not.
+fn send_off_extras(flying: &mut [Butterfly], wanted: &[(usize, usize)]) {
+    for &(set, want) in wanted {
+        let staying = flying.iter().filter(|b| b.set == set && b.state != State::Leaving).count();
+        for b in flying.iter_mut().filter(|b| b.set == set && b.state != State::Leaving && b.kept <= 0.0).take(staying.saturating_sub(want)) {
+            b.state = State::Leaving;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn fly(
     time: Res<Time>,
@@ -555,13 +566,7 @@ fn fly(
             });
         }
     }
-    // Too many of a set (its hour passing, rain coming): the extra ones leave.
-    for &(set, want) in &wanted {
-        let staying = butterflies.flying.iter().filter(|b| b.set == set && b.state != State::Leaving).count();
-        for b in butterflies.flying.iter_mut().filter(|b| b.set == set && b.state != State::Leaving).take(staying.saturating_sub(want)) {
-            b.state = State::Leaving;
-        }
-    }
+    send_off_extras(&mut butterflies.flying, &wanted);
 
     let wind = Vec3::new(weather.current.wind.x, 0.0, weather.current.wind.y);
     let visits: Vec<(Vec3, BlockId)> = butterflies
@@ -689,6 +694,23 @@ mod tests {
 
     fn open(_: IVec3) -> bool {
         false
+    }
+
+    #[test]
+    fn a_kept_butterfly_stays_when_its_set_is_not_wanted() {
+        // A released one (the gate's) whose set is out of season: the free one leaves, the kept one stays.
+        let mut flying = vec![Butterfly { kept: 30.0, ..butterfly(Vec3::ZERO) }, butterfly(Vec3::X)];
+        send_off_extras(&mut flying, &[(0, 0)]);
+        assert_ne!(flying[0].state, State::Leaving, "the kept one was sent off");
+        assert_eq!(flying[1].state, State::Leaving);
+        // Kept time over, it goes like the rest.
+        flying[0].kept = 0.0;
+        send_off_extras(&mut flying, &[(0, 0)]);
+        assert_eq!(flying[0].state, State::Leaving);
+        // Wanted ones stay.
+        let mut flying = vec![butterfly(Vec3::ZERO), butterfly(Vec3::X)];
+        send_off_extras(&mut flying, &[(0, 1)]);
+        assert_eq!(flying.iter().filter(|b| b.state == State::Leaving).count(), 1);
     }
 
     #[test]
