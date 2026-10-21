@@ -83,6 +83,13 @@ pub struct SavedMachine {
     /// The work it was doing, by what it makes first, and the seconds done of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work: Option<(String, f32)>,
+    /// The slots a home grew it to as a store, if it did (`MachineState::grown`).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub grown: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Where the machines that look at their neighbours stand, gathered once a survey.
@@ -437,6 +444,7 @@ impl Server {
                 bin_wear: state.bin.iter().flatten().enumerate().filter(|(_, s)| s.wear > 0).map(|(at, s)| (at as u16, s.wear)).collect(),
                 owner: state.owner.clone(),
                 counted: state.counted,
+                grown: state.grown,
                 work: state.process.and_then(|p| machines.process(p).outputs.first()).map(|&(item, _)| (blocks.def(item).name.clone(), state.progress)),
             })
             .collect();
@@ -502,6 +510,7 @@ impl Server {
                 made: machine.made,
                 owner: machine.owner.clone(),
                 counted: machine.counted,
+                grown: machine.grown,
                 ..MachineState::default()
             };
             // A converter needs nothing of the world but a standing structure, if it is a
@@ -537,7 +546,9 @@ impl Server {
             if let Some(def) = machines.get(block) {
                 let (inputs, outputs) = def.slots();
                 let mut spilled = Vec::new();
-                for (slots, room) in [(&mut state.inputs, inputs), (&mut state.outputs, outputs), (&mut state.bin, def.bin_slots())] {
+                // A store a home grew keeps the slots it grew to (`Machine::grown_bin`).
+                let bin = state.bin_room(def);
+                for (slots, room) in [(&mut state.inputs, inputs), (&mut state.outputs, outputs), (&mut state.bin, bin)] {
                     slots.retain(Option::is_some);
                     if slots.len() > room {
                         spilled.extend(slots.split_off(room).into_iter().flatten());

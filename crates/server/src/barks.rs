@@ -11,7 +11,7 @@ use crate::Server;
 pub const BARK_COMMAND_REACH: f32 = 32.0;
 
 impl Server {
-    /// Creature `id` makes `bark`, heard by every player within its `barking.range` who
+    /// Creature `id` makes `bark`, heard by every player within its `barking` range who
     /// sees it now, each no more than once in `barking.every` (per bark, per player). The
     /// one hook for what settlements' people say without words: whatever makes them react
     /// calls it.
@@ -27,7 +27,7 @@ impl Server {
         let (at, tick, every) = (c.body.position, self.tick, (barking.every * TICKS_PER_SECOND as f32) as u64);
         let heard = &mut self.villagers.barked;
         heard.retain(|_, until| *until > tick);
-        for player in self.players.values().filter(|p| p.joined && (asked || p.position.distance(at) <= barking.range) && self.creatures.sees(p.id, id)) {
+        for player in self.players.values().filter(|p| p.joined && (asked || p.position.distance(at) <= barking.range(bark)) && self.creatures.sees(p.id, id)) {
             let until = heard.entry((id, player.id, bark)).or_insert(0);
             if asked || *until <= tick {
                 *until = tick + every;

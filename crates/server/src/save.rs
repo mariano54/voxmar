@@ -1315,7 +1315,7 @@ mod tests {
         let mut meta = WorldMeta::new("Test", 7, GameMode::Creative);
         save.create(&meta).unwrap();
         let crops = |stage: u8| vec![SavedCrop { position: [1, 2, 3], crop: "base:wheat".into(), stage, due: 9, sown: true }];
-        let machines = |count: u8| vec![crate::machines::SavedMachine { position: [0, 64, 0], block: "base:chest".into(), inputs: Vec::new(), outputs: Vec::new(), fuel: None, burning: 0.0, energy: 0.0, condition: 0.0, made: 0, bin: vec![("base:iron_ore".into(), count)], bin_wear: Vec::new(), owner: None, counted: false, work: None }];
+        let machines = |count: u8| vec![crate::machines::SavedMachine { position: [0, 64, 0], block: "base:chest".into(), inputs: Vec::new(), outputs: Vec::new(), fuel: None, burning: 0.0, energy: 0.0, condition: 0.0, made: 0, bin: vec![("base:iron_ore".into(), count)], bin_wear: Vec::new(), owner: None, counted: false, work: None, grown: 0 }];
         // Generation 1, whole.
         save.begin(1);
         save.write_machines(&machines(0)).unwrap();
