@@ -235,6 +235,13 @@ fn letters_apart(a: &str, b: &str) -> usize {
 }
 
 impl Content {
+    /// The cooking recipes a player can work: those whose station some block carries. A
+    /// recipe at a station no block has (the potters' `village_kiln`, worked for the player by
+    /// a wandering party) is left out of the recipe book, the makeable list and the guides.
+    pub fn player_cooking(&self) -> impl Iterator<Item = (crate::block::BlockId, &crate::cooking::Recipe)> {
+        self.cooking.iter().filter(|(_, recipe)| self.blocks.tagged(&recipe.def.station).next().is_some())
+    }
+
     /// The tags of blocks crafting looks for within reach: what recipes are made near (a
     /// chopping block) and what tools are mended at, each once.
     pub fn near_tags(&self) -> Vec<&str> {
@@ -276,6 +283,7 @@ impl Content {
         let mut defence = Setting::<DefenceTraining>::default();
         let mut condition = Setting::<ConditionRules>::default();
         let mut climbing = Setting::<Climbing>::default();
+        let mut genetics = Setting::<crate::creature::Genetics>::default();
         let mut fishing_rules = Setting::<crate::fishing::FishingRules>::default();
         let mut notes = Vec::new();
         let mut cooking = Vec::new();
@@ -362,6 +370,7 @@ impl Content {
                         defence.set(package, &name, "Defence training", read.defence, &mut notes);
                         condition.set(package, &name, "condition rules", read.condition, &mut notes);
                         climbing.set(package, &name, "climbing", read.climbing, &mut notes);
+                        genetics.set(package, &name, "genetics", read.genetics, &mut notes);
                         files.push(ContentFile { package: package.clone(), name, source });
                     }
                     // `recipes.ron`, and `recipes_<topic>.ron` for what a system makes (weapons, machines).
@@ -514,7 +523,7 @@ impl Content {
         let mut blocks = BlockRegistry::with_shapes(blocks, &crate::shape::Shapes::gather(shapes, shape_limits.value)?)?;
         blocks.rename(renames)?;
         let crops = CropRegistry::new(crops, &blocks, &skills)?;
-        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value, climbing: climbing.value };
+        let rules = Rules { limits: creature_limits.value, defence: defence.value, condition: condition.value, climbing: climbing.value, genetics: genetics.value };
         let creatures = CreatureRegistry::new(creatures, rules, &blocks, &skills)?;
         let cooking = CookingRegistry::new(cooking, &blocks, &skills)?;
         let recipes = RecipeRegistry::new(recipes, &blocks, &skills)?;
@@ -1219,10 +1228,11 @@ mod tests {
             })
             .collect();
         assert_eq!(asked, fuels, "A Full Charge asks for the kiln's fuels");
-        let bricks = blocks.expect("base:kiln_bricks");
+        let bricks = blocks.expect("base:tempered_kiln_bricks");
         let ring: u32 = kiln.pieces().iter().filter(|(takes, _)| *takes == [bricks]).map(|(_, n)| n).sum();
+        assert!(ring > 0, "the kiln's ring takes tempered kiln bricks");
         let placed: Vec<u32> = content.quests.get("base:the_kiln_ring").expect("The Kiln Ring").tasks.iter().flatten().filter_map(|g| match g {
-            Goal::Placed(item, n) if item == "base:kiln_bricks" => Some(*n),
+            Goal::Placed(item, n) if item == "base:tempered_kiln_bricks" => Some(*n),
             _ => None,
         }).collect();
         assert_eq!(placed, [ring], "The Kiln Ring sets down the kiln's {ring} bricks");

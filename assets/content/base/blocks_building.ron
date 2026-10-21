@@ -83,6 +83,27 @@
                 name: "{name}_fence_gate_open", render: Model, shape: "fence_gate_open", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"),
                 swaps: "{name}_fence_gate", drops: "{name}_fence_gate", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "fence", "gate", "wood", "building", "fuel"],
             ),
+            // A double gate: two leaves two cells wide, set together (`beside`: the second
+            // leaf goes in to the right of whoever sets it) and opened, shut and broken
+            // together, for cattle too broad for a gate one wide (an aurochs, a bison) to be
+            // led through. Shut, it is a railing as a gate is; open, it stops nobody. The
+            // second leaf is only ever set with the first and drops nothing of its own.
+            (
+                name: "{name}_double_gate", render: Model, shape: "double_gate", facing: true, sound: Wood, textures: All("furniture_grain"),
+                beside: "{name}_double_gate_leaf", swaps: "{name}_double_gate_open", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "gate", "double_gate", "wood", "building", "fuel"],
+            ),
+            (
+                name: "{name}_double_gate_open", render: Model, shape: "double_gate_open", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"),
+                beside: "{name}_double_gate_leaf_open", swaps: "{name}_double_gate", drops: "{name}_double_gate", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "fence", "gate", "double_gate", "wood", "building", "fuel"],
+            ),
+            (
+                name: "{name}_double_gate_leaf", render: Model, shape: "double_gate_leaf", facing: true, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_double_gate_leaf_open", drops: "core:air", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "gate", "wood", "building"],
+            ),
+            (
+                name: "{name}_double_gate_leaf_open", render: Model, shape: "double_gate_leaf_open", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_double_gate_leaf", drops: "core:air", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "fence", "gate", "wood", "building"],
+            ),
             // A ladder, set against a wall facing whoever sets it: with your feet in its cell,
             // pressing against it or holding jump climbs it, letting go slides you down
             // slowly (`climbable`; engine movement.rs). One over another climbs a shaft to a
