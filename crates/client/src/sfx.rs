@@ -2289,9 +2289,10 @@ mod tests {
     }
 
     /// Work the server finishes on its own is heard as it finishes: the stew ready, the herbs
-    /// dry, the compost rotted, the clamp burnt through, the skep full. Only that change,
-    /// never the way back (taking the stew, cutting the honey) nor anything else; the
-    /// shipped clips are made at [`ACTION_LOUDNESS`] and short; a bad entry fails the check.
+    /// dry, the compost rotted, the skep full (a clamp burnt through is heard as its owner is
+    /// told, `fired`, so not twice). Only that change, never the way back (taking the stew,
+    /// cutting the honey) nor anything else; the shipped clips are made at
+    /// [`ACTION_LOUDNESS`] and short; a bad entry fails the check.
     #[test]
     fn work_done_is_heard_as_it_finishes() {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
@@ -2305,14 +2306,12 @@ mod tests {
             ("cooking_pot_simmering", "cooking_pot_ready", "pot_ready"),
             ("drying_rack_hung", "drying_rack_dry", "rack_dry"),
             ("compost_heap_full", "compost_heap_ready", "compost_ready"),
-            ("firewood", "charcoal_heap", "clamp_done"),
-            ("firewood", "ash_heap", "clamp_done"),
             ("bee_skep", "honey_skep", "skep_full"),
         ] {
             assert_eq!(heard(old, new), Some(name), "{old} to {new}");
             assert_eq!(heard(new, old), None, "{new} back to {old}");
         }
-        for (old, new) in [("cooking_pot_ready", "cooking_pot"), ("honey_skep", "bee_skep"), ("firewood", "firewood"), ("oak_log", "charcoal_heap")] {
+        for (old, new) in [("cooking_pot_ready", "cooking_pot"), ("honey_skep", "bee_skep"), ("firewood", "firewood"), ("firewood", "charcoal_heap"), ("firewood", "ash_heap")] {
             assert_eq!(heard(old, new), None, "{old} to {new}");
         }
         for work in &recorded.work_done {

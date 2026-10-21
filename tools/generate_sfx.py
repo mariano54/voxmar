@@ -1203,17 +1203,6 @@ def compost_ready(rng):
     return out
 
 
-def clamp_done(rng):
-    """A charcoal clamp burnt through: the earth roof sinking onto the charred wood with a
-    low, muffled slump, then charcoal and soil trickling into the gaps."""
-    out = np.zeros(int(1.1 * RATE))
-    place(out, 0.0, thud(rng, 0.45, 0.02, 0.18), 0.9)
-    place(out, 0.08, trickle(rng, 0.8, rng.uniform(1600, 2200), 110), 0.55)
-    for _ in range(3):
-        place(out, rng.uniform(0.2, 0.8), stone(rng, rng.uniform(1600, 2400), 0.03), 0.2)
-    return out
-
-
 def skep_full(rng):
     """A skep filled with honey: the bees' hum swelling as they fan the comb, then settling."""
     n = int(1.2 * RATE)
@@ -1424,7 +1413,6 @@ SOUNDS = {
     "work/pot_ready": (pot_ready, 2),
     "work/rack_dry": (rack_dry, 2),
     "work/compost_ready": (compost_ready, 2),
-    "work/clamp_done": (clamp_done, 2),
     "work/skep_full": (skep_full, 2),
     "work/scrape_hide": (scrape_hide, 2),
     "work/shape_clay": (shape_clay, 2),
