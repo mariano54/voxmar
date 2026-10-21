@@ -981,6 +981,7 @@ pub struct SettlementInfo {
 }
 
 pub use settlements::CultureInfo;
+pub use settlements::def::PropKind as SettlementPropKind;
 
 /// Samples sites over an area, computing the regional climate once per lattice point.
 pub struct Sampler<'a> {

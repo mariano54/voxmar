@@ -963,6 +963,31 @@ mod tests {
         assert_eq!(broken(&mut server, false), 0, "a village's net gave itself");
     }
 
+    /// A log bench a player set down comes back when broken; a village's (not marked as
+    /// placed) gives nothing.
+    #[test]
+    fn a_players_log_bench_comes_back_and_a_villages_gives_nothing() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let bench = server.content.blocks.expect("base:oak_log_bench");
+        let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 2, 0);
+        let broken = |server: &mut crate::Server, players: bool| {
+            server.set_block(pos, bench);
+            server.placed.remove(&pos);
+            if players && server.marks_placed(bench, bench) {
+                server.placed.insert(pos);
+            }
+            server.items.take_all().for_each(drop);
+            server.break_loot(1, pos, None);
+            server.items.take_all().filter(|d| d.stack.item == bench).map(|d| u32::from(d.stack.count)).sum::<u32>()
+        };
+        assert_eq!(broken(&mut server, true), 1, "a player's log bench came not back");
+        assert_eq!(broken(&mut server, false), 0, "a village's log bench gave itself");
+    }
+
     /// A coal sample a player sets down where the world laid one, over its seam, and mines
     /// again teaches no prospecting: the place action marks the cell as theirs, and the mine
     /// action's break skips what a player put there.

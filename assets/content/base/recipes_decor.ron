@@ -15,6 +15,9 @@
         (pattern: [["stick", "stick", "stick"], ["stick", "hide", "stick"], ["stick", "stick", "stick"]], output: "hide_window", count: 2, skill: "core:construction", level: 3, xp: 5.0),
         (pattern: [["{name}_planks", "{name}_planks"], ["stick", "stick"]], output: "{name}_stool", skill: "core:construction", level: 1, xp: 2.0),
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_bench", skill: "core:construction", level: 2, xp: 3.0),
+        // Two stripped logs, one split for the seat and one cut into stumps, for two log
+        // benches: the village's, for a home.
+        (ingredients: ["stripped_{name}_log", "stripped_{name}_log"], output: "{name}_log_bench", count: 2, skill: "core:construction", level: 1, xp: 2.0),
         (pattern: [["stick", "", ""], ["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_chair", skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"], ["stick", "", "stick"]], output: "{name}_table", skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_planks", "stick", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_crate_stack", skill: "core:construction", level: 2, xp: 3.0),
