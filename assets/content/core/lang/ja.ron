@@ -519,6 +519,8 @@
     "quest.tracker.opens": "開いた：{list}",
     "quest.tracker.more": "ほか{count}件",
     "quest.tracker.how": "やり方：{way}",
+    "quest.tracker.first": "まず：{way}",
+    "quest.tracker.set_down": "まず：{item}を置く",
     "quest.tracker.from": "{how}：{list}",
     "quest.tracker.book": "{key}：クエスト",
     "quest.any": "何か",

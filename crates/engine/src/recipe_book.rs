@@ -117,6 +117,16 @@ pub struct RecipeBook {
     uses: FxHashMap<BlockId, Vec<usize>>,
     /// What the world lays, as each is held ([`listed_as`]).
     laid: std::collections::HashSet<BlockId>,
+    /// The creative-only blocks a way breaks that the world never lays (a zinc ore sample
+    /// no vein sets down): ways no player meets.
+    unlaid: std::collections::HashSet<BlockId>,
+}
+
+/// The item a way that takes any of `accepts` shows going in: the first a player can come
+/// by, not one only the creative catalogue has (a hollow root no one can break loose).
+fn shown_input(blocks: &crate::block::BlockRegistry, accepts: &[BlockId]) -> Option<BlockId> {
+    let items = accepts.iter().map(|&b| blocks.item_of(b));
+    items.clone().find(|&item| !blocks.def(item).has_tag(CREATIVE_ONLY)).or_else(|| items.clone().next())
 }
 
 /// The block `id` is held as: itself, or for one of its placed forms (another look, a
@@ -194,7 +204,7 @@ impl RecipeBook {
         // takes its kind.
         for (id, process) in content.machines.processes() {
             let machines: Vec<BlockId> = content.machines.iter().filter(|m| m.processes.contains(&id)).map(|m| m.block).collect();
-            let inputs: Vec<(BlockId, u8)> = process.inputs.iter().filter_map(|(accepts, n)| Some((blocks.item_of(*accepts.first()?), *n))).collect();
+            let inputs: Vec<(BlockId, u8)> = process.inputs.iter().filter_map(|(accepts, n)| Some((shown_input(blocks, accepts)?, *n))).collect();
             let made = process.outputs.iter().map(|&(item, n)| (item, n, 1.0)).chain(process.byproducts.iter().copied());
             for (item, n, chance) in made {
                 let method = Method::Process { machines: machines.clone(), inputs: inputs.clone(), tier: process.tier, chance };
@@ -205,8 +215,8 @@ impl RecipeBook {
         // Home stations: each work, left in the station's empty block.
         for station in &content.stations.stations {
             for work in &station.works {
-                let Some(&input) = work.accepts.first() else { continue };
-                let method = Method::Work { station: station.empty, input: blocks.item_of(input), takes: work.takes, skill: work.skill, level: work.level };
+                let Some(input) = shown_input(blocks, &work.accepts) else { continue };
+                let method = Method::Work { station: station.empty, input, takes: work.takes, skill: work.skill, level: work.level };
                 let uses = work.accepts.iter().copied().chain(method.stations(blocks)).collect();
                 book.add(blocks, Entry { method, output: work.output, count: (work.gives, work.gives) }, uses);
             }
@@ -417,6 +427,12 @@ impl RecipeBook {
         self.laid.contains(&listed_as(blocks, block))
     }
 
+    /// Whether a player can meet `entry`: not by breaking a creative-only block the world
+    /// never lays (as [`found`](Self::found) was told).
+    pub fn met(&self, entry: &Entry) -> bool {
+        !matches!(entry.method, Method::Break { block, .. } if self.unlaid.contains(&block))
+    }
+
     /// Adds what the world lays (`placed`, from its generator's data) that breaking gives
     /// back as itself: found, not made. Items that are never placed (seeds) are left out,
     /// and so are furnishings: one the world placed (a village's bed) gives nothing broken.
@@ -426,6 +442,15 @@ impl RecipeBook {
         placed.sort();
         placed.dedup();
         self.laid.extend(placed.iter().map(|&b| listed_as(blocks, b)));
+        let laid = &self.laid;
+        self.unlaid = self
+            .entries
+            .iter()
+            .filter_map(|e| match e.method {
+                Method::Break { block, .. } if blocks.def(block).has_tag(CREATIVE_ONLY) && !laid.contains(&listed_as(blocks, block)) => Some(block),
+                _ => None,
+            })
+            .collect();
         // A crop the world lays ripe (a wild cabbage) is foraged as it stands.
         for (_, crop) in content.crops.iter().filter(|(_, crop)| placed.contains(&crop.ripe())) {
             for (item, loot) in &crop.forage {

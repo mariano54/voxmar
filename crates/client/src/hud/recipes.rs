@@ -100,7 +100,9 @@ impl RecipeViewer {
     /// The ways the current look-up finds.
     pub fn found(&self) -> Vec<&Entry> {
         let (Some(book), Some(lookup)) = (&self.book, self.trail.last()) else { return Vec::new() };
-        if lookup.uses { book.using(lookup.item) } else { book.making(lookup.item) }
+        // Never a way no player meets: breaking an ore sample the world never lays.
+        let found = if lookup.uses { book.using(lookup.item) } else { book.making(lookup.item) };
+        found.into_iter().filter(|e| book.met(e)).collect()
     }
 
     /// Whether the quests row needs drawing for `item` in `language`, noting that it is.
@@ -204,9 +206,12 @@ fn look_up(
     start: Option<Res<StartLookup>>,
     mut commands: Commands,
 ) {
-    if viewer.book.is_none() {
+    // Built again for a world played with other content (other packages, other ways), and
+    // what was being looked up there forgotten.
+    if viewer.book.is_none() || launch.is_changed() {
         // Its world data parsed as the content loaded (`load_content` refuses it otherwise).
         viewer.book = Some(Arc::new(voxmar_server::recipe_book(&launch.content).expect("the world data of loaded content parses")));
+        viewer.trail.clear();
     }
     if let Some(StartLookup(name, uses)) = start.as_deref() {
         commands.remove_resource::<StartLookup>();
@@ -565,8 +570,7 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
             });
             // Made near a block: that block beside the grid, as a cooking station is.
             if let Some(block) = near.as_deref().and_then(|tag| content.blocks.tagged(tag).next()) {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(block), None);
+                plus(card, font, images, Some(block), None);
             }
         }
         Method::Cook { input, uses, with, station, .. } => {
@@ -574,12 +578,10 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
             let count = |n: u8| (n > 1).then(|| n.to_string());
             item_cell(card, font, images, Some(*input), count(*uses));
             for &(item, n) in with {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(item), count(n));
+                plus(card, font, images, Some(item), count(n));
             }
             if let Some(fire) = content.blocks.tagged(station).next() {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(fire), None);
+                plus(card, font, images, Some(fire), None);
             }
         }
         Method::Product { tool, .. } => {
@@ -589,20 +591,20 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
         }
         Method::Process { machines, inputs, .. } => {
             for (i, &(item, n)) in inputs.iter().enumerate() {
+                let count = (n > 1).then(|| n.to_string());
                 if i > 0 {
-                    card.spawn(text(font, "+", BODY, MUTED));
+                    plus(card, font, images, Some(item), count);
+                } else {
+                    item_cell(card, font, images, Some(item), count);
                 }
-                item_cell(card, font, images, Some(item), (n > 1).then(|| n.to_string()));
             }
             if let Some(&machine) = machines.first() {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(machine), None);
+                plus(card, font, images, Some(machine), None);
             }
         }
         Method::Work { station, input, takes, .. } => {
             item_cell(card, font, images, Some(*input), (*takes > 1).then(|| takes.to_string()));
-            card.spawn(text(font, "+", BODY, MUTED));
-            item_cell(card, font, images, Some(*station), None);
+            plus(card, font, images, Some(*station), None);
         }
         // What plants it (or the crop itself, if players don't), or the wild plant foraged.
         Method::Harvest { from, .. } => {
@@ -611,19 +613,20 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
         Method::Break { block, tool, .. } => {
             item_cell(card, font, images, Some(content.blocks.item_of(*block)), None);
             if let Some(tool) = tool {
-                card.spawn(text(font, "+", BODY, MUTED));
-                item_cell(card, font, images, Some(*tool), None);
+                plus(card, font, images, Some(*tool), None);
             }
         }
         Method::Trap { trap, .. } => {
             item_cell(card, font, images, Some(*trap), None);
         }
         Method::Bees { block, holding, .. } => {
+            let nest = Some(content.blocks.item_of(*block));
             if let Some(held) = holding {
                 item_cell(card, font, images, Some(*held), None);
-                card.spawn(text(font, "+", BODY, MUTED));
+                plus(card, font, images, nest, None);
+            } else {
+                item_cell(card, font, images, nest, None);
             }
-            item_cell(card, font, images, Some(content.blocks.item_of(*block)), None);
         }
         Method::Chest { chest, .. } => {
             item_cell(card, font, images, Some(*chest), None);
@@ -643,6 +646,15 @@ pub(super) fn way_inputs(card: &mut ChildSpawnerCommands, font: &Handle<Font>, i
         }
         Method::Drop { .. } | Method::Catch { .. } | Method::Trade { wants: None, .. } | Method::Reward { .. } | Method::Found { tool: None, .. } => {}
     }
+}
+
+/// A "+" and the item after it, together, so a recipe line that wraps never leaves the "+"
+/// at a line's end apart from its item.
+fn plus(card: &mut ChildSpawnerCommands, font: &Handle<Font>, images: &HudImages, item: Option<BlockId>, count: Option<String>) {
+    card.spawn(Node { align_items: AlignItems::Center, column_gap: Val::Px(space::GAP), ..default() }).with_children(|pair| {
+        pair.spawn(text(font, "+", BODY, MUTED));
+        item_cell(pair, font, images, item, count);
+    });
 }
 
 /// The words under a way's result: how it is done, and what it takes.
