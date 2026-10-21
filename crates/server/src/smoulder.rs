@@ -54,8 +54,8 @@ pub struct Waiting {
 }
 
 /// How much news waits for one player away: the newest, so a long absence brings back what
-/// is true now rather than every firing since.
-const NEWS_WAITING: usize = 8;
+/// is true now rather than every firing since, and no more than their screen shows at once.
+const NEWS_WAITING: usize = voxmar_protocol::NEWS_LINES;
 
 /// How a smoulder ended.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -814,8 +814,39 @@ mod tests {
         assert_eq!(server.news_waiting.iter().filter(|w| w.owner == "someone_away").count(), NEWS_WAITING);
         assert_eq!(server.news_waiting.first().map(|w| w.words.clone()), Some(Words::text(3)), "the oldest went first");
         server.tell_waiting(1);
-        assert!(client.try_recv().ok().flatten().is_none_or(|m| !matches!(m, voxmar_protocol::ServerMessage::Fired { .. })), "none was {ada}'s");
+        while let Ok(Some(message)) = client.try_recv() {
+            assert!(!matches!(message, voxmar_protocol::ServerMessage::Fired { .. }), "none was {ada}'s: {message:?}");
+        }
         assert_eq!(server.news_waiting.len(), NEWS_WAITING + 1, "theirs kept for them");
+    }
+
+    /// A player coming on (their hello answered) hears the news kept for them, and only
+    /// theirs.
+    #[test]
+    fn a_player_saying_hello_hears_the_news_kept_for_them() {
+        use voxmar_engine::lang::Words;
+        use voxmar_protocol::{ClientMessage, PROTOCOL_VERSION, ServerMessage, local_pair};
+        let mut server = crate::test_server();
+        let (connections, incoming) = crossbeam_channel::unbounded();
+        server.incoming = incoming;
+        server.tell_fired(&crate::player_key("bob"), Words::text("your clamp is done"));
+        server.tell_fired("someone_else", Words::text("not bob's"));
+        let (client, server_side) = local_pair();
+        connections.send(server_side).unwrap();
+        client.send(ClientMessage::Hello { name: "bob".into(), protocol: PROTOCOL_VERSION, content: server.content.fingerprint(), admin_token: None });
+        server.accept_connections();
+        server.handle_messages();
+        let (mut welcomed, mut fired) = (false, Vec::new());
+        while let Ok(Some(message)) = client.try_recv() {
+            match message {
+                ServerMessage::Welcome { .. } => welcomed = true,
+                ServerMessage::Fired { words } => fired.push(words),
+                _ => {}
+            }
+        }
+        assert!(welcomed, "let in");
+        assert_eq!(fired, [Words::text("your clamp is done")], "told theirs as they came on");
+        assert_eq!(server.news_waiting.len(), 1, "the other's still kept");
     }
 
     /// Its wood swapped for stone while it smoulders opens it, and the stone is left as it

@@ -25,8 +25,8 @@ const FADE: f32 = 0.6;
 const MERGE: f32 = 1.2;
 /// How far a line rises over its life, in HUD pixels.
 const RISE: f32 = 10.0;
-/// Lines shown at once at most.
-const LINES: usize = 6;
+/// Lines shown at once at most: as many as the server keeps news waiting for a player away.
+const LINES: usize = voxmar_protocol::NEWS_LINES;
 /// How long a refusal's reason shows under the crosshair, and how far below its middle
 /// (of the screen's height): close enough to read without looking away from the block.
 const WHY_SECONDS: f32 = 2.5;

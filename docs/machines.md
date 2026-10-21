@@ -182,9 +182,9 @@ Raw logs are poor fuel. The way up:
    only warns what opening it now costs; a second soon after digs. Whoever lit it is told
    when it is done, wherever they are (`ServerMessage::Fired`, the interface's `fired`
    sound), as whoever fired a kiln is when it goes cold; one off the server then hears it
-   as they come on again (the newest eight, saved in the world's `news_waiting`). Done
-   out of loaded land it is told then; found opened once loaded after all, the lighter is
-   told what waits there instead.
+   as they come on again (the newest six, as many as their screen shows at once,
+   `NEWS_LINES`; saved in the world's `news_waiting`). Done out of loaded land it is told
+   then; found opened once loaded after all, the lighter is told what waits there instead.
 3. **Charcoal heat** gates the Crucible Kiln, and so the Farm age's end.
 
 It is the one way to make charcoal (balance call, Oct 20): the earth clamp station, which
