@@ -6,6 +6,7 @@
 //! player walks out of reach or dies, or when the store is broken.
 
 use voxmar_engine::block::BlockId;
+use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::IVec3;
 use voxmar_engine::inventory::{ItemStack, Store};
 use voxmar_engine::traits;
@@ -17,31 +18,46 @@ use crate::Server;
 const SLACK: f32 = 1.5;
 
 impl Server {
-    /// What stands on each block that shows what it holds (`BlockDef::shows`: a mantel
-    /// shelf's things): the item in each of its first slots, a spot apiece, by place. One
-    /// with nothing on it is left out.
-    pub(crate) fn shown(&self) -> Vec<(IVec3, Vec<Option<BlockId>>)> {
-        let blocks = &self.content.blocks;
-        let mut shown: Vec<(IVec3, Vec<Option<BlockId>>)> = self
-            .factory
-            .iter()
-            .filter_map(|(pos, block, state)| {
-                let spots = blocks.def(block).shows.len();
-                let items: Vec<Option<BlockId>> = state.bin.iter().take(spots).map(|slot| slot.as_ref().map(|stack| stack.item)).collect();
-                items.iter().any(Option::is_some).then_some((pos, items))
-            })
-            .collect();
-        shown.sort_by_key(|(pos, _)| pos.to_array());
-        shown
+    /// What stands on the block at `pos`, if it shows what it holds (`BlockDef::shows`: a
+    /// mantel shelf's things): the item in each of its first slots, a spot apiece. None for
+    /// one with nothing on it, or no such block.
+    fn shown_at(&self, pos: IVec3) -> Option<Vec<Option<BlockId>>> {
+        let (block, state) = self.factory.get(pos)?;
+        let spots = self.content.blocks.def(block).shows.len();
+        let items: Vec<Option<BlockId>> = state.bin.iter().take(spots).map(|slot| slot.as_ref().map(|stack| stack.item)).collect();
+        items.iter().any(Option::is_some).then_some(items)
     }
 
-    /// Tells every player what stands on the blocks that show it, when that changed since
-    /// they were last told (a player joining is told on joining).
+    /// Tells the players who have a column what stands on its shelves, when that changed
+    /// since they were last told: only the bins the factory says changed are looked at. A
+    /// player is told of a column's shelves as the column is sent (`stream_columns`).
     pub(crate) fn send_shown(&mut self) {
-        let shown = self.shown();
-        if shown != self.shown_sent {
-            self.broadcast(ServerMessage::Shown { at: shown.clone() });
-            self.shown_sent = shown;
+        let mut columns: Vec<ColumnPos> = Vec::new();
+        for pos in self.factory.take_bins_changed() {
+            let now = self.shown_at(pos);
+            let column = ColumnPos::of_block(pos);
+            let told = self.shown.get(&column).and_then(|at| at.iter().find(|(p, _)| *p == pos)).map(|(_, items)| items);
+            if told == now.as_ref() {
+                continue;
+            }
+            let at = self.shown.entry(column).or_default();
+            at.retain(|(p, _)| *p != pos);
+            if let Some(items) = now {
+                at.push((pos, items));
+                at.sort_by_key(|(p, _)| p.to_array());
+            }
+            if !columns.contains(&column) {
+                columns.push(column);
+            }
+        }
+        for column in columns {
+            let at = self.shown.get(&column).cloned().unwrap_or_default();
+            if at.is_empty() {
+                self.shown.remove(&column);
+            }
+            for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
+                player.connection.send(ServerMessage::Shown { column, at: at.clone() });
+            }
         }
     }
 
@@ -142,11 +158,8 @@ impl Server {
 }
 
 /// Tells players what stands on the blocks that show what they hold, five times a second:
-/// a thing put on a shelf by hand, a chute or another player shows soon after.
-// TODO: it looks over every machine each time and tells everyone the whole world's
-// shelves. Telling only of the stores that changed, to the players who have their chunks
-// (and each player of what stands in a chunk as it loads), wants the factory to say which
-// bins changed; worth it once worlds hold many shelves.
+/// a thing put on a shelf by hand, a chute or another player shows soon after. Only the
+/// bins that changed are looked at, and only the players who have their columns told.
 pub(crate) struct Shelves;
 
 impl crate::process::Process for Shelves {
