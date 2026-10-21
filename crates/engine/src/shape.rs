@@ -364,6 +364,23 @@ mod tests {
         compile("test:shape", "test:block", &ShapeDef { boxes, ..Default::default() }, &Textures::All("stone".into()), Facing::North, LIMITS).map(|(shape, _)| shape)
     }
 
+    /// A shape's hull is the span of its boxes unless it names its own, turned with the
+    /// block; a hull span outside the cell is refused.
+    #[test]
+    fn a_hull_is_its_span_or_its_own_spans() {
+        let rail = vec![ShapeBox { from: [0.0, 0.0, 13.0], to: [16.0, 2.0, 16.0], ..Default::default() }, ShapeBox { from: [0.0, 13.0, 13.0], to: [16.0, 16.0, 16.0], ..Default::default() }];
+        let span = shape(rail.clone()).unwrap();
+        assert_eq!(span.hull, vec![(Vec3::new(0.0, 0.0, 13.0 / 16.0), Vec3::ONE)]);
+        let hull = vec![Span { from: [0.0, 0.0, 13.0], to: [16.0, 16.0, 16.0] }, Span { from: [13.0, 0.0, 0.0], to: [16.0, 16.0, 13.0] }];
+        let def = ShapeDef { boxes: rail.clone(), hull: hull.clone() };
+        let east = compile("test:shape", "test:block", &def, &Textures::All("stone".into()), Facing::East, LIMITS).unwrap().0;
+        // Turned east, the run along the south runs along the west, the one on the east along the south.
+        assert_eq!(east.hull, vec![(Vec3::ZERO, Vec3::new(3.0 / 16.0, 1.0, 1.0)), (Vec3::new(3.0 / 16.0, 0.0, 13.0 / 16.0), Vec3::ONE)]);
+        let out = ShapeDef { boxes: rail, hull: vec![Span { from: [0.0, 0.0, 0.0], to: [17.0, 16.0, 16.0] }] };
+        let error = compile("test:shape", "test:block", &out, &Textures::All("stone".into()), Facing::North, LIMITS).unwrap_err();
+        assert!(error.0.contains("hull span 0 must run from less to more"), "{}", error.0);
+    }
+
     #[test]
     fn a_slab_covers_its_bottom_and_no_side_whole() {
         let slab = shape(vec![ShapeBox { to: [16.0, 8.0, 16.0], cull: true, ..Default::default() }]).unwrap();

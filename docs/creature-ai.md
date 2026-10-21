@@ -259,7 +259,12 @@ if it jumps, down no further than `SAFE_DROP` in a chase and otherwise no furthe
 it climbs back unless onto open ground (`Walker::drop`, `way_out`), at most 1500 cells within 24 blocks, again
 at most once a second and only when its goal has moved. It walks the cells' centres, still
 steering, so a wolf finds the doorway in a wall (a shut door is a wall) and a sheep after
-wheat follows the player through it. A creature is made facing open air, so none starts
+wheat follows the player through it. Before a gap barely wider than it that its box would
+not go straight through from where it is (a boar come along a fence to a gate), it first
+makes for the point square in front of the gap's middle, a cell back, and goes in from
+there; it does so only where it would go straight in from that point, so a step it climbs
+is no gap. Cattle broader than a block (an aurochs, a bison) fit no gate one wide; they
+are led through a double gate (`<timber>_double_gate`). A creature is made facing open air, so none starts
 with its head in a trunk. Next, from the deep dive:
 
 - A per-species movement profile for that search (step, jump, safe fall, media) and sparse
