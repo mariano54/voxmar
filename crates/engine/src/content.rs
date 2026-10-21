@@ -1198,10 +1198,11 @@ mod tests {
             })
             .collect();
         assert_eq!(asked, fuels, "A Full Charge asks for the kiln's fuels");
-        let bricks = blocks.expect("base:kiln_bricks");
+        let bricks = blocks.expect("base:tempered_kiln_bricks");
         let ring: u32 = kiln.pieces().iter().filter(|(takes, _)| *takes == [bricks]).map(|(_, n)| n).sum();
+        assert!(ring > 0, "the kiln's ring takes tempered kiln bricks");
         let placed: Vec<u32> = content.quests.get("base:the_kiln_ring").expect("The Kiln Ring").tasks.iter().flatten().filter_map(|g| match g {
-            Goal::Placed(item, n) if item == "base:kiln_bricks" => Some(*n),
+            Goal::Placed(item, n) if item == "base:tempered_kiln_bricks" => Some(*n),
             _ => None,
         }).collect();
         assert_eq!(placed, [ring], "The Kiln Ring sets down the kiln's {ring} bricks");

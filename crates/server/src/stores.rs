@@ -33,6 +33,9 @@ impl Server {
         if self.in_home_with(agent, pos)
             && let Some(machine) = machines.get(block)
         {
+            // Judged afresh, at their own home: not what a visit or the last home left on
+            // their modifiers (they refresh only once a second).
+            crate::process::Survival::refresh(self, agent);
             let want = machine.grown_bin(self.players[&agent].modifiers.store_room);
             if let Some(state) = self.factory.state_mut(pos)
                 && state.bin.len() < want
@@ -406,6 +409,21 @@ mod tests {
         open(&mut server);
         assert_eq!(slots(&server), 18, "a barrel in a Homely home");
         assert_eq!(server.players[&1].inventory.store.as_ref().map(|s| s.slots.len()), Some(18), "the open store's slots, as the client is sent them");
+    }
+
+    /// What a finer home elsewhere (a friend's, or the one just left) last left on the
+    /// player's modifiers grows nothing: at their own plain home the barrel is judged afresh
+    /// and holds its 9.
+    #[test]
+    fn a_store_grows_by_the_home_it_is_in_not_the_last_one_felt() {
+        let mut server = fixture();
+        let barrel = id(&server, "base:barrel");
+        server.set_block(AT, barrel);
+        let player = server.players.get_mut(&1).unwrap();
+        player.bed = Some(Vec3::new(9.5, (FLOOR + 1) as f32, 8.5));
+        player.modifiers.store_room = 3.0;
+        open(&mut server);
+        assert_eq!(slots(&server), 9, "a barrel at a plain home grew by a finer home's store_room");
     }
 
     /// A store grown at home keeps its size: the home no longer Homely, opened again, and
