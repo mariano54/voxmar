@@ -125,7 +125,7 @@
             // across a window it keeps most of the room's light in (`light_filter`), so a lit
             // home's window glows low at night; drawn back, the light goes through as air.
             (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, light_filter: 8, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
-                swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
+                swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "curtain_drawn", "drape", "decor", "colour:{name}"]),
             (name: "{name}_curtain_open", render: Model, shape: "curtain_open", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
                 swaps: "{name}_curtain", drops: "{name}_curtain", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
             // `paper_lantern` is this alone, not the metal or stone lanterns, for a quest that asks

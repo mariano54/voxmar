@@ -178,6 +178,8 @@
     "settings.key.recipes.hint": "アイテムの上で:それを作るレシピを表示します。",
     "settings.key.uses": "用途キー",
     "settings.key.uses.hint": "アイテムの上で:それを使うものを表示します。",
+    "settings.key.put_away": "片付けキー",
+    "settings.key.put_away.hint": "家の中で:ホットバー以外の荷物を、同じ物が入っている家の収納にしまいます。",
     "settings.key.screenshot": "スクリーンショットキー",
     "settings.key.screenshot.hint": "画面をクリップボードにコピーし、スクリーンショットのフォルダーに保存します。",
     "screenshot.copied": "スクリーンショットをコピーし、{file}として保存しました。",

@@ -27,7 +27,8 @@ fn made(content: &Content) -> Vec<BlockId> {
 }
 
 /// A state one swaps into and comes back as (a curtain drawn back) is the same piece: its
-/// partner's colour, family and furnishing tags, and it gives the partner back.
+/// partner's colour, family and furnishing tags (all but the one naming the state), and it
+/// gives the partner back.
 #[test]
 fn a_swap_state_keeps_its_partners_colour_and_tags() {
     let content = content();
@@ -41,7 +42,9 @@ fn a_swap_state_keeps_its_partners_colour_and_tags() {
         assert_eq!(partner.swaps.as_deref(), Some(def.name.as_str()), "{} and {} swap both ways", def.name, partner.name);
         assert_eq!(def.tint, partner.tint, "{}'s colour", def.name);
         assert_eq!(def.family, partner.family, "{}'s family", def.name);
-        assert_eq!(def.tags, partner.tags, "{}'s tags", def.name);
+        // Apart from the tag naming the state (a curtain drawn across hushes a draught).
+        let plain = |tags: &[String]| tags.iter().filter(|t| !t.ends_with("_drawn") && !t.ends_with("_open")).cloned().collect::<Vec<_>>();
+        assert_eq!(plain(&def.tags), plain(&partner.tags), "{}'s tags", def.name);
         states += 1;
     }
     assert!(states >= 12, "the twelve dyes' drawn-back curtains, at least: {states}");
