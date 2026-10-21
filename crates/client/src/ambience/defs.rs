@@ -102,13 +102,16 @@ pub enum Fixed {
     SettlementEdge,
     /// How many people live in the nearest settlement (0 with none): its size.
     SettlementPeople,
+    /// How far up the home ladder the player stands, by the highest of `home`'s effects
+    /// they hold: 0 away from home, 1 for the first, and so on.
+    Home,
 }
 
 /// The `settlement` axis with no settlement near.
 pub const NO_SETTLEMENT: f32 = 10_000.0;
 
 impl Fixed {
-    pub const ALL: [Fixed; 33] = [
+    pub const ALL: [Fixed; 34] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -142,6 +145,7 @@ impl Fixed {
         Fixed::Sheltered,
         Fixed::SettlementEdge,
         Fixed::SettlementPeople,
+        Fixed::Home,
     ];
 
     fn name(self) -> &'static str {
@@ -179,6 +183,7 @@ impl Fixed {
             Fixed::Sheltered => "sheltered",
             Fixed::SettlementEdge => "settlement_edge",
             Fixed::SettlementPeople => "settlement_people",
+            Fixed::Home => "home",
         }
     }
 }
@@ -457,6 +462,9 @@ pub struct Ambience {
     pub draughts: Vec<(String, Vec<usize>)>,
     /// The sets of buildings one-shots sound from, each once.
     pub buildings: Vec<BuildingSet>,
+    /// The home ladder's effects, lowest first (`home`): the `home` axis is how far up it
+    /// the player stands.
+    pub home: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -474,6 +482,8 @@ struct FileDef {
     roofs: Option<RoofsDef>,
     #[serde(default)]
     draughts: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    home: Option<Vec<String>>,
 }
 
 /// `roofs`: a later package's height and muffle replace an earlier one's; its shelter and
@@ -609,6 +619,9 @@ impl Ambience {
                     return Err(format!("{package}/{FILE}: shelter wants walls and roof of a block or more, muffle 20..20000 Hz, thunder 0..1"));
                 }
                 ambience.shelter = shelter;
+            }
+            if let Some(home) = &def.home {
+                ambience.home.clone_from(home);
             }
         }
         // Groups first, so every file's conditions may name any group.
@@ -746,6 +759,26 @@ impl Ambience {
         }
         ambience.draughts = resolved.into_iter().collect();
         Ok(ambience)
+    }
+
+    /// Fails, for the launch, on a `home` step that names no effect, or names one twice.
+    pub fn check_home(&self, effects: &voxmar_engine::effect::EffectRegistry) -> Result<(), String> {
+        for (i, name) in self.home.iter().enumerate() {
+            if effects.find(name).is_none() {
+                return Err(format!("{FILE}: home names {name}, which is no effect"));
+            }
+            if self.home[..i].contains(name) {
+                return Err(format!("{FILE}: home names {name} twice"));
+            }
+        }
+        Ok(())
+    }
+
+    /// How far up the home ladder a player holding `held` stands: 1 + the place of the
+    /// highest step they hold, 0 for none.
+    pub fn home_step(&self, effects: &voxmar_engine::effect::EffectRegistry, held: &[voxmar_engine::effect::ActiveEffect]) -> f32 {
+        let holds = |name: &String| effects.find(name).is_some_and(|id| held.iter().any(|a| a.effect == id));
+        self.home.iter().rposition(holds).map_or(0.0, |step| step as f32 + 1.0)
     }
 
     /// Fails, for the launch, on a block's `shelter:` tag that neither keeps the rain's

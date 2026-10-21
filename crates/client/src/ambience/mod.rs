@@ -729,6 +729,7 @@ fn settlement_bounds(s: &voxmar_worldgen::SettlementInfo, at: Vec2, sets: &[defs
 /// Fills in the environment vector from the scan, the place, the weather and the time.
 fn listen(
     player: Res<LocalPlayer>,
+    launch: Res<Launch>,
     world: Res<ClientWorld>,
     weather: Res<ClientWeather>,
     cycle: Res<DayCycle>,
@@ -777,6 +778,7 @@ fn listen(
     env.set(Fixed::Settlement, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.settlement));
     env.set(Fixed::SettlementEdge, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.edge));
     env.set(Fixed::SettlementPeople, ambient.place.as_ref().map_or(0.0, |place| place.people));
+    env.set(Fixed::Home, ambient.ambience.home_step(&launch.content.effects, &player.vitals.effects));
     surroundings.settlement = ambient.place.as_ref().and_then(|place| Some((place.id?, place.edge)));
     surroundings.surveyed = ambient.place_survey;
     let shown = &weather.current;
