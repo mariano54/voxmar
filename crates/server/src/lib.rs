@@ -1620,6 +1620,81 @@ pub(crate) fn test_server_on(content: Content) -> Server {
 mod tests {
     use super::*;
 
+    /// Every quest, on any path, asks to make only what its own goals and the quests it comes
+    /// after have taught the stations for: what it has the player make, cook, set down or
+    /// hold (of a tag: any one of what a player can hold of it) is got one of the recipe
+    /// book's ways, each worked only at a station (the crafting table, a recipe's `near`
+    /// block, a cooking station) one of those quests has the player make. A Craft goal is
+    /// met at the grid and a Cook goal by cooking (at its station, for CookAt). The
+    /// main-line walk puts down any station a recipe needs and walks only the main line, so
+    /// a side path asking for fired clay before the kiln got through (A Stove and a Quern's
+    /// workshop half, once 451 made its pieces take kiln output).
+    #[test]
+    fn a_quest_asks_only_for_what_its_stations_are_taught_for() {
+        use voxmar_engine::quest::Goal;
+        use voxmar_engine::recipe_book::Method;
+        let content = test_content();
+        let blocks = &content.blocks;
+        // The book as the server has it: with what the world lays, found and broken loose.
+        let book = recipe_book_of(&content, &WorldContent::load(&content).expect("checked by load_content"));
+        let id = |name: &str| blocks.id(name).or_else(|| blocks.id(&format!("base:{name}")));
+        // What a goal names, as held: an item, or what a player can hold with a tag.
+        let named = |item: &str| -> Vec<BlockId> {
+            let mut held: Vec<BlockId> = match item.strip_prefix("tag:") {
+                Some(tag) => blocks.tagged(tag).filter(|&b| blocks.holdable(b) && !blocks.def(b).has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY)).map(|b| blocks.item_of(b)).collect(),
+                None => id(item).map(|b| blocks.item_of(b)).into_iter().collect(),
+            };
+            held.sort();
+            held.dedup();
+            held
+        };
+        let mut walls = Vec::new();
+        for quest in content.quests.iter() {
+            // The quests it surely comes after ("a|b" makes sure of neither), and itself.
+            let mut before: Vec<&voxmar_engine::quest::QuestDef> = Vec::new();
+            let mut next = vec![quest];
+            while let Some(q) = next.pop() {
+                if before.iter().any(|b| b.name == q.name) {
+                    continue;
+                }
+                before.push(q);
+                next.extend(q.after.iter().filter(|a| !a.contains('|')).map(|a| content.quests.get(a).unwrap_or_else(|| panic!("{} comes after {a}, which is no quest", q.name))));
+            }
+            // A station is taught by a goal that has the player make, set down or hold it by name.
+            let taught: Vec<BlockId> = before.iter().flat_map(|q| q.tasks.iter().flatten()).filter_map(|g| match g {
+                Goal::Craft(item, _) | Goal::Placed(item, _) | Goal::Have(item, _) if !item.starts_with("tag:") => id(item).map(|b| blocks.item_of(b)),
+                _ => None,
+            }).collect();
+            let tagged = |tag: &str| taught.iter().any(|&b| blocks.def(b).has_tag(tag));
+            let small = |cells: &[Option<BlockId>; voxmar_engine::craft::GRID]| cells.iter().enumerate().all(|(i, c)| c.is_none() || voxmar_engine::craft::SMALL.contains(&i));
+            let worked = |method: &Method| match method {
+                Method::Craft { variants, near, .. } => (variants.iter().any(small) || tagged("crafting_table")) && near.as_deref().is_none_or(tagged),
+                Method::Cook { station, .. } => tagged(station),
+                Method::Work { .. } | Method::Process { .. } | Method::Trap { .. } => method.stations(blocks).iter().any(|&s| taught.contains(&blocks.item_of(s))),
+                _ => true,
+            };
+            for goal in quest.tasks.iter().flatten() {
+                // Which of the book's ways meet it.
+                let (item, way): (&String, &dyn Fn(&Method) -> bool) = match goal {
+                    Goal::Craft(item, _) => (item, &|m| matches!(m, Method::Craft { .. })),
+                    Goal::Cook(item, _) => (item, &|m| matches!(m, Method::Cook { .. })),
+                    Goal::CookAt(item, station, _) => (item, &move |m| matches!(m, Method::Cook { station: at, .. } if at == station)),
+                    Goal::Placed(item, _) | Goal::Have(item, _) => (item, &|_| true),
+                    _ => continue,
+                };
+                if item == "any" {
+                    continue;
+                }
+                let accepts = named(item);
+                assert!(!accepts.is_empty(), "{}: {goal:?} names nothing a player holds", quest.name);
+                if !accepts.iter().any(|&b| book.making(b).into_iter().any(|e| way(&e.method) && book.by(blocks, e, &worked))) {
+                    walls.push(format!("{}: {goal:?}", quest.name));
+                }
+            }
+        }
+        assert!(walls.is_empty(), "these goals need a station no quest before them has the player make: {walls:#?}");
+    }
+
     /// Where a new world of `seed` wakes its first player, from the spawn column alone as
     /// `Server::new` loads it, and the block they stand on.
     fn spawn_on(seed: u64, content: &Content, world_content: &WorldContent) -> (Vec3, Option<BlockId>) {
