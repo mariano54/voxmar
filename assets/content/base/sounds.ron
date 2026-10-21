@@ -216,6 +216,15 @@
                 (tags: ["flour"], sounds: ["sounds/work/flour_1.ogg", "sounds/work/flour_2.ogg"], volume: 0.9),
                 (tags: ["twine"], sounds: ["sounds/work/twine_1.ogg", "sounds/work/twine_2.ogg"], volume: 1.2),
                 (tags: ["bolt"], sounds: ["sounds/work/cloth_1.ogg", "sounds/work/cloth_2.ogg"], volume: 0.6),
+                // What the fire and the kilns give back: a loaf knocked hollow, fired clay
+                // ringing sound, an ingot clinking from the mould with a hiss, charcoal raked
+                // out in brittle clinks. (Clay cracked in the fire comes back as plain clay,
+                // and kilned stone as stone: told by no tag that dug clay or rock lacks, so
+                // they keep the cook's own sound.)
+                (tags: ["baked"], sounds: ["sounds/baked_1.ogg", "sounds/baked_2.ogg"], volume: 0.8),
+                (tags: ["fired_clay"], sounds: ["sounds/work/fired_1.ogg", "sounds/work/fired_2.ogg"], volume: 0.8),
+                (tags: ["ingot"], sounds: ["sounds/work/ingot_1.ogg", "sounds/work/ingot_2.ogg"], volume: 0.8),
+                (tags: ["charcoal"], sounds: ["sounds/work/charcoal_1.ogg", "sounds/work/charcoal_2.ogg"], volume: 0.8),
             ],
             ways: [
                 // Clay or cobble set into a pit kiln: a knock into the embers and a breath of

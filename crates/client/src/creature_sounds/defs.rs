@@ -50,6 +50,8 @@ pub struct VoiceDef {
     pub greet: Option<EventDef>,
     pub alarm: Option<EventDef>,
     pub content: Option<EventDef>,
+    /// Tamed by the player. Unset: its idle sound.
+    pub tamed: Option<EventDef>,
 }
 
 impl VoiceDef {
@@ -68,6 +70,7 @@ impl VoiceDef {
             Kind::Greet => self.greet.as_ref(),
             Kind::Alarm => self.alarm.as_ref(),
             Kind::Content => self.content.as_ref(),
+            Kind::Tamed => self.tamed.as_ref(),
         }
     }
 }
@@ -406,8 +409,9 @@ mod tests {
                     voices: {
                         "beast": (size: 1.0, idle: (clips: ["a.ogg", "b.ogg"]), hurt: (clips: ["h.ogg"], gain: 0.5), rest: (clips: ["r.ogg"])),
                         "small": (like: "beast", call: (clips: ["c.ogg"], range: 60.0)),
+                        "pet": (like: "small", tamed: (clips: ["t.ogg"])),
                     },
-                    species: { "rabbit": (voice: "small") },
+                    species: { "rabbit": (voice: "small"), "hare": (voice: "pet") },
                 )"#,
             )]),
             creatures,
@@ -423,6 +427,10 @@ mod tests {
         // An alert it lacks falls back to its call; a death to its hurt.
         assert_eq!(path(Kind::Alert), "content/base/c.ogg");
         assert_eq!(path(Kind::Death), "content/base/h.ogg");
+        // Tamed, it says so with its idle noise; a voice with its own tamed clips uses them.
+        assert_eq!(path(Kind::Tamed), "content/base/a.ogg");
+        let hare = bank.voice(creatures.find("hare").unwrap()).unwrap();
+        assert_eq!(bank.clips[hare.event(Kind::Tamed).unwrap().clips[0]].path, "content/base/t.ogg");
         // Nothing for grazing: grazing is not heard rather than a stand-in.
         assert!(rabbit.event(Kind::Graze).is_none());
         // A rabbit is smaller than the voice's one-block animal, so higher.

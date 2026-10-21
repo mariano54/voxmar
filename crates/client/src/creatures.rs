@@ -1191,6 +1191,7 @@ fn show(
     }
     let mut built = 0;
     let views: Vec<CreatureView> = std::mem::take(&mut creatures.waiting).into_iter().chain(std::mem::take(&mut creatures.inbox)).collect();
+    let me = creatures.me;
     for view in views {
         if let Some(shown) = creatures.shown.get_mut(&view.id) {
             // Hurt by someone else's blow (ours cry as the server answers them, below).
@@ -1210,6 +1211,10 @@ fn show(
                 if let Some(kind) = kind {
                     sounds.push(sound(kind, view.id, &view, shown.position, 0.0));
                 }
+            }
+            // Tamed by this player: it says it is theirs, heard whatever its chance.
+            if view.kept && !shown.view.kept && view.owner.is_some() && view.owner == me {
+                sounds.push(CreatureSound { answering: true, ..sound(Sound::Tamed, view.id, &view, shown.position, 0.0) });
             }
             if view.ready && !shown.view.ready {
                 sounds.push(sound(Sound::Ready, view.id, &view, shown.position, 0.0));
