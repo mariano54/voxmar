@@ -117,9 +117,9 @@ impl Items {
 
     /// Where the nearest stack of any of `items` lies within `reach` blocks of `at`, across
     /// the ground, for a scavenger (`creature::Scavenge`): one anyone may pick up, nobody's
-    /// own.
-    pub(crate) fn scrap_near(&self, at: Vec3, reach: f32, items: &[BlockId]) -> Option<Vec3> {
-        self.scraps(at, reach, items).map(|(_, d)| d.body.position).min_by(|a, b| a.distance_squared(at).total_cmp(&b.distance_squared(at)))
+    /// own, and one it senses (`sensed`).
+    pub(crate) fn scrap_near(&self, at: Vec3, reach: f32, items: &[BlockId], sensed: impl Fn(Vec3) -> bool) -> Option<Vec3> {
+        self.scraps(at, reach, items).map(|(_, d)| d.body.position).filter(|&p| sensed(p)).min_by(|a, b| a.distance_squared(at).total_cmp(&b.distance_squared(at)))
     }
 
     /// A scavenger within `reach` of a stack of any of `items` snatches one of it (the
