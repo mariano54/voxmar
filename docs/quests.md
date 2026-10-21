@@ -276,7 +276,8 @@ the Nomad quests whose goals take hide (A Coin Purse, Pockets, A Stone's Throw, 
 come after Hung to Dry, whose drying rack turns a hunt's raw hide into hide. The Farm book
 teaches its own rack, as a Farm quest comes after Farm quests only: Bigger Game has the player
 make one, and the Farm quests that take hide (Full Hide Wraps, Light in the Window, Books and
-Banners, Candlelight, The Beekeeper Calls) come after it. A drop counts only from a creature
+Banners) come after it. Candlelight and The Beekeeper Calls need no hide: a candle is also a wick
+over lard (a wild boar's drop) or over beeswax, so they come after their own chapters alone. A drop counts only from a creature
 every player meets: the raiders and jailers that also drop hide come only with rare
 wandering parties, and a boss's drop counts once a quest before has the player kill it.
 

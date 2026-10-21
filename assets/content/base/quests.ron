@@ -517,7 +517,7 @@
         ),
         (
             name: "candlelight", age: "farm", branch: "home", title: "Candlelight",
-            why: "With shelves and cupboards up (Shelves and Cupboards), light them: twine and two hides make two candles (Crafting 3; raw hide hung a while on a drying rack turns to hide), a softer light than a torch for a table or shelf.",
+            why: "With shelves and cupboards up (Shelves and Cupboards), light them: a twine wick over a lump of lard makes two candles (Crafting 3), and wild boar and brown bears drop lard; a cake of beeswax makes three, and two hides two. A candle is a softer light than a torch for a table or shelf.",
             tasks: [[Craft("candle", 2)]],
             after: ["shelves_and_cupboards"],
             rewards: [Xp("crafting", 60.0)],
