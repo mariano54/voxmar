@@ -3134,13 +3134,12 @@ fn homes_are_furnished_for_their_people() {
     use super::canvas::Put;
     use rustc_hash::FxHashMap;
     let registry = base_registry();
-    let content = crate::content::WorldContent::base(&registry).unwrap();
     let solid = |b: Option<&BlockId>| b.is_some_and(|&b| registry.info(b).solid);
     let tagged = |b: Option<&BlockId>, tag: &str| b.is_some_and(|&b| registry.def(b).has_tag(tag));
     let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut tops, mut surfaces, mut stairs, mut bare) = (0, 0, 0, 0, 0, 0, 0, 0, Vec::new());
     let mut shown = 0;
     for seed in [42u64, 1, 7] {
-        let world = Overworld::with_content(seed, registry.clone(), &content);
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
             let Some(plan) = slot.0.as_ref() else { continue };
