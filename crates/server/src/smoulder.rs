@@ -223,8 +223,7 @@ impl Server {
     /// Fires gone out are taken out of `lit` here, or by a block changed meanwhile
     /// (`fire_changed`), which keeps them for this to tell.
     pub(crate) fn tell_fires_out(&mut self) {
-        let (since, tick) = (self.fires_out_seen, self.tick);
-        self.fires_out_seen = tick;
+        let tick = self.tick;
         let mut cold = std::mem::take(&mut self.fires_out);
         let before = self.lit.len();
         self.lit.retain(|_, fire| {
@@ -237,10 +236,8 @@ impl Server {
         if self.lit.len() != before {
             self.send_fires();
         }
-        // The first look after a start tells nothing: those went out while no one played.
-        if since == 0 {
-            return;
-        }
+        // Even the first look after a start tells: a fire saved lit comes back only if it
+        // still burns (`until` past the world's tick), so whatever goes out went out in play.
         let out: Vec<(String, String)> = cold
             .into_iter()
             .filter(|fire| self.content.multiblocks.get(&fire.structure).is_some_and(|m| !m.home && !m.fuels.is_empty()))
@@ -276,12 +273,13 @@ impl Server {
         })
     }
 
-    /// Sends `words` to the player keyed `owner` (`player_key`), if they are on.
-    /// Sends `words` to the player keyed `owner` (`player_key`); one away hears it when on
-    /// again (`tell_waiting`), the newest `NEWS_WAITING` kept for each.
+    /// Sends `words` to the player keyed `owner` (`player_key`); one away, or whose
+    /// connection has gone, hears it when on again (`tell_waiting`), the newest
+    /// `NEWS_WAITING` kept for each.
     fn tell_fired(&mut self, owner: &str, words: Words) {
-        if let Some(player) = self.players.values().find(|p| crate::player_key(&p.name) == owner) {
-            player.connection.send(voxmar_protocol::ServerMessage::Fired { words });
+        if let Some(player) = self.players.values().find(|p| crate::player_key(&p.name) == owner)
+            && player.connection.send(voxmar_protocol::ServerMessage::Fired { words: words.clone() })
+        {
             return;
         }
         self.news_waiting.push(Waiting { owner: owner.to_owned(), words });
@@ -820,6 +818,40 @@ mod tests {
             assert!(!matches!(message, voxmar_protocol::ServerMessage::Fired { .. }), "none was {ada}'s: {message:?}");
         }
         assert_eq!(server.news_waiting.len(), NEWS_WAITING + 1, "theirs kept for them");
+    }
+
+    /// News for a player whose connection is gone (dropped, not yet noticed, or about to
+    /// be replaced by their own rejoin) is kept for them, not lost on the dead socket.
+    #[test]
+    fn news_for_a_player_whose_connection_went_is_kept() {
+        use voxmar_engine::lang::Words;
+        let (mut server, client) = heard("base:torch");
+        let ada = crate::player_key(&server.players[&1].name);
+        drop(client);
+        server.tell_fired(&ada, Words::text("your kiln is cold"));
+        assert_eq!(server.news_waiting, [super::Waiting { owner: ada, words: Words::text("your kiln is cold") }]);
+    }
+
+    /// A kiln gone cold in the first look after the server starts is told: what was lit
+    /// when the world was saved comes back only if it still burns, so whatever goes out now
+    /// went out in play.
+    #[test]
+    fn a_kiln_gone_cold_in_the_first_look_after_a_start_is_told() {
+        let (mut server, client) = heard("base:torch");
+        let name = server.players[&1].name.clone();
+        let kiln = server.content.multiblocks.iter().find(|m| !m.home && !m.fuels.is_empty()).expect("a fuelled kiln").name.clone();
+        let here = IVec3::new(4, FLOOR + 1, 20);
+        server.lit.insert(here, crate::hearth::Lit { position: here.to_array(), structure: kiln, until: server.tick + 1, owner: Some(crate::player_key(&name)) });
+        while client.try_recv().is_ok_and(|m| m.is_some()) {}
+        server.tick += 2;
+        server.tell_fires_out();
+        let mut keys = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            if let voxmar_protocol::ServerMessage::Fired { words: voxmar_engine::lang::Words::Key(key, _) } = message {
+                keys.push(key);
+            }
+        }
+        assert_eq!(keys, ["multiblock.fire_out"], "told the first time it looked");
     }
 
     /// A player coming on (their hello answered) hears the news kept for them, and only

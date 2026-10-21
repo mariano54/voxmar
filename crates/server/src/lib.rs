@@ -759,8 +759,6 @@ pub(crate) struct Server {
     smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
     /// News of firings for players away when it came, told when they are on again.
     news_waiting: Vec<smoulder::Waiting>,
-    /// The tick fuelled fires were last looked over for going out (`Server::tell_fires_out`).
-    fires_out_seen: u64,
     /// Fuelled fires gone cold since then, taken out of `lit` wherever that happened, to be
     /// told (`Server::tell_fires_out`).
     fires_out: Vec<hearth::Lit>,
@@ -954,7 +952,6 @@ impl Server {
             lit,
             smoulders,
             news_waiting,
-            fires_out_seen: 0,
             fires_out: Vec::new(),
             hearth_owners,
             fires_sent: Vec::new(),
