@@ -45,7 +45,7 @@ pub fn module(behaviour: Behaviour) -> Arc<dyn Module> {
 /// Every creature has these, whatever its data says: going home when it strays, going to
 /// a mate when both are ready to breed, and warning players off if its kind does (`warn`).
 pub fn always() -> Vec<Arc<dyn Module>> {
-    vec![Arc::new(ReturnHome), Arc::new(Court), Arc::new(Roam), Arc::new(Warn), Arc::new(Fire)]
+    vec![Arc::new(ReturnHome), Arc::new(Court), Arc::new(Roam), Arc::new(Warn), Arc::new(Fire), Arc::new(Hide)]
 }
 
 /// Now and then a curious, lively individual sets off alone across its range, so groups
@@ -286,7 +286,7 @@ impl Flee {
         let radius = self.radius * (0.5 + ctx.mind.personality.fear());
         ctx.attacker()
             .filter(|_| ctx.mind.fear > 0.0)
-            .or_else(|| ctx.nearest().filter(|p| !p.tempting && ctx.distance(p.position) < radius))
+            .or_else(|| ctx.nearest().filter(|p| !p.tempting && ctx.distance(p.position) < sitting(ctx, p).map_or(radius, |f| f.hold)))
             .copied()
     }
 
@@ -342,7 +342,51 @@ impl Module for Flee {
         }
         // A bird takes wing and goes well clear before it settles again.
         let far = if flier(ctx) { 22.0 } else { 8.0 };
-        Decision { goal: Some(at.position + (away + side).normalize() * far), speed: run(ctx) * winded(ctx, mind), pose: Pose::Alert, alarm: fresh, ..Default::default() }
+        // One that sat tight bursts away, its first seconds faster than it can run.
+        let burst = flush(ctx).filter(|f| mind.since < f.seconds).map_or(1.0, |f| f.burst);
+        Decision { goal: Some(at.position + (away + side).normalize() * far), speed: run(ctx) * burst * winded(ctx, mind), pose: Pose::Alert, alarm: fresh, ..Default::default() }
+    }
+}
+
+/// How it sits tight (`creature::Flush`), if its kind does and it is neither kept nor on
+/// an errand.
+fn flush(ctx: &Ctx) -> Option<crate::creature::Flush> {
+    ctx.creature.def.flush.filter(|_| !ctx.at.kept && ctx.at.errand.is_none())
+}
+
+/// How it sits tight from `p` (`creature::Flush`): not once they flushed it, while it
+/// recalls being scared by them, so a flushed bird runs well clear and does not settle
+/// again at the edge of its `hold`.
+fn sitting(ctx: &Ctx, p: &Seen) -> Option<crate::creature::Flush> {
+    flush(ctx).filter(|_| !ctx.mind.recalls(Memory::ScaredBy(p.id)))
+}
+
+/// A game bird sits tight (`creature::Flush`): a player it has noticed, beyond its `hold`,
+/// it lets be, crouched still in the grass, facing nowhere in particular so as not to be
+/// seen looking. Not once it is hurt or its kin are alarmed: then it runs (`Flee`).
+#[derive(Debug)]
+struct Hide;
+
+impl Module for Hide {
+    fn name(&self) -> &'static str {
+        "hide"
+    }
+
+    fn band(&self) -> Band {
+        Band::Danger
+    }
+
+    fn want(&self, ctx: &Ctx) -> Option<Want> {
+        if flush(ctx).is_none() || ctx.mind.fear >= 0.3 || ctx.attacker().is_some() {
+            return None;
+        }
+        let p = ctx.nearest().filter(|p| !p.tempting && sitting(ctx, p).is_some_and(|f| ctx.distance(p.position) >= f.hold))?;
+        Want::at(2.0, *p)
+    }
+
+    fn act(&self, _: &Ctx, mind: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
+        mind.goal = None;
+        Decision { pose: Pose::Crouched, ..Default::default() }
     }
 }
 

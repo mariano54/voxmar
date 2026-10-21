@@ -314,6 +314,9 @@ impl MultiblockRegistry {
             if def.ward != 0.0 && !(WARD_LEAST..=WARD_MOST).contains(&def.ward) {
                 return Err(bad(format!("it wards {} blocks round it: 0 for none, else {WARD_LEAST} to {WARD_MOST}", def.ward)));
             }
+            if def.ward != 0.0 && def.smoulder.is_some() {
+                return Err(bad("it smoulders, and what smoulders is never lit, so its `ward` would keep nothing back".into()));
+            }
             if let Some(tag) = &def.lit_by
                 && !blocks.ids().any(|b| blocks.def(b).has_tag(tag))
             {
@@ -505,6 +508,9 @@ mod tests {
         ] {
             assert!(load(lit_by, smoulder, core_key).is_err(), "{lit_by} {smoulder} {core_key} loaded");
         }
+        // Nor a `ward`: what smoulders is never lit, and would ward nothing.
+        let warded = load("Some(\"fire\"), ward: 8.0", good, "kindling|flue");
+        assert!(warded.as_ref().is_err_and(|e| e.to_string().contains("smoulders")), "{:?}", warded.map(|_| ()));
     }
 
     /// A clamp that is not the same turned about is lit from a cell of it, never from one
