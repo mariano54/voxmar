@@ -536,8 +536,8 @@ mod tests {
     }
 
     /// A stick held in any fire catches: the last one comes back a firebrand in the hand
-    /// that held it, from a campfire or a torch alike; from a bundle, one is lit and the
-    /// rest stay in hand.
+    /// that held it, from a campfire or a torch alike; from a bundle, one is lit and held
+    /// up, and the rest are put by in the pack.
     #[test]
     fn a_stick_held_in_any_fire_becomes_a_firebrand() {
         for fire in ["base:campfire", "base:torch"] {
@@ -553,8 +553,8 @@ mod tests {
         let at = put(&mut server, "base:campfire");
         server.cook(1, at);
         let inventory = &server.players[&1].inventory;
-        assert_eq!(inventory.slots[0], Some(ItemStack::new(stick, 2)));
-        assert_eq!(inventory.count(server.content.blocks.expect("base:firebrand")), 1);
+        assert_eq!(inventory.slots[0], Some(ItemStack::new(server.content.blocks.expect("base:firebrand"), 1)), "the light in hand");
+        assert_eq!(inventory.count(stick), 2, "the rest put by");
         let (mut server, _client) = holding("base:stick", 0);
         let at = put(&mut server, "base:stone");
         server.cook(1, at);
