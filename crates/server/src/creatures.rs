@@ -360,6 +360,12 @@ impl Neighbours {
 
 impl Creatures {
     /// Whether `player` was last told of creature `id`: it is in their sight.
+    /// For tests: player `player` is shown creature `id`, as a sent view does.
+    #[cfg(test)]
+    pub(crate) fn show(&mut self, player: PlayerId, id: u32) {
+        self.seen.entry(player).or_default().insert(id);
+    }
+
     pub(crate) fn sees(&self, player: PlayerId, id: u32) -> bool {
         self.seen.get(&player).is_some_and(|seen| seen.contains(&id))
     }
@@ -739,7 +745,7 @@ impl Server {
     /// looks: within `field` degrees either way of where it faces, from high in its body,
     /// with nothing that hides it between (`BlockInfo::occludes`, as a player's look is
     /// judged). Seeing all round, it sees through nothing all the same.
-    fn in_view(&self, body: &Body, field: f32, eye: Vec3) -> bool {
+    pub(crate) fn in_view(&self, body: &Body, field: f32, eye: Vec3) -> bool {
         let from = body.position + Vec3::Y * body.size.1 * 0.8;
         let to = eye - from;
         let distance = to.length();
@@ -6339,6 +6345,64 @@ mod fight_tests {
         };
         let (ran, said) = (limped / whole, 1.0 - hurt * (1.0 - share));
         assert!((ran - said).abs() < 0.08, "hurt to {share:.2} of its health it ran {ran:.2} of the ground, not {said:.2} ({limped:.1} of {whole:.1} blocks)");
+    }
+
+    /// A game bird sits tight (`creature::Flush`): a player walking up to it in the open is
+    /// let come to its `hold`, the bird crouched where it was; within it, it bursts away
+    /// faster than it can run.
+    #[test]
+    fn a_game_bird_sits_tight_then_bursts_away() {
+        const WALK: f32 = 4.3;
+        for name in ["base:pheasant", "base:quail", "base:junglefowl"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 48);
+            let start = c.as_vec3() + Vec3::new(8.5, 0.0, 0.5);
+            let id = put(&mut server, name, start, -Vec3::X);
+            let player = join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+            let species = server.creatures.live[&id].species;
+            let (flush, run) = {
+                let def = &server.content.creatures.get(species).def;
+                (def.flush.expect("a game bird sits tight"), def.movement.run)
+            };
+            let doing = |server: &Server| {
+                let c = &server.creatures.live[&id];
+                c.mind.doing.map_or("-", |i| server.content.creatures.get(c.species).modules[i].0.name())
+            };
+            let gap = |server: &Server| server.players[&player].position.with_y(0.0).distance(server.creatures.live[&id].body.position.with_y(0.0));
+            // Walk up, a step a tick, to half a block outside its hold.
+            let (mut sat, mut ticks) = (None, 0);
+            while gap(&server) > flush.hold + 0.5 {
+                ticks += 1;
+                let (at, bird) = (server.players[&player].position, server.creatures.live[&id].body.position);
+                let step = (bird - at).with_y(0.0).normalize() * (WALK / TICKS_PER_SECOND as f32).min(gap(&server) - flush.hold - 0.5);
+                server.players.get_mut(&player).unwrap().position = at + step;
+                server.tick += 1;
+                server.tick_creatures();
+                if doing(&server) == "hide" {
+                    sat.get_or_insert(server.creatures.live[&id].body.position);
+                }
+                assert!(ticks < 20 * TICKS_PER_SECOND, "{name}: the walk up never ended, {:.1} blocks off, {}", gap(&server), doing(&server));
+            }
+            let sat = sat.unwrap_or_else(|| panic!("{name} never sat tight, {}", doing(&server)));
+            assert_eq!(doing(&server), "hide", "{name} at {:.1} blocks", gap(&server));
+            let still = server.creatures.live[&id].body.position.with_y(0.0).distance(sat.with_y(0.0));
+            assert!(still < 0.3, "{name} crept {still:.2} blocks while sitting tight");
+            // One step more, within its hold: it bursts away.
+            let at = server.players[&player].position;
+            let bird = server.creatures.live[&id].body.position;
+            server.players.get_mut(&player).unwrap().position = at + (bird - at).with_y(0.0).normalize();
+            // It turns from facing them and gathers speed; at the top of its burst it is
+            // going faster than its run.
+            let mut top: f32 = 0.0;
+            for _ in 0..TICKS_PER_SECOND / 2 {
+                server.tick += 1;
+                server.tick_creatures();
+                top = top.max(server.creatures.live[&id].body.velocity.with_y(0.0).length());
+            }
+            assert_eq!(doing(&server), "flee", "{name} within its hold");
+            let pace = server.creatures.live[&id].mind.personality.pace();
+            assert!(top > run * pace * 1.2, "{name} went at most {top:.2} blocks a second; its run is {:.2}", run * pace);
+        }
     }
 
     /// At night a wolf in a campfire's ward (`BlockDef::ward`) walks out of it. Not by day,
