@@ -150,6 +150,7 @@ fn the_singles_load_and_can_be_made() {
     let singles = [
         "candle", "brazier", "cauldron", "cottage_stove", "loom_frame", "spindle_stand", "quern_stones", "wind_flags", "stone_grave_slab", "mossy_grave_slab", "stone_headstone",
         "mossy_headstone", "iron_hanging_lantern", "copper_hanging_lantern", "stone_lantern", "sandstone_lantern", "calcite_column", "sandstone_column", "stone_column", "window_box", "rush_mat", "fishing_net", "sack",
+        "barrel", "crate",
     ];
     for name in singles {
         let id = content.blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("no {name}"));
