@@ -136,7 +136,8 @@ one active at any hour, `quiet` 1..6, `wakes` 4..24 and above `quiet`), out of i
 with nothing on its mind, it lies down and notices only a friend, someone who hurt it, a player
 within `quiet` blocks, or a loud one (moving faster than a walk) within `wakes`. A player who
 creeps up can pass a sleeping bear or pick a sleeping deer; one who sprints past wakes it with a
-start: a fighter wakes angry at them, prey bolts. A held creature drops any blow it was winding
+start: a fighter wakes angry at them, prey bolts. Its food held within `wakes` wakes it calmly, so a
+lure still works on a sleeper. A held creature drops any blow it was winding
 up, so a hold means it stands still.
 
 ## Aggression

@@ -593,7 +593,8 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     mind.noticed.retain(|n| n.1 > 0.0);
     // Asleep out of its hours (`creature::Sleeps`), with no one in mind, nothing afraid or
     // angry, wild and about no errand: eyes shut, it notices only a quiet step within its
-    // `quiet`, and a sprint within its `wakes`, which wakes it with a start.
+    // `quiet`, its food held within its `wakes`, and a sprint within its `wakes`, which wakes
+    // it with a start.
     let asleep = def.sleeps.filter(|_| lively < SLEEPY && mind.noticed.is_empty() && mind.fear < 0.3 && mind.anger <= 0.0 && !at.kept && at.errand.is_none());
     for p in at.players {
         let d = p.position.distance(at.position);
@@ -601,7 +602,9 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         if let Some(sleeps) = asleep {
             let hurt = mind.recalls(Memory::HurtBy(p.id));
             let startled = p.loud && d < sleeps.wakes && !p.friend && !hurt;
-            if !(p.friend || hurt || d <= sleeps.quiet || startled) {
+            // Its food held near wakes it calmly, as a quiet step does: a lure works on a sleeper.
+            let fed = p.tempting && d < sleeps.wakes;
+            if !(p.friend || hurt || d <= sleeps.quiet || startled || fed) {
                 continue;
             }
             mind.noticed.push((p.id, def.senses.keep, 0.0));
@@ -1413,7 +1416,8 @@ pub(super) mod tests {
     /// eyes shut, it notices a player walking up only within its `quiet`, and then as ever
     /// (its double take, then whatever it does), so a careful hunter gets close. One going
     /// faster than a walk within its `wakes` wakes it with a start: a fighter comes up
-    /// provoked, with no warning, and prey bolts. In its own hours it is awake as ever.
+    /// provoked, with no warning, and prey bolts. Its food held within its `wakes` wakes it
+    /// calmly. In its own hours it is awake as ever.
     #[test]
     fn a_sleeper_wakes_to_a_sprint_not_a_quiet_step() {
         let bear = species(&format!(
@@ -1441,6 +1445,10 @@ pub(super) mod tests {
         let mut far = Mind::new(&bear.def.temperament, 2);
         let _ = think(&bear, &mut far, &noon(&[loud(14.0)]));
         assert_eq!(far.noticed.len(), 0, "a sprint at fourteen blocks");
+        // Its food held at ten blocks, a quiet step, wakes it calmly: a lure works on a sleeper.
+        let mut lured = Mind::new(&bear.def.temperament, 2);
+        let _ = think(&bear, &mut lured, &noon(&[Seen { tempting: true, ..quiet(10.0) }]));
+        assert_eq!((lured.noticed.len(), lured.anger, lured.attacker()), (1, 0.0, None), "woken by its food held near");
         // At night, its own hours, it sees a quiet step at six as ever.
         let mut awake = Mind::new(&bear.def.temperament, 2);
         let _ = think(&bear, &mut awake, &Situation { daylight: 0.0, ..situation(&[quiet(6.0)]) });

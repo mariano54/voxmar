@@ -710,6 +710,15 @@ impl Server {
         creature::daylight(self.day as u64)
     }
 
+    /// Sets the hour to mid-morning, half daylight: the hours of every kind that keeps any
+    /// (`Active`), so none that sleeps (`creature::Sleeps`) is asleep.
+    #[cfg(test)]
+    pub(crate) fn mid_morning(&mut self) {
+        let ticks = voxmar_protocol::TICKS_PER_DAY;
+        self.day = (0..ticks).find(|&t| creature::daylight(t) >= 0.5).unwrap() as f64;
+        assert!(!self.night());
+    }
+
     /// Whether the sun is down now (`Condition::Night`).
     pub(crate) fn night(&self) -> bool {
         let ticks = voxmar_protocol::TICKS_PER_DAY;
@@ -3310,6 +3319,7 @@ pub(crate) mod cornered_tests {
     #[test]
     fn a_creature_struck_in_a_corner_finds_the_way_out() {
         let mut server = crate::test_server();
+        server.mid_morning();
         let centre = pen(&mut server, 6);
         let corner = centre.as_vec3() + Vec3::new(-4.4, 0.0, -4.4);
         let player = join(&mut server, corner + Vec3::new(2.5, 0.0, 2.5));
@@ -6146,6 +6156,7 @@ mod fight_tests {
     fn a_wolf_warns_before_it_goes_for_a_player() {
         for stays in [true, false] {
             let mut server = crate::test_server();
+            server.mid_morning();
             let c = pen(&mut server, 9);
             let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
             let player = join(&mut server, stand);
@@ -6225,6 +6236,7 @@ mod fight_tests {
     fn a_badger_warns_only_one_it_sees() {
         for walled in [true, false] {
             let mut server = crate::test_server();
+            server.mid_morning();
             let c = pen(&mut server, 9);
             let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
             let _player = join(&mut server, stand);
@@ -6313,6 +6325,7 @@ mod fight_tests {
     #[test]
     fn a_torch_holds_a_wolf_off() {
         let mut server = crate::test_server();
+        server.mid_morning();
         let c = pen(&mut server, 12);
         let stand = c.as_vec3() + Vec3::new(5.5, 0.0, 0.5);
         let player = join(&mut server, stand);
@@ -6358,6 +6371,7 @@ mod fight_tests {
         const SPRINT: f32 = 6.1;
         for name in ["base:rabbit", "base:red_deer"] {
             let mut server = crate::test_server();
+            server.mid_morning();
             let c = pen(&mut server, 48);
             // Facing the player, so it sees them come, and far enough off that its double take
             // (`Senses::react`) does not let them walk up and take it.
@@ -6632,6 +6646,7 @@ mod fight_tests {
     fn a_player_by_a_lit_hearth_is_let_be_at_night() {
         for night in [true, false] {
             let mut server = crate::test_server();
+            server.mid_morning();
             let c = pen(&mut server, 12);
             let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
             let player = join(&mut server, stand);
