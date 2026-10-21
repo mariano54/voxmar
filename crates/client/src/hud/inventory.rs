@@ -1287,7 +1287,7 @@ fn tooltip(
     window: Query<&Window, With<PrimaryWindow>>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
     mut tip: Query<(Entity, &mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
-    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool, u32, u16)>>,
+    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool, u32, u16, usize)>>,
     launch: Res<Launch>,
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
@@ -1353,7 +1353,8 @@ fn tooltip(
     let carried: u32 = player.inventory.pouched.iter().map(|&(_, n)| n as u32 * 31 + 1).sum();
     // So does how worn the pointed tool is.
     let wear = pointed.filter(|_| viewer_item.is_none()).and_then(|slot| player.inventory.get(slot)).map_or(0, |stack| stack.wear);
-    let key = (item, settings.debug_overlay, reading, carried, wear);
+    // The recipe book too: the same item number in a world of other content is another item.
+    let key = (item, settings.debug_overlay, reading, carried, wear, viewer.book_number());
     if *shown != Some(key) || locale.is_changed() {
         *shown = Some(key);
         let def = world.registry.def(item);
