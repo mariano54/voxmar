@@ -102,13 +102,16 @@ pub enum Fixed {
     SettlementEdge,
     /// How many people live in the nearest settlement (0 with none): its size.
     SettlementPeople,
+    /// How far up the home ladder the player stands, by the highest of `home`'s effects
+    /// they hold: 0 away from home, 1 for the first, and so on.
+    Home,
 }
 
 /// The `settlement` axis with no settlement near.
 pub const NO_SETTLEMENT: f32 = 10_000.0;
 
 impl Fixed {
-    pub const ALL: [Fixed; 33] = [
+    pub const ALL: [Fixed; 34] = [
         Fixed::Air,
         Fixed::Sky,
         Fixed::Canopy,
@@ -142,6 +145,7 @@ impl Fixed {
         Fixed::Sheltered,
         Fixed::SettlementEdge,
         Fixed::SettlementPeople,
+        Fixed::Home,
     ];
 
     fn name(self) -> &'static str {
@@ -179,6 +183,7 @@ impl Fixed {
             Fixed::Sheltered => "sheltered",
             Fixed::SettlementEdge => "settlement_edge",
             Fixed::SettlementPeople => "settlement_people",
+            Fixed::Home => "home",
         }
     }
 }
@@ -457,6 +462,9 @@ pub struct Ambience {
     pub draughts: Vec<(String, Vec<usize>)>,
     /// The sets of buildings one-shots sound from, each once.
     pub buildings: Vec<BuildingSet>,
+    /// The home ladder's effects, lowest first (`home`): the `home` axis is how far up it
+    /// the player stands.
+    pub home: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -474,6 +482,8 @@ struct FileDef {
     roofs: Option<RoofsDef>,
     #[serde(default)]
     draughts: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    home: Option<Vec<String>>,
 }
 
 /// `roofs`: a later package's height and muffle replace an earlier one's; its shelter and
@@ -587,6 +597,18 @@ fn default_pitch() -> (f32, f32) {
     (0.95, 1.05)
 }
 
+/// How far up the home `ladder` (see [`Ambience::home_ladder`]) a player holding `held`
+/// stands: 1 + the place of the highest step they hold, 0 for none.
+pub fn home_step(ladder: &[voxmar_engine::effect::EffectId], held: &[voxmar_engine::effect::ActiveEffect]) -> f32 {
+    ladder.iter().rposition(|&id| held.iter().any(|a| a.effect == id)).map_or(0.0, |step| step as f32 + 1.0)
+}
+
+/// The loudest a bed or a one-shot may be (`volume`), and the farthest a one-shot may
+/// carry at half loudness (`reach`, blocks): as creature sounds are bounded, so that no
+/// package deafens the player or fills the world.
+pub const VOLUME_MOST: f32 = 2.0;
+pub const REACH_MOST: f32 = 128.0;
+
 fn default_reach() -> f32 {
     12.0
 }
@@ -609,6 +631,9 @@ impl Ambience {
                     return Err(format!("{package}/{FILE}: shelter wants walls and roof of a block or more, muffle 20..20000 Hz, thunder 0..1"));
                 }
                 ambience.shelter = shelter;
+            }
+            if let Some(home) = &def.home {
+                ambience.home.clone_from(home);
             }
         }
         // Groups first, so every file's conditions may name any group.
@@ -678,6 +703,9 @@ impl Ambience {
                     }
                     _ => return Err(format!("{}: give a sound or a recording, not both", context(&bed.name))),
                 };
+                if !(0.0..=VOLUME_MOST).contains(&bed.volume) {
+                    return Err(format!("{}: volume {} is not 0 to {VOLUME_MOST}", context(&bed.name), bed.volume));
+                }
                 let when = ambience.conditions(bed.when, bed.biome, bed.not_biome).map_err(|e| format!("{}: {e}", context(&bed.name)))?;
                 let duck = ambience.duck(bed.duck, &bed_names, package).map_err(|e| format!("{}: {e}", context(&bed.name)))?;
                 ambience.beds.push(Bed { name, sound, volume: bed.volume, when, duck, fade: bed.fade.max(0.1) });
@@ -686,6 +714,9 @@ impl Ambience {
                 let name = format!("{package}:{}", sound.name);
                 if sound.sound.is_bed() {
                     return Err(format!("{}: {:?} is a bed, not a one-shot", context(&sound.name), sound.sound));
+                }
+                if !(0.0..=VOLUME_MOST).contains(&sound.volume) || !(1.0..=REACH_MOST).contains(&sound.reach) {
+                    return Err(format!("{}: volume {} (0 to {VOLUME_MOST}) and reach {} (1 to {REACH_MOST} blocks)", context(&sound.name), sound.volume, sound.reach));
                 }
                 let at = match sound.at {
                     PlacementDef::Block(group) => Placement::Block(
@@ -718,7 +749,7 @@ impl Ambience {
                     per_minute: sound.per_minute,
                     cooldown: sound.cooldown,
                     pitch: sound.pitch,
-                    reach: sound.reach.max(0.5),
+                    reach: sound.reach,
                     when,
                     duck,
                 });
@@ -746,6 +777,25 @@ impl Ambience {
         }
         ambience.draughts = resolved.into_iter().collect();
         Ok(ambience)
+    }
+
+    /// Fails, for the launch, on a `home` step that names no effect, or names one twice.
+    pub fn check_home(&self, effects: &voxmar_engine::effect::EffectRegistry) -> Result<(), String> {
+        for (i, name) in self.home.iter().enumerate() {
+            if effects.find(name).is_none() {
+                return Err(format!("{FILE}: home names {name}, which is no effect"));
+            }
+            if self.home[..i].contains(name) {
+                return Err(format!("{FILE}: home names {name} twice"));
+            }
+        }
+        Ok(())
+    }
+
+    /// The home ladder's effects, lowest first, looked up once (a name that is no effect,
+    /// which the launch refuses, is no step).
+    pub fn home_ladder(&self, effects: &voxmar_engine::effect::EffectRegistry) -> Vec<voxmar_engine::effect::EffectId> {
+        self.home.iter().filter_map(|name| effects.find(name)).collect()
     }
 
     /// Fails, for the launch, on a block's `shelter:` tag that neither keeps the rain's
@@ -962,7 +1012,19 @@ mod tests {
         assert!(error(r#"(beds: [(name: "x", sound: Wind, volume: 1, when: {"altitude": (min: 1)})])"#).contains("no axis altitude"));
         assert!(error(r#"(beds: [(name: "x", sound: Warbler, volume: 1)])"#).contains("not a bed"));
         assert!(error(r#"(sounds: [(name: "x", sound: Owl, volume: 1, at: Block("trees"), per_minute: 1)])"#).contains("no group trees"));
+        assert!(error(r#"(sounds: [(name: "x", sound: Owl, volume: 1, at: OpenBlock("trees"), per_minute: 1)])"#).contains("no group trees"));
         assert!(error(r#"(beds: [(name: "x", sound: Wind, volume: 1, duck: {"thunder": 1})])"#).contains("thunder"));
+        // Too loud, too far, or not a number: refused at load.
+        for bad in [
+            r#"(beds: [(name: "x", sound: Wind, volume: 2.5)])"#,
+            r#"(beds: [(name: "x", sound: Wind, volume: NaN)])"#,
+            r#"(sounds: [(name: "x", sound: Owl, volume: 3, at: Listener, per_minute: 1)])"#,
+            r#"(sounds: [(name: "x", sound: Owl, volume: 0.3, at: Listener, per_minute: 1, reach: 500)])"#,
+            r#"(sounds: [(name: "x", sound: Owl, volume: 0.3, at: Listener, per_minute: 1, reach: 0.5)])"#,
+        ] {
+            assert!(error(bad).contains("volume"), "{bad}");
+        }
+        assert!(Ambience::load(&file(r#"(beds: [(name: "x", sound: Wind, volume: 2.0)], sounds: [(name: "y", sound: Owl, volume: 0.3, at: Listener, per_minute: 1, reach: 128)])"#)).is_ok());
         assert!(error(r#"(shelter: (muffle: 5))"#).contains("shelter"));
         assert!(error(r#"(shelter: (walls: 0))"#).contains("shelter"));
         assert!(error(r#"(shelter: (thunder: 1.5))"#).contains("shelter"));

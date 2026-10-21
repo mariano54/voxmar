@@ -183,6 +183,10 @@ impl Textures {
     }
 }
 
+/// The least and most a fire's ward reaches (`BlockDef::ward`, `MultiblockDef::ward`).
+pub const WARD_LEAST: f32 = 2.0;
+pub const WARD_MOST: f32 = 24.0;
+
 /// A block definition as authored in content files.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -257,6 +261,9 @@ pub struct BlockDef {
     /// Particles it gives off while near the player: a campfire's smoke, embers and sparks,
     /// a torch's flame. Only the client draws them.
     pub particles: Vec<Emission>,
+    /// How many blocks round it its firelight keeps the wild back at night: creatures afraid
+    /// of fire (`creature::Fire`) do not come in. 0 for none, else 2 to 24.
+    pub ward: f32,
     /// Whether it comes in four facings: the block itself faces north (-z), and blocks
     /// `<name>_east`, `<name>_south` and `<name>_west` are made from it, turned (their
     /// particles too), each dropping the block itself. A wall torch faces out from its
@@ -589,6 +596,7 @@ impl Default for BlockDef {
             plant_height: 1.0,
             host: None,
             particles: Vec::new(),
+            ward: 0.0,
             facing: false,
             faces: None,
             flips: false,
@@ -1244,6 +1252,9 @@ impl BlockRegistry {
                     .ok_or_else(|| RegistryError(format!("`{}` drops unknown block `{name}`", def.name)))?,
                 None => by_name[&def.name],
             };
+            if def.ward != 0.0 && !(WARD_LEAST..=WARD_MOST).contains(&def.ward) {
+                return Err(RegistryError(format!("`{}` wards {} blocks round it: 0 for none, else {WARD_LEAST} to {WARD_MOST}", def.name, def.ward)));
+            }
             let occludes = def.render == RenderKind::Opaque || shape.is_some_and(|s| shapes[s as usize].is_full_cube());
             info.push(BlockInfo {
                 render: def.render,

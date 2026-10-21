@@ -5,13 +5,14 @@ shutters, a hatch or a curtain, cooking, lying down to sleep (on a wooden bed to
 sitting on a wooden seat,
 casting a line, picking an item up, feeding an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
 spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, food
-coming off the fire done or burnt, and a tool nearly worn out and breaking; for the
-interface, a quest book's page turned and a soft "no" when something is refused; and the
-building materials' steps, placings and breakings (timber, thatch, shingle, cobblestone,
-stone brick, wattle, daub, hide, terracotta) under materials/;
+coming off the fire done or burnt, a loaf baked, and a tool nearly worn out and breaking;
+for the interface, a quest book's page turned and a soft "no" when something is refused;
+and the building materials' steps, placings and breakings (timber, thatch, shingle,
+cobblestone, stone brick, wattle, daub, hide, terracotta) under materials/;
 and the work of the first two ages under work/: flint knapped,
 a hide scraped, clay shaped, pottery, stone dressed, cord twisted, wood whittled, the
-home stations loaded, a kiln fed, ore smelted, a hearth or kiln kindled, a sheep shorn,
+home stations loaded, a kiln fed and what it fires (pottery, charcoal), ore
+smelted and its ingot, a hearth or kiln kindled, a sheep shorn,
 a cow milked, bees smoked and honey taken, grain ground at a quern, wool spun on a
 spindle and woven at a loom, and the flour, twine and cloth they give.
 
@@ -166,7 +167,7 @@ def light(rng):
     return out
 
 
-def catch(rng):
+def thatch_catch(rng):
     """Thatch or wattle catching fire (fire.ron): a soft, low whoomph of flame taking hold,
     swelling quickly and settling, with the first dry crackles running through it. Softer
     than a strike: a warning heard across a room, not a bang."""
@@ -1203,6 +1204,49 @@ def cloth_off(rng):
     return out
 
 
+def baked(rng):
+    """A loaf lifted out done: a light crackle of the cooling crust and two hollow knocks
+    of a knuckle on its underside."""
+    out = np.zeros(int(0.6 * RATE))
+    place(out, 0.0, crackles(rng, 0.35, 30, 0.6))
+    for tap in range(2):
+        at = 0.15 + tap * rng.uniform(0.12, 0.15)
+        hollow = modes(rng.uniform(170, 210), 0.2, [(1.0, 1.0, 0.035), (2.1, 0.4, 0.02), (3.3, 0.2, 0.01)], attack=0.0008)
+        level = (0.8, 1.0)[tap]
+        place(out, at, hollow, level)
+        place(out, at, thud(rng, 0.08, 0.06, 0.015), 0.3 * level)
+    return out
+
+
+def fired_clay(rng):
+    """Fired clay drawn out of the kiln: the fine ticks of pottery cooling and a clear ring
+    as it is knocked, sound and whole."""
+    out = np.zeros(int(0.7 * RATE))
+    place(out, 0.0, trickle(rng, 0.3, 5200, 60), 0.4)
+    place(out, 0.25, tile(rng), 0.9)
+    place(out, 0.26, modes(rng.uniform(1100, 1400), 0.4, [(1.0, 0.6, 0.12), (2.76, 0.3, 0.06), (5.4, 0.15, 0.03)], attack=0.0003), 0.5)
+    return out
+
+
+def ingot(rng):
+    """A hot ingot tipped from the crucible's mould: a heavy metal clink, ringing, and a
+    hiss as it meets the damp ground."""
+    out = np.zeros(int(0.8 * RATE))
+    ring = modes(rng.uniform(900, 1150), 0.6, [(1.0, 0.7, 0.18), (2.41, 0.5, 0.1), (3.9, 0.3, 0.05), (5.6, 0.15, 0.03)], attack=0.0002)
+    place(out, 0.0, ring, 0.9)
+    place(out, 0.0, thud(rng, 0.06, 0.08, 0.01), 0.36)
+    n = int(0.5 * RATE)
+    t = np.arange(n) / RATE
+    place(out, 0.05, bandpass(rng.standard_normal(n), 4200, 0.8) * np.minimum(t / 0.02, 1.0) * np.exp(-t / 0.18), 0.35)
+    return out
+
+
+def charcoal(rng):
+    """Charcoal raked out of the fire: light, brittle, glassy clinks of black sticks."""
+    return clatter(rng, 0.4, 6, lambda r: modes(r.uniform(1800, 2600), 0.06, [(1.0, 0.6, 0.012), (2.3, 0.3, 0.006)], attack=0.0002))
+
+
+
 def finish(mono, rng, width=0.15):
     """The clip made stereo (a hair of width from a short delay), faded, and brought to
     its loudness."""
@@ -1226,7 +1270,7 @@ SOUNDS = {
     "eat": (eat, 3),
     "craft": (craft, 3),
     "light": (light, 2),
-    "fire_catch": (catch, 2),
+    "fire_catch": (thatch_catch, 2),
     "store_open": (store_open, 2),
     "door": (door, 2),
     "cook": (cook, 2),
@@ -1310,6 +1354,10 @@ SOUNDS = {
     "work/flour": (flour, 2),
     "work/twine": (twine_wound, 2),
     "work/cloth": (cloth_off, 2),
+    "baked": (baked, 2),
+    "work/fired": (fired_clay, 2),
+    "work/ingot": (ingot, 2),
+    "work/charcoal": (charcoal, 2),
 }
 
 

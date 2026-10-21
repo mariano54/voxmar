@@ -98,6 +98,7 @@ Built now (`engine::creature::brain::modules`):
 | defend | danger | fights back when hurt (the boar, the bull, the bear); gives up as hunt does |
 | curious | social | comes to look from a distance, backs off if you come closer |
 | warn | danger | every creature whose kind has a `warn`: stands its ground and warns a player before it attacks them (its stance and `warn` sound): a hunter those it would hunt, one that only defends itself those it sees within its radius, never one holding its food unless it hunts; goes for one who stays its seconds or comes within `near`, as if struck; lets be one who backs off first (see "Warnings" below) |
+| fire | danger | every creature whose kind has a `fire`: backs away from a player holding a fire at it (a torch), facing them, if it is one of its kind's `fear` share; at night walks out of a lit fire's ward; not once provoked, kept or on an errand (see "Fire" below) |
 | return_home | drive | every creature: goes home when past its leash, until well inside; having given up a chase, lopes all the way home |
 
 Planned (from the deep dive's library): cache food, drink, sleep, bask, seek shade, huddle,
@@ -174,6 +175,44 @@ afresh after the look, so prey that looks and then runs still raises the alarm t
   `lured_bears_and_badgers_follow_without_warning` and `a_badger_warns_only_one_it_sees`.
   The gate's Narrow and Feel steps summon their bear held and let it go with the first
   blow, as Climb does its wolf: stepping close is meant to provoke it.
+- **Fire** (Oct 21): a creature whose kind has a `fire` (creatures.ron) is afraid of it.
+  A player holding a fire (an item tagged `fire`: a torch) at it, one it has noticed
+  (`Senses`: seen where it looks, or close by, and kept in mind a while as it turns away),
+  within its `give` blocks, it backs away from, facing them (in its warning stance, for one that
+  warns), until they are `give` off and a block more (`FIRE_EXIT`); a warning it was giving
+  lapses. Its kind's `fear` is the share that give ground, each individual by its own
+  roll (`Fire::gives_ground`); the bold rest stand theirs. Held off, one that warns
+  warns from beyond the torch as long as it is held and never comes for them by its
+  warning's time (only within its `near`, which the torch keeps it out of), nor hunts them
+  unwarned when it does not see them; put away, it does. At night, unless `ward: false`, it keeps out of a lit fire's ward: a block's
+  `ward` (a campfire, 8 blocks) or a lit multiblock's (the Homestead Hearth 16, the
+  Crucible Kiln 10). Standing in one it walks out past its edge, a stroll (roam or
+  wander) that would end in one is dropped, and a player standing in one it neither
+  hunts nor warns. The server finds the wards each second at night (`find_wards`: the lit
+  multiblocks', and warding blocks within 20 blocks across and 5 up or down of each
+  player). Provoked, it fights whatever the light; kept animals and those on an errand
+  (villagers, guards) pay fire no heed; a boss or a supernatural kind may not have a
+  `fire`. Base game: wolf (fear 0.85, give 5), brown bear (0.6, 5), badger (0.9, 3).
+  Tests: the brain's `fire_keeps_the_wild_back` and `fire_out_of_range_is_refused`;
+  the server's `a_torch_holds_a_wolf_off`, `wolves_keep_out_of_firelight_at_night` and
+  `a_player_by_a_lit_hearth_is_let_be_at_night`; `wards_out_of_range_are_refused`.
+- **Winded** (Oct 21): a creature whose kind has `tires` (creatures.ron) runs flat out
+  from a threat for its `after` seconds, then winded at its `pace` of its run for `rest`
+  seconds, then flat out again; time not spent fleeing gets its wind back a second for a
+  second (`Mind::sprinted`, `Mind::winded`). A kept animal or one on an errand runs as
+  ever. Hurt, it limps: it runs `hurt` slower at the last of its health, in proportion
+  above (a creature does not heal), so each blow a hunter lands brings the catch nearer.
+  The base game sets it on the prey faster than a sprinting player (6.1 blocks a second):
+  rabbit (3 s, 0.4, 4 s, hurt 0.5), hare (2.5, 0.35, 5, 0.5), red squirrel (2.5, 0.5, 4,
+  0.5), red deer (3, 0.4, 5, 0.5), reindeer (4, 0.45, 5, 0.5), wild horse (4, 0.35, 6,
+  0.4) and gazelle (3, 0.35, 6, 0.4), each averaging under a sprint over a sprint and a
+  rest, so a first hunt on foot ends in a catch: first-days.md's slowest wait was the chase
+  for the bed's hides. Tests: the brain's `prey_that_tires_runs_winded_after_a_sprint`;
+  the server's `a_sprinting_hunter_runs_down_winded_prey` (a rabbit and a red deer run
+  down within 20 s on open ground; without `tires` the rabbit is not) and
+  `a_hurt_rabbit_limps` (at a third of its health, from the same seed and spot, it covers
+  0.63 of an unhurt one's ground in its sprint, the data saying 0.67; 1.00 without the
+  limp).
 
 ## Roaming
 
