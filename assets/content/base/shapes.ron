@@ -283,6 +283,33 @@
             (from: (1, 7, 11), to: (15, 8, 12)),
             (from: (1, 13, 14), to: (15, 14, 16)),
         ]),
+        // A bedside table, its drawer to the north: a top on four legs, a drawer under it.
+        "bedside_table": (boxes: [
+            (from: (2, 10, 2), to: (14, 12, 14)),
+            (from: (2, 0, 2), to: (4, 10, 4), textures: All("furniture_grain")),
+            (from: (12, 0, 2), to: (14, 10, 4), textures: All("furniture_grain")),
+            (from: (2, 0, 12), to: (4, 10, 14), textures: All("furniture_grain")),
+            (from: (12, 0, 12), to: (14, 10, 14), textures: All("furniture_grain")),
+            (from: (4, 6, 2.5), to: (12, 10, 13.5), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+        ]),
+        // A footstool: a low frame on four legs, its top woven of rushes.
+        "footstool": (boxes: [
+            (from: (3, 4, 3), to: (13, 5, 13)),
+            (from: (3.5, 5, 3.5), to: (12.5, 6, 12.5), textures: All("furniture_linen")),
+            (from: (3, 0, 3), to: (5, 4, 5), textures: All("furniture_grain")),
+            (from: (11, 0, 3), to: (13, 4, 5), textures: All("furniture_grain")),
+            (from: (3, 0, 11), to: (5, 4, 13), textures: All("furniture_grain")),
+            (from: (11, 0, 11), to: (13, 4, 13), textures: All("furniture_grain")),
+        ]),
+        // A spice rack on the wall behind it (south): a back board, a ledge and a rail, the
+        // herbs in it standing on the ledge (`shows`).
+        "spice_rack": (boxes: [
+            (from: (1, 8, 15), to: (15, 14, 16)),
+            (from: (1, 8, 12), to: (15, 9, 15)),
+            (from: (1, 10, 12), to: (15, 10.5, 12.5)),
+            (from: (1, 9, 12), to: (1.5, 10.5, 15)),
+            (from: (14.5, 9, 12), to: (15, 10.5, 15)),
+        ]),
         // A rushlight holder: a foot, a post, an arm to the east and the rush burning in its
         // clip at the arm's end.
         "rushlight": (boxes: [

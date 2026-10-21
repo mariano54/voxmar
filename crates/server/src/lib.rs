@@ -789,8 +789,9 @@ pub(crate) struct Server {
     blaze_risked: Vec<IVec3>,
     /// The smouldering blocks players were last told of.
     smoulders_sent: Vec<IVec3>,
-    /// What players were last told stands on the blocks that show what they hold.
-    shown_sent: Vec<(IVec3, Vec<Option<voxmar_engine::block::BlockId>>)>,
+    /// What stands on the blocks that show what they hold, by column, as players who have
+    /// the column were last told (`stores::Shelves`); a column with nothing shown has none.
+    shown: FxHashMap<ColumnPos, Vec<(IVec3, Vec<Option<voxmar_engine::block::BlockId>>)>>,
     /// Whose doing a fire that starts now is (a player's key, `player_key`): the player whose
     /// message is being handled or whose action commits, whoever lights a hearth as it is lit
     /// (`hearth_blaze`), a burning block's own fire as it spreads; none for a flood or a
@@ -963,7 +964,7 @@ impl Server {
             blazes,
             blaze_risked: Vec::new(),
             smoulders_sent: Vec::new(),
-            shown_sent: Vec::new(),
+            shown: FxHashMap::default(),
             fire_origin: None,
             changed_by: None,
             planter_grown,
@@ -1463,6 +1464,9 @@ impl Server {
                 if let Some(column) = self.world.column(pos) {
                     if sent < COLUMNS_PER_TICK {
                         player.connection.send(ServerMessage::Column { pos, column: column.clone() });
+                        if let Some(at) = self.shown.get(&pos) {
+                            player.connection.send(ServerMessage::Shown { column: pos, at: at.clone() });
+                        }
                         player.sent.insert(pos);
                         sent += 1;
                     }

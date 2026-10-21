@@ -56,7 +56,7 @@ pub use voxmar_engine::weather::Weather;
 // 58: a creature warning a player off before it attacks (Pose::Warning).
 // 59: a firing finished while the player was away (ServerMessage::Fired).
 // 60: ServerMessage::Shown, what stands on the blocks that show what they hold (a shelf's
-// things).
+// things), a column at a time to the players who have it.
 pub const PROTOCOL_VERSION: u32 = 60;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
@@ -255,11 +255,12 @@ pub enum ServerMessage {
     /// What the player holds wore down past its warning (`tool::Wear::warn`), or with
     /// `broke` wore out and broke: the hand hears it, and a break shows a puff of chips.
     ToolWore { item: BlockId, broke: bool },
-    /// What stands on each block that shows what it holds (`BlockDef::shows`: a mantel
-    /// shelf's things), by place, in order: the item in each of its first slots, a spot
-    /// apiece; a block with nothing on it is left out. Sent whenever that changes, to
-    /// everyone, and on joining.
-    Shown { at: Vec<(IVec3, Vec<Option<BlockId>>)> },
+    /// What stands on each block in `column` that shows what it holds (`BlockDef::shows`:
+    /// a mantel shelf's things), by place, in order: the item in each of its first slots, a
+    /// spot apiece; a block with nothing on it is left out. It replaces what was said of the
+    /// column before. Sent with the column when it is sent, and whenever it changes, to the
+    /// players who have the column.
+    Shown { column: ColumnPos, at: Vec<(IVec3, Vec<Option<BlockId>>)> },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between

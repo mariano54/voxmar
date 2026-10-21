@@ -286,7 +286,15 @@ impl ClientWorld {
         }
     }
 
+    /// What the server says stands on the shelves in `column` now (`ServerMessage::Shown`),
+    /// in place of what it said of it before.
+    pub fn show_in(&mut self, column: ColumnPos, at: Vec<(IVec3, Vec<Option<BlockId>>)>) {
+        self.shown.retain(|&pos, _| ColumnPos::of_block(pos) != column);
+        self.shown.extend(at);
+    }
+
     pub fn remove_column(&mut self, pos: ColumnPos) {
+        self.shown.retain(|&at, _| ColumnPos::of_block(at) != pos);
         self.voxels.remove(pos);
         self.dirty.remove(&pos);
         self.edited.remove(&pos);
