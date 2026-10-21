@@ -1042,6 +1042,11 @@ mod tests {
     #[test]
     fn a_stick_held_to_a_campfire_is_held_in_it() {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        // Thirty milliseconds a frame, through the cook's time and a second past it: long
+        // enough that anything sent when it ends, or after, is seen.
+        let cook = content.actions.get(content.actions.expect("base:cook")).unwrap();
+        let voxmar_engine::action::Duration::Seconds(seconds) = cook.duration else { panic!("base:cook is timed: {:?}", cook.duration) };
+        let frames = ((seconds + 1.0) / 0.03).ceil() as usize;
         for held_on in [true, false] {
             let (mut app, block, server_side) = app(content.actions.clone());
             let id = |name: &str| content.blocks.expect(name);
@@ -1053,7 +1058,7 @@ mod tests {
             app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
             app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
             app.update();
-            for _ in 0..100 {
+            for _ in 0..frames {
                 let mut mouse = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
                 mouse.clear();
                 if !held_on {

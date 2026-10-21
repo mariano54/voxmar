@@ -5817,6 +5817,8 @@ struct BrandPlan {
     /// the phase) the one `base:cook` at the fire went out.
     proposals: u64,
     asked: Option<f32>,
+    /// How many times the sticks were cleared and one given again, more than one carried.
+    regiven: u32,
 }
 
 impl BrandPlan {
@@ -5832,7 +5834,7 @@ impl BrandPlan {
                 def.has_tag(&recipe.def.station) && !def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY) && blocks.info(b).placeable && blocks.item_of(b) == b && blocks.info(b).emission > 0
             });
             if let Some(fire) = fire {
-                return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand), proposals: 0, asked: None });
+                return Ok(Self { brand, stick: input, fire, burnt: tools.burnt(brand), proposals: 0, asked: None, regiven: 0 });
             }
         }
         Err("nothing in the content gives light held and burns, made at level 1 at a fire that can be set down".into())
@@ -5904,7 +5906,7 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // two in hand one catches and the brand goes where it fits, the other left in hand
         // (train 174): the sticks are cleared and the one given again.
         1 => {
-            let Some(plan) = gate.firebrand else { return };
+            let Some(mut plan) = gate.firebrand else { return };
             let burning = world.resource::<ClientWorld>().block(fire_at) == Some(plan.fire);
             let (sticks, slot) = holding(world, &name(plan.stick));
             if sticks > 1 && now - gate.tap_at >= TAP_EVERY {
@@ -5922,6 +5924,8 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("give {} 1", name(plan.stick)));
                 gate.tap_at = now;
                 gate.taps += 1;
+                plan.regiven += 1;
+                gate.firebrand = Some(plan);
             }
             if let (true, 1, Some(slot)) = (burning, sticks, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
                 world.resource_mut::<LocalPlayer>().selected = slot;
@@ -5942,6 +5946,14 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             let held = in_hand(world);
             let cook = content.actions.expect("base:cook");
+            // Another stick picked up since phase 1 would stack on the one in hand and repeat
+            // train 174: before any press, back to phase 1 to clear it.
+            if plan.asked.is_none() && holding(world, &name(plan.stick)).0 != 1 {
+                mouse(world, MouseButton::Right, false);
+                gate.phase = 0;
+                gate.advance(now);
+                return;
+            }
             if plan.asked.is_none() {
                 let aimed = world.resource::<crate::interact::Target>().hit.as_ref().is_some_and(|hit| hit.block == fire_at);
                 gate.tap(world, aimed && held.is_some_and(|s| s.item == plan.stick), now);
@@ -5956,7 +5968,7 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let held = in_hand(world);
             if held.is_some_and(|s| s.item == plan.brand) {
                 mouse(world, MouseButton::Right, false);
-                gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand, on click {}", name(plan.stick), name(plan.fire), name(plan.brand), gate.taps)));
+                gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand, on click {} after {} re-gives", name(plan.stick), name(plan.fire), name(plan.brand), gate.taps, plan.regiven)));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", fire_at.x, fire_at.y, fire_at.z));
                 gate.advance(now);
             } else if let Some(asked) = plan.asked {
