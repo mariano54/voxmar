@@ -583,8 +583,8 @@ mod tests {
         assert!(Celebrations::load(&[file("mod", "(milestone_every: 10)")]).is_err());
     }
 
-    /// A path's capstone (the base game's, such as a homestead's lit hearth) rings its own
-    /// jingle; any other quest a quest's, and levels theirs.
+    /// A path's last quest (a base game capstone) rings its own jingle; any other quest a
+    /// quest's, and levels theirs.
     #[test]
     fn a_capstone_rings_its_own_jingle() {
         let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();

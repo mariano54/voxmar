@@ -300,11 +300,10 @@ def level_milestone(rng):
 
 
 def capstone_done(rng):
-    """A path's capstone finished (the hearth of a homestead lit, a kiln fired): a horn call
-    rising over warm strings, answered by the trumpet a fourth higher, then a slow plagal
-    close (IV - I, the hymn's amen) held full and soft by the horns and brass under harp
-    and bells. About four
-    seconds: warmer and broader than a level's milestone, the age's own."""
+    """A path's last quest finished (its capstone): a horn call rising over warm strings,
+    answered by the trumpet a fourth higher, then a slow plagal close (IV - I, the hymn's
+    amen) held full and soft by the horns and brass under harp and bells. About four
+    seconds: warmer and broader than a level's milestone."""
     score = Score([(0, TRUMPET, 104, 72), (1, HORN, 108, 50), (2, STRINGS, 96, 64), (3, TIMPANI, 104, 64), (4, GLOCK, 64, 84), (5, HARP, 95, 40), (6, TROMBONE, 88, 56), (7, BRASS, 92, 58)])
     for at, name, length, velocity in [(0.0, "G4", 0.22, 92), (0.24, "C5", 0.22, 98), (0.48, "E5", 0.5, 106)]:
         score.play(1, at, name, length, velocity)

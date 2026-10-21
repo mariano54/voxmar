@@ -69,7 +69,7 @@ pub enum UiSound {
     LevelUp,
     /// A skill reached a milestone level (`hud::celebrate`).
     Milestone,
-    /// A path's capstone finished (`hud::celebrate`): an age's step.
+    /// A path's last quest (its capstone) finished (`hud::celebrate`).
     CapstoneDone,
 }
 
