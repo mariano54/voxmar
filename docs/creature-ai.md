@@ -118,6 +118,16 @@ curse spread, aura, molt rebirth, dream walk.
 | Vibration | burrowers | running feet; sneaking is silent |
 | Aether | supernatural only | the aether field and aether-bearing items |
 
+Where it looks decides what it notices (`senses.field`, `close`, `react` in its data). It sees a
+player within `field` degrees either way of where it faces, with nothing opaque between
+(`Server::in_view`); a deer's eyes see most of the way round (160), a wolf's to the front (110),
+and 180, the default, sees all round. Out of view it notices a player only within `close`
+blocks (it hears and smells them), when they hold its food within its hearing, or once they
+hurt it; a player it has noticed it keeps in mind for `keep` seconds out of sight (default 10, at most 60), so
+turning away does not drop a chase. Just noticing someone, it takes a double take of `react`
+seconds, facing them, alert, before it runs, hunts or comes to look: the moment a player has to
+back off, or to creep closer behind it. A blow skips the double take.
+
 ## Aggression
 
 - **Temperament, not type.** Hostile is high aggression and low fear; neutral is a
@@ -140,9 +150,10 @@ curse spread, aura, molt rebirth, dream walk.
   taking over in that same decision. A warning only tells a hunt before it comes, and
   never changes whom a hunter goes for or when: it warns the one its hunt would go for (the
   nearest it would hunt, as far off, kept, frightened or on an errand as much as not) if
-  it sees them, and goes for one it does not see unwarned, as it always did. One that
-  only defends itself (a badger, a bear) warns those it sees (a clear line from its eyes
-  to their head or middle, the server's `in_sight`) within its `radius`, and then defends
+  it sees them; one it does not see it has not noticed (unless they are close, hurt it or
+  hold its food), so it leaves them be. One that only defends itself (a badger, a bear)
+  warns those it sees (in its field of view with a clear line from its eyes, the same
+  `in_view` look it notices by) within its `radius`, and then defends
   its ground. No warning goes to a player holding the food that tempts it unless it hunts
   (a hunter's chase outranked the food before, and still does): a lured bear or badger
   follows the food as before. It warns no one creative, of more than twice its level or

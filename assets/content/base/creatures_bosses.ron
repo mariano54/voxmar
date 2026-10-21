@@ -42,7 +42,7 @@
             ),
             group: (size: (1, 1)),
             temperament: (aggression: 0.0, fear: 0.0, nervousness: 0.1, curiosity: 0.2, sociability: 0.2, territory: 0.2, energy: 0.4),
-            senses: (sight: 14.0, hearing: 18.0),
+            senses: (sight: 14.0, hearing: 18.0, field: 110.0, react: 0.8),
             leash: 40.0,
             diet: (eats: ["brown_mushroom", "red_mushroom", "short_grass"], favourite: ["truffle"]),
             behaviours: [(do: Wander(radius: 16.0)), (do: LookAround), (do: Graze), (do: Defend, weight: 1.5), (do: StandToLook), (do: Tempted(radius: 10.0))],

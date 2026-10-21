@@ -664,7 +664,8 @@
         ]),
         // A railing along the back (south) of its cell: a bottom rail, a handrail and four
         // balusters between them, a block high in all. The corner has a second run along
-        // its east side.
+        // its east side, and a hull of the two runs, so a blow at one in its open part
+        // passes the open part.
         "railing": (boxes: [
             (from: (0, 0, 13.5), to: (16, 2, 16), cull: true),
             (from: (0, 13, 13), to: (16, 16, 16), cull: true),
@@ -691,6 +692,9 @@
             (from: (2, 11, 7), to: (6.5, 13.5, 9)),
             (from: (7, 5, 2), to: (9, 7.5, 6.5)),
             (from: (7, 11, 2), to: (9, 13.5, 6.5)),
+        ], hull: [
+            (from: (0, 0, 6.5), to: (9.5, 16, 9.5)),
+            (from: (6.5, 0, 0), to: (9.5, 16, 6.5)),
         ]),
         // A field gate between two half posts: a frame of two rails and three uprights. Open,
         // it stands swung out to the north, folded against its west post.
@@ -747,6 +751,9 @@
             (from: (14, 2, 1.25), to: (15.5, 13, 2.75)),
             (from: (14, 2, 5.25), to: (15.5, 13, 6.75)),
             (from: (14, 2, 9.25), to: (15.5, 13, 10.75)),
+        ], hull: [
+            (from: (0, 0, 13), to: (16, 16, 16)),
+            (from: (13, 0, 0), to: (16, 16, 13)),
         ]),
         // A newel post: a post five texels square and a cap over it.
         "newel_post": (boxes: [
