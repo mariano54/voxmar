@@ -291,15 +291,21 @@ impl Server {
         }
     }
 
-    /// Tells player `id`, just on, the news that came while they were away, oldest first.
+    /// Tells player `id`, just on, the news that came while they were away, oldest first;
+    /// what their connection would not take (gone again, or full) stays kept for them.
     pub(crate) fn tell_waiting(&mut self, id: voxmar_protocol::PlayerId) {
         let Some(player) = self.players.get(&id) else { return };
         let key = crate::player_key(&player.name);
-        let (theirs, rest): (Vec<Waiting>, Vec<Waiting>) = std::mem::take(&mut self.news_waiting).into_iter().partition(|w| w.owner == key);
-        self.news_waiting = rest;
-        for waiting in theirs {
-            player.connection.send(voxmar_protocol::ServerMessage::Fired { words: waiting.words });
+        let (theirs, mut rest): (Vec<Waiting>, Vec<Waiting>) = std::mem::take(&mut self.news_waiting).into_iter().partition(|w| w.owner == key);
+        let mut theirs = theirs.into_iter();
+        for waiting in theirs.by_ref() {
+            if !player.connection.send(voxmar_protocol::ServerMessage::Fired { words: waiting.words.clone() }) {
+                rest.push(waiting);
+                break;
+            }
         }
+        rest.extend(theirs);
+        self.news_waiting = rest;
     }
 
     /// Turns what `core`'s structure chars into what it made: done, its share of the burn
@@ -829,7 +835,12 @@ mod tests {
         let ada = crate::player_key(&server.players[&1].name);
         drop(client);
         server.tell_fired(&ada, Words::text("your kiln is cold"));
-        assert_eq!(server.news_waiting, [super::Waiting { owner: ada, words: Words::text("your kiln is cold") }]);
+        server.tell_fired(&ada, Words::text("your clamp is done"));
+        let kept = [super::Waiting { owner: ada.clone(), words: Words::text("your kiln is cold") }, super::Waiting { owner: ada, words: Words::text("your clamp is done") }];
+        assert_eq!(server.news_waiting, kept);
+        // Told on a hello whose connection is gone again: still kept, in order.
+        server.tell_waiting(1);
+        assert_eq!(server.news_waiting, kept, "not lost on a send that failed");
     }
 
     /// A kiln gone cold in the first look after the server starts is told: what was lit
