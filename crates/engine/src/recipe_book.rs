@@ -66,6 +66,13 @@ pub enum Method {
     Trade { event: usize, wants: Option<(crate::wander::Want, u8)>, chance: f32 },
     /// Given for finishing the quest `quest`.
     Reward { quest: String },
+    /// Left when `from` burns out, set down or in hand (a torch's stub), or, `relit`, what
+    /// `from` is lit again into (a lamp filled with fat), using up an item tagged `fuel`
+    /// if lighting it does.
+    Burn { from: BlockId, relit: bool, fuel: Option<String> },
+    /// Left where `from` was charred in the structure `structure` (a clamp's firewood), lit
+    /// and left to smoulder; `early` if it was opened before its time.
+    Smoulder { structure: String, from: BlockId, early: bool },
     /// Found in the world (its generator lays it) and broken loose as itself, with `tool`
     /// (the least that does) if it needs one, from `level` in `skill`.
     Found { tool: Option<BlockId>, skill: Option<crate::skill::SkillId>, level: u8 },
@@ -337,6 +344,46 @@ impl RecipeBook {
                     && let Some(item) = blocks.id(name)
                 {
                     book.add(blocks, Entry { method: Method::Reward { quest: quest.name.clone() }, output: item, count: (*count, *count) }, Vec::new());
+                }
+            }
+        }
+        // Fire: what a light set down leaves burnt out and what one is lit again into, each
+        // as breaking it gives it, from what breaking the light gives (a guttering torch is
+        // picked up as a torch); and what an item burning in hand leaves. What breaks to
+        // nothing is no way to anything.
+        let held = |b: BlockId| Some(blocks.info(b).drops).filter(|d| !d.is_air());
+        let mut fire = Vec::new();
+        for b in blocks.ids() {
+            if let Some((_, to)) = content.flames.burns_out(blocks, b) {
+                fire.push((held(b), held(to), false, None));
+            }
+            if let Some(to) = content.flames.relit(blocks, b) {
+                fire.push((held(b), held(to), true, content.flames.relit_with(b)));
+            }
+            if let Some(to) = content.tools.burnt(b) {
+                fire.push((Some(b), held(to), false, None));
+            }
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (from, output, relit, fuel) in fire {
+            if let (Some(from), Some(output)) = (from, output)
+                && from != output
+                && seen.insert((from, output, relit))
+            {
+                // The fuel it uses up is among what it takes, so fat looked up shows the lamp.
+                let takes = std::iter::once(from).chain(fuel.into_iter().flat_map(|tag| blocks.tagged(tag))).collect();
+                book.add(blocks, Entry { method: Method::Burn { from, relit, fuel: fuel.map(str::to_owned) }, output, count: (1, 1) }, takes);
+            }
+        }
+        // A smouldering structure: what each of its wood cells, charred through or opened
+        // early, breaks to, as many as the heap drops.
+        for structure in content.multiblocks.iter() {
+            let Some(smoulder) = &structure.smoulder else { continue };
+            let Some(&from) = smoulder.wood.first().and_then(|&at| structure.takes(at).first()) else { continue };
+            for (left, early) in [(smoulder.done, false), (smoulder.early, true)] {
+                if let Some(output) = held(left) {
+                    let n = blocks.info(left).drop_count;
+                    book.add(blocks, Entry { method: Method::Smoulder { structure: structure.name.clone(), from, early }, output, count: (n, n) }, vec![from]);
                 }
             }
         }
@@ -651,6 +698,23 @@ mod tests {
         // A quest's reward.
         let torch_quests: Vec<&str> = book.making(id("base:torch")).iter().filter_map(|e| if let Method::Reward { quest } = &e.method { Some(quest.as_str()) } else { None }).collect();
         assert!(content.quests.iter().filter(|q| q.rewards.contains(&crate::quest::Reward::Item("base:torch".into(), 4))).all(|q| torch_quests.contains(&q.name.as_str())) && !torch_quests.is_empty());
+        // Fire: a torch burnt out leaves its stub, a firebrand burnt in hand a charred stick,
+        // and an empty lamp filled is a lit one; a guttering torch, picked up as a torch, is
+        // no way to itself.
+        let burnt = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Burn { from, relit, .. } = m { Some((from, relit)) } else { None }).collect::<Vec<_>>();
+        assert_eq!(burnt("base:torch_stub"), [(id("base:torch"), false)]);
+        assert_eq!(burnt("base:charred_stick"), [(id("base:firebrand"), false)]);
+        assert_eq!(burnt("base:clay_oil_lamp"), [(id("base:clay_oil_lamp_empty"), true)]);
+        assert!(burnt("base:torch_guttering").is_empty());
+        // A clamp's firewood, charred through, is charcoal; opened early, charred wood.
+        let charred = |item: &str| ways(item).into_iter().filter_map(|m| if let Method::Smoulder { structure, from, early } = m { Some((structure, from, early)) } else { None }).collect::<Vec<_>>();
+        assert_eq!(charred("base:charcoal"), [("base:charcoal_clamp".to_owned(), id("base:firewood"), false)]);
+        assert_eq!(charred("base:charred_wood"), [("base:charcoal_clamp".to_owned(), id("base:firewood"), true)]);
+        // As many as a heap breaks to: four charcoal, two charred wood.
+        let heap = |item: &str| book.making(id(item)).iter().find(|e| matches!(e.method, Method::Smoulder { .. })).map(|e| e.count);
+        assert_eq!((heap("base:charcoal"), heap("base:charred_wood")), (Some((4, 4)), Some((2, 2))));
+        let fat = content.blocks.tagged("fat").next().expect("something is fat");
+        assert!(book.using(fat).iter().any(|e| matches!(&e.method, Method::Burn { relit: true, fuel: Some(tag), .. } if tag == "fat") && e.output == id("base:clay_oil_lamp")));
         // Food left too long: the cooking entries it burns in make it.
         let burnt = book.making(id("base:burnt_food"));
         assert!(!burnt.is_empty() && burnt.iter().all(|e| matches!(e.method, Method::Cook { burnt: Some(b), .. } if b == id("base:burnt_food"))));

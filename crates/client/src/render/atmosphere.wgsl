@@ -78,6 +78,10 @@ struct Atmosphere {
     // A rainbow (see `rainbow`): xyz the direction to the sun, w how strong (above 0.75 a
     // double one), 0 for none.
     bow: vec4<f32>,
+    // A light held in the player's hand (a firebrand): xyz where it is, w its light level
+    // over 15 (0: none held). It lights what is near as a block giving that light would,
+    // one level less a block, without waiting for the light to spread (`held_light`).
+    held: vec4<f32>,
 };
 
 // At full dusk or dawn, how much more red, green and blue the side of the sky towards the

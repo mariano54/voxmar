@@ -657,6 +657,16 @@ impl Overworld {
         self.lairs.defs()
     }
 
+    /// Whether a settlement's plan covers (x, z), out to a few blocks past its edge.
+    pub fn in_settlement(&self, x: i32, z: i32) -> bool {
+        self.settlement_covers(x, z)
+    }
+
+    /// The height of the settlement whose plan covers (x, z), if one does.
+    pub fn settlement_height(&self, x: i32, z: i32) -> Option<i32> {
+        self.settlements.height_covering(self, x, z)
+    }
+
     /// Whether a settlement's plan covers (x, z).
     pub(crate) fn settlement_covers(&self, x: i32, z: i32) -> bool {
         self.settlements.covers(self, x, z)

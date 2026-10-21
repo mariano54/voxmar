@@ -4,7 +4,7 @@
     recipes: [
         (pattern: [["bone"], ["bone"], ["stick"]], output: "bone_club", skill: "core:crafting", level: 1, xp: 6.0),
         (pattern: [["", "", "flint"], ["", "stick", ""], ["stick", "", ""]], output: "flint_spear", skill: "core:crafting", level: 2, xp: 8.0),
-        (pattern: [["great_tusk"], ["stick"]], output: "tusk_club", skill: "core:crafting", level: 3, xp: 10.0),
+        (pattern: [["twine", "great_tusk", "twine"], ["", "stick", ""]], output: "tusk_club", skill: "core:crafting", level: 3, xp: 10.0),
         (pattern: [["cobblestone"], ["cobblestone"], ["stick"]], output: "stone_sword", skill: "core:crafting", level: 1, xp: 6.0),
         // A sling is a hide pouch on two cords; a short bow a bent stick strung with twine,
         // and its arrows a head of flint or stone on a stick, fletched with a feather.

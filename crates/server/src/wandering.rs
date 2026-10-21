@@ -1285,7 +1285,7 @@ impl Server {
                     p.changed(traits::INVENTORY);
                     if left > 0 {
                         let body = voxmar_engine::dropped::thrown(p.eye(), p.look());
-                        self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: left }, body, voxmar_engine::dropped::PICKUP_DELAY);
+                        self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, left), body, voxmar_engine::dropped::PICKUP_DELAY);
                     }
                 }
                 ResolvedReward::Xp(skill, xp) => self.grant_xp(player, skill, xp),

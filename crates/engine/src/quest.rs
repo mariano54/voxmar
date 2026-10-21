@@ -92,6 +92,9 @@ pub enum Goal {
     /// Laid a recipe for this item (or `any`, or a `tag:TAG`) into the crafting grid this
     /// many times with the recipe viewer's Lay, taking from a store in the home.
     Laid(String, u32),
+    /// Mended this many worn tools or weapons (one, `any`, or a `tag:TAG`) at the crafting
+    /// grid, by the block each is mended at.
+    Mended(String, u32),
     /// Set down this many blocks that water crops (a block, `any` or a `tag:TAG`, such as a
     /// well) by tilled ground, near enough to keep it moist.
     Watering(String, u32),
@@ -129,6 +132,7 @@ impl Goal {
             | Goal::Offered(item, _)
             | Goal::Ate(item, _)
             | Goal::Laid(item, _)
+            | Goal::Mended(item, _)
             | Goal::Watering(item, _)
             | Goal::Fertilised(item, _) => Some(item),
             _ => None,
@@ -331,6 +335,7 @@ impl Progress<'_> {
             Goal::Ate(food, n) => (tally("ate", food), *n),
             Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
             Goal::Laid(item, n) => (tally("laid", item), *n),
+            Goal::Mended(item, n) => (tally("mended", item), *n),
             Goal::Watering(block, n) => (tally("watering", block), *n),
             Goal::Placed(block, n) => (tally("placed", block), *n),
             Goal::Stocked(item, store, n) => (tally(&format!("stocked:{store}"), item), *n),
@@ -656,6 +661,7 @@ impl QuestRegistry {
                     Goal::Ate(name, _) => find(name, &made)?,
                     Goal::Felt(name) => find(name, &effect)?,
                     Goal::Laid(name, _) => find(name, &made)?,
+                    Goal::Mended(name, _) => find(name, &made)?,
                     Goal::Watering(name, _) | Goal::Placed(name, _) => find(name, &made)?,
                     Goal::Stocked(name, kept, _) => {
                         find(name, &made)?;
@@ -1208,7 +1214,7 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1), ("placed:base:hide_window", 2), ("stocked:base:feed_trough:base:wheat", 8), ("crafted_near:chopping_block:base:oak_planks", 6), ("trapped:base:rabbit", 1)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1), ("placed:base:hide_window", 2), ("stocked:base:feed_trough:base:wheat", 8), ("crafted_near:chopping_block:base:oak_planks", 6), ("trapped:base:rabbit", 1), ("mended:base:bone", 2)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
@@ -1240,6 +1246,8 @@ mod tests {
         assert_eq!(goal(Goal::CraftNear("base:oak_planks".into(), "chopping_block".into(), 6)), (6, 6));
         assert_eq!(goal(Goal::CraftNear("base:oak_planks".into(), "oven".into(), 1)), (0, 1), "made near another block");
         assert_eq!(goal(Goal::Trapped("any".into(), 1)), (1, 1), "a catch taken from a trap");
+        assert_eq!(goal(Goal::Mended("base:bone".into(), 3)), (2, 3), "mended, not made");
+        assert_eq!(goal(Goal::Mended("tag:offering".into(), 1)), (2, 1), "mended counts by tag");
         assert_eq!(goal(Goal::Laid("base:bone".into(), 1)), (0, 1), "what was made is not what was laid");
         assert_eq!(goal(Goal::Lured("any".into(), 1)), (2, 1), "creatures drawn up close by their favourite food");
         assert_eq!(goal(Goal::Lured("base:junglefowl".into(), 1)), (0, 1), "a rabbit lured is no junglefowl");
