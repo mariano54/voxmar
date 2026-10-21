@@ -364,6 +364,12 @@ impl RecipeBook {
         }
     }
 
+    /// Whether the world lays `block` (as [`found`](Self::found) was told): a creative-only
+    /// block a player only ever meets where the generator set it.
+    pub fn laid(&self, blocks: &crate::block::BlockRegistry, block: BlockId) -> bool {
+        self.laid.contains(&listed_as(blocks, block))
+    }
+
     /// Adds what the world lays (`placed`, from its generator's data) that breaking gives
     /// back as itself: found, not made. Items that are never placed (seeds) are left out,
     /// and so are furnishings: one the world placed (a village's bed) gives nothing broken.
