@@ -125,6 +125,22 @@
     // head shifts. Worn out: the haft snaps and its pieces fall.
     tool_worn: ["sounds/tool_worn_1.ogg", "sounds/tool_worn_2.ogg"],
     tool_break: ["sounds/tool_break_1.ogg", "sounds/tool_break_2.ogg"],
+    // Work heard done, from the block, as the server changes it: a block becoming one of `to`
+    // (by name, or `tag:TAG`) from one of `from` (any other block, if none). About as loud
+    // as placing a block, times `volume`; the first entry that fits is heard. A package
+    // that names an entry replaces it.
+    work_done: [
+        // The stew is ready: the lid rattles and the bubbling settles.
+        (name: "pot_ready", from: ["cooking_pot_simmering"], to: ["cooking_pot_ready"], sounds: ["sounds/work/pot_ready_1.ogg", "sounds/work/pot_ready_2.ogg"]),
+        // The herbs on the rack have dried: a papery rustle.
+        (name: "rack_dry", from: ["drying_rack_hung"], to: ["drying_rack_dry"], sounds: ["sounds/work/rack_dry_1.ogg", "sounds/work/rack_dry_2.ogg"], volume: 0.8),
+        // The compost has rotted down: a soft settling slump.
+        (name: "compost_ready", from: ["compost_heap_full"], to: ["compost_heap_ready"], sounds: ["sounds/work/compost_ready_1.ogg", "sounds/work/compost_ready_2.ogg"], volume: 0.8),
+        // A clamp burnt through: the stack settles and cools with a crackle.
+        (name: "clamp_done", from: ["firewood"], to: ["charcoal_heap", "ash_heap"], sounds: ["sounds/work/clamp_done_1.ogg", "sounds/work/clamp_done_2.ogg"]),
+        // The skep has filled with honey: a contented swell of humming.
+        (name: "skep_full", from: ["bee_skep"], to: ["honey_skep"], sounds: ["sounds/work/skep_full_1.ogg", "sounds/work/skep_full_2.ogg"], volume: 0.8),
+    ],
     // What the player does, heard as they do it, by action: about as loud as placing a
     // block, times `volume`. A package that names an action replaces its sound. Every
     // action says how it sounds, or the game does not start: its `sounds`, `silent: true`,
