@@ -124,6 +124,12 @@ impl Villagers {
         self.by_creature.contains_key(&id)
     }
 
+    /// Creature `id` is kept here, as if one of its own (a test's).
+    #[cfg(test)]
+    pub(crate) fn keep_for_test(&mut self, id: u32) {
+        self.by_creature.insert(id, (0, 0));
+    }
+
     /// Where creature `id`'s routine sends it now, if it is someone's; a guard after
     /// someone goes straight at them within `handoff` blocks.
     pub(crate) fn errand(&self, id: u32, handoff: f32) -> Option<Errand> {
@@ -339,26 +345,60 @@ impl Server {
                 continue;
             }
             self.villagers.towns.get_mut(&id).expect("listed").alive = true;
-            // Only nearby residents live, closest first, with an independent town cap.
-            let t = &self.villagers.towns[&id];
-            let mut nearby: Vec<(usize, f32)> = (0..t.people.len()).filter_map(|i| {
-                let at = match t.people[i].creature.and_then(|c| self.creatures.live.get(&c)) {
-                    Some(c) => c.body.position,
-                    None => self.spot_for(id, i, mix(t.info.people[i].seed, self.villagers.generation(id, i)))?.0.as_vec3(),
-                };
-                let distance = players.iter().map(|p| p.with_y(0.0).distance(at.with_y(0.0))).fold(f32::MAX, f32::min);
-                (distance <= live.nearby).then_some((i, distance))
-            }).collect();
-            nearby.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
-            nearby.truncate(live.per_settlement);
+            let nearby = self.nearby(id, &players, live);
             for i in 0..self.villagers.towns[&id].people.len() {
-                if nearby.iter().any(|&(j, _)| j == i) {
+                if nearby.contains(&i) {
                     self.bring_out(id, i);
                 } else {
                     self.release_person(id, i);
                 }
             }
         }
+    }
+
+    /// Who of settlement `id`'s people live, near `players`: only nearby residents, closest
+    /// first, with an independent town cap.
+    fn nearby(&self, id: u64, players: &[Vec3], live: &LiveDef) -> Vec<usize> {
+        let t = &self.villagers.towns[&id];
+        let mut nearby: Vec<(usize, f32)> = (0..t.people.len()).filter_map(|i| {
+            let at = match t.people[i].creature.and_then(|c| self.creatures.live.get(&c)) {
+                Some(c) => c.body.position,
+                None => self.spot_for(id, i, mix(t.info.people[i].seed, self.villagers.generation(id, i)))?.0.as_vec3(),
+            };
+            let distance = players.iter().map(|p| p.with_y(0.0).distance(at.with_y(0.0))).fold(f32::MAX, f32::min);
+            (distance <= live.nearby).then_some((i, distance))
+        }).collect();
+        nearby.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        nearby.truncate(live.per_settlement);
+        nearby.into_iter().map(|(i, _)| i).collect()
+    }
+
+    /// Of the people of every living settlement near players, how many are out and how
+    /// many are due out (those who live and are not dead, where the land under them is
+    /// held), and which of those out a player at `at` is told of (`/creatures people`, for a
+    /// test to wait on rather than guess).
+    pub(crate) fn people_out(&self, at: Vec3) -> (usize, usize, Vec<u32>) {
+        let live = self.live();
+        let players: Vec<Vec3> = self.players.values().filter(|p| p.joined).map(|p| p.position).collect();
+        let today = days(self.day);
+        let (mut out, mut due, mut seen) = (0, 0, Vec::new());
+        for (&id, town) in self.villagers.towns.iter().filter(|(_, t)| t.alive) {
+            for i in self.nearby(id, &players, &live) {
+                if self.villagers.dead.get(&(id, i)).is_some_and(|d| d.away_until > today) {
+                    continue;
+                }
+                if let Some(creature) = town.people[i].creature {
+                    (out, due) = (out + 1, due + 1);
+                    if self.creatures.live.get(&creature).is_some_and(|c| c.body.position.distance(at) < crate::creatures::SEEN_WITHIN) {
+                        seen.push(creature);
+                    }
+                } else if self.spot_for(id, i, mix(town.info.people[i].seed, self.villagers.generation(id, i))).is_some_and(|(spot, _)| self.world.contains(ColumnPos::of_block(spot))) {
+                    due += 1;
+                }
+            }
+        }
+        seen.sort_unstable();
+        (out, due, seen)
     }
 
     /// A disappearance without `creature_dies` releases a resident, never starts the
@@ -1006,7 +1046,7 @@ mod tests {
             culture: CultureInfo { family: "hearth".into(), title: ("Hearth".into(), "炉辺".into()), second: None,
                 quirks: Vec::new(), axes: [0.5; 8], dropped: Vec::new(), borrowed: Vec::new() },
             buildings: vec![SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(4, 4), max: IVec2::new(12, 12), floor: 199,
-                room: (6..=10).flat_map(|x| (6..=10).map(move |z| IVec2::new(x, z))).collect(),
+                room: (6..=10).flat_map(|x| (6..=10).map(move |z| IVec2::new(x, z))).collect(), byre: Vec::new(),
                 door: Some(IVec3::new(8, 200, 13)), facing: SettlementFacing::South, what: "cottage".into(), work: None, beds: Vec::new(), seats: Vec::new() }],
             people: (0..count).map(|i| Resident { species: species.into(), home: 0, work: None, routine, guard: species == "base:guard", seed: 100 + i as u64 }).collect(),
             walls: Vec::new(), wall_block: None,

@@ -753,6 +753,29 @@ pub struct JettyDef {
     pub chance: f32,
 }
 
+/// Row houses (a terrace): homes built wall to wall along a straight stretch of street,
+/// alike but for what is inside, under one run of roof: a number drawn from `houses`, and
+/// fewer where the street, the ground or the homes wanted run out (as few as one beside
+/// the first). A home of four walls on the ground starts one on `chance` times the place's
+/// crowding; its row stands at least the `storeys` its place's size names (1 where it
+/// names none), the first raised with it, has nothing out at its sides nor a porch, and a
+/// gable roof where the first's would not run on over a join.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RowDef {
+    pub chance: f32,
+    pub houses: (u32, u32),
+    #[serde(default)]
+    pub storeys: Vec<(String, u32)>,
+}
+
+impl RowDef {
+    /// The least storeys of the houses of a row in a place of `size`.
+    pub fn storeys_at(&self, size: &str) -> u32 {
+        self.storeys.iter().find(|(s, _)| s == size).map_or(1, |&(_, n)| n)
+    }
+}
+
 /// What a village's own flames must not reach: none of its blocks that catch (`catch`, by
 /// tag) stands within `reach` steps of one of its flames (`flames`, by tag), stepping only
 /// through open cells, as fire catches in a home; a roof of them there is laid in `instead`.
@@ -973,6 +996,9 @@ struct HouseFile {
     porch: f32,
     #[serde(default)]
     wing: f32,
+    /// A byre at the back for its animals, now and then.
+    #[serde(default)]
+    byre: Option<ByreDef>,
     #[serde(default)]
     form: Form,
     /// The work done in it (`bakery`, `mill`), for the people who will work there; none
@@ -1116,6 +1142,8 @@ struct StyleFile {
     pieced: f32,
     #[serde(default)]
     jetty: Option<JettyDef>,
+    #[serde(default)]
+    row: Option<RowDef>,
 }
 
 /// A package's `rules`: each section it names replaces the earlier one whole, each
@@ -1219,6 +1247,7 @@ pub struct HouseDef {
     pub storeys: (u32, u32),
     pub porch: f32,
     pub wing: f32,
+    pub byre: Option<ByreDef>,
     pub form: Form,
     pub work: Option<String>,
     pub inside: Vec<Fitting>,
@@ -1231,6 +1260,18 @@ pub struct HouseDef {
     pub water: bool,
     pub people: (u32, u32),
 }
+
+/// A home's byre: its chance, and how many rows of its room at the back it takes, behind a
+/// wall across with a doorway, with its own wide door out the back.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ByreDef {
+    pub chance: f32,
+    pub rows: (u32, u32),
+}
+
+/// The rows a home keeps for its people in front of a byre.
+pub const BYRE_KEEPS: u32 = 4;
 
 /// A roof shape every style may weigh, and the levers it leans on.
 #[derive(Clone, Debug, PartialEq)]
@@ -1329,6 +1370,7 @@ pub struct StyleDef {
     pub roof_pieces: Vec<RoofPiecesDef>,
     pub pieced: f32,
     pub jetty: Option<JettyDef>,
+    pub row: Option<RowDef>,
 }
 
 /// Every package's `settlements.ron` together.
@@ -1544,6 +1586,7 @@ impl SettlementsDef {
                 storeys: h.storeys,
                 porch: h.porch,
                 wing: h.wing,
+                byre: h.byre,
                 form: h.form,
                 work: h.work,
                 inside: h.inside,
@@ -1616,6 +1659,7 @@ impl SettlementsDef {
                 roof_pieces: s.roof_pieces.into_iter().map(|p| RoofPiecesDef { slope: qualify(package, &p.slope), ridge: qualify(package, &p.ridge), weight: p.weight }).collect(),
                 pieced: s.pieced,
                 jetty: s.jetty.map(|j| JettyDef { beam: qualify(package, &j.beam), chance: j.chance }),
+                row: s.row,
             });
         }
         self.people.extend(at, package, file.people)?;
@@ -1794,6 +1838,17 @@ impl SettlementsDef {
             if h.not_in.iter().any(|s| !self.styles.iter().any(|z| z.name == *s)) {
                 return fail(format!("house `{}` is kept out of a style there is none of", h.name));
             }
+            // A byre: hay, a stall and a trough in its rows; the wall across, the walls front
+            // and back and the home's own rows in front, in the deepest it is built.
+            if let Some(b) = h.byre
+                && (!(0.0..=1.0).contains(&b.chance) || b.rows.0 < 3 || b.rows.0 > b.rows.1 || h.work.is_some() || h.form != Form::Box || !h.inside.is_empty() || h.depth.1 < b.rows.0 + BYRE_KEEPS + 3)
+            {
+                return fail(format!(
+                    "house `{}` has a byre {b:?}: it needs a chance in [0, 1], 3 or more rows low to high, a home of four walls with nothing inside, and a depth of its rows and {} more",
+                    h.name,
+                    BYRE_KEEPS + 3
+                ));
+            }
         }
         for p in &self.props {
             if let PropKind::Blocks(name, blocks) = &p.kind {
@@ -1844,6 +1899,19 @@ impl SettlementsDef {
             }
         }
         for style in &self.styles {
+            if style.row.as_ref().is_some_and(|r| !(0.0..=1.0).contains(&r.chance) || r.houses.0 < 2 || r.houses.0 > r.houses.1 || r.houses.1 > 12) {
+                return fail(format!("style `{}`: a row's `chance` is a share (0 to 1) and its `houses` from 2 to at most 12", style.name));
+            }
+            if let Some(r) = &style.row
+                && let Some((size, n)) = r.storeys.iter().find(|(s, n)| !self.sizes.iter().any(|z| z.name == *s) || !(1..=3).contains(n))
+            {
+                return fail(format!("style `{}`: a row's storeys name a size there is one of, and 1 to 3 storeys, not `{size}` {n}", style.name));
+            }
+            if let Some(r) = &style.row
+                && let Some((size, _)) = r.storeys.iter().enumerate().find(|(i, (s, _))| r.storeys[..*i].iter().any(|(t, _)| t == s)).map(|(_, e)| e)
+            {
+                return fail(format!("style `{}`: a row names the storeys of size `{size}` twice", style.name));
+            }
             if style.jetty.as_ref().is_some_and(|j| !(0.0..=1.0).contains(&j.chance)) {
                 return fail(format!("style `{}`: a jetty's `chance` is a share (0 to 1)", style.name));
             }

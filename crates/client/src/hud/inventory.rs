@@ -79,7 +79,7 @@ fn find_near(ui: Res<UiState>, world: Res<ClientWorld>, player: Res<LocalPlayer>
     if !ui.inventory_open {
         return;
     }
-    let tags = launch.content.recipes.near_tags();
+    let tags = launch.content.near_tags();
     let found = voxmar_engine::craft::tags_near(&tags, &launch.content.blocks, player.eye(), |pos| world.block(pos));
     if near.0 != found {
         near.0 = found;
@@ -153,8 +153,8 @@ pub struct InterfaceStyle {
     pub book_zooms: Vec<f32>,
     /// Which of `book_zooms` the book opens at.
     pub book_zoom_at: usize,
-    /// How much of the window the book takes across, in percent; down, it takes all but the
-    /// keys under it and the HUD at the bottom.
+    /// How much of the window the book takes across, in percent; down, it takes all from
+    /// under the bar of the screens' keys to the HUD at the bottom.
     pub book_width: f32,
 }
 
@@ -394,7 +394,7 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
             super::makeable::spawn(card, font, HOTBAR_SLOTS);
             spawn_legend(card, font);
         });
-        super::screens::spawn_hotkeys(root, super::screens::GameScreen::Inventory);
+        super::screens::mark_screen(root, super::screens::GameScreen::Inventory);
         // The held stack belongs to the inventory; the tooltip also serves recipe and
         // quest icons, so it must live outside this screen's visibility hierarchy.
         let pointer = Node { position_type: PositionType::Absolute, width: Val::Px(SLOT), height: Val::Px(SLOT), ..default() };
@@ -476,15 +476,35 @@ fn craft(
             !voxmar_engine::level::meets_recipe(r, skills.level(player.skills.xp(s)), boosted, &player.inventory, blocks)
         })
     };
-    let allowed = |r: &voxmar_engine::craft::Recipe| (at_table || !r.needs_table()) && short(r).is_none();
+    // And a later age's only once its rite is done.
+    let closed = |r: &voxmar_engine::craft::Recipe| super::makeable::closed(&launch.content, &player, r);
+    let allowed = |r: &voxmar_engine::craft::Recipe| closed(r).is_none() && (at_table || !r.needs_table()) && short(r).is_none();
     let near = |tag: &str| near.has(tag);
-    let found = recipes.find_near(&player.inventory.grid(), near);
-    let lacking = found.and_then(|r| short(r).map(|skill| (skill, r.level)));
-    let made = found.filter(|r| allowed(r)).map(|r| (r.output, r.count));
+    // A worn tool and what mends it, by the block it is mended at, mend it, as the server
+    // does before any recipe.
+    let tools = launch.content.tools.clone();
+    let mending = tools.mended(&player.inventory.craft, near);
+    // At the level its recipe asks, as the server checks it.
+    let level = |skill| (skills.level(player.skills.xp(skill)), voxmar_engine::level::check_level(&skills, effects, &player.skills, &player.vitals.effects, skill));
+    let mend_short = mending.and_then(|m| voxmar_engine::level::lacks_for_mend(&tools, m.item, level, &player.inventory, blocks));
+    let mended = mending.filter(|_| mend_short.is_none());
+    let found = recipes.find_near(&player.inventory.grid(), near).filter(|_| mending.is_none());
+    let locked = found.and_then(closed);
+    let lacking = mend_short.or_else(|| found.and_then(|r| short(r).map(|skill| (skill, r.level))));
+    let made = mended.map(|m| (m.item, 1)).or_else(|| found.filter(|r| allowed(r)).map(|r| (r.output, r.count)));
     let filled = player.inventory.grid().iter().any(Option::is_some);
     // How to look a recipe up is in the key row under the screen, where no item's name
     // reaches it; here only what to do with what the grid makes.
     let (title, how) = match made {
+        _ if let Some(age) = &locked => {
+            let age = locale.get(&format!("quest.age.{age}")).to_owned();
+            (locale.format("inventory.craft.age", &[("age", &age)]), String::new())
+        }
+        Some((item, _)) if let Some(mended) = mended => {
+            let uses = tools.uses(item);
+            let after = locale.format("inventory.craft.mend", &[("left", &uses.saturating_sub(mended.wear)), ("uses", &uses)]);
+            (locale.block(launch.content.blocks.def(item)), after)
+        }
         _ if let Some((skill, level)) = lacking => {
             let skill = locale.skill(skills.get(skill));
             (locale.format("skills.needs", &[("skill", &skill), ("level", &level)]), String::new())
@@ -527,10 +547,16 @@ fn craft(
     let all = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let Some(craft) = actions.named("core:craft") else { return };
     let mut inventory = player.inventory.clone();
-    if craft_grid(&mut inventory, &recipes, allowed, near, all) > 0 {
+    // What it is made of says how it sounds: flint knapped, clay shaped, wood whittled.
+    let with = player.inventory.grid().into_iter().flatten().collect();
+    let done = match mended {
+        Some(mended) => inventory.mend(mended, all),
+        None => craft_grid(&mut inventory, &recipes, allowed, near, all) > 0,
+    };
+    if done {
         player.inventory = inventory;
         // Heard as crafting (`sounds.ron`), not as a click.
-        net.propose(craft, ActionTarget::Slot(if all { 0 } else { 1 }));
+        net.propose_with(craft, ActionTarget::Slot(if all { 0 } else { 1 }), with);
     }
 }
 
@@ -992,10 +1018,21 @@ pub fn origins_and_uses(locale: &Locale, content: &voxmar_engine::content::Conte
             Method::Craft { .. } => add(locale.get("tooltip.from.craft").to_owned()),
             Method::Cook { .. } => add(locale.get("tooltip.from.cook").to_owned()),
             Method::Product { creature, .. } | Method::Drop { creature, .. } => add(locale.creature(&content.creatures.get(*creature).def)),
+            Method::Process { .. } => add(locale.get("tooltip.from.machine").to_owned()),
+            Method::Work { .. } => add(locale.get("tooltip.from.station").to_owned()),
+            Method::Harvest { .. } => add(locale.get("tooltip.from.harvest").to_owned()),
+            Method::Break { .. } => add(locale.get("tooltip.from.break").to_owned()),
+            Method::Catch { .. } => add(locale.get("tooltip.from.fishing").to_owned()),
+            Method::Trap { .. } => add(locale.get("tooltip.from.trap").to_owned()),
+            Method::Bees { .. } => add(locale.get("tooltip.from.bees").to_owned()),
+            Method::Chest { .. } => add(locale.get("tooltip.from.chest").to_owned()),
+            Method::Trade { .. } => add(locale.get("tooltip.from.trade").to_owned()),
+            Method::Reward { .. } => add(locale.get("tooltip.from.quest").to_owned()),
+            Method::Burn { relit: false, .. } => add(locale.get("tooltip.from.burn").to_owned()),
+            Method::Burn { relit: true, .. } => add(locale.get("tooltip.from.relit").to_owned()),
+            Method::Smoulder { .. } => add(locale.get("tooltip.from.smoulder").to_owned()),
+            Method::Found { .. } => add(locale.get("tooltip.from.found").to_owned()),
         }
-    }
-    if content.crops.iter().any(|(_, crop)| crop.harvest.iter().any(|(got, _)| *got == item)) {
-        add(locale.get("tooltip.from.harvest").to_owned());
     }
     let mut into: Vec<String> = Vec::new();
     for entry in book.using(item) {
@@ -1028,6 +1065,13 @@ fn seed_line(
     Some((words, if ready { SOFT } else { ERROR }))
 }
 
+/// A reaping hoe's patch: the ripe crops it takes with the one it cuts (`reap:N`).
+pub(crate) fn reap_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
+    let reach = content.tools.tool(Some(item)).reap;
+    let side = 2 * reach as u32 + 1;
+    (reach > 0).then(|| (locale.format("item.reaps", &[("side", &side)]), SOFT))
+}
+
 /// How much faster a tool works than a bare hand, on what it is made for (`speed:X`): none
 /// for one no faster (a rod, which mines nothing).
 pub(crate) fn tool_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
@@ -1039,6 +1083,59 @@ pub(crate) fn tool_line(locale: &Locale, content: &voxmar_engine::content::Conte
 /// How a weapon fights: its class, style and the level that wields it (red while the
 /// player's is short of it), then its max hit at their level and how often it strikes, and
 /// its reach if it is not the usual.
+/// How many uses a tool or weapon has left of all it lasts, red when nearly worn out, and
+/// what mends it where; or how long what burns has left.
+fn wear_lines(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId, wear: u16) -> Vec<(String, Color)> {
+    // A light: how much of its burn it has left set down, and that a settlement tends it.
+    let flame = content.flames.burn_life(item);
+    if flame > 0 {
+        let per_day = voxmar_engine::flame::WEAR_PER_DAY as f32;
+        let days = |wear: u16| format!("{:.1}", wear as f32 / per_day);
+        let color = if worn_low(content, item, wear) { ERROR } else { SOFT };
+        let mut lines = vec![(locale.format("item.flame", &[("left", &days(flame.saturating_sub(wear))), ("days", &days(flame))]), color)];
+        if content.flames.tended(item) {
+            lines.push((locale.get("item.flame.tended").to_owned(), MUTED));
+        }
+        return lines;
+    }
+    let burns = content.tools.burns(item);
+    if burns > 0 {
+        let color = if worn_low(content, item, wear) { ERROR } else { SOFT };
+        return vec![(locale.format("item.burns", &[("left", &burns.saturating_sub(wear))]), color)];
+    }
+    let uses = content.tools.uses(item);
+    if uses == 0 {
+        return Vec::new();
+    }
+    let left = uses.saturating_sub(wear);
+    let color = if worn_low(content, item, wear) { ERROR } else { SOFT };
+    let mut lines = vec![(locale.format("item.uses", &[("left", &left), ("uses", &uses)]), color)];
+    // Named by the tag that mends it (Planks, not one wood's), and by the kind of block
+    // it is mended at.
+    if let Some(&by) = content.tools.mends(item).first() {
+        let by = match content.tools.mend_by_tag(item) {
+            Some(tag) => locale.get(&format!("item.mend.tag.{tag}")).to_owned(),
+            None => locale.block(content.blocks.def(by)),
+        };
+        let station = locale.get(&format!("item.mend.near.{}", content.tools.mend_near(item))).to_owned();
+        lines.push((locale.format("item.mend", &[("item", &by), ("station", &station)]), MUTED));
+    }
+    lines
+}
+
+/// The wear `item` lasts: a tool's uses, a firebrand's seconds, or a light's burn set down
+/// (`flame::WEAR_PER_DAY` a game day); 0 for what never wears.
+pub fn life(content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> u16 {
+    content.tools.life(item).max(content.flames.burn_life(item))
+}
+
+/// Whether a tool worn by `wear` (a firebrand burnt by it, a light picked up burning) is
+/// down to the share where it warns (`tool::Wear::warn`).
+pub fn worn_low(content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId, wear: u16) -> bool {
+    let uses = life(content, item);
+    uses > 0 && wear > 0 && uses.saturating_sub(wear) <= (uses as f32 * content.tools.wear().warn).ceil() as u16
+}
+
 fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {
     let Some(weapon) = content.combat.weapon(item) else { return Vec::new() };
     let (Some(class), Some(skill)) = (weapon.class, weapon.skill) else { return Vec::new() };
@@ -1174,13 +1271,16 @@ fn hover_item(
     window: Query<&Window, With<PrimaryWindow>>,
     catalogue: Res<super::creative::Catalogue>,
     near: Res<NearTags>,
+    (make, plan): (Query<(&super::makeable::MakeCell, &RelativeCursorPosition)>, Res<super::makeable::Drawn>),
 ) {
     // Without a pointer (no window: `--gate`, `--capture`) nothing is under it to change.
     if ui.recipes_open || window.single().ok().and_then(Window::cursor_position).is_none() {
         return;
     }
     let made = || output.iter().any(RelativeCursorPosition::cursor_over).then(|| launch.content.recipes.find_near(&player.inventory.grid(), |tag| near.has(tag)).map(|r| r.output)).flatten();
-    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or(catalogue.hovered) } else { None };
+    // A thing on the Can Make list looks up as the item it makes.
+    let planned = || make.iter().find(|(_, cursor)| cursor.cursor_over()).and_then(|(cell, _)| plan.0.get(cell.0)).map(|makeable| makeable.output);
+    let item = if ui.inventory_open { hovered(&slots).and_then(|slot| player.inventory.get(slot)).map(|stack| stack.item).or_else(made).or_else(planned).or(catalogue.hovered) } else { None };
     if over.0 != item {
         over.0 = item;
     }
@@ -1199,19 +1299,40 @@ fn tooltip(
     window: Query<&Window, With<PrimaryWindow>>,
     slots: Query<(&InventorySlot, &RelativeCursorPosition)>,
     mut tip: Query<(Entity, &mut Node, &mut Visibility, &ComputedNode), With<Tooltip>>,
-    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool, u32)>>,
+    mut shown: Local<Option<(voxmar_engine::block::BlockId, bool, bool, u32, u16)>>,
     launch: Res<Launch>,
     locale: Res<Locale>,
     (keys, scale, catalogue): (Res<ButtonInput<KeyCode>>, Res<UiScale>, Res<super::creative::Catalogue>),
     mut japanese: Local<Option<Locale>>,
-    (viewer, forced, places, viewer_items): (
+    (viewer, forced, places, viewer_items, (texts, parents, cameras)): (
         Res<super::recipes::RecipeViewer>,
         Option<Res<HoverSlot>>,
         Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>,
         Query<(&super::recipes::ViewerItem, &RelativeCursorPosition, &InheritedVisibility)>,
+        (
+            Query<(Entity, &ComputedNode, &bevy::ui::UiGlobalTransform, &InheritedVisibility), (With<Text>, Without<Tooltip>)>,
+            Query<&ChildOf>,
+            Query<&Camera, With<Camera3d>>,
+        ),
     ),
 ) {
     let Ok((entity, mut node, mut visibility, computed)) = tip.single_mut() else { return };
+    // Where a pinned tip may not go: over the words of the screen under it (its own aside),
+    // on the view the interface is laid out on.
+    let pinned = forced.as_ref().map(|f| f.0);
+    let words: Vec<Rect> = if pinned.is_some() {
+        texts
+            .iter()
+            .filter(|(text, node, _, visible)| visible.get() && node.size().min_element() > 0.0 && parents.get(*text).ok().is_none_or(|p| p.parent() != entity))
+            .map(|(_, node, transform, _)| {
+                let scale = node.inverse_scale_factor();
+                Rect::from_center_size(transform.translation * scale, node.size() * scale)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let view = crate::ui::view_size(&window, &cameras).map(|view| view / scale.0);
     let browsing = ui.recipes_open || ui.quests_open;
     let pointed = hovered(&slots).or(forced.as_ref().map(|f| f.0)).filter(|_| !browsing && ui.inventory_open && player.inventory.cursor.is_none() && gesture.drag.is_none());
     // An empty worn slot says what goes in it.
@@ -1234,7 +1355,7 @@ fn tooltip(
             lines.spawn((text(&font.0, locale.get("item.slot.empty").to_owned(), BODY, MUTED), tip_line()));
         });
         visibility.set_if_neq(Visibility::Inherited);
-        place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
+        place_tip(&mut node, computed, window.single().ok(), scale.0, pinned, &places, &words, view);
         return;
     };
     // Shift shows how the name reads: in Japanese, the kana over the name; in another
@@ -1242,7 +1363,9 @@ fn tooltip(
     let reading = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     // What a pouch carries changes its lines.
     let carried: u32 = player.inventory.pouched.iter().map(|&(_, n)| n as u32 * 31 + 1).sum();
-    let key = (item, settings.debug_overlay, reading, carried);
+    // So does how worn the pointed tool is.
+    let wear = pointed.filter(|_| viewer_item.is_none()).and_then(|slot| player.inventory.get(slot)).map_or(0, |stack| stack.wear);
+    let key = (item, settings.debug_overlay, reading, carried, wear);
     if *shown != Some(key) || locale.is_changed() {
         *shown = Some(key);
         let def = world.registry.def(item);
@@ -1272,9 +1395,11 @@ fn tooltip(
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
                 .chain(tool_line(&locale, &launch.content, item))
+                .chain(wear_lines(&locale, &launch.content, item, wear))
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
                 .chain(armour_lines(&locale, &launch.content, &player, item))
                 .chain(pouch_lines(&locale, &world.registry, &player, item))
+                .chain(reap_line(&locale, &launch.content, item))
                 .chain(book.into_iter().map(|line| (line, SOFT)))
                 .chain(details(&locale, def, settings.debug_overlay));
             for (line, color) in lines_after {
@@ -1286,13 +1411,24 @@ fn tooltip(
         });
     }
     visibility.set_if_neq(Visibility::Inherited);
-    place_tip(&mut node, computed, window.single().ok(), scale.0, forced.as_ref().map(|f| f.0), &places);
+    place_tip(&mut node, computed, window.single().ok(), scale.0, pinned, &places, &words, view);
 }
 
 /// Puts the tooltip up and to the right of the pointer, kept on screen; without a pointer,
-/// beside the slot a screenshot names. The pointer is in the window's points, the
-/// interface laid out at its own scale.
-fn place_tip(node: &mut Node, computed: &ComputedNode, window: Option<&Window>, scale: f32, forced: Option<usize>, places: &Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>) {
+/// beside the slot a screenshot names, at the nearest place there that covers none of
+/// `words` (the screen's texts under it) within the `view`. The pointer is in the window's
+/// points, the interface laid out at its own scale.
+#[allow(clippy::too_many_arguments)]
+fn place_tip(
+    node: &mut Node,
+    computed: &ComputedNode,
+    window: Option<&Window>,
+    scale: f32,
+    forced: Option<usize>,
+    places: &Query<(&InventorySlot, &ComputedNode, &bevy::ui::UiGlobalTransform)>,
+    words: &[Rect],
+    view: Option<Vec2>,
+) {
     let size = computed.size() * computed.inverse_scale_factor();
     if let Some(window) = window
         && let Some(at) = window.cursor_position()
@@ -1304,16 +1440,62 @@ fn place_tip(node: &mut Node, computed: &ComputedNode, window: Option<&Window>, 
         && let Some((_, cell, place)) = places.iter().find(|(s, ..)| s.0 == slot)
     {
         let at = (place.translation + cell.size() / 2.0) * cell.inverse_scale_factor();
-        node.left = Val::Px(at.x + 2.0 * PX);
-        node.top = Val::Px((at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
+        let first = Vec2::new(at.x + 2.0 * PX, (at.y - size.y - cell.size().y * cell.inverse_scale_factor()).max(2.0 * PX));
+        let spot = view.and_then(|view| clear_spot(first, size, view, words)).unwrap_or(first);
+        node.left = Val::Px(spot.x);
+        node.top = Val::Px(spot.y);
     }
 }
+
+/// The top left nearest `first` where a tip of `size` lies wholly within the `view` and
+/// over none of `words`, on a grid of `TIP_STEP`; none where nowhere is clear.
+fn clear_spot(first: Vec2, size: Vec2, view: Vec2, words: &[Rect]) -> Option<Vec2> {
+    let (low, high) = (Vec2::splat(2.0 * PX), view - size - 2.0 * PX);
+    if high.cmplt(low).any() {
+        return None;
+    }
+    let clear = |at: Vec2| {
+        let tip = Rect::from_corners(at, at + size);
+        words.iter().all(|word| {
+            let both = tip.intersect(*word);
+            both.width() <= 0.0 || both.height() <= 0.0
+        })
+    };
+    let steps = ((high - low) / TIP_STEP).floor().as_uvec2();
+    (0..=steps.x)
+        .flat_map(|i| (0..=steps.y).map(move |j| low + Vec2::new(i as f32, j as f32) * TIP_STEP))
+        .chain(std::iter::once(first.clamp(low, high)))
+        .filter(|&at| clear(at))
+        .min_by(|a, b| a.distance_squared(first).total_cmp(&b.distance_squared(first)))
+}
+
+/// How finely a pinned tip looks for a clear place, in interface pixels.
+const TIP_STEP: f32 = 4.0 * PX;
 
 #[cfg(test)]
 mod tests {
     use voxmar_engine::block::BlockId;
 
     use super::*;
+
+    /// A pinned tip goes where it first would when nothing is under it; over words, to the
+    /// nearest place that covers none (a tool's tip by the catalogue ran into its search
+    /// line, then, flipped, into the pack's counts and the Craft label); within the view;
+    /// nowhere where every place covers some.
+    #[test]
+    fn a_pinned_tip_lies_over_no_words() {
+        let (view, size) = (Vec2::new(1706.0, 960.0), Vec2::new(360.0, 300.0));
+        let first = Vec2::new(1017.0, 300.0);
+        assert_eq!(clear_spot(first, size, view, &[]), Some(first));
+        let words = [Rect::new(1300.0, 40.0, 1600.0, 60.0), Rect::new(600.0, 200.0, 1000.0, 700.0), Rect::new(1100.0, 400.0, 1200.0, 420.0)];
+        let spot = clear_spot(first, size, view, &words).expect("somewhere clear");
+        let tip = Rect::from_corners(spot, spot + size);
+        assert!(words.iter().all(|w| tip.intersect(*w).is_empty()), "{tip:?} covers a word");
+        assert!(tip.min.cmpge(Vec2::splat(2.0 * PX)).all() && tip.max.cmple(view - 2.0 * PX).all(), "{tip:?} off the view");
+        assert!(spot.distance(first) < 200.0, "{spot} is not near {first}");
+        assert_eq!(clear_spot(first, size, view, &[Rect::new(0.0, 0.0, 1706.0, 960.0)]), None);
+        assert_eq!(clear_spot(first, Vec2::new(2000.0, 10.0), view, &[]), None, "wider than the view");
+    }
 
     #[test]
     fn the_interface_style_comes_from_data_and_a_later_package_changes_it() {
@@ -1327,7 +1509,7 @@ mod tests {
         assert_eq!((style.home_hidden_within, style.home_icon.as_deref()), (8.0, Some("base:hearthstone")), "core's distance, base's icon");
         assert_eq!((style.home_shown_beyond, style.home_dusk, style.home_dawn, style.home_fade), (48.0, 16500, 23500, 0.5));
         // Each way home number is checked as it loads.
-        assert_eq!((style.book_zooms.len(), style.book_zoom_at, style.book_width), (5, 1, 96.0));
+        assert_eq!((style.book_zooms.len(), style.book_zoom_at, style.book_width), (5, 1, 98.0));
         // As is each of the quest book's: sharp zooms from small to big, opening at one of
         // them, across most of the window.
         for bad in [
@@ -1362,7 +1544,7 @@ mod tests {
             let locale = Locale::load(&assets.join("content"), code);
             let line = |name: &str| tool_line(&locale, &content, content.blocks.id(name).unwrap()).map(|(line, _)| line);
             assert_eq!(line("base:copper_pickaxe"), Some(locale.format("item.tool_speed", &[("speed", &"7")])), "{code}");
-            assert_eq!(line("base:wooden_axe"), Some(locale.format("item.tool_speed", &[("speed", &"2")])), "{code}");
+            assert_eq!(line("base:flint_axe"), Some(locale.format("item.tool_speed", &[("speed", &"2")])), "{code}");
             assert_eq!(line("base:oak_log"), None, "{code}: a log is no tool");
             assert_eq!(line("base:fishing_rod"), None, "{code}: a rod mines nothing, so claims no speed");
         }
@@ -1407,7 +1589,7 @@ mod tests {
 
     fn held(count: u8) -> Inventory {
         let mut inventory = Inventory::default();
-        inventory.cursor = Some(ItemStack { item: BlockId(1), count });
+        inventory.cursor = Some(ItemStack::new(BlockId(1), count));
         inventory
     }
 
@@ -1452,7 +1634,7 @@ mod tests {
         let planks = content.blocks.expect("base:oak_planks");
         net.command("/clear");
         net.command("/give oak_planks 6");
-        wait_for(&|i| i.get(0) == Some(ItemStack { item: planks, count: 6 }) && i.slots.iter().flatten().count() == 1);
+        wait_for(&|i| i.get(0) == Some(ItemStack::new(planks, 6)) && i.slots.iter().flatten().count() == 1);
         // Down the left two planks a cell, one a cell beside them: a crafting table; what is
         // left, a plank over a plank, would make sticks.
         let transfer = content.actions.expect("core:transfer");
@@ -1489,9 +1671,9 @@ mod tests {
     #[test]
     fn double_clicks_gather_part_stacks_first() {
         let mut inventory = held(5);
-        inventory.slots[3] = Some(ItemStack { item: BlockId(1), count: 64 });
-        inventory.slots[7] = Some(ItemStack { item: BlockId(1), count: 20 });
-        inventory.slots[8] = Some(ItemStack { item: BlockId(2), count: 20 });
+        inventory.slots[3] = Some(ItemStack::new(BlockId(1), 64));
+        inventory.slots[7] = Some(ItemStack::new(BlockId(1), 20));
+        inventory.slots[8] = Some(ItemStack::new(BlockId(2), 20));
         let moves = gather(&inventory, BlockId(1));
         assert_eq!(moves, vec![Move::Items { from: 7, to: CURSOR, count: 20 }, Move::Items { from: 3, to: CURSOR, count: 64 }]);
         for action in moves {

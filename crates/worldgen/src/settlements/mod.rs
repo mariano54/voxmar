@@ -71,6 +71,8 @@ pub struct Building {
     /// Ground-floor room columns in world (x, z), clear of walls and exterior extras.
     /// Empty for buildings whose activity is outdoors.
     pub room: Vec<IVec2>,
+    /// The floor columns of its byre, behind the room, for the animals kept there.
+    pub byre: Vec<IVec2>,
     /// Where its path leaves the door, two blocks out, at the height of a foot standing there.
     pub door: Option<IVec3>,
     pub facing: Facing,
@@ -431,7 +433,8 @@ impl Settlements {
             spawn: std::sync::OnceLock::new(),
             promised: std::sync::OnceLock::new(),
             id: IDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            cells: Cache::new(MB),
+            // Pure functions of their cells, which the server's tick may read: copying.
+            cells: Cache::copying(MB),
             #[cfg(test)]
             planned: std::sync::atomic::AtomicUsize::new(0),
         }
@@ -617,6 +620,55 @@ impl Settlements {
         cells.into_iter().map(|c| self.slot(world, c)).filter(|slot| slot.0.is_some()).collect()
     }
 
+    /// The settlement nearest `from` by its middle, within `radius` of it, that `keep`
+    /// takes. Squares are planned nearest first, a few side by side at a time, and the
+    /// search stops once no square left could hold a nearer one: a settlement never
+    /// reaches past its square, so the nearest point of a square bounds how near any of
+    /// its places can be. Only the squares nearer than the answer are planned, where
+    /// `near` would plan every one within `radius`.
+    pub fn nearest(&self, world: &Overworld, from: IVec2, radius: i32, keep: impl Fn(&Plan) -> bool) -> Option<Arc<Slot>> {
+        let spacing = self.def.grid.spacing;
+        let reach = i64::from(radius) * i64::from(radius);
+        let away = |p: IVec2| (p - from).as_i64vec2().length_squared();
+        let (first, last) = (self.cell_of(from.x - radius, from.y - radius), self.cell_of(from.x + radius, from.y + radius));
+        let mut cells: Vec<(i64, IVec2)> = (first.y..=last.y)
+            .flat_map(|cz| (first.x..=last.x).map(move |cx| IVec2::new(cx, cz)))
+            .map(|c| (away(from.clamp(c * spacing, (c + 1) * spacing - 1)), c))
+            .filter(|&(bound, _)| bound <= reach)
+            .collect();
+        cells.sort_unstable_by_key(|&(bound, c)| (bound, c.x, c.y));
+        let batch = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+        // Ties go to the lower x, then z, of the middle, as a sorted scan would give.
+        let mut best: Option<((i64, i32, i32), Arc<Slot>)> = None;
+        for group in cells.chunks(batch) {
+            if best.as_ref().is_some_and(|(d, _)| group[0].0 > d.0) {
+                break;
+            }
+            let missing: Vec<IVec2> = group.iter().map(|&(_, c)| c).filter(|&c| !self.plans.has(c)).collect();
+            if missing.len() > 1 {
+                crate::parallel::for_each(&missing, |&c| {
+                    self.slot(world, c);
+                });
+            }
+            for &(_, c) in group {
+                let slot = self.slot(world, c);
+                let Some(plan) = slot.0.as_ref() else { continue };
+                let d = (away(plan.centre), plan.centre.x, plan.centre.y);
+                // The cheap checks before `keep`, which may look the plan over.
+                if d.0 <= reach && best.as_ref().is_none_or(|(b, _)| d < *b) && keep(plan) {
+                    best = Some((d, slot.clone()));
+                }
+            }
+        }
+        best.map(|(_, slot)| slot)
+    }
+
+    /// The settlement of the square holding (x, z), planning that square alone: the only
+    /// one any block there can belong to.
+    pub fn holding(&self, world: &Overworld, x: i32, z: i32) -> Option<Arc<Slot>> {
+        Some(self.slot(world, self.cell_of(x, z))).filter(|slot| slot.0.is_some())
+    }
+
     /// Plans square `cell`, settled near `spawn` if it is the spawn's.
     fn plan(&self, world: &Overworld, fixed: &Fixed, cell: IVec2, spawn: Option<IVec2>) -> Option<Plan> {
         #[cfg(test)]
@@ -706,6 +758,12 @@ impl Settlements {
         self.slot(world, self.cell_of(x, z)).0.as_ref().is_some_and(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all())
     }
 
+    /// The height of the settlement whose plan covers (x, z), if one does (as `covers`).
+    pub fn height_covering(&self, world: &Overworld, x: i32, z: i32) -> Option<i32> {
+        let p = IVec2::new(x, z);
+        self.slot(world, self.cell_of(x, z)).0.as_ref().filter(|plan| p.cmpge(plan.min - 4).all() && p.cmple(plan.max + 4).all()).map(|plan| plan.height)
+    }
+
     /// Whether any settlement's gate lies within `reach` blocks of the box from `min` to
     /// `max`.
     pub fn any_near(&self, world: &Overworld, min: IVec2, max: IVec2, reach: i32) -> bool {
@@ -744,10 +802,43 @@ impl Settlements {
         Some(roofs)
     }
 
+    /// As [`Settlements::planned`], the blocks set at a height over the ground of their
+    /// column rather than at one of their own (a lamp's torch on its post): each where
+    /// generation sets it, over the ground's top block as generation finds it.
+    pub fn planned_on_ground(&self, world: &Overworld, centre: IVec2, keep: &dyn Fn(BlockId) -> bool) -> Option<Vec<(IVec3, BlockId)>> {
+        let slot = self.slot(world, self.cell_of(centre.x, centre.y));
+        let plan = slot.0.as_ref().filter(|p| p.centre == centre)?;
+        let mut set: Vec<(IVec3, BlockId)> = plan
+            .voxels
+            .values()
+            .flatten()
+            .filter(|v| v.ground)
+            .filter_map(|v| match v.put {
+                Put::Set(b) if keep(b) => Some((IVec3::new(v.pos.x, world.geo_area(v.pos.x, v.pos.z, 1)[0].height + v.pos.y, v.pos.z), b)),
+                _ => None,
+            })
+            .collect();
+        set.sort_unstable_by_key(|r| (r.0.y, r.0.x, r.0.z));
+        Some(set)
+    }
+
     /// What its flames are kept from (`rules.fire`).
     pub fn fire(&self) -> Option<&roofs::Fire> {
         self.fixed.as_ref().map(|f| &f.fire)
     }
+}
+
+/// Whether a settlement furnishes itself with block `b` picked by tag: a plain common
+/// sort, no wonder, nothing supernatural, no pair or clump.
+fn plain(registry: &BlockRegistry, b: BlockId) -> bool {
+    let def = registry.def(b);
+    !def.has_tag("wonder") && !def.has_tag("supernatural") && !def.name.ends_with("_pair") && !def.name.ends_with("_clump") && def.rarity == voxmar_engine::block::Rarity::Common
+}
+
+/// Whether a settlement's flowers and bushes, picked by tag, take block `b`: a plain small
+/// plant.
+pub(crate) fn small_plant(registry: &BlockRegistry, b: BlockId) -> bool {
+    plain(registry, b) && registry.def(b).render == RenderKind::Plant
 }
 
 /// The blocks settlements furnish themselves with (`furnishings` in settlements.ron):
@@ -755,10 +846,6 @@ impl Settlements {
 fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
     let f: &FurnishingsDef = &def.furnishings;
     let id = |name: &Option<String>| name.as_deref().and_then(|n| registry.id(n));
-    let plain = |b: BlockId| {
-        let def = registry.def(b);
-        !def.has_tag("wonder") && !def.has_tag("supernatural") && !def.name.ends_with("_pair") && !def.name.ends_with("_clump") && def.rarity == voxmar_engine::block::Rarity::Common
-    };
     let palette = |list: &[Select], filter: &dyn Fn(BlockId) -> bool| {
         Palette(
             list.iter()
@@ -772,7 +859,7 @@ fn fixed(registry: &BlockRegistry, def: &SettlementsDef) -> Option<Fixed> {
                 .collect(),
         )
     };
-    let small_plant = |b: BlockId| plain(b) && registry.def(b).render == RenderKind::Plant;
+    let small_plant = |b: BlockId| small_plant(registry, b);
     let any = |_: BlockId| true;
     let dirt = id(&f.dirt)?;
     Some(Fixed {

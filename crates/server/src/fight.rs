@@ -55,6 +55,8 @@ struct Fighter {
     /// perfect dodge).
     counter_until: f64,
     riposte_until: f64,
+    /// Swings landed, counted round, for others to see each blow (`FightView::struck`).
+    struck: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -65,6 +67,9 @@ struct Aim {
     /// What the swing started with: the blow lands with it, and a switch drops it.
     weapon: Weapon,
     held: Option<BlockId>,
+    /// The slot it was swung from, which the blow wears: a switch to another of the same
+    /// in another slot drops the swing as well.
+    slot: usize,
 }
 
 /// A creature's blow on its way: the tick it comes down, and how much of that tick's
@@ -131,6 +136,9 @@ pub(crate) struct Fights {
     /// lower by the share, until when).
     pinned: FxHashMap<u32, (f32, f64)>,
     sundered: FxHashMap<u32, (f32, f64)>,
+    /// Fight time in tests that drive it by game time (`run_clock`), not the wall clock.
+    #[cfg(test)]
+    clock: Option<f64>,
 }
 
 impl Default for Fights {
@@ -142,6 +150,8 @@ impl Default for Fights {
             bleeds: Vec::new(),
             pinned: FxHashMap::default(),
             sundered: FxHashMap::default(),
+            #[cfg(test)]
+            clock: None,
         }
     }
 }
@@ -152,7 +162,18 @@ impl Fights {
     }
 
     fn now(&self) -> f64 {
+        #[cfg(test)]
+        if let Some(clock) = self.clock {
+            return clock;
+        }
         self.secs(Instant::now())
+    }
+
+    /// Runs fight time by game time from here on, `seconds` on from where it is (tests that
+    /// tick faster than the clock): the wall clock no longer counts.
+    #[cfg(test)]
+    pub(crate) fn run_clock(&mut self, seconds: f32) {
+        self.clock = Some(self.clock.unwrap_or_else(|| self.secs(Instant::now())) + seconds as f64);
     }
 
     /// The share a pin slows `creature` by at `now`, in game seconds (`Server::game_secs`).
@@ -192,6 +213,19 @@ impl Server {
 
     fn fight_arrival(&self) -> f64 {
         self.fights.secs(self.arrival)
+    }
+
+    /// What `player` is doing in a fight, for others to see: the swing under way (seconds
+    /// into it on the fight clock), the blows landed and the guard.
+    pub(crate) fn fight_view(&self, player: PlayerId) -> voxmar_protocol::FightView {
+        let Some(fighter) = self.fights.fighters.get(&player) else { return Default::default() };
+        let now = self.fights.now().max(self.fight_arrival());
+        let swing = fighter.rhythm.pending().zip(fighter.aim).map(|(swing, aim)| voxmar_protocol::SwingView {
+            into: (now - swing.starts) as f32,
+            windup: (swing.lands - swing.starts) as f32,
+            shot: !self.content.combat.ammo(&aim.weapon).is_empty(),
+        });
+        voxmar_protocol::FightView { swing, struck: fighter.struck, guard: fighter.guarding.is_up() }
     }
 
     /// How `player` guards: with their shield, or their weapon (`CombatRegistry::guard_of`).
@@ -254,6 +288,7 @@ impl Server {
             return;
         }
         let held = self.players.get(&player).and_then(|p| p.held());
+        let slot = self.players.get(&player).map_or(0, |p| p.selected);
         let timing = self.content.combat.timing(&weapon);
         let now = self.fight_arrival();
         let feel = self.content.combat.feel;
@@ -272,7 +307,7 @@ impl Server {
             let riposte = seen <= fighter.riposte_until;
             fighter.counter_until = 0.0;
             fighter.riposte_until = 0.0;
-            fighter.aim = Some(Aim { creature, counter, riposte, weapon, held });
+            fighter.aim = Some(Aim { creature, counter, riposte, weapon, held, slot });
         }
     }
 
@@ -380,8 +415,12 @@ impl Server {
         // player stands, from its body's edge (`Creature::choose`).
         let species = self.content.creatures.get(live.species);
         let edge = species.edge(to.length(), live.scale);
-        let Some(index) = species.choose(live.phase, edge, live.attack) else { return };
+        let Some(index) = species.choose(live.phase, edge, live.attack, species.level(live.body.position.y, target.position.y, live.scale)) else { return };
         let Some(attack) = species.attack_at(index) else { return };
+        // No wind-up at a player its blow has no way through the air to (`blow_open`).
+        if attack.charge.is_none() && !self.blow_open(&live.body, attack.reach, target.position) {
+            return;
+        }
         let feel = self.content.combat.feel;
         let windup = attack.windup.unwrap_or(feel.creature_windup).max(0.0);
         let tick = self.tick;
@@ -448,7 +487,8 @@ impl Server {
         for (&player, fighter) in &mut self.fights.fighters {
             let Some(aim) = fighter.aim else { continue };
             let held = self.players.get(&player).and_then(|p| p.held());
-            if held != aim.held {
+            let selected = self.players.get(&player).map(|p| p.selected);
+            if held != aim.held || selected != Some(aim.slot) {
                 let timing = self.content.combat.timing(&aim.weapon);
                 fighter.rhythm.cancel(now, &timing, &feel);
                 fighter.rhythm.lose_pips();
@@ -465,6 +505,7 @@ impl Server {
         for (&player, fighter) in &mut self.fights.fighters {
             if let Some(swing) = fighter.rhythm.landed(now) {
                 let Some(aim) = fighter.aim.take() else { continue };
+                fighter.struck = fighter.struck.wrapping_add(1);
                 let p = self.players.get(&player);
                 let eye = p.map(|p| p.eye());
                 let ammo = combat.ammo(&aim.weapon);
@@ -562,6 +603,11 @@ impl Server {
             self.stir_bees(player, at);
         }
         let Some(damage) = self.land_blow(player, aim.creature, &weapon, stroke) else { return };
+        // A blow that lands wears what struck it (a shot, the bow that loosed it), from the
+        // slot it was swung from.
+        if damage > 0 {
+            self.wear_slot(player, aim.slot, self.content.tools.wear().hit);
+        }
         // A shot that hit may be left lying where the target stood (gone, if it killed), a
         // miss more often (`recover_miss`).
         if let (Some(item), Some(at)) = (shot, at) {
@@ -597,24 +643,26 @@ impl Server {
         while flown > 0.0 && body(flown).aabb().intersects(|cell| self.is_solid(cell)) {
             flown -= 0.05;
         }
-        self.items.spawn(voxmar_engine::inventory::ItemStack { item, count: 1 }, body(flown.max(0.0)), voxmar_engine::dropped::PICKUP_DELAY);
+        self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, 1), body(flown.max(0.0)), voxmar_engine::dropped::PICKUP_DELAY);
     }
 
     /// A hit taken spoils a shot being drawn with a weapon whose class says so
     /// (`spoiled_by_hits`): the draw is let go and the meter starts again from
     /// `Feel::cancel_to`, as a guard raised does. The client does the same on the hit it is
-    /// told of (`Fighting::hurt`).
-    fn spoil_draw(&mut self, player: PlayerId, now: f64) {
+    /// told it spoiled (`Hurt::spoiled`, `Fighting::hurt`). Returns whether it did.
+    fn spoil_draw(&mut self, player: PlayerId, now: f64) -> bool {
         let feel = self.content.combat.feel;
-        let Some(fighter) = self.fights.fighters.get_mut(&player) else { return };
-        let Some(aim) = fighter.aim else { return };
+        let Some(fighter) = self.fights.fighters.get_mut(&player) else { return false };
+        let Some(aim) = fighter.aim else { return false };
         if !self.content.combat.spoiled_by_hits(&aim.weapon) {
-            return;
+            return false;
         }
         let timing = self.content.combat.timing(&aim.weapon);
-        if fighter.rhythm.cancel(now, &timing, &feel) {
+        let spoiled = fighter.rhythm.cancel(now, &timing, &feel);
+        if spoiled {
             fighter.aim = None;
         }
+        spoiled
     }
 
     /// Tells a player what came of their blow, with their pips as the server counts them.
@@ -705,6 +753,13 @@ impl Server {
         live.decision.pose = brain::Pose::Idle;
         live.held_until = live.held_until.max(tick + ticks(recovery));
         live.mind.cooldown = (attack.every - windup - recovery).max(0.0);
+        // One that circles between blows does so once it has recovered (held till then, it
+        // does not think, so the circling counts from there), and only then comes in again
+        // (`Attack::circle`).
+        if let Some(circle) = attack.circle {
+            live.mind.circling = circle.seconds;
+            live.mind.cooldown = live.mind.cooldown.max(live.mind.circling);
+        }
         live.changed = true;
         let Some(target) = self.players.get(&player) else { return };
         if !target.health.alive() || target.allow_flight {
@@ -719,7 +774,10 @@ impl Server {
         // with slack for the lag.
         let reach = attack.reach + size.0 * scale * 0.5 + 0.3 + feel.reach_slack;
         let flat = (to - at).with_y(0.0).length();
-        let tall = (to.y - at.y).abs() < size.1 * scale + 1.5;
+        let tall = self.content.creatures.get(species).in_band(at.y, to.y, voxmar_engine::physics::player::HEIGHT, scale);
+        // And through the air, not through a roof or a wall (`blow_open`); a charge that ran
+        // into them met them.
+        let open = contact || self.blow_open(&voxmar_engine::creature::motion::Body { position: at, ..live.body }, attack.reach + feel.reach_slack, to);
         // A charge that runs onto a braced point is stopped on it, heavy or not.
         if let Some(charge) = attack.charge.filter(|_| contact) {
             let bracing = self.guard_of(player).filter(|g| g.braces(look, at - to));
@@ -734,7 +792,7 @@ impl Server {
         }
         let guard = self.guard_of(player).and_then(|g| g.takes(attack.style, attack.heavy, look, at - to, &feel));
         let fighter = self.fights.fighters.entry(player).or_default();
-        let defended = if flat > reach || !tall { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
+        let defended = if flat > reach || !tall || !open { Defended::Evaded } else { fighter.guarding.meets(lands, guard.as_ref()) };
         match defended {
             Defended::Dodged => fighter.riposte_until = lands + feel.riposte as f64,
             Defended::Perfect => fighter.counter_until = lands + feel.counter as f64,
@@ -757,15 +815,16 @@ impl Server {
             Some(damage) => (damage, defended),
             None => (0, if defended == Defended::Hit { Defended::Missed } else { defended }),
         };
+        let mut spoiled = false;
         if defended == Defended::Hit && damage > 0 {
             // An unguarded hit costs the rhythm.
             if let Some(fighter) = self.fights.fighters.get_mut(&player) {
                 fighter.rhythm.lose_pips();
             }
-            self.spoil_draw(player, lands);
+            spoiled = self.spoil_draw(player, lands);
         }
         if let Some(p) = self.players.get(&player) {
-            p.connection.send(ServerMessage::Hurt { creature, damage, defended });
+            p.connection.send(ServerMessage::Hurt { creature, damage, defended, spoiled });
         }
     }
 
@@ -791,7 +850,8 @@ impl Server {
         let Some(live) = self.creatures.live.get_mut(&creature) else { return };
         let Some(mut charge) = live.charging else { return };
         let body = live.body;
-        let species = self.content.creatures.get(live.species);
+        let kind = live.species;
+        let species = self.content.creatures.get(kind);
         let (size, scale, most) = (species.def.body.size, live.scale, species.def.health);
         let moved = (body.position - before).with_y(0.0).dot(charge.along).max(0.0);
         charge.left -= moved;
@@ -824,7 +884,7 @@ impl Server {
             .filter(|p| p.joined && p.health.alive() && !p.allow_flight)
             .filter(|p| {
                 let to = (p.position - body.position).with_y(0.0);
-                to.length() <= touching && to.dot(charge.along) >= 0.0 && (p.position.y - body.position.y).abs() < size.1 * scale + 1.0
+                to.length() <= touching && to.dot(charge.along) >= 0.0 && self.content.creatures.get(kind).level(body.position.y, p.position.y, scale)
             })
             .min_by(|a, b| (a.position - body.position).with_y(0.0).length_squared().total_cmp(&(b.position - body.position).with_y(0.0).length_squared()))
             .map(|p| p.id);
@@ -879,7 +939,7 @@ impl Server {
         let damage = ((weapon.max_hit(level) as f32 * (1.0 + feel.counter_max_hit)).round() as u16).max(1);
         self.end_charge(creature, Some(stun));
         if let Some(p) = self.players.get(&player) {
-            p.connection.send(ServerMessage::Hurt { creature, damage: 0, defended: Defended::Perfect });
+            p.connection.send(ServerMessage::Hurt { creature, damage: 0, defended: Defended::Perfect, spoiled: false });
         }
         self.hurt_creature(player, creature, damage, weapon.skill, Blow::Counter);
     }
@@ -949,7 +1009,7 @@ mod tests {
             for _ in 0..40 {
                 let full = server.content.creatures.get(wolf).def.health;
                 server.creatures.live.get_mut(&creature).unwrap().health = full;
-                let aim = Aim { creature, counter: false, riposte: false, weapon, held: Some(sling) };
+                let aim = Aim { creature, counter: false, riposte: false, weapon, held: Some(sling), slot: 0 };
                 server.land_swing(player, aim, 1.0, false, Blow::Plain, true);
             }
             let lying: u32 = server.items.saved(|item| format!("{item:?}")).iter().map(|d| d.count as u32).sum();
@@ -963,6 +1023,41 @@ mod tests {
         assert_eq!(hits + strays, strikes, "each shot that missed drew as a stray, and only those");
         assert!(lying > 0 && (lying as u64) < strikes, "{lying} of {strikes} shots left lying");
         assert_eq!(shot(1_377), first, "the same shots later were left otherwise");
+    }
+
+    /// A blow wears the copy it was swung with, not another of the same switched to: and a
+    /// switch to another slot drops the swing before it lands.
+    #[test]
+    fn a_blow_wears_the_slot_it_was_swung_from() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        (joined.joined, joined.draw_key) = (true, crate::player::player_draw_key(0x0d1a, "ada"));
+        let sword = server.content.blocks.expect("base:stone_sword");
+        assert!(server.content.tools.uses(sword) > 0, "a sword wears");
+        joined.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(sword, 1));
+        joined.inventory.slots[1] = Some(voxmar_engine::inventory::ItemStack::new(sword, 1));
+        joined.selected = 1;
+        server.players.insert(player, joined);
+        let weapon = server.content.combat.wielded(Some(sword), |_| 1);
+        let wolf = server.content.creatures.id("base:wolf").unwrap();
+        let creature = server.spawn_creature(wolf, server.spawn + Vec3::X * 2.0, 1).expect("room");
+        for _ in 0..20 {
+            let full = server.content.creatures.get(wolf).def.health;
+            server.creatures.live.get_mut(&creature).unwrap().health = full;
+            let aim = Aim { creature, counter: false, riposte: false, weapon, held: Some(sword), slot: 0 };
+            server.land_swing(player, aim, 1.0, false, Blow::Plain, true);
+        }
+        let wear = |slot: usize| server.players[&player].inventory.slots[slot].map(|s| s.wear);
+        assert!(wear(0).is_some_and(|w| w > 0), "the sword swung wore: {:?}", wear(0));
+        assert_eq!(wear(1), Some(0), "the one switched to did not");
+        // A swing under way from slot 0, with the hand now on slot 1's sword: dropped.
+        let fighter = server.fights.fighters.entry(player).or_default();
+        fighter.aim = Some(Aim { creature, counter: false, riposte: false, weapon, held: Some(sword), slot: 0 });
+        fighter.held = Some(sword);
+        server.tick_fights();
+        assert!(server.fights.fighters[&player].aim.is_none(), "a switch to another slot drops the swing");
     }
 
     /// Empty columns from x -32 to 63 and z -32 to 31, with a stone floor under y 100 from x
@@ -1017,7 +1112,7 @@ mod tests {
         let lying = |server: &Server| server.items.saved(|item| format!("{item:?}")).iter().map(|d| (d.count as u32, Vec3::from_array(d.position))).collect::<Vec<_>>();
         let shoot = |server: &mut Server, shots: u32| {
             for _ in 0..shots {
-                let aim = Aim { creature, counter: false, riposte: false, weapon, held };
+                let aim = Aim { creature, counter: false, riposte: false, weapon, held, slot: 0 };
                 server.land_swing(1, aim, 1.0, false, Blow::Plain, false);
             }
         };
@@ -1069,7 +1164,7 @@ mod tests {
         for _ in 0..40 {
             let creature = server.spawn_creature(rabbit, Vec3::new(6.5, 100.0, 0.5), 1).expect("room");
             server.creatures.live.get_mut(&creature).unwrap().health = 1;
-            let aim = Aim { creature, counter: false, riposte: false, weapon, held };
+            let aim = Aim { creature, counter: false, riposte: false, weapon, held, slot: 0 };
             server.land_swing(1, aim, 1.0, true, Blow::Plain, true);
             if server.creatures.live.contains_key(&creature) {
                 server.creatures.take_away(creature);
@@ -1086,8 +1181,9 @@ mod tests {
     }
 
     /// A blow that hurts the player spoils a bow being drawn (`spoiled_by_hits`): the shot
-    /// is let go, and the meter starts again from `cancel_to`. A blow that misses spoils
-    /// nothing, and a spear thrust is not spoiled by a hit.
+    /// is let go, the meter starts again from `cancel_to`, and the client is told so
+    /// (`Hurt::spoiled`). A blow that misses spoils nothing, and a spear thrust is not
+    /// spoiled by a hit.
     #[test]
     fn a_hit_taken_spoils_a_bow_draw_but_not_a_spear_thrust() {
         for (weapon, ammo, spoils) in [("base:short_bow", Some("base:arrow"), true), ("base:flint_spear", None, false)] {
@@ -1108,12 +1204,13 @@ mod tests {
                 assert!(server.fights.fighters[&1].aim.is_some(), "the swing started");
                 server.creature_blow(bear, 1, at + 0.1, false);
                 let hurt = std::iter::from_fn(|| client.try_recv().ok().flatten()).find_map(|message| match message {
-                    ServerMessage::Hurt { damage, defended, .. } => Some((damage, defended)),
+                    ServerMessage::Hurt { damage, defended, spoiled, .. } => Some((damage, defended, spoiled)),
                     _ => None,
                 });
                 let fighter = &server.fights.fighters[&1];
+                assert_eq!(hurt.is_some_and(|h| h.2), fighter.aim.is_none(), "{weapon}: the client is told the draw was spoiled exactly when it was");
                 match hurt {
-                    Some((damage, Defended::Hit)) if damage > 0 => {
+                    Some((damage, Defended::Hit, _)) if damage > 0 => {
                         hits += 1;
                         assert_eq!(fighter.aim.is_none(), spoils, "{weapon}: a hit taken spoiled the draw: {}", fighter.aim.is_none());
                         assert_eq!(fighter.rhythm.pending().is_none(), spoils, "{weapon}: the meter");
@@ -1159,7 +1256,7 @@ mod tests {
         server.players.insert(player, joined);
         let species = server.content.creatures.id("base:brown_bear").expect("a bear");
         let bear = server.spawn_creature(species, at, 1).expect("room");
-        std::sync::Arc::get_mut(&mut server.content.combat).expect("the test server owns its combat data").feel.creature_tracking = 0.0;
+        std::sync::Arc::make_mut(&mut server.content.combat).feel.creature_tracking = 0.0;
         for direction in [Vec3::X, -Vec3::X, Vec3::Z, -Vec3::Z, Vec3::X + Vec3::Z, Vec3::X - Vec3::Z, -Vec3::X + Vec3::Z, -Vec3::X - Vec3::Z] {
             let direction = direction.normalize();
             let target = at + direction * 4.0;
@@ -1195,16 +1292,52 @@ mod tests {
         assert!(!server.creatures.live[&bear].winding);
     }
 
-    /// The ticks a wolf's blows come down on, standing by a player who never fights back,
+    /// Others see a player's fight as the server has it: the guard up, a swing winding up
+    /// with its wind-up and not a shot, then landed (the count of blows moves on).
+    #[test]
+    fn others_see_a_players_guard_swing_and_blow() {
+        let mut server = crate::test_server();
+        let (client, connection) = voxmar_protocol::local_pair();
+        let player = 1;
+        let mut joined = crate::player::Player::new(player, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        joined.joined = true;
+        let sword = server.content.blocks.id("base:iron_sword").expect("a sword");
+        joined.inventory.add(sword, 1);
+        let attack = server.content.skills.id("core:attack").expect("Attack");
+        joined.skills.grant(attack, server.content.skills.xp_for(20));
+        let ahead = joined.position + joined.look().with_y(0.0).normalize() * 1.2;
+        server.players.insert(player, joined);
+        let species = server.content.creatures.id("base:brown_bear").expect("a bear");
+        let bear = server.spawn_creature(species, ahead, 1).expect("room");
+        assert_eq!(server.fight_view(player), voxmar_protocol::FightView::default(), "a player who never fought");
+        client.send(ClientMessage::Guard { up: true });
+        server.handle_messages();
+        assert!(server.fight_view(player).guard, "the guard up was not shown");
+        client.send(ClientMessage::Guard { up: false });
+        server.handle_messages();
+        assert!(!server.fight_view(player).guard, "the guard down was not shown");
+        server.swing_at(player, bear);
+        let view = server.fight_view(player);
+        let swing = view.swing.expect("the swing winding up was not shown");
+        let windup = server.content.combat.timing(&server.wielded_by(player).expect("a sword")).windup;
+        assert!(!swing.shot && (swing.windup - windup).abs() < 1e-4 && (0.0..windup).contains(&swing.into), "{swing:?}, a wind-up of {windup} wanted");
+        // Its wind-up goes by (the epoch put back that much, as no test waits on the clock).
+        server.fights.epoch = server.fights.epoch.checked_sub(Duration::from_secs_f32(windup + 0.05)).expect("a clock that far back");
+        server.tick_fights();
+        let after = server.fight_view(player);
+        assert_eq!((after.swing, after.struck), (None, view.struck.wrapping_add(1)), "the blow landed was not shown");
+    }
+
+    /// The ticks a `name`'s blows come down on, standing by a player who never fights back,
     /// over 10 game seconds of the server's own ticks; with `slow`, each tick takes 100 ms of
     /// the players' clock, 50 more than it is, as on a server running behind.
-    fn wolf_blows(slow: bool) -> Vec<u64> {
+    fn blows_of(name: &str, slow: bool) -> Vec<u64> {
         use crate::creatures::cornered_tests::{join, pen, put};
         let mut server = crate::test_server();
         let c = pen(&mut server, 9);
         let stand = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
         let player = join(&mut server, stand);
-        let wolf = put(&mut server, "base:wolf", stand - Vec3::X * 3.0, Vec3::X);
+        let wolf = put(&mut server, name, stand - Vec3::X * 3.0, Vec3::X);
         server.tick = 1000;
         server.hurt_creature(player, wolf, 0, None, Blow::Plain);
         let (mut blows, mut winding) = (Vec::new(), false);
@@ -1234,17 +1367,24 @@ mod tests {
     /// ahead (every test) landed none.
     #[test]
     fn a_creatures_blows_keep_their_beat_in_game_time_however_long_the_ticks_take() {
-        let quick = wolf_blows(false);
-        let slow = wolf_blows(true);
+        // A badger strikes on its `every` alone; a wolf circles between bites (`circle`),
+        // which comes on top, so its beat is checked only for keeping to game time.
+        let quick = blows_of("base:badger", false);
+        let slow = blows_of("base:badger", true);
         let server = crate::test_server();
-        let wolf = server.content.creatures.find("wolf").map(|s| server.content.creatures.get(s).def.clone()).expect("a wolf");
-        let every = wolf.attack.expect("a wolf bites").every as f64;
+        let badger = server.content.creatures.find("badger").map(|s| server.content.creatures.get(s).def.clone()).expect("a badger");
+        let attack = badger.attack.expect("a badger strikes");
+        assert!(attack.circle.is_none(), "the badger circles now: pick a creature that strikes on its every alone");
+        let every = attack.every as f64;
         let gaps: Vec<f64> = quick.windows(2).map(|w| (w[1] - w[0]) as f64 / TICKS_PER_SECOND as f64).collect();
-        assert!(quick.len() >= 6, "the wolf came down only {} times in 10 game seconds: {quick:?}", quick.len());
+        assert!(quick.len() >= 6, "the badger came down only {} times in 10 game seconds: {quick:?}", quick.len());
         assert_eq!(quick, slow, "a server running behind gave other blows");
         for gap in &gaps {
             assert!((every - 0.05..=every + 0.35).contains(gap), "blows {gap:.2} game s apart, its every {every:.2}: {gaps:?}");
         }
+        let (quick, slow) = (blows_of("base:wolf", false), blows_of("base:wolf", true));
+        assert!(quick.len() >= 3, "the wolf came down only {} times in 10 game seconds: {quick:?}", quick.len());
+        assert_eq!(quick, slow, "a server running behind gave a circling wolf other blows");
     }
 
     /// A guard raised just before a creature's blow lands counts, even when the server
@@ -1331,7 +1471,7 @@ mod tests {
         fn answered(&mut self, round_trip: f32, allowance: Option<f32>, after: f32, dodge: bool) -> Defended {
             let (player, lands) = (1, 10.0);
             if let Some(allowance) = allowance {
-                std::sync::Arc::get_mut(&mut self.server.content.combat).expect("the test server owns its combat data").feel.lag_allowance = allowance;
+                std::sync::Arc::make_mut(&mut self.server.content.combat).feel.lag_allowance = allowance;
             }
             // As new: no guard up, no dodge under way, the bear where it was, the player well.
             self.server.fights.fighters.clear();

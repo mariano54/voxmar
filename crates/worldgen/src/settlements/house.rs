@@ -187,9 +187,30 @@ pub struct Spec {
     /// What a centrepiece is, when the code draws it.
     pub centre: Option<Centre>,
     pub seed: u64,
+    /// A house of a row (a terrace), built on against its neighbours: none of its eaves or
+    /// side windows on a side another stands against.
+    pub row: Option<Row>,
+    /// A byre at the back: the rows of its room behind a wall across; none when 0.
+    pub byre: i32,
+}
+
+/// A house's place in a row of houses built wall to wall along a street, each with its own
+/// side walls (`left` at x 0, `right` at x `w - 1`) against the next one's. The row's
+/// `seed` decides what all its houses share: the pieces of their roofs, and jettied or not
+/// where their roofs slope down to the street.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub seed: u64,
+    pub left: bool,
+    pub right: bool,
 }
 
 impl Spec {
+    /// The seed for what all the houses of its row share.
+    pub fn shared_seed(&self) -> u64 {
+        self.row.map_or(self.seed, |r| r.seed)
+    }
+
     pub fn has(&self, extra: Extra) -> bool {
         self.extras.contains(&extra)
     }
@@ -201,8 +222,9 @@ impl Spec {
             return Vec::new();
         }
         let foot = Foot { x0: 0, z0: 0, w: self.w, d: self.d, form: self.form };
+        let byre = self.byre_wall();
         let mut local: Vec<_> = (0..self.d).flat_map(|z| (0..self.w).map(move |x| (x, z)))
-            .filter(|&(x, z)| foot.room(x, z)).collect();
+            .filter(|&(x, z)| foot.room(x, z) && byre.is_none_or(|b| z < b)).collect();
         if let Some((ww, wd)) = self.wing {
             // The back wall is opened into this wing, including its joining row.
             local.extend((self.d - 1..self.d + wd - 1)
@@ -212,6 +234,23 @@ impl Spec {
             let p = frame.at(x, 0, z);
             IVec2::new(p.x, p.z)
         }).collect()
+    }
+
+    /// The row of the wall across before a byre at the back.
+    pub fn byre_wall(&self) -> Option<i32> {
+        (self.byre > 0).then(|| self.d - 2 - self.byre)
+    }
+
+    /// The byre's floor columns in world (x, z), behind its wall across; none without one.
+    pub fn byre_room(&self, frame: &Frame) -> Vec<IVec2> {
+        let Some(b) = self.byre_wall() else { return Vec::new() };
+        (b + 1..self.d - 1)
+            .flat_map(|z| (1..self.w - 1).map(move |x| (x, z)))
+            .map(|(x, z)| {
+                let p = frame.at(x, 0, z);
+                IVec2::new(p.x, p.z)
+            })
+            .collect()
     }
 
     /// The room columns of the storeys above the ground, which no wing reaches.
@@ -244,14 +283,20 @@ impl Spec {
                 };
                 let right = self.w + if self.shed > 0 { 3 } else { 0 };
                 let back = self.d + self.wing.map_or(0, |(_, wd)| wd);
-                (IVec2::new(-1, front), IVec2::new(right, back))
+                // No eave over a side another house of its row stands against.
+                let (left, right) = match self.row {
+                    Some(row) => (if row.left { 0 } else { -1 }, if row.right { right - 1 } else { right }),
+                    None => (-1, right),
+                };
+                (IVec2::new(left, front), IVec2::new(right, back))
             }
         }
     }
 
     /// Where its chimney stands, inside the walls, and the wall behind it: over the oven
     /// where it bakes; else against a gable end under the ridge, the back one where the
-    /// ridge runs front to back and no wing joins there, the left one otherwise.
+    /// ridge runs front to back and no wing or byre joins there, the left one otherwise (in
+    /// front of a byre).
     pub fn chimney(&self) -> Option<((i32, i32), (i32, i32))> {
         if !self.has(Extra::Chimney) {
             return None;
@@ -263,8 +308,9 @@ impl Spec {
         }
         let gabled = matches!(self.roof, Roof::Gable | Roof::HalfHip | Roof::Saltbox | Roof::Gambrel);
         // The altar occupies the back centre; its hearth must use the side wall.
-        let back = !self.inside.contains(&Fitting::Altar) && self.wing.is_none_or(|(ww, _)| w / 2 < w - ww);
-        if gabled && !self.ridge_x && back { Some(((w / 2, d - 2), (w / 2, d - 1))) } else { Some(((1, d / 2), (0, d / 2))) }
+        let back = !self.inside.contains(&Fitting::Altar) && self.wing.is_none_or(|(ww, _)| w / 2 < w - ww) && self.byre == 0;
+        let z = self.byre_wall().map_or(d / 2, |b| b / 2);
+        if gabled && !self.ridge_x && back { Some(((w / 2, d - 2), (w / 2, d - 1))) } else { Some(((1, z), (0, z))) }
     }
 
     /// The top of the walls, over the floor.
@@ -443,8 +489,15 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
     let flat = shape == Roof::Flat;
     // Eaves one column out, but an A-frame's timber ends stand flush with its roof.
     let a_frame = foot.form == Form::AFrame;
+    // A row's house has no eave over a side its neighbour stands against: their roofs run on.
+    // Only the house's own body is joined: a wing behind stands out past its neighbour's
+    // back wall, open on both sides.
+    let body = x0 == 0 && w == spec.w;
+    let (open_left, open_right) = spec.row.map_or((true, true), |r| (!(r.left && body), !(r.right && body)));
     let roofed = |x: i32, z: i32| {
-        if flat {
+        if (x < x0 && !open_left) || (x >= x0 + w && !open_right) {
+            false
+        } else if flat {
             foot.inside(x, z)
         } else if a_frame {
             let (along, across) = if ridge_x { (x - x0, z) } else { (z - z0, x) };
@@ -504,7 +557,7 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
     let gabled = matches!(shape, Roof::Gable | Roof::HalfHip | Roof::Saltbox | Roof::Gambrel);
     // A pitched gable over four walls may be laid in shaped pieces: each column's top a
     // slope whose low edge faces its eave, and a ridge cap along the peak.
-    let pieces = if shape == Roof::Gable && pitch == 1 && matches!(foot.form, Form::Box | Form::ShopFront) { mats.pieces(spec.seed) } else { None };
+    let pieces = if shape == Roof::Gable && pitch == 1 && matches!(foot.form, Form::Box | Form::ShopFront) { mats.pieces(spec.shared_seed()) } else { None };
     let facing = pen.frame.facing;
     let piece = |x: i32, z: i32| -> Option<BlockId> {
         let p = pieces?;
@@ -540,7 +593,8 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
             let wall = foot.wall(x, z);
             let (s, r) = if ridge_x { (z - z0, x - x0) } else { (x - x0, z - z0) };
             let gable = gabled && (r == 0 || r == run - 1);
-            let end = gable && s == span / 2 && blind != Some((x, z));
+            let joined = ridge_x && ((r == 0 && !open_left) || (r == run - 1 && !open_right));
+            let end = gable && !joined && s == span / 2 && blind != Some((x, z));
             // An A-frame's ends are timber, boards in a frame of logs under the roof, so
             // it never reads as a bank of earth whatever its roof.
             let timber = gable && foot.form == Form::AFrame;
@@ -558,7 +612,9 @@ fn roof(spec: &Spec, pen: &mut Pen, mats: &Mats, top: i32, foot: &Foot, ridge_x:
                     pen.set(x, y, z, mats.wall);
                 }
             }
-            if flat && wall && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
+            // A flat roof's low parapet, but not on a side a neighbour's roof runs on from.
+            let against = (x == x0 && !open_left) || (x == x0 + w - 1 && !open_right);
+            if flat && wall && !against && pen.roll(x, top + 2, z, 0x9a2) < 0.85 {
                 pen.set(x, top + 2, z, mats.trim);
             }
         }
@@ -716,11 +772,14 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     let gable_windows = if spec.form == Form::AFrame { 3 } else { 1 };
     // A jettied house: its storeys over the ground stand a block out over the street (moved
     // out once the front is drawn), so its roof covers a block more at the front. Not over
-    // a porch, an awning or a balcony, nor with a dormer in the roof's front.
+    // a porch, an awning or a balcony, nor with a dormer in the roof's front. A house of a
+    // row rolls its own, unless its roof slopes down to the street: a jetty moves that eave
+    // out, so the whole row shares the roll and the roof runs on at one height.
+    let sloped_to_street = spec.ridge_x && spec.roof != Roof::Flat;
     let jetty = (spec.form == Form::Box
         && spec.storeys >= 2
         && ![Extra::Porch, Extra::Awning, Extra::Balcony, Extra::Dormer].iter().any(|&e| spec.has(e)))
-    .then(|| mats.jetty(spec.seed))
+    .then(|| mats.jetty(if sloped_to_street { spec.shared_seed() } else { spec.seed }))
     .flatten();
     let covered = if jetty.is_some() { Foot { z0: -1, d: d + 1, ..foot } } else { foot };
     let heights = roof(spec, &mut pen, mats, top, &covered, spec.ridge_x, spec.roof, mats.roof, gable_windows, chimney.map(|c| c.1));
@@ -870,7 +929,7 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     // The first free floor near a place.
     let free = |x: i32, z: i32| -> (i32, i32) {
         let stair = |x: i32, z: i32| flights.first().and_then(|f| f.as_ref()).is_some_and(|f| f[1..].contains(&(x, z)));
-        let ok = |x: i32, z: i32| foot.room(x, z) && !(x == door && z <= 1) && !stair(x, z) && chimney.is_none_or(|c| c.0 != (x, z));
+        let ok = |x: i32, z: i32| foot.room(x, z) && !(x == door && z <= 1) && !stair(x, z) && chimney.is_none_or(|c| c.0 != (x, z)) && spec.byre_wall().is_none_or(|b| z < b);
         if ok(x, z) {
             return (x, z);
         }
@@ -914,6 +973,9 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     if !lit {
         let (x, z) = free(1, 1);
         pen.set(x, lift + 1, z, fixed.torch);
+    }
+    if spec.byre > 0 {
+        byre(spec, &mut pen, mats, fixed, lift);
     }
     if spec.kind == Kind::Inn {
         // Tables down the room.
@@ -1111,7 +1173,7 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
     }
     // A dovecote on a pole behind.
     if spec.has(Extra::Dovecote) {
-        let x = if spec.wing.is_some() { 1 } else { w - 2 };
+        let x = if spec.wing.is_some() || spec.byre > 0 { 1 } else { w - 2 };
         for up in 1..=3 {
             pen.ground(x, up, d, Put::Set(mats.frame));
         }
@@ -1141,9 +1203,11 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
 fn jettied(pen: &mut Pen, spec: &Spec, mats: &Mats, lift: i32, top: i32, beams: [BlockId; 4]) {
     let w = spec.w;
     let floor = lift + spec.wall + 1;
+    // Not a neighbour's in its row: its own front moves out with it.
+    let (from_x, to_x) = spec.row.map_or((-1, w), |r| (if r.left { 0 } else { -1 }, if r.right { w - 1 } else { w }));
     for y in floor..=top {
         for z in [-1, 0] {
-            for x in -1..=w {
+            for x in from_x..=to_x {
                 let (from, to) = (pen.frame.at(x, y, z), pen.frame.at(x, y, z - 1));
                 match pen.canvas.absolute.get(&from).copied() {
                     Some(put) => pen.canvas.put(to, put),
@@ -1151,8 +1215,11 @@ fn jettied(pen: &mut Pen, spec: &Spec, mats: &Mats, lift: i32, top: i32, beams: 
                         pen.canvas.absolute.remove(&to);
                     }
                 }
+                // Where the front wall stood, each storey's floor runs on to the wall's
+                // new line; the rest is room.
+                let storey_floor = (y - lift) % (spec.wall + 1) == 0 && (y - lift) / (spec.wall + 1) < spec.storeys;
                 if z == 0 && x > 0 && x < w - 1 {
-                    if y == floor { pen.set(x, y, 0, mats.floor) } else { pen.clear(x, y, 0) }
+                    if storey_floor { pen.set(x, y, 0, mats.floor) } else { pen.clear(x, y, 0) }
                 } else if z == 0 && (x < 0 || x >= w) {
                     pen.canvas.absolute.remove(&from);
                 }
@@ -1160,8 +1227,12 @@ fn jettied(pen: &mut Pen, spec: &Spec, mats: &Mats, lift: i32, top: i32, beams: 
         }
     }
     let out = super::roofs::facing_of(turned(pen.frame.facing, IVec2::new(0, -1)));
+    // Under the overhang, but never over what already hangs there (a sign board at the
+    // top of walls of three).
     for x in 0..w {
-        pen.set(x, floor - 1, -1, beams[out]);
+        if !pen.canvas.absolute.contains_key(&pen.frame.at(x, floor - 1, -1)) {
+            pen.set(x, floor - 1, -1, beams[out]);
+        }
     }
 }
 
@@ -1246,6 +1317,49 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
         flights.push(found);
     }
     flights
+}
+
+/// A home's byre, its back `spec.byre` rows of room: a wall across with a doorway in the
+/// middle, an earth floor, hay along the left wall either side of a stall's post, a trough
+/// let into the floor on the right by the wall across, and a wide door out the back.
+fn byre(spec: &Spec, pen: &mut Pen, mats: &Mats, fixed: &Fixed, lift: i32) {
+    let (w, d) = (spec.w, spec.d);
+    let Some(across) = spec.byre_wall() else { return };
+    let (y, gap) = (lift + 1, w / 2);
+    for x in 1..w - 1 {
+        for yy in y..=lift + spec.wall {
+            if x != gap || yy > y + 1 {
+                pen.set(x, yy, across, mats.wall);
+            }
+        }
+    }
+    pen.clear(gap, y, across);
+    pen.clear(gap, y + 1, across);
+    for z in across + 1..d - 1 {
+        for x in 1..w - 1 {
+            pen.set(x, lift, z, fixed.dirt);
+            pen.clear(x, y, z);
+            pen.clear(x, y + 1, z);
+        }
+    }
+    for z in [across + 1, d - 2] {
+        if let Some(hay) = fixed.hay.at(spec.seed ^ 0xb7e, pen.frame.at(1, y, z)) {
+            pen.set(1, y, z, hay);
+        }
+    }
+    pen.set(1, y, (across + d - 1) / 2, mats.frame);
+    pen.set(w - 2, lift, across + 1, fixed.water);
+    // The door out the back, two wide where the room is, with a lintel and the ground
+    // outside clear.
+    for x in gap..=(gap + 1).min(w - 2) {
+        pen.clear(x, y, d - 1);
+        pen.clear(x, y + 1, d - 1);
+        if spec.wall >= 3 {
+            pen.set(x, y + 2, d - 1, mats.trim);
+        }
+        pen.ground(x, 1, d, Put::Clear);
+        pen.ground(x, 2, d, Put::Clear);
+    }
 }
 
 fn fittings(spec: &Spec, pen: &mut Pen, mats: &Mats, fixed: &Fixed, lift: i32, door: i32) {
@@ -1412,9 +1526,12 @@ fn windows(spec: &Spec, pen: &mut Pen, mats: &Mats, base: i32, storey: i32, rng:
             place(pen, x, d - 1, x, rng);
         }
     }
+    let (left, right) = spec.row.map_or((false, false), |r| (r.left, r.right));
     for z in 1..d - 1 {
-        place(pen, 0, z, z, rng);
-        if !(spec.shed > 0 && storey == 0) {
+        if !left {
+            place(pen, 0, z, z, rng);
+        }
+        if !(spec.shed > 0 && storey == 0) && !right {
             place(pen, w - 1, z, z, rng);
         }
     }

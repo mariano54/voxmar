@@ -32,7 +32,7 @@ mod lattice;
 mod levels;
 mod noise;
 mod parallel;
-pub use parallel::set_helper_limit;
+pub use parallel::{mark_urgent, set_helper_limit};
 #[cfg(test)]
 mod perf;
 mod rarity;
@@ -267,6 +267,11 @@ pub struct Overworld {
     /// searches from the same lattice (a test's many biomes from the same places) work
     /// each out once.
     fields: water::cache::Cache<(IVec2, IVec2), Arc<[Point]>>,
+    /// Columns already generated, when a caller asked to keep them (`remember_columns`).
+    remembered: std::sync::OnceLock<water::cache::Cache<ColumnPos, Arc<Column>>>,
+    /// `spawn_search` without and with trails and settlements, each worked out once: a
+    /// shared generator gives every server on its world the spawn found by the first.
+    spawns: [std::sync::OnceLock<IVec3>; 2],
     seed: u64,
 }
 
@@ -335,7 +340,9 @@ impl Overworld {
             shape_surfaces,
             blend: geology::noise(stream, 40, 1.0 / 12.0, FractalType::FBm, 2),
             tint: geology::noise(stream, 41, 1.0 / 45.0, FractalType::FBm, 2),
-            fields: water::cache::Cache::new(FIELD_BUDGET),
+            fields: water::cache::Cache::copying(FIELD_BUDGET),
+            remembered: std::sync::OnceLock::new(),
+            spawns: Default::default(),
             seed: stream,
         }
     }
@@ -348,17 +355,44 @@ impl Overworld {
     /// another holds open (each gameplay test starts its own on one seed) finds the land
     /// round its spawn already planned rather than keeping its first player waiting.
     pub fn shared(seed: u64, content: &voxmar_engine::content::Content, world: &WorldContent) -> Arc<Self> {
-        type Held = ((u64, u64), std::sync::Weak<Overworld>);
-        static SHARED: std::sync::Mutex<Vec<Held>> = std::sync::Mutex::new(Vec::new());
         let key = (seed, content.fingerprint());
-        let mut shared = SHARED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        shared.retain(|(_, held)| held.strong_count() > 0);
-        if let Some(found) = shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade()) {
+        let mut shared = Self::held().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(found) = Self::find(&mut shared, key) {
             return found;
         }
         let made = Arc::new(Self::with_content(seed, content.blocks.clone(), world));
         shared.push((key, Arc::downgrade(&made)));
         made
+    }
+
+    /// As `shared`, reading the world content from `content` (outside the lock) only when
+    /// no generator for it is held: a server started beside another on its world reads none.
+    pub fn shared_loading(seed: u64, content: &voxmar_engine::content::Content) -> Result<Arc<Self>, ContentError> {
+        let key = (seed, content.fingerprint());
+        if let Some(found) = Self::find(&mut Self::held().lock().unwrap_or_else(|poisoned| poisoned.into_inner()), key) {
+            return Ok(found);
+        }
+        Ok(Self::shared(seed, content, &WorldContent::load(content)?))
+    }
+
+    /// The generators `shared` hands out, by seed and content fingerprint.
+    fn held() -> &'static std::sync::Mutex<Vec<((u64, u64), std::sync::Weak<Overworld>)>> {
+        static SHARED: std::sync::Mutex<Vec<((u64, u64), std::sync::Weak<Overworld>)>> = std::sync::Mutex::new(Vec::new());
+        &SHARED
+    }
+
+    fn find(shared: &mut Vec<((u64, u64), std::sync::Weak<Overworld>)>, key: (u64, u64)) -> Option<Arc<Self>> {
+        shared.retain(|(_, held)| held.strong_count() > 0);
+        shared.iter().find(|(k, _)| *k == key).and_then(|(_, held)| held.upgrade())
+    }
+
+    /// Keeps up to about `bytes` of the columns this generator makes, and hands out copies
+    /// of them when they are asked for again: for a process that starts many servers on
+    /// one world (a test run), each generating the land round the same spawn. A column is
+    /// a function of the seed, the content and its place, so a copy is what generating it
+    /// again would make. Only the first call sets the budget.
+    pub fn remember_columns(&self, bytes: usize) {
+        let _ = self.remembered.set(water::cache::Cache::new(bytes));
     }
 
     /// The biomes of this world.
@@ -533,9 +567,15 @@ impl Overworld {
 
     /// The ground at one position, with its rivers, lakes and trails.
     pub(crate) fn geo(&self, x: i32, z: i32) -> GeoSample {
+        self.geo_with(x, z, &mut geology::Corners::default())
+    }
+
+    /// [`Overworld::geo`], sharing the relief at lattice corners with other samples nearby
+    /// through `corners`: neighbouring positions read the same few corners.
+    pub(crate) fn geo_with(&self, x: i32, z: i32, corners: &mut geology::Corners) -> GeoSample {
         let sample = {
             let _stage = stage::enter(Stage::Rivers);
-            self.ground(x, z)
+            self.rivers.sample_with(self.stages(), x, z, true, corners)
         };
         let _stage = stage::enter(Stage::Trails);
         let sample = self.trails.apply(&self.land(), sample, x, z);
@@ -601,6 +641,12 @@ impl Overworld {
         RiverLand { rivers: &self.rivers, stages: self.stages(), world: self }
     }
 
+    /// The middle of the vein a sample of ore (`block`) lying at `pos` marks, telling one
+    /// vein from another: none for a sample no vein laid there (one a player set down).
+    pub fn vein_of_sample(&self, pos: IVec3, block: BlockId) -> Option<IVec3> {
+        self.terrain.ores.vein_of_sample(self, pos.x, pos.z, block)
+    }
+
     /// The lairs within `radius` blocks of `centre`, nearest first (`lairs.ron`).
     pub fn lairs_near(&self, centre: IVec2, radius: i32) -> Vec<LairSite> {
         self.lairs.near(self, centre, radius)
@@ -611,6 +657,16 @@ impl Overworld {
         self.lairs.defs()
     }
 
+    /// Whether a settlement's plan covers (x, z), out to a few blocks past its edge.
+    pub fn in_settlement(&self, x: i32, z: i32) -> bool {
+        self.settlement_covers(x, z)
+    }
+
+    /// The height of the settlement whose plan covers (x, z), if one does.
+    pub fn settlement_height(&self, x: i32, z: i32) -> Option<i32> {
+        self.settlements.height_covering(self, x, z)
+    }
+
     /// Whether a settlement's plan covers (x, z).
     pub(crate) fn settlement_covers(&self, x: i32, z: i32) -> bool {
         self.settlements.covers(self, x, z)
@@ -619,27 +675,41 @@ impl Overworld {
     /// The settlements whose squares lie within `radius` blocks of `centre`: their names
     /// (English and Japanese), sizes, middles and buildings.
     pub fn settlements_near(&self, centre: IVec2, radius: i32) -> Vec<SettlementInfo> {
-        self.settlements
-            .near(self, centre, radius)
-            .iter()
-            .filter_map(|slot| slot.0.as_ref())
-            .map(|p| SettlementInfo {
-                id: p.id,
-                name: p.name.clone(),
-                size: p.size.clone(),
-                style: p.style.clone(),
-                layout: p.layout.clone(),
-                centre: IVec3::new(p.centre.x, p.height, p.centre.y),
-                buildings: p.buildings.clone(),
-                gates: p.gates.clone(),
-                lanes: p.lanes.clone(),
-                levers: p.levers,
-                culture: self.settlements.culture_info(p),
-                people: p.people.clone(),
-                walls: p.walls.clone(),
-                wall_block: p.wall_block,
-            })
-            .collect()
+        self.settlements.near(self, centre, radius).iter().filter_map(|slot| slot.0.as_ref()).map(|p| self.settlement_info(p)).collect()
+    }
+
+    /// The settlement nearest `from` by its middle, within `radius`, that `keep` takes:
+    /// what `settlements_near` would find nearest, planning only the squares nearer than
+    /// it (`/locate settlement`).
+    pub fn nearest_settlement(&self, from: IVec2, radius: i32, keep: impl Fn(&SettlementInfo) -> bool) -> Option<SettlementInfo> {
+        let slot = self.settlements.nearest(self, from, radius, |p| keep(&self.settlement_info(p)))?;
+        slot.0.as_ref().map(|p| self.settlement_info(p))
+    }
+
+    /// The settlement whose square holds (x, z), if that square is settled: the only one a
+    /// block there can be part of, planning that square alone.
+    pub fn settlement_holding(&self, at: IVec2) -> Option<SettlementInfo> {
+        let slot = self.settlements.holding(self, at.x, at.y)?;
+        slot.0.as_ref().map(|p| self.settlement_info(p))
+    }
+
+    fn settlement_info(&self, p: &settlements::Plan) -> SettlementInfo {
+        SettlementInfo {
+            id: p.id,
+            name: p.name.clone(),
+            size: p.size.clone(),
+            style: p.style.clone(),
+            layout: p.layout.clone(),
+            centre: IVec3::new(p.centre.x, p.height, p.centre.y),
+            buildings: p.buildings.clone(),
+            gates: p.gates.clone(),
+            lanes: p.lanes.clone(),
+            levers: p.levers,
+            culture: self.settlements.culture_info(p),
+            people: p.people.clone(),
+            walls: p.walls.clone(),
+            wall_block: p.wall_block,
+        }
     }
 
     /// The shaped roof pieces the settlement whose square's middle is at `centre` lays,
@@ -652,6 +722,22 @@ impl Overworld {
     /// sets, each where it goes.
     pub fn settlement_planned(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
         self.settlements.planned(self, centre, keep).unwrap_or_default()
+    }
+
+    /// As [`Overworld::settlement_planned`], the blocks set at a height over the ground of
+    /// their column (a lamp's torch on its post), each with its height over the ground.
+    pub fn settlement_planned_on_ground(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
+        self.settlements.planned_on_ground(self, centre, keep).unwrap_or_default()
+    }
+
+    /// Whether `block` is one of settlements' own flames (`rules.fire.flames`).
+    pub fn settlement_flame(&self, block: voxmar_engine::block::BlockId) -> bool {
+        self.settlements.fire().is_some_and(|f| f.flame(block))
+    }
+
+    /// How many steps settlements' fire reaches from a flame (`rules.fire.reach`).
+    pub fn settlement_fire_reach(&self) -> i32 {
+        self.settlements.fire().map_or(0, |f| f.reach)
     }
 
     /// Every block that catches fire (thatch, wattle) a flame among `blocks` reaches, as
@@ -921,10 +1007,19 @@ impl Sampler<'_> {
         let cell = p.div_euclid(IVec2::splat(biome::CELL));
         let f = (p - cell * biome::CELL).as_vec2() / biome::CELL as f32;
         let mut sum = [[0.0f32; 3]; 3];
+        // Corners of the same biomes at the same share have the same colours (all four,
+        // inside a biome), worked out once.
+        let mut last: Option<((BiomeId, BiomeId, u32), [[f32; 3]; 3])> = None;
         for (dx, dz, w) in [(0, 0, (1.0 - f.x) * (1.0 - f.y)), (1, 0, f.x * (1.0 - f.y)), (0, 1, (1.0 - f.x) * f.y), (1, 1, f.x * f.y)] {
             let at = (cell + IVec2::new(dx, dz)) * biome::CELL;
             let pick = self.pick(at.x, at.y);
-            let colors = self.biome_colors(climate, n, &pick, Biomes::blend(pick.edge, site.fertility));
+            let share = Biomes::blend(pick.edge, site.fertility);
+            let key = (pick.home, pick.neighbour, share.to_bits());
+            let colors = match last {
+                Some((k, colors)) if k == key => colors,
+                _ => self.biome_colors(climate, n, &pick, share),
+            };
+            last = Some((key, colors));
             for (total, c) in sum.iter_mut().zip(colors) {
                 for k in 0..3 {
                     total[k] += w * c[k];
@@ -1085,7 +1180,10 @@ impl Generator for Overworld {
 
     fn generate(&self, pos: ColumnPos) -> Column {
         let _span = tracing::info_span!("generate_column").entered();
-        terrain::generate(self, pos)
+        match self.remembered.get() {
+            Some(remembered) => (*remembered.get(pos, || Arc::new(terrain::generate(self, pos)))).clone(),
+            None => terrain::generate(self, pos),
+        }
     }
 
     fn spawn_point(&self) -> IVec3 {
@@ -1105,7 +1203,13 @@ impl Overworld {
 
     /// Walks outwards on a spiral until it finds open, temperate grassland on dry land;
     /// `built`: also off trails and outside settlements, which plan by the search without.
+    /// Each is worked out once (`spawns`), so a search must never ask for its own kind's
+    /// spawn: it would wait on itself.
     fn spawn_search(&self, built: bool) -> IVec3 {
+        *self.spawns[built as usize].get_or_init(|| self.search_spawn(built))
+    }
+
+    fn search_spawn(&self, built: bool) -> IVec3 {
         for ring in 0..256 {
             for step in 0..(ring * 8).max(1) {
                 let (x, z) = spiral(ring, step);
@@ -1147,6 +1251,53 @@ pub(crate) fn spiral(ring: i32, step: i32) -> (i32, i32) {
     }
 }
 
+/// Every package's content, as a server loads it, loaded once for the run and read by the
+/// tests that only read it.
+#[cfg(test)]
+pub(crate) fn full_content() -> &'static (voxmar_engine::content::Content, WorldContent) {
+    static FULL: std::sync::OnceLock<(voxmar_engine::content::Content, WorldContent)> = std::sync::OnceLock::new();
+    FULL.get_or_init(|| {
+        let content = voxmar_engine::content::Content::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content")).unwrap();
+        let world = WorldContent::load(&content).unwrap();
+        (content, world)
+    })
+}
+
+/// The seeds more than one test reads on every package's content (`shared_full_world`):
+/// the water tests (`generated_water`), and the village thatch and jettied storeys tests.
+#[cfg(test)]
+const HELD_FULL_SEEDS: [u64; 5] = [1, 2, 3, 7, 42];
+
+/// The world of `seed` on every package's content (`full_content`), for tests that only read
+/// what it generates. A seed of `HELD_FULL_SEEDS` is held for the rest of the run: what a
+/// world generates depends on neither which test asks first nor on what its caches hold,
+/// and the next test on the seed finds its rivers and settlements already planned rather
+/// than planning them again. Any other seed gets a world of its own, let go with its test,
+/// as a held world keeps all it planned. Kept apart from `Overworld::shared`, whose letting
+/// go is tested. Tests that count what a world plans, or compare a fresh world with another,
+/// make their own.
+#[cfg(test)]
+pub(crate) fn shared_full_world(seed: u64) -> Arc<Overworld> {
+    let (content, world) = full_content();
+    let make = || Arc::new(Overworld::with_content(seed, content.blocks.clone(), world));
+    if !HELD_FULL_SEEDS.contains(&seed) {
+        return make();
+    }
+    static WORLDS: std::sync::Mutex<Vec<(u64, Arc<std::sync::OnceLock<Arc<Overworld>>>)>> = std::sync::Mutex::new(Vec::new());
+    let slot = {
+        let mut worlds = WORLDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match worlds.iter().find(|(s, _)| *s == seed) {
+            Some((_, slot)) => slot.clone(),
+            None => {
+                let slot = Arc::new(std::sync::OnceLock::new());
+                worlds.push((seed, slot.clone()));
+                slot
+            }
+        }
+    };
+    slot.get_or_init(make).clone()
+}
+
 /// All base block files, in the same order as the game loader. Partial registries
 /// omit furnishings and tag members, which can change generation and census results.
 #[cfg(test)]
@@ -1182,19 +1333,26 @@ mod tests {
     }
 
     /// The world of `seed` on the test registry, one for every test that only reads what it
-    /// generates: each new world would trace its rivers, trails and caches from nothing
-    /// again. What a world generates depends on neither which column nor which test asks
-    /// first, nor on what its caches hold (`rivers_never_depend_on_generation_order`,
-    /// `decorations_never_depend_on_generation_order`), and those tests, the timing ones
-    /// and the golden hashes still make worlds of their own.
-    fn shared_world(seed: u64) -> Arc<Overworld> {
-        static WORLDS: std::sync::OnceLock<std::sync::Mutex<rustc_hash::FxHashMap<u64, Arc<Overworld>>>> = std::sync::OnceLock::new();
-        let worlds = WORLDS.get_or_init(Default::default);
-        if let Some(world) = worlds.lock().unwrap().get(&seed) {
-            return world.clone();
-        }
-        let world = Arc::new(Overworld::new(seed, registry()));
-        worlds.lock().unwrap().entry(seed).or_insert(world).clone()
+    /// generates, here and in the settlements' tests: each new world would trace its rivers,
+    /// trails and settlements from nothing again. What a world generates depends on neither
+    /// which column nor which test asks first, nor on what its caches hold
+    /// (`rivers_never_depend_on_generation_order`, `decorations_never_depend_on_generation_order`),
+    /// and those tests, the timing ones and the golden hashes still make worlds of their
+    /// own. Made once however many tests ask for it at once.
+    pub(crate) fn shared_world(seed: u64) -> Arc<Overworld> {
+        static WORLDS: std::sync::Mutex<Vec<(u64, Arc<std::sync::OnceLock<Arc<Overworld>>>)>> = std::sync::Mutex::new(Vec::new());
+        let slot = {
+            let mut worlds = WORLDS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match worlds.iter().find(|(s, _)| *s == seed) {
+                Some((_, slot)) => slot.clone(),
+                None => {
+                    let slot = Arc::new(std::sync::OnceLock::new());
+                    worlds.push((seed, slot.clone()));
+                    slot
+                }
+            }
+        };
+        slot.get_or_init(|| Arc::new(Overworld::new(seed, registry()))).clone()
     }
 
     #[test]
@@ -1260,6 +1418,23 @@ mod tests {
     pub(crate) fn generate_area(world: &Overworld, first: ColumnPos, count: i32) -> Vec<Column> {
         let positions: Vec<ColumnPos> = (0..count * count).map(|i| first.offset(i % count, i / count)).collect();
         generate_columns(world, &positions)
+    }
+
+    /// A generator keeping its columns (`remember_columns`) hands out exactly what one
+    /// that keeps none makes, asked once or again, and with too small a budget to keep them all.
+    #[test]
+    fn remembered_columns_are_the_columns() {
+        let registry = registry();
+        let fresh = Overworld::new(42, registry.clone());
+        let at: Vec<ColumnPos> = (0..6).map(|i| ColumnPos::new(i % 3 - 10, i / 3 - 3)).collect();
+        let made = generate_columns(&fresh, &at);
+        for budget in [64 << 20, 200 << 10] {
+            let kept = Overworld::new(42, registry.clone());
+            kept.remember_columns(budget);
+            for _ in 0..2 {
+                assert!(generate_columns(&kept, &at) == made, "a kept column differs from one made afresh (budget {budget})");
+            }
+        }
     }
 
     /// Rivers are traced region by region and cached; nothing may depend on which column,
@@ -2761,6 +2936,21 @@ mod tests {
         };
         // HERB_SEEDS=a,b,... counts other worlds instead, to check the rates hold beyond these.
         let order: Vec<u64> = std::env::var("HERB_SEEDS").map(|s| s.split(',').map(|n| n.trim().parse().expect("HERB_SEEDS must be seeds")).collect()).unwrap_or_else(|_| HERB_SEEDS.to_vec());
+        // The census on a pool of its own, as many threads as the tests' own: its generation
+        // would otherwise fill that pool for minutes, every other test's work queued behind
+        // it (`waterfalls_pour`, 7 s alone, took 198 s beside it). What it counts does not
+        // depend on the threads: the places are counted in order. Only where the tests'
+        // pool is held to part of the machine (`RAYON_NUM_THREADS`, half the cores in the
+        // gate); on a pool of every core (no `RAYON_NUM_THREADS`, or 0), a second would
+        // double the threads.
+        let capped = std::env::var("RAYON_NUM_THREADS").ok().and_then(|n| n.parse::<usize>().ok()).is_some_and(|n| n > 0);
+        let pool = capped.then(|| rayon::ThreadPoolBuilder::new().num_threads(rayon::current_num_threads()).build().unwrap());
+        fn on_pool<R: Send>(pool: &Option<rayon::ThreadPool>, f: impl FnOnce() -> R + Send) -> R {
+            match pool {
+                Some(pool) => pool.install(f),
+                None => f(),
+            }
+        }
         let mut seeds = 0;
         while seeds < order.len().min(16) && (0..biomes.len()).any(|b| !counted(&tally, b)) {
             let seed = order[seeds];
@@ -2771,7 +2961,7 @@ mod tests {
             // Every place of every open biome side by side, counted in order.
             use rayon::prelude::*;
             let wanted: Vec<(usize, IVec2)> = open.iter().flat_map(|&b| PLACES.map(|from| (b, from))).collect();
-            let areas: Vec<_> = wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect();
+            let areas: Vec<_> = on_pool(&pool, || wanted.par_iter().map(|&(b, from)| (b, biome_area(&world, &biomes[b], from, 16, &looks, herbs.len()))).collect());
             for (b, area) in areas {
                 let Some((columns, bank, placed, away)) = area else { continue };
                 tally[b].0 += 1;

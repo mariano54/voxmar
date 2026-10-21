@@ -32,6 +32,10 @@ pub struct VoiceDef {
     /// Whether its steps sound the ground they fall on (false for things that fly, float
     /// or glide on slime). Unset: as `like`'s, else true.
     pub ground: Option<bool>,
+    /// How much of its unbidden chatter is a call rather than an idle sound, through each
+    /// part of the day: a cock crows at dawn, wolves howl and frogs croak by night. An hour
+    /// it leaves unset is as `like`'s, else a call a quarter of the time.
+    pub calls: CallsDef,
     pub step: Option<EventDef>,
     pub idle: Option<EventDef>,
     pub graze: Option<EventDef>,
@@ -92,6 +96,89 @@ fn one() -> f32 {
     1.0
 }
 
+/// The shares of calls a voice gives, by the part of the day, as its file writes them.
+#[derive(Clone, Copy, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CallsDef {
+    pub dawn: Option<f32>,
+    pub day: Option<f32>,
+    pub dusk: Option<f32>,
+    pub night: Option<f32>,
+}
+
+impl CallsDef {
+    fn hours(&self) -> [Option<f32>; 4] {
+        [self.dawn, self.day, self.dusk, self.night]
+    }
+}
+
+/// The share of a voice's chatter that is a call, by the part of the day.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Calls {
+    pub dawn: f32,
+    pub day: f32,
+    pub dusk: f32,
+    pub night: f32,
+}
+
+/// A call a quarter of the time, whatever the hour.
+pub const CALLS: f32 = 0.25;
+
+impl Default for Calls {
+    fn default() -> Self {
+        Calls { dawn: CALLS, day: CALLS, dusk: CALLS, night: CALLS }
+    }
+}
+
+impl Calls {
+    /// Each hour as the nearest of `chain` (a voice and those it is `like`) that gives it.
+    fn of(chain: &[(&str, &VoiceDef)]) -> Calls {
+        let hour = |i: usize| chain.iter().find_map(|(_, v)| v.calls.hours()[i]).unwrap_or(CALLS);
+        Calls { dawn: hour(0), day: hour(1), dusk: hour(2), night: hour(3) }
+    }
+
+    /// The share at `part` of the day.
+    pub fn at(&self, part: Part) -> f32 {
+        match part {
+            Part::Dawn => self.dawn,
+            Part::Day => self.day,
+            Part::Dusk => self.dusk,
+            Part::Night => self.night,
+        }
+    }
+}
+
+/// A part of the day, as a voice's [`Calls`] name them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Dawn,
+    Day,
+    Dusk,
+    Night,
+}
+
+/// The share of the day around sunrise and around sunset that is dawn and dusk: about
+/// two minutes of a twenty-minute day, half before the sun crosses the horizon and half
+/// after.
+const TWILIGHT: f64 = 0.1;
+
+impl Part {
+    /// The part of the day at `day_fraction` (0..1 from sunrise, as `calendar` counts it).
+    pub fn at(day_fraction: f64) -> Part {
+        let f = day_fraction.rem_euclid(1.0);
+        let near = |edge: f64| ((f - edge + 0.5).rem_euclid(1.0) - 0.5).abs() < TWILIGHT / 2.0;
+        if near(0.0) {
+            Part::Dawn
+        } else if near(voxmar_engine::calendar::DAYLIGHT_SHARE) {
+            Part::Dusk
+        } else if voxmar_engine::calendar::night(f) {
+            Part::Night
+        } else {
+            Part::Day
+        }
+    }
+}
+
 fn pitch_spread() -> (f32, f32) {
     (0.93, 1.07)
 }
@@ -145,6 +232,7 @@ pub struct Voice {
     pub gain: f32,
     /// Whether its steps sound the ground underfoot.
     pub ground: bool,
+    pub calls: Calls,
 }
 
 impl Voice {
@@ -181,6 +269,9 @@ impl Bank {
         for file in files.iter().filter(|f| f.name == FILE) {
             let def: BankFile = options.from_str(&file.source).map_err(|e| format!("{}/{FILE}: {e}", file.package))?;
             for (name, voice) in def.voices {
+                if voice.calls.hours().into_iter().flatten().any(|share| !(0.0..=1.0).contains(&share)) {
+                    return Err(format!("{}/{FILE}: voice `{name}`: `calls` are shares of its chatter, 0 to 1", file.package));
+                }
                 voices.insert(name, (file.package.clone(), voice));
             }
             for (name, entry) in def.species {
@@ -226,9 +317,19 @@ impl Bank {
             let size = chain.iter().find_map(|(_, v)| v.size);
             let pitch = entry.pitch.unwrap_or_else(|| size.map_or(1.0, |size| pitch_for_size(size, height)));
             let ground = chain.iter().find_map(|(_, v)| v.ground).unwrap_or(true);
-            bank.species[id.0 as usize] = Some(Voice { events, pitch, gain: entry.gain.max(0.0), ground });
+            let calls = Calls::of(&chain);
+            bank.species[id.0 as usize] = Some(Voice { events, pitch, gain: entry.gain.max(0.0), ground, calls });
         }
         Ok(bank)
+    }
+
+    /// Whether every clip a voice plays is there under `assets`, so a mistyped path fails
+    /// at launch rather than leaving the animal silent.
+    pub fn check_files(&self, assets: &std::path::Path) -> Result<(), String> {
+        match self.clips.iter().find(|key| !assets.join(&key.path).is_file()) {
+            Some(missing) => Err(format!("{FILE}: `{}` is not there", missing.path)),
+            None => Ok(()),
+        }
     }
 
     pub fn voice(&self, species: CreatureId) -> Option<&Voice> {
@@ -333,6 +434,10 @@ mod tests {
         let rabbit = bank.voice(creatures.find("rabbit").unwrap()).unwrap();
         let clip = &bank.clips[rabbit.event(Kind::Idle).unwrap().clips[0]];
         assert_eq!(clip, &ClipKey { path: "content/zmod/b.ogg".into(), aether: 10 });
+        // Every shipped voice's clips are there; the mod's b.ogg is not, and fails the launch.
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        assert_eq!(Bank::load(&content.files, creatures).unwrap().check_files(&assets), Ok(()));
+        assert!(bank.check_files(&assets).is_err());
     }
 
     #[test]
@@ -340,6 +445,56 @@ mod tests {
         let content = content();
         assert!(Bank::load(&files(&[("base", r#"(species: {"rabbit": (voice: "nobody")})"#)]), &content.creatures).is_err());
         assert!(Bank::load(&files(&[("base", r#"(voices: {"v": (idel: (clips: ["a.ogg"]))})"#)]), &content.creatures).is_err());
+    }
+
+    /// A voice's calls by the hour are taken by those `like` it, a quarter all day
+    /// otherwise; a share past 1 is refused at load.
+    #[test]
+    fn calls_follow_the_hours() {
+        let content = content();
+        let creatures = &content.creatures;
+        let bank = Bank::load(
+            &files(&[(
+                "base",
+                r#"(
+                    voices: {
+                        "cock": (idle: (clips: ["a.ogg"]), call: (clips: ["c.ogg"]), calls: (dawn: 0.9, night: 0.0)),
+                        "hen": (like: "cock", calls: (day: 0.5)),
+                        "plain": (idle: (clips: ["a.ogg"])),
+                    },
+                    species: { "rabbit": (voice: "hen"), "hare": (voice: "plain") },
+                )"#,
+            )]),
+            creatures,
+        )
+        .unwrap();
+        let calls = |name| bank.voice(creatures.find(name).unwrap()).unwrap().calls;
+        // The hen's own day, the cock's dawn and night, and the quarter for the dusk neither gives.
+        assert_eq!(calls("rabbit"), Calls { dawn: 0.9, day: 0.5, dusk: CALLS, night: 0.0 });
+        assert_eq!(calls("hare"), Calls::default());
+        // Out of range, not a number or a misspelt hour, in a voice no species speaks with.
+        for bad in ["(night: 1.5)", "(dawn: -0.1)", "(day: NaN)", "(nite: 0.5)"] {
+            let source = format!(r#"(voices: {{"v": (idle: (clips: ["a.ogg"])), "unused": (idle: (clips: ["a.ogg"]), calls: {bad})}}, species: {{"rabbit": (voice: "v")}})"#);
+            let refused = Bank::load(&files(&[("base", source.as_str())]), creatures);
+            assert!(refused.is_err(), "{bad}");
+        }
+    }
+
+    /// Dawn and dusk straddle sunrise and sunset; night lies between, day the rest.
+    #[test]
+    fn the_parts_of_the_day() {
+        let sunset = voxmar_engine::calendar::DAYLIGHT_SHARE;
+        assert_eq!(Part::at(0.0), Part::Dawn);
+        assert_eq!(Part::at(0.98), Part::Dawn, "just before sunrise");
+        assert_eq!(Part::at(0.04), Part::Dawn, "just after");
+        assert_eq!(Part::at(0.06), Part::Day);
+        assert_eq!(Part::at(0.33), Part::Day, "noon");
+        assert_eq!(Part::at(sunset - 0.04), Part::Dusk);
+        assert_eq!(Part::at(sunset + 0.04), Part::Dusk);
+        assert_eq!(Part::at(sunset + 0.06), Part::Night);
+        assert_eq!(Part::at(0.83), Part::Night, "midnight");
+        assert_eq!(Part::at(0.94), Part::Night);
+        assert_eq!(Part::at(-0.5), Part::at(0.5), "any count of days");
     }
 
     #[test]

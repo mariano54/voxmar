@@ -44,15 +44,16 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
-Seats are stools, chairs, benches and cushions; tables include desks and counters; storage is
-whatever a home keeps things in or on: chests, cupboards and wardrobes, shelves (pot shelves
+Seats are stools, chairs, benches, settles, cushions and window seats; tables include desks
+and counters; storage is whatever a home keeps things in or on: chests, blanket chests,
+cupboards and wardrobes, stair cupboards, window seats, shelves (pot shelves, pantry shelves
 and bookshelves too), crate stacks, barrel racks, jars and baskets, and a village's barrels
 and crates (every store a player opens counts but the feed trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
-of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage stove and cauldron;
-workshop is the loom frame, spindle stand and quern. All are craftable in the first two ages
-(Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of gathering and
-crafting, not a grind.
+of a chest and a barrel by a campfire, "home: storage"); cooking is the cottage stove and
+cauldron; workshop is the loom frame, spindle stand and quern. All are craftable in the
+first two ages (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of
+gathering and crafting, not a grind.
 
 ## Walls (how well a home is built)
 
@@ -116,7 +117,11 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Larder | + roof, 4 storage, a stove or cauldron, a table | meals also heal x1.2 (`meal_heal`) and last x1.5 |
 | Bedside | a bed, a seat, 2 lights (no roof needed) | 2° warmer, and a night's sleep there is Well rested |
 | Herb nook | 2 hanging herbs or hung drying racks (`drying`), 1 storage | farming and alchemy count 1 level higher, a meal's good lasts x1.1 |
-| Bright room | a roof, 2 windows (`window`: hide window, glass) | heal x1.05, learn x1.05 |
+| Bright room | a roof, 2 windows (`window`: hide window, glass, lattice window, open shuttered window) | heal x1.05, learn x1.05 |
+| Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging or a curtain) | 1° warmer |
+| Hearth corner | a roof, the hearth, a settle (`settle`) and a woodpile (`woodpile`) | 1° warmer, heal x1.05 (test `a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner`) |
+| Bedchamber | a roof, a bed, a blanket chest (`blanket_chest`), a washstand (`washstand`) and a rug | 1° warmer, heal x1.1 (test `a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber`) |
+| Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
 beside the sleeping bag. Before any roof or hearth it is the warmer night and the better rest
@@ -126,6 +131,20 @@ The herb nook is the Farm age's: two herbs tied with twine hang to dry (Crafting
 bunches); two bunches and a jar, basket or crate make it. Its farming level counts where it
 is felt, sowing the kitchen garden at the door (a crop a level early) and harvesting it, and
 its alchemy level at the bench.
+Soft furnishings keep the draught off: a rug underfoot and cloth hung on a wall or at a window
+(`drape`: a wall hanging, two cloths over two sticks, Crafting 4, any dye, or a curtain) under the home's roof, 1°
+warmer; two rugs are not enough
+(`a_rug_and_a_hanging_under_a_roof_are_soft_furnishings`, the server's
+`a_rug_and_a_hanging_make_soft_furnishings`, the gate's walls step: "home: soft furnishings").
+The dooryard is the Farm age's too, the home's outside (home audit 2, item 10: outdoor decor
+used to count for nothing): an awning at the door and two more things set out under the sky
+about it. A yard piece counts only where it stands under the open sky (effects.ron
+`outdoors`, a tag list load-checked against what `HomeHas` asks), so a bench or bales kept
+indoors are no yard; only blocks still standing count, so a bale taken away or broken takes
+its part with it; and it holds only out in the yard, never under the roof, which `/home`
+names ("you out under the open sky", `Lack::Sky`)
+(`an_awning_and_yard_pieces_out_of_doors_make_a_dooryard`, the server's
+`an_awning_a_bench_and_a_bale_make_a_dooryard`, the gate's walls step: "home: dooryard").
 
 `boosts` are the effect vocabulary's own (they stop at +6 and recipes marked firm ignore
 them); `meal_heal` and `meal_time` are two new modifiers, applied as the meal is eaten from
@@ -424,8 +443,7 @@ to the rest of the home, so the barrel is a larder from the first night:
   never reaches into a pouch. This is data per station, `from_stores` (true unless said
   otherwise). The drying rack and the cooking pot take from the stores. The compost heap
   does not, because grain and seed kept in a barrel are for eating and sowing, and a heap
-  that ate them would punish keeping a larder. Nor does the earth clamp: logs and clay in
-  the stores are for building, and one log in hand would draw the woodshed in. The chat line says how many came from the stores
+  that ate them would punish keeping a larder. The chat line says how many came from the stores
   (`station.loaded_from_stores`, en and ja). Cooking at a fire (cooking.ron) and machines
   are left out. A fire cooks the one item in hand and a machine takes items into its own
   slots, so there is no load to top up.
@@ -627,6 +645,13 @@ one clay at a time. Clay coats only when aimed at a block's side, a wall's face:
 top of a dirt floor or a panel is laid there as a block as before (test
 `clay_to_the_side_of_an_earth_wall_daubs_it_and_to_the_top_does_not`).
 
+A panel never daubs shut on anyone. The thin panel turns into a whole daub block, so clay held
+to one a player or a creature leans into is refused with placing's words ("Someone is standing there":
+`CoatClear`, refusals.ron), as placing a block on them and shutting a door on them are. The
+dauber's client sees no other body, so the server sends those words itself; and `coat` keeps
+the cell clear whatever action asks for it. Once they step off, the same clay daubs it (test
+`a_panel_someone_leans_on_is_not_daubed_around_them`).
+
 ## Curing hides
 
 A beast's hide comes off **raw**. The drying rack is the one place it dries (stations.ron,
@@ -649,9 +674,11 @@ particles keep) and `over: Some(("hearth", 3))` (given off only with a `hearth` 
 stove pipe or a forge's flue can do the same. The client searches farther only for chunks
 whose palette holds such a block, and counts nearness as a share of each emission's range,
 so a far chimney takes its place among the nearest torches
-(`a_chimney_smokes_over_a_hearth_from_afar`). The gate's Cook step builds a hearth beside
-its campfire, checks its chimney gives nothing off cold, lights it and counts the puffs
-("chimney smoke").
+(`a_chimney_smokes_over_a_hearth_from_afar`). Chimney pieces (`chimney_piece`) stacked
+straight over the chimney carry its smoke up and out of their top, so a chimney carried up
+through a roof smokes from its pot (docs/building.md). The gate's Cook step builds a hearth
+beside its campfire, its chimney carried up a brick flue to a pot, checks nothing smokes
+cold, lights it and counts the pot's puffs ("chimney smoke").
 
 A cold hearth is quiet. Lighting a hearth keeps its fire until a piece of it is taken away
 (server/src/hearth.rs; a kiln's burns for its fuel charge), and the server tells every
@@ -661,14 +688,43 @@ ambience's `fire` group (`lit: true`) hears a hearth or a Crucible Kiln crackle 
 then; a campfire or a pit kiln always. A home hearth lit in a world saved before this is lit
 again when its player joins.
 
+## Lights burn down
+
+Every light set down burns by the world's clock (engine `flame.rs`, server `flames.rs`): a
+torch a game day, a candle three, an oil lamp five on a fill of fat. A home's light steps
+(Camp, Snug, Homely, Cosy, Bedside, Workbench) therefore need tending, not just building.
+
+- **Guttering.** In the last tenth of its burn (`gutter_share`, core/survival.ron) a torch
+  turns into its guttering block (`gutters_to:`): dimmer, its flame low and smoky, burning on
+  to the same end. That is the cue to light it again: anything that kindles lights a
+  guttering torch whole (`relights_to:`).
+- **Telling the owner.** When lights going out leave a home short of a light a step it had
+  asks for, the home's owner (if here) is told once per burn pass, naming the highest step
+  lost and how many lights it wants (`flame.home_short`). The steps a home meets are kept on
+  the player (`home_steps` in their save); one who was away is told on return, once the land
+  round their home has loaded (`flame.home_short_away`).
+- **Picked up burning** a light keeps what it has burnt as its item's wear (`WEAR_PER_DAY`,
+  1200 a game day), shown as a wear bar and in its tooltip, and set down again burns on from
+  there: carrying a light never refreshes it. A lamp picked up lit keeps its fat.
+- **Stubs.** A torch's stub breaks into an unlit stub item. Set down it is a stub, lit again
+  where it stands by anything that kindles; held in any fire it catches into a torch.
+- **Tended.** Inside a settlement, within `tend_height` blocks of its height (so not in a mine
+  under it), its people tend what is tagged `tended`: one set down there never goes out, and
+  keeps what it had burnt. The item's tooltip says so.
+- **Old lights.** A light with no burn (set down before lights burnt out, or placed by the
+  world outside a settlement) is given a full burn the first time its column loads, once a
+  column (`flame_columns` in the world's save).
+
 ## Light in the windows
 
 A home shows its lit rooms at night: a window glows warm by the light of the room behind it.
 Before glass there is the Hide Window (Farm, Construction 3: a hide in a frame of eight sticks,
 two windows), oiled hide in a stick frame. Every block tagged `window` (the hide window, glass,
-settlements' old glass) passes block light as air does (a `Cutout` cube), so a candle or the
-hearth behind it lights the ground outside, and is `lit_through` (a block field, any mod's
-window can say it): its bright texels glow by the block light reaching its face, which came
+settlements' old glass, and the lattice window and open shuttered window, which are shapes,
+not cubes) passes block light as air does (a `Cutout` cube, or light through a lattice's
+squares), so a candle or the hearth behind it lights the ground outside, and is
+`lit_through` (a block field, any mod's window can say it): its bright texels glow by the
+block light reaching its face, which came
 through it, as a lantern's glow by its own light (client `render/mod.rs` `layer_table`, the
 glow byte's `THROUGH` bit; `voxel.wgsl`). It shows at any hour, as a lantern's glow does, and
 stands out after dark. Two windows in a home's walls under its roof make it a **Bright
@@ -676,7 +732,13 @@ room** (Rooms above; home audit 2, item 10: windows used to count for nothing), 
 a package tags `window` (`two_windows_at_home_make_a_bright_room`, the server's
 `windows_at_home_make_a_bright_room`, the gate's walls step: "home: bright room"). A dark
 room's window stays dark; a wall keeps the light in
-(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). The gate's Door step then
+(`a_window_lets_a_lit_rooms_light_out`, engine tests/windows.rs). A curtain hung inside a
+window draws across and back with a right click (`swaps`, as a door; drawn back it is
+`{name}_curtain_open` and gives the curtain): drawn across, it keeps most of the room's
+light in (`light_filter: 8`), so a lit home's window glows low at night, and drawn back
+the light goes through as air (`a_drawn_curtain_keeps_the_light_in`; the gate's walls step
+hangs one inside a pane and draws it back: "home: curtain"). Either way it is a curtain for
+the ladder's steps and a drape (`drape`, which Soft furnishings asks beside a rug). The gate's Door step then
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).
 

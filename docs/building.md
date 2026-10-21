@@ -14,6 +14,7 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Beam | `<timber>_beam` | 6 texels square along the cell, on its floor; under a ceiling at its top (a joist) | runs away from the placer | 3 logs in a row make 6 (2) |
 | Lattice window | `<timber>_lattice_window` | a frame and laths, light through the squares | faces the placer | 4 planks, 5 sticks make 4 (3) |
 | Roof | `thatch_roof`, `<timber>_shingles` | four courses a quarter block high, eave towards the placer | | thatch: 6 fibre make 4 (1); shingles: 6 slabs make 4 (5) |
+| Hip, valley | `thatch_corner`, `thatch_inner_corner`, `<timber>_shingles_corner`, `<timber>_shingles_inner_corner` | a roof's courses stepping in from the north and the west (a hip, where two eaves meet), or back from both (a valley, where two slopes meet in an L) | eaves towards the placer and their right | 2 roof pieces side by side make 2 hips, one over the other 2 valleys (thatch 1, shingles 5) |
 | Ridge | `thatch_ridge`, `<timber>_shingle_ridge` | courses rising from both sides to a cap | ridge across the placer's view | thatch: 3 fibre make 2 (1); shingles: 3 slabs make 2 (5) |
 | Hide lean-to | `hide_lean_to` | hide in four thin courses on two rafters, eave towards the placer | | 3 hide, 2 sticks make 2 (1) |
 | Wattle | `wattle_panel` | woven sticks across the middle of the cell, three stakes | faces the placer | 8 sticks round a twine make 4 (1) |
@@ -27,10 +28,17 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Window frame | `<timber>_window_frame` | jambs, a sill and a lintel round an opening, one block high; stops nothing | faces the placer | 2 posts, 2 beams make 2 (3) |
 | Shuttered window | `<timber>_shuttered_window` (`_shut`) | a lattice window with two leaves on its face, standing out open, across it shut | faces the placer; a right click shuts and opens them | a lattice window and shutters make 1 (3) |
 | Railing | `<timber>_railing`, `<timber>_railing_corner` | a handrail and a bottom rail along the back of the cell with balusters between, a block high; the corner turns along the east side too | the rail runs along the side away from the placer | 3 beams, 3 sticks make 3 (3); 2 railings make a corner (3) |
+| Fence, gate | `<timber>_fence`, `<timber>_fence_corner`, `<timber>_fence_gate` | half a post at each end and two rails across the middle of the cell, a block high; the corner turns from the west to the north; the gate a frame of rails and uprights, swung out north against its west post when open | runs across the placer's view | 4 posts, 2 sticks make 6 (2); 2 fences make a corner; 2 fences round a slab make a gate (2) |
+| Ladder | `<timber>_ladder` | two rails and four rungs at the back of the cell, against the wall behind | faces the placer, its back to the wall | 6 posts, 3 sticks make 4 (2) |
+| Stair cupboard | `<timber>_stair_cupboard` | a stair (the step facing north) with panelled doors in its riser: walked up as a stair, counted as storage | faces the placer | a stair, a plank and a stick (5) |
+| Built-ins | `<wood>_window_seat`, `<wood>_sill`, `<wood>_pantry_shelf` (furnishings) | a panelled box under a cushion against the wall (a seat and storage); a deep board on two brackets at the top of its cell (decor); a shelf with two crocks and a keg (storage) | face the placer, their backs to the wall | a bench, 2 planks, wool (5); a slab and a stick make 2 (3); a shelf and 2 clay pots (5) |
+| Hearth corner | `<wood>_settle`, `<wood>_woodpile`, `<wood>_peg_rail` (furnishings) | a high-backed bench with arms and a cushion, sat in as a seat (`settle`); logs stacked two, two and one against the wall (`woodpile`); a rail high on the wall with three pegs, a cloak and a pot hung on them (decor). A settle and a woodpile by the hearth under the roof make a Hearth corner (docs/home.md) | face the placer, their backs to the wall | a bench and 3 planks (4); 3 logs and 2 sticks (1); a plank and 3 sticks make 2 (2) |
+| Bedchamber | `<wood>_blanket_chest`, `<wood>_washstand` (furnishings) | a panelled box under an overhanging lid, for the bed's foot (storage, `blanket_chest`); a top on four legs with a low shelf, a basin and a jug on it (`washstand`). With the bed and a rug under the roof they make a Bedchamber (docs/home.md) | face the placer | 4 planks and wool (3); a table and 2 clay pots (4) |
+| Hatch | `<timber>_hatch` (`_open`) | boards across the top of the cell over two battens; open, hung against the back of the cell no deeper than a ladder's rungs | faces the placer; a right click opens and shuts it | 2 slabs on 2 sticks make 2 (2) |
 | Newel post | `<timber>_newel_post` | a post five texels square with a cap | | a slab on a post makes 1 (3) |
 | Landing | `<timber>_landing` | boards across the top of the cell on two joists, level with a stair's top | joists run away from the placer | 3 slabs on 2 beams make 3 (3) |
 | Balcony door | `balcony_door` (`_top`, `_open`, `_open_top`) | a plank door whose upper half is a lattice | placed whole, as a door; a right click opens and shuts it | a lattice window on a wooden door makes 1 (4) |
-| Arrow slit | `stone_arrow_slit` | dressed stone with an upright slit three texels wide through it | the slit runs away from the placer | 2 stone bricks, a brick slab make 2 (5) |
+| Arrow slit | `stone_arrow_slit` | dressed stone with an upright slit three texels wide through it | the slit runs away from the placer | 2 stone bricks, a brick slab make 2 (6) |
 
 The home's ladder runs from a hide lean-to through wattle and daub and timber to stone and
 brick. Every piece on it carries a shelter tag for how well it keeps the weather out of a
@@ -51,8 +59,13 @@ comes through (which a draughty home's whistle can listen for). `draught` means 
 gap: an oiled-hide window or old glass is a draughty wall with no gap in it, so it
 carries no `draught`. A room with them is as
 closed as without, and as Snug, but each is a face short of sound: enough of them cost a
-room Cosy, which asks nine tenths sound. Shut, the shutters are a sound wall and keep the
-light out. Every window lets light in: a block tagged `window`, `lattice`, `window_frame`,
+room Cosy, which asks nine tenths sound. A lattice window, and a shuttered one while it
+stands open, is tagged `window` as glass and hide are: it glows by the light through it
+and a home counts it among its windows. It draws with its own `lattice_grain`, since a
+glow is a drawing's: on the grain posts and chairs share, every one would glow (refused at
+load). Shut, the shutters are a sound wall, keep the light out and are no window; a bare
+frame (an opening), plain shutters folded back over one, and an arrow slit are none either.
+Every window lets light in: a block tagged `window`, `lattice`, `window_frame`,
 `slit` or `draught`, or lit through, is refused at load if it is a whole cube or dims light
 by more than 2 (`light_filter`); a misspelt `shelter:` tag, or `draught` on anything but a
 draughty wall, is refused too.
@@ -63,17 +76,52 @@ gallery or a landing keeps anyone from walking off it. A railing stands a block 
 nobody steps onto it, and to a creature it stands two high, as a fence does, so nothing
 hops over it: no animal walks on its top or on air over it, even from a step beside it.
 A boss, or a fighter after a player, climbs it as the block-high step it is, so a ring of
-railings is no pen to fight from. It walls no room: a home's survey looks past it (survival.ron's
+railings is no pen to fight from. A field fence and its gate are railings too (tagged
+`railing`), so a ring of fences pens a farm's animals; a right click swings the gate open
+(`swaps`, as a door), and open it stops nobody, so a mouflon led by wheat follows you out
+through it (`a_fenced_pen_holds_a_led_mouflon_until_its_gate_opens`; the gate's Pieces step
+judges a fence, a corner and a gate). It walls no room: a home's survey looks past it (survival.ron's
 `home_furniture` names `railing`), so a gallery round a hall leaves the hall as walled as it
 was. A shut balcony door is a sound lower half and a draughty lattice over it; open, it is
 a way through, as an empty frame is. At load a block tagged `railing` must be solid and a
 block high, and one tagged `landing` solid across the whole top of its cell.
+
+A ladder (`<timber>_ladder`, tagged `climbable`) is climbed as in Minecraft: with your feet
+in its cell, pressing against it (or the wall behind it) or holding jump takes you up at
+`climb_speed` (core `movement.ron`, 3 blocks a second, at most `jump_velocity`), and letting
+go slides you down no faster than that. You climb off its top: past the last rung your feet
+leave its cell, and pressing on steps you onto the wall or floor it leads to. The server
+counts a ladder your feet are in as something under you, so a climb taller than a jump is
+not put back, though nobody rises on one faster than `climb_speed`; and a slide down one is
+no fall, so it neither hurts nor lands a falling blow (`sliding_down_a_ladder_is_no_fall`).
+A ladder is furniture to a home's survey (survival.ron's `home_furniture` names `ladder`),
+so a ladder up to a loft leaves the room as walled as it was (engine `movement.rs` `on_ladder`; tests
+`a_ladder_is_climbed_onto_the_wall_behind_and_slid_down_when_let_go` and gameplay
+`an_honest_climb_up_a_ladder_is_never_put_back`; the gate's Pieces step judges one). At load
+a climbable block must be solid, so there is something to press against. Creatures do not
+climb ladders.
+
+A hatch (`<timber>_hatch`) closes a hole in a loft's floor: shut, its boards are level with
+the floor round it, walked on, and a sound bit of ceiling to the room below. A right click
+swings it open (`swaps`); open, it hangs against the back of its cell and is climbed as a
+ladder is (`climbable`, a draughty face to the room below), so a ladder under it, set with its
+back the same way, climbs on up through it and out onto the loft floor
+(`a_ladder_climbs_through_an_open_hatch_into_a_loft_and_a_shut_one_stops_it`; the gate's
+Pieces step judges one shut and one open).
 The home's load check (`Rules::check_shelters`) holds every solid building or roof block
 but furniture to exactly one grade.
 
 Chimney pieces (`chimney_piece`: the stone and brick flues, the hood, the pot) carry a
-hearth's smoke up through a roof: the stone flue comes at Construction 2, before brick, so a
-thatched house can have one, and the home's fire rule keeps a chimney's roof from catching.
+hearth's smoke up through a roof: stacked straight over the hearth's chimney (or over any
+block that smokes), its smoke comes out of the top of the stack while flames, embers and
+sparks stay at the fire, so a chimney carried up past the eaves smokes from its pot and not
+under the roof (client `emitters.rs` `flue_top`; a stack of any height smokes from its top
+piece; tests `only_smoke_goes_up_a_flue` and
+`a_flue_over_a_chimney_carries_its_smoke_up_to_the_pot`; the gate's Cook step builds its
+hearth's chimney with a brick flue and a pot and counts the pot's puffs, "chimney smoke").
+The stone flue comes at Construction 2, before brick, so a thatched house can have one, and
+the home's fire rule keeps a chimney's roof from catching (solid pieces line the flue, as
+stone does).
 A jetty beam sticks out of the wall under an upper floor that overhangs the street; a door
 frame finishes a doorway with no door, and stops nothing, so villagers and animals walk
 through it as through any open way.

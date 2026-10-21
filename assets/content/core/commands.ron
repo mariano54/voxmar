@@ -66,6 +66,13 @@
             run: Give,
         ),
         (
+            name: "wear",
+            usage: "<uses left> [hotbar slot]",
+            help: "Wears the tool in your hand (or in that hotbar slot, 1 to 9) down (or mends it) to that many uses left, or burns what is there down to that many seconds.",
+            permission: Admin,
+            run: Wear,
+        ),
+        (
             name: "effect",
             usage: "<effect> [seconds] | clear",
             help: "Gives you an effect for a while (60 seconds unless you say), as food would; clear takes them all away.",
@@ -143,8 +150,8 @@
         ),
         (
             name: "creatures",
-            usage: "[tame | ready | hasten | hold | kill | remove] [creature] | populate | disperse",
-            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute, kill them, or take away the ones they keep; only of one species, if they name it. Populate tries natural spawning nearby and holds arrivals for a minute; disperse removes nearby wild creatures.",
+            usage: "[tame | ready | hasten | hold | release | kill | remove] [creature] | populate | disperse | people",
+            help: "Lists the creatures within 64 blocks of you: how many of each, and what the nearest is doing. Admins may tame those within 8 blocks, ready the kept ones there to breed, hasten them (products due and young grown at once), hold them still for a minute or let a hold go (release), kill them, or take away the ones they keep; only of one species, if they name it. Populate tries natural spawning nearby and holds arrivals for a minute; disperse removes nearby wild creatures; people says how many of the settlement people due out near players are out.",
             run: Creatures,
         ),
         (
@@ -160,6 +167,13 @@
             help: "Sets your level in a skill (farming, hunter, cooking, attack…), from 1 to the highest.",
             permission: Admin,
             run: Skill,
+        ),
+        (
+            name: "quest",
+            usage: "<quest>",
+            help: "Marks a quest done for you (an age's rite opens its stations), its rewards waiting to be claimed.",
+            permission: Admin,
+            run: Quest,
         ),
         (
             name: "machine",

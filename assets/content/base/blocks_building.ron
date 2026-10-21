@@ -9,17 +9,19 @@
 // room is dark until it is lit; its faces take the light of the open side they face
 // (`light_filter: 14`, see mesh.rs `emit_model`). Placed, a roof's eave and a lattice's face
 // turn to whoever set them; a beam runs away from them, and set against a block's
-// underside it hangs at the top of its cell, a joist under a floor (`flips`). A lattice lets
-// light through the squares between its laths, so it is no `window` (a pane that glows by
-// the light through it, `lit_through`): its laths share the timber's drawing, which glowing
-// would light every oak post and chair leg.
+// underside it hangs at the top of its cell, a joist under a floor (`flips`). A lattice is a
+// `window`, open or with its shutters open: light comes through the squares between its
+// laths, and its frame and laths glow by a lit room's light (`lit_through`). Glow is a
+// drawing's, not a block's, so a lattice draws with its own `lattice_grain`, never the
+// `furniture_grain` every post, beam and chair leg shares (block.rs refuses a glowing face
+// drawn as a block that does not glow); shut, or the leaves of open shutters, it is plain timber.
 (
     templates: {
         // Timber in one wood (`{name}`).
         "timber": [
             (name: "{name}_post", render: Model, shape: "post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "post", "wood", "building", "fuel", "shelter:sound"]),
             (name: "{name}_beam", render: Model, shape: "beam", facing: true, flips: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "beam", "wood", "building", "fuel", "shelter:sound"]),
-            (name: "{name}_lattice_window", render: Model, shape: "lattice_window", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "wood", "building", "shelter:draughty", "draught"]),
+            (name: "{name}_lattice_window", render: Model, shape: "lattice_window", facing: true, sound: Wood, textures: All("lattice_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "window", "wood", "building", "shelter:draughty", "draught"], lit_through: true),
             (name: "{name}_shingles", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "wood", "building", "fuel", "shelter:sound"]),
             // A jetty: a joist run out past the wall below to carry a floor over the street,
             // a brace under it back to the wall. Its overhang faces whoever set it.
@@ -47,8 +49,9 @@
             // come through. A right click shuts them across it (`swaps`, as a door), and it
             // is a sound wall that keeps the light out.
             (
-                name: "{name}_shuttered_window", render: Model, shape: "lattice_shutters_open", facing: true, sound: Wood, textures: All("furniture_grain"),
-                swaps: "{name}_shuttered_window_shut", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "shutters", "shutters_open", "wood", "building", "fuel", "shelter:draughty", "draught"],
+                name: "{name}_shuttered_window", render: Model, shape: "lattice_shutters_open", facing: true, sound: Wood, textures: All("lattice_grain"),
+                swaps: "{name}_shuttered_window_shut", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "window", "shutters", "shutters_open", "wood", "building", "fuel", "shelter:draughty", "draught"],
+                lit_through: true,
             ),
             (
                 name: "{name}_shuttered_window_shut", render: Model, shape: "lattice_shutters_shut", facing: true, light_filter: 14, sound: Wood, textures: All("furniture_grain"),
@@ -63,11 +66,57 @@
             // and a railed balcony is open air.
             (name: "{name}_railing", render: Model, shape: "railing", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "wood", "building", "fuel"]),
             (name: "{name}_railing_corner", render: Model, shape: "railing_corner", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "wood", "building", "fuel"]),
+            // A field fence and its gate, to pen a farm's animals: posts and two rails across
+            // the middle of the cell, a block high. A fence is a railing to everyone (`railing`:
+            // a creature takes it as two high and only a boss or a wild fighter on a chase
+            // climbs it; a home's survey looks past it). The gate shut is one too; a right
+            // click swings it open (`swaps`, as a door), and open it stops nobody.
+            // `plain_fence` is the straight length alone, not the corner or the gate, for a quest
+            // that asks for so many fences beside a gate.
+            (name: "{name}_fence", render: Model, shape: "fence", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "plain_fence", "wood", "building", "fuel"]),
+            (name: "{name}_fence_corner", render: Model, shape: "fence_corner", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "wood", "building", "fuel"]),
+            (
+                name: "{name}_fence_gate", render: Model, shape: "fence_gate", facing: true, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_fence_gate_open", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "railing", "fence", "gate", "wood", "building", "fuel"],
+            ),
+            (
+                name: "{name}_fence_gate_open", render: Model, shape: "fence_gate_open", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_fence_gate", drops: "{name}_fence_gate", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "fence", "gate", "wood", "building", "fuel"],
+            ),
+            // A ladder, set against a wall facing whoever sets it: with your feet in its cell,
+            // pressing against it or holding jump climbs it, letting go slides you down
+            // slowly (`climbable`; engine movement.rs). One over another climbs a shaft to a
+            // loft or up onto a roof.
+            (name: "{name}_ladder", render: Model, shape: "ladder", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["timber", "climbable", "ladder", "wood", "building", "fuel"]),
+            // A hatch for a loft: set in a hole in the floor, boards level with the floor round
+            // it, a sound bit of ceiling to the room below that keeps the light out as a roof
+            // does. A right click swings it open (`swaps`) to hang against the back of its
+            // cell, and open it is climbed as a ladder is (`climbable`), so a ladder under it
+            // climbs on up through it into the loft;
+            // it lets a draught down. Set it with its back over the ladder's.
+            (
+                name: "{name}_hatch", render: Model, shape: "hatch", facing: true, light_filter: 14, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_hatch_open", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "hatch", "wood", "building", "fuel", "shelter:sound"],
+            ),
+            (
+                name: "{name}_hatch_open", render: Model, shape: "hatch_open", facing: true, sound: Wood, textures: All("furniture_grain"),
+                swaps: "{name}_hatch", drops: "{name}_hatch", hardness: 1.0, color: (160, 120, 70), tags: ["timber", "hatch", "climbable", "wood", "building", "fuel", "shelter:draughty"],
+            ),
+            // A stair with a cupboard in its riser: a step to walk up like any stair (`stairs`),
+            // and doors in its front to keep things behind (`storage`, as a cupboard counts for
+            // a pantry or a larder). A flight of them puts the space under a stair to use.
+            (name: "{name}_stair_cupboard", render: Model, shape: "stair_cupboard", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["timber", "stairs", "cupboard", "storage", "wood", "building", "fuel", "shelter:sound"]),
             // A newel post: a stout post with a cap, at the foot or the turn of a stair.
             (name: "{name}_newel_post", render: Model, shape: "newel_post", sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "newel", "wood", "building", "fuel", "shelter:sound"]),
             // A landing: boards on two joists, its top level with a stair's, for the turn of a
             // stair, a gallery round a hall or a balcony on jetty beams.
             (name: "{name}_landing", render: Model, shape: "landing", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "landing", "floor", "wood", "building", "fuel", "shelter:sound"]),
+            // Roof corners: an outer one where two eaves meet at a hip, its courses stepping
+            // in from the north and the west; an inner one where two slopes meet in a valley
+            // (an L-shaped house), its courses stepping back from both. Walked up course by
+            // course, as the roof is.
+            (name: "{name}_shingles_corner", render: Model, shape: "roof_corner", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "roof_corner", "wood", "building", "fuel", "shelter:sound"]),
+            (name: "{name}_shingles_inner_corner", render: Model, shape: "roof_inner_corner", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "roof_corner", "wood", "building", "fuel", "shelter:sound"]),
             (name: "{name}_shingle_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "ridge", "shingle", "wood", "building", "fuel", "shelter:sound"]),
         ],
         // Slabs and stairs of one cut stone (`{name}`, by default the full block's name and
@@ -148,6 +197,8 @@
         // Thatch: straw laid in courses on a roof, the first roof anyone can make (grass
         // twine or wheat). It stops rain and light as shingles do, and feeds a fire as straw does.
         (name: "thatch_roof", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "thatch", "building", "fuel", "shelter:sound"]),
+        (name: "thatch_corner", render: Model, shape: "roof_corner", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "thatch", "roof_corner", "building", "fuel", "shelter:sound"]),
+        (name: "thatch_inner_corner", render: Model, shape: "roof_inner_corner", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "thatch", "roof_corner", "building", "fuel", "shelter:sound"]),
         (name: "thatch_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "ridge", "thatch", "building", "fuel", "shelter:sound"]),
     ],
 )

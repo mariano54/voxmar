@@ -34,14 +34,14 @@ impl Server {
         // What the grid and the pointer hold goes back into the pack first.
         let mut trial = player.inventory.clone();
         if let Some(stack) = trial.cursor.take() {
-            if trial.add(stack.item, stack.count) > 0 {
+            if trial.add_stack(stack) > 0 {
                 self.say(agent, Words::key("craft.lay.room"));
                 return;
             }
         }
         for cell in 0..GRID {
             if let Some(stack) = trial.craft[cell].take()
-                && trial.add(stack.item, stack.count) > 0
+                && trial.add_stack(stack) > 0
             {
                 self.say(agent, Words::key("craft.lay.room"));
                 return;
@@ -72,6 +72,13 @@ impl Server {
             })
         });
         let Some(grid) = laid else {
+            // A later age's way, before its rite: said as a refusal, as the grid's is.
+            if usable.is_empty()
+                && let Some(age) = making.iter().find_map(|r| self.age_closed(agent, r))
+            {
+                self.refuse_age(agent, &age);
+                return;
+            }
             let words = match usable.first() {
                 Some(recipe) => short_words(recipe, &have, &self.content.blocks),
                 None => Words::key("craft.lay.cannot"),
@@ -124,7 +131,7 @@ impl Server {
                 }
             }
             debug_assert_eq!(left, 0, "counted as there");
-            trial.craft[cell] = Some(ItemStack { item, count: n });
+            trial.craft[cell] = Some(ItemStack::new(item, n));
         }
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.inventory = trial;
@@ -139,7 +146,8 @@ impl Server {
     }
 
     /// Which recipes `agent` may craft where they are: a table's within reach of one, one
-    /// made near a block within reach of such a block, and those whose level they have.
+    /// made near a block within reach of such a block, those whose level they have, and a
+    /// later age's only once they have done its rite.
     pub(crate) fn allowed_recipes(&self, agent: PlayerId) -> impl Fn(&Recipe) -> bool + use<> {
         let at_table = self.at_table(agent);
         let near = self.near_tags(agent);
@@ -149,11 +157,26 @@ impl Server {
             skills.ids().map(|skill| (skill, (skills.level(player.skills.xp(skill)), voxmar_engine::level::check_level(&skills, &effects, &player.skills, &player.vitals.effects, skill)))).collect()
         }).unwrap_or_default();
         let inventory = player.map(|p| p.inventory.clone()).unwrap_or_default();
+        // The ages whose rite they have done: a later age's recipes wait for it.
+        let done = player.map(|p| p.quests_done.clone()).unwrap_or_default();
+        let quests = self.content.quests.clone();
         move |r: &Recipe| {
-            (at_table || !r.needs_table())
+            r.age.as_deref().is_none_or(|age| quests.opened(age, &|quest| done.iter().any(|d| d == quest)))
+                && (at_table || !r.needs_table())
                 && r.near.as_deref().is_none_or(|tag| near.iter().any(|t| t == tag))
                 && r.skill.is_none_or(|s| levels.get(&s).is_some_and(|&(own, boosted)| voxmar_engine::level::meets_recipe(r, own, boosted, &inventory, &blocks)))
         }
+    }
+
+    /// The later age `recipe` opens in, while `agent` has not done its rite.
+    pub(crate) fn age_closed(&self, agent: PlayerId, recipe: &Recipe) -> Option<String> {
+        let done = &self.players.get(&agent)?.quests_done;
+        recipe.age.clone().filter(|age| !self.content.quests.opened(age, &|quest| done.iter().any(|d| d == quest)))
+    }
+
+    /// Tells `agent` what they tried opens in a later age.
+    pub(crate) fn refuse_age(&self, agent: PlayerId, age: &str) {
+        self.refuse(agent, Words::key("craft.age").with("age", Words::key(&format!("quest.age.{age}"))));
     }
 
     /// The stores in `agent`'s home, while they stand in it, nearest first.
@@ -298,7 +321,7 @@ mod tests {
             .making(item)
             .iter()
             .find_map(|entry| match &entry.method {
-                voxmar_engine::recipe_book::Method::Craft { variants, first, .. } => Some((*first as u16, variants.len() as u8)),
+                voxmar_engine::recipe_book::Method::Craft { first, ways, .. } => Some((*first as u16, *ways as u8)),
                 _ => None,
             })
             .expect("a crafting way");
@@ -308,7 +331,7 @@ mod tests {
     fn stock(server: &mut Server, name: &str, count: u8) {
         let machines = server.content.machines.clone();
         let item = id(server, name);
-        assert_eq!(server.factory.put(BARREL, ItemStack { item, count }, &machines), None);
+        assert_eq!(server.factory.put(BARREL, ItemStack::new(item, count), &machines), None);
     }
 
     fn grid(server: &Server) -> Vec<(BlockId, u8)> {
@@ -325,8 +348,8 @@ mod tests {
         let mut server = fixture();
         let (log, dirt) = (id(&server, "base:oak_log"), id(&server, "base:dirt"));
         let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
-        inventory.slots[0] = Some(ItemStack { item: log, count: 5 });
-        inventory.craft[4] = Some(ItemStack { item: dirt, count: 2 });
+        inventory.slots[0] = Some(ItemStack::new(log, 5));
+        inventory.craft[4] = Some(ItemStack::new(dirt, 2));
         lay(&mut server, "base:oak_planks", 3);
         assert_eq!(grid(&server), vec![(log, 3)]);
         let pack = &server.players[&1].inventory.slots;
@@ -342,7 +365,7 @@ mod tests {
         let xp = server.content.skills.xp_for(5);
         let player = server.players.get_mut(&1).unwrap();
         player.skills.grant(crafting, xp);
-        player.inventory.slots[0] = Some(ItemStack { item: twine, count: 2 });
+        player.inventory.slots[0] = Some(ItemStack::new(twine, 2));
         player.inventory.pouched.push((lavender, 3));
         lay(&mut server, "base:hanging_herbs", 1);
         let mut laid = grid(&server);
@@ -360,7 +383,7 @@ mod tests {
         let mut server = fixture();
         stock(&mut server, "base:oak_planks", 6);
         let planks = id(&server, "base:oak_planks");
-        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: planks, count: 1 });
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(planks, 1));
         // No home yet: one plank is not enough for a table.
         lay(&mut server, "base:crafting_table", 1);
         assert!(grid(&server).is_empty());
@@ -383,11 +406,73 @@ mod tests {
         assert!(grid(&server).is_empty());
         assert_eq!(barrel(&server), 3);
         // From the pack alone, it is no lay from the stores.
-        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack { item: planks, count: 4 });
+        server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(planks, 4));
         lay(&mut server, "base:crafting_table", 1);
         assert_eq!(grid(&server), vec![(planks, 1); 4]);
         assert_eq!(laid(&server), 1, "only a lay that took from a store counts");
     }
+    /// A later age's station (a pit kiln, `age: "farm"`) is refused until its rite is done,
+    /// whatever lies in the grid; then it is made as any other.
+    #[test]
+    fn a_later_ages_station_waits_for_its_rite() {
+        let mut server = fixture();
+        let (cobble, campfire, kiln) = (id(&server, "base:cobblestone"), id(&server, "base:campfire"), id(&server, "base:pit_kiln"));
+        let table = IVec3::new(10, FLOOR + 1, 8);
+        server.set_block(table, id(&server, "base:crafting_table"));
+        server.players.get_mut(&1).unwrap().station = Some(table);
+        assert!(server.at_table(1), "at the table, so only the age stands in the way");
+        let craft = server.content.actions.expect("core:craft");
+        let made = |server: &mut Server| {
+            let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
+            inventory.craft = [None; GRID];
+            for (cell, item) in [(0, cobble), (2, cobble), (3, cobble), (4, campfire), (5, cobble)] {
+                inventory.craft[cell] = Some(ItemStack::new(item, 1));
+            }
+            server.propose(1, craft, ActionTarget::Slot(0), Instant::now());
+            server.players[&1].inventory.slots.iter().flatten().filter(|s| s.item == kiln).count()
+        };
+        let rite = server.content.quests.rite("farm").expect("a rite opens the Farm age").name.clone();
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        let refused = || {
+            let mut keys = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let voxmar_protocol::ServerMessage::Refused { why: Words::Key(key, _) } = message {
+                    keys.push(key);
+                }
+            }
+            keys
+        };
+        assert_eq!(made(&mut server), 0, "the Farm age is not open");
+        assert_eq!(refused(), ["craft.age"], "the grid's craft says why");
+        server.players.get_mut(&1).unwrap().inventory.craft = [None; GRID];
+        lay(&mut server, "base:pit_kiln", 1);
+        assert_eq!(refused(), ["craft.age"], "laying it from the book says why");
+        server.players.get_mut(&1).unwrap().quests_done.push(rite);
+        assert_eq!(made(&mut server), 1, "its rite done, the kiln is made");
+    }
+
+    /// The Farm age's hand stations (quern, spindle, loom) wait for its rite as the kiln does.
+    #[test]
+    fn the_farm_hand_stations_wait_for_its_rite() {
+        let mut server = fixture();
+        let table = IVec3::new(10, FLOOR + 1, 8);
+        server.set_block(table, id(&server, "base:crafting_table"));
+        server.players.get_mut(&1).unwrap().station = Some(table);
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        for station in ["base:quern_stones", "base:spindle_stand", "base:loom_frame"] {
+            lay(&mut server, station, 1);
+            let mut keys = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let voxmar_protocol::ServerMessage::Refused { why: Words::Key(key, _) } = message {
+                    keys.push(key);
+                }
+            }
+            assert_eq!(keys, ["craft.age"], "{station} before the Farm age");
+        }
+    }
+
     /// A log split near a chopping block gives six planks, away from one the grid's four;
     /// the way made near one lays only near one.
     #[test]
@@ -397,7 +482,7 @@ mod tests {
         let craft = server.content.actions.expect("core:craft");
         let carried = |server: &Server| server.players[&1].inventory.slots.iter().flatten().filter(|s| s.item == planks).map(|s| s.count as u32).sum::<u32>();
         let split = |server: &mut Server| {
-            server.players.get_mut(&1).unwrap().inventory.craft[0] = Some(ItemStack { item: log, count: 1 });
+            server.players.get_mut(&1).unwrap().inventory.craft[0] = Some(ItemStack::new(log, 1));
             server.propose(1, craft, ActionTarget::Slot(0), Instant::now());
         };
         split(&mut server);
@@ -406,6 +491,8 @@ mod tests {
         server.set_block(block, id(&server, "base:chopping_block"));
         split(&mut server);
         assert_eq!(carried(&server), 10, "two more by one");
+        let tallies = &server.players[&1].tallies;
+        assert_eq!((tallies.get("crafted:base:oak_planks"), tallies.get("crafted_near:chopping_block:base:oak_planks")), (Some(&10), Some(&6)), "made near it, tallied for quests");
         // Its way in the recipe book lays only near one.
         let book = voxmar_engine::recipe_book::RecipeBook::new(&server.content);
         let first = book
@@ -416,7 +503,7 @@ mod tests {
                 _ => None,
             })
             .expect("a way near a chopping block");
-        server.players.get_mut(&1).unwrap().inventory.slots[1] = Some(ItemStack { item: log, count: 2 });
+        server.players.get_mut(&1).unwrap().inventory.slots[1] = Some(ItemStack::new(log, 2));
         let action = server.content.actions.expect("core:lay");
         server.propose(1, action, ActionTarget::Recipe { first, ways: 1, count: 1 }, Instant::now());
         assert_eq!(grid(&server), vec![(log, 1)]);
@@ -425,7 +512,7 @@ mod tests {
         lay(&mut server, "base:oak_planks", 1);
         assert_eq!(grid(&server), vec![(log, 1)], "the plain way, laid by a chopping block");
         server.players.get_mut(&1).unwrap().inventory.craft = [None; GRID];
-        server.players.get_mut(&1).unwrap().inventory.slots[1] = Some(ItemStack { item: log, count: 2 });
+        server.players.get_mut(&1).unwrap().inventory.slots[1] = Some(ItemStack::new(log, 2));
         server.set_block(block, BlockId::AIR);
         server.propose(1, action, ActionTarget::Recipe { first, ways: 1, count: 1 }, Instant::now());
         assert!(grid(&server).is_empty(), "not near one");
@@ -441,8 +528,8 @@ mod tests {
         let item = id(server, held);
         let player = server.players.get_mut(&1).unwrap();
         player.inventory = Default::default();
-        player.inventory.slots[0] = Some(ItemStack { item, count: in_hand });
-        player.inventory.slots[5] = (packed > 0).then_some(ItemStack { item, count: packed });
+        player.inventory.slots[0] = Some(ItemStack::new(item, in_hand));
+        player.inventory.slots[5] = (packed > 0).then_some(ItemStack::new(item, packed));
         player.selected = 0;
         server.use_station(1, at);
     }

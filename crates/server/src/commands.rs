@@ -188,6 +188,7 @@ impl Server {
             Run::SetBlock => self.set_block_command(id, args),
             Run::Fill => self.fill(id, args),
             Run::Give => self.give(id, args),
+            Run::Wear => self.wear_command(id, args),
             Run::Clear => self.clear(id, args),
             Run::Effect => self.effect_command(id, args),
             Run::Kill => self.kill_command(id),
@@ -205,6 +206,7 @@ impl Server {
                 Some(what) => self.creatures_command(id, what, args.get(1).map(String::as_str)),
             },
             Run::Skill => self.skill_command(id, args),
+            Run::Quest => self.quest_command(id, args),
             Run::Machine => self.machine_command(id, args),
             Run::Wander => self.wander_command(id, args),
             Run::Home => self.home_command(id),
@@ -578,6 +580,12 @@ impl Server {
             }
             return Ok(Words::key("command.creatures.dispersed").with("count", Words::text(wild.len())));
         }
+        // How many of the settlements' people near players are out, of those due out.
+        if what == "people" && species.is_none() {
+            let (out, due, seen) = self.people_out(at);
+            let seen = Words::List(seen.into_iter().map(Words::text).collect());
+            return Ok(Words::key("command.creatures.people").with("out", Words::text(out)).with("due", Words::text(due)).with("seen", seen));
+        }
         // One of a settlement's people near makes a bark: `/creatures bark greet`.
         if what == "bark" {
             let (name, made) = species.and_then(|name| Some((name, self.bark_command(at, name)?))).ok_or_else(|| Words::key("command.creatures.bark_what"))?;
@@ -643,6 +651,9 @@ impl Server {
                     }
                     creature.body.velocity = voxmar_engine::glam::Vec3::ZERO;
                 }
+                // Let go of a hold now (`hold`, `/summon ... held`): the gate's Climb step lets
+                // its wolf go at the foot of the step.
+                "release" => creature.held_until = tick,
                 "hasten" => {
                     creature.products_due.iter_mut().for_each(|due| *due = tick);
                     if creature.grows_up.is_some() {
@@ -678,6 +689,23 @@ impl Server {
         }
         p.changed(voxmar_engine::traits::SKILLS);
         Ok(Words::key("command.skill.done").with("level", Words::text(level)))
+    }
+
+    /// `/quest <quest>`: marks a quest done for the player, by its full name or its own
+    /// (`the_farm_age`); what it pays waits to be claimed.
+    fn quest_command(&mut self, id: Source, args: &[String]) -> Reply {
+        let player = Self::me(id)?;
+        let [name] = args else { return Err(Words::key("command.quest.what")) };
+        let quests = self.content.quests.clone();
+        let quest = quests.iter().find(|q| q.name == *name || q.name.rsplit(':').next() == Some(name.as_str())).ok_or_else(|| Words::key("command.quest.unknown").with("name", name.as_str()))?;
+        let title = Words::Own(voxmar_engine::lang::def_key("quest", &quest.name), quest.title.clone());
+        if self.players[&player].quests_done.contains(&quest.name) {
+            return Err(Words::key("command.quest.already").with("quest", title));
+        }
+        self.finish_quest(player, &quest.name, std::slice::from_ref(&quest.name));
+        // Told at once, as a claim is: the stations its rite opens show open straight away.
+        self.update_quests(player);
+        Ok(Words::key("command.quest.done").with("quest", title))
     }
 
     /// `/creatures`: the creatures within 64 blocks.
@@ -830,13 +858,9 @@ impl Server {
         }
         let position = self.position_of(id);
         let from = IVec2::new(position.x.floor() as i32, position.z.floor() as i32);
-        let nearest = self
-            .overworld
-            .settlements_near(from, radius)
-            .into_iter()
-            .map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s))
-            .filter(|(offset, s)| offset.as_vec2().length() <= radius as f32 && size.is_none_or(|size| *size == s.size))
-            .min_by_key(|(offset, _)| offset.length_squared());
+        // Nearest first, planning only the squares nearer than the answer: every square
+        // within a radius of thousands planned at once held the server's tick for seconds.
+        let nearest = self.overworld.nearest_settlement(from, radius, |s| size.is_none_or(|size| *size == s.size)).map(|s| (IVec2::new(s.centre.x, s.centre.z) - from, s));
         match nearest {
             Some((offset, s)) => Ok(Words::key("command.locate.settlement")
                 .with("name", Words::Name(vec![("en".into(), s.name.0.clone()), ("ja".into(), s.name.1.clone())]))
@@ -959,11 +983,44 @@ impl Server {
         while spilled > 0 {
             let count = spilled.min(MAX_STACK as u16) as u8;
             let body = voxmar_engine::dropped::Loose::new(feet, Vec3::ZERO);
-            self.items.spawn(ItemStack { item: block, count }, body, 0.0);
+            self.items.spawn(ItemStack::new(block, count), body, 0.0);
             spilled -= count as u16;
         }
         let gave = Words::key("command.give").with("count", Words::text(count)).with("block", Words::Block(self.content.blocks.def(block).name.clone()));
         if left > 0 { Ok(Words::key("command.give.spilled").with("gave", gave).with("left", Words::text(left))) } else { Ok(gave) }
+    }
+
+    /// `/wear <uses left> [hotbar slot]`: the tool in hand (or in that hotbar slot, counted
+    /// from 1) worn down (or mended) to that many uses left, or what burns there (a
+    /// firebrand) to that many seconds. Naming the slot needs no wait for the server to hear
+    /// which slot is in hand.
+    pub(crate) fn wear_command(&mut self, source: Source, args: &[String]) -> Reply {
+        let player = self.players.get_mut(&Self::me(source)?).ok_or_else(|| Words::key("command.error.nobody_to_give_to"))?;
+        let (left, slot) = match args {
+            [left] => (left, player.selected),
+            [left, slot] => {
+                let most = voxmar_engine::inventory::HOTBAR_SLOTS;
+                let slot = slot
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| (1..=most).contains(n))
+                    .ok_or_else(|| Words::key("command.error.not_a_count").with("word", slot.as_str()).with("max", Words::text(most)))?;
+                (left, slot - 1)
+            }
+            _ => return Err(Words::key("command.error.wear_what")),
+        };
+        let held = player.inventory.get(slot);
+        let uses = held.map_or(0, |stack| self.content.tools.life(stack.item));
+        let (Some(mut stack), true) = (held, uses > 0) else { return Err(Words::key("command.error.wear_nothing")) };
+        let left = left
+            .parse::<u16>()
+            .ok()
+            .filter(|n| (1..=uses).contains(n))
+            .ok_or_else(|| Words::key("command.error.not_a_count").with("word", left.as_str()).with("max", Words::text(uses)))?;
+        stack.wear = uses - left;
+        player.inventory.slots[slot] = Some(stack);
+        player.changed(voxmar_engine::traits::INVENTORY);
+        Ok(Words::key("command.wear").with("block", Words::Block(self.content.blocks.def(stack.item).name.clone())).with("left", Words::text(left)).with("uses", Words::text(uses)))
     }
 
     fn clear(&mut self, source: Source, args: &[String]) -> Reply {
@@ -1073,7 +1130,7 @@ impl Server {
             None => self.position_of(source),
         };
         let body = voxmar_engine::dropped::Loose::new(position, Vec3::ZERO);
-        self.items.spawn(ItemStack { item: block, count }, body, voxmar_engine::dropped::PICKUP_DELAY);
+        self.items.spawn(ItemStack::new(block, count), body, voxmar_engine::dropped::PICKUP_DELAY);
         Ok(Words::key("command.drop")
             .with("count", Words::text(count))
             .with("block", Words::Block(self.content.blocks.def(block).name.clone()))
@@ -1397,6 +1454,7 @@ fn home_needs(lacks: &[voxmar_engine::effect::Lack]) -> Words {
             .iter()
             .map(|lack| match lack {
                 Lack::Roof => Words::key("home.lack.roof"),
+                Lack::Sky => Words::key("home.lack.sky"),
                 Lack::Away => Words::key("home.lack.away"),
                 Lack::Tag { tag, have, need } => Words::key("home.lack.tag").with("tag", Words::Own(format!("home.tag.{tag}"), tag.replace('_', " "))).with("have", Words::text(have)).with("need", Words::text(need)),
                 Lack::Walls { shelter, have, need } => Words::key("home.lack.walls").with("shelter", Words::key(&format!("home.shelter.{}", shelter.name()))).with("have", Words::text(have)).with("need", Words::text(need)),

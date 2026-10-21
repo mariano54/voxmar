@@ -24,7 +24,11 @@ reward, shown first), tasks, after, rewards. A book of its own can go in a
 the topics follow in byte order (uppercase before lowercase), and the quests are held in that
 order. A quest may come `after` one in any file. A quest name written twice, in one file or
 two, fails the load naming both files, across packages too: a mod cannot replace a quest by
-writing its name.
+writing its name. Quests that come after each other (one after itself, or a loop of them
+with no choice out) would never open, so the load refuses them, naming the loop.
+A file no part of the game reads (a misspelt `quest.ron`) still loads, and
+the load notes it with the likeliest name meant (`zz_mod/quest.ron is read by nothing (meant
+quests.ron?)`); the names other crates read are `content::READ_ELSEWHERE`.
 Goals:
 
 | Goal | Reads |
@@ -64,7 +68,7 @@ Quests done, quests claimed and the tallies are saved with the player.
 ## Claiming
 
 Finishing a quest pays nothing by itself. A done quest with rewards waits in the quest
-book: it glows gold on the web, its chapter shows a gold "!", the chat says so, and its
+book: its shape on the web is gold with a "!" in its corner, its chapter shows a gold "!", the chat says so, and its
 page has a Claim button (`ClientMessage::ClaimQuest`) beside the rewards, which list the
 experience and the items. The server then gives the items and the experience once. A quest
 that pays nothing is claimed as it finishes. If the pack cannot hold every item, nothing
@@ -151,7 +155,7 @@ so that what the game already does is something the book points to:
   wandering kind with what the player does next anyway, so meeting them is a side step,
   never a wait. Nomad: Coal by Road (the coal carters or the benighted miners, and sixteen
   torches; pays four coal). Farm: Fired Whole (the clay diggers fire your clay, and
-  twenty-four fired in all; pays twelve clay), The Last Sheaf (the harvest home procession,
+  twenty-four fired in all; pays six gold coins), The Last Sheaf (the harvest home procession,
   and twelve wheat brought in; pays eight wheat seed) and Mice in the Stores (follow the
   piper to the end of his tune, and a pantry or larder at home; pays four seed mix).
 - **Wanderers that come back** (the Nomad thread's hooks, Oct 13): quests that ask for a
@@ -195,9 +199,9 @@ so that what the game already does is something the book points to:
 ## Quick upgrades
 
 Oct 13 (docs/first-days.md, "Quick upgrades on common resources"): Timber asks for four logs
-by hand, the planks for the table, sticks and both wooden tools, and An Axe to It (after
-Crafting Table) asks for the wooden axe and eight logs chopped with it, so the first tool
-upgrade comes in the first minute. First Night tells the player the stone axe hits three
+with a flint axe, the planks for the table and sticks, and An Axe to It (after Crafting
+Table) asks for a spare flint axe and eight logs chopped with it (Oct 15: there are no
+wooden tools). First Night tells the player the stone axe hits three
 times as hard as a fist.
 
 ## Structure (Oct 13)
@@ -208,7 +212,7 @@ on the spine gated by a side quest, and a quest that is several steps shown as s
 
 | Check | Before | After |
 |---|---|---|
-| A clear goal per chapter | Nomad's goal Homestead Hearth ("the Farm age opens"); Farm's goal the lit Crucible Kiln ("starts the Bronze age"), with First Bronze after it as the bridge to the next age | Unchanged: both goals are the last spine quest their text names as the age's end |
+| A clear goal per chapter | Nomad's goal Homestead Hearth ("the Farm age opens"; since Oct 15 its rite, The Farm Age, follows it and opens the age); Farm's goal the lit Crucible Kiln ("starts the Bronze age"), with First Bronze after it as the bridge to the next age | Unchanged: both goals are the last spine quest their text names as the age's end |
 | Side branches read as optional | No spine quest comes after a side quest (the_potter, brick_by_brick and crucible_kiln come only after spine quests or the hearth); the wanderer quests say "may" | Unchanged |
 | Nothing unreachable or a dead end | Every `after` names a quest that exists (load-checked); no Nomad quest waits on a Farm one; no Craft or Level goal asks more than Engineering 10 (The Crucible). A Place to Pray stood in the Farm tab with no `after`, so it could finish before the Farm age opened. Stone in Hand had no `after`, so the spine read as three loose starts | A Place to Pray comes after Homestead Hearth like the rest of its tab; Stone in Hand after Crafting Table, so the Nomad spine reads Crafting Table, Stone in Hand, then First Night's line (First Night stays pinned at the start, with no `after`) |
 | Several steps shown as several | Homestead Hearth was one goal (`Home`) for a hearthstone, two chimneys and the lighting | Three parts: the hearthstone, two chimneys, and the lit hearth (`Home`). The book ticks each as it is made |
@@ -263,7 +267,7 @@ Twine and Thong and the rest beside the first three), so a newcomer met a wall b
 their first tool. Now four quests open at the start, the three pinned ones (Look It Up,
 Timber, First Night) and the Crafting Table, and every other path starts from a step the
 main line reaches: the crafting table, the stone tools, the first night or the bed. Each path runs as a chain:
-mining runs A Pile of Stone, Dig In, Coal and Cinders, First Ore, Stockpile; fighting runs
+mining runs A Pile of Stone and Dig In, and Black Flecks (a coal sample lifted with flint, or one coal ore, from the Crafting Table), Coal and Cinders (twelve coal, after it and Stone in Hand; Torchlight waits on it), First Ore, Stockpile; fighting runs
 Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw; the camp runs Make
 Camp, Company at Camp, Pantry Shelves, From the Shelves, with A Lit Corner and A Bench to
 Work At beside it; grain runs A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore.
@@ -300,6 +304,171 @@ does not know.
 
 These counts come from the quest data and twelve logs of the kiln bot; along the bot's run
 a Farm count includes every quest open since the hearth was lit.
+
+## Hooks for the new features (Oct 14)
+
+Each new feature has a quest that teaches it, in two parts the book counts one by one:
+
+| Quest | Age, path, after | Parts |
+|---|---|---|
+| A Chopping Block | Nomad, start; An Axe to It, A Bed of Your Own (Crafting 2 by then) and Timber | one set down; twelve planks split by it |
+| Set a Snare | Nomad, hunter; Twine and Thong | one set down; a catch taken from a trap |
+| Old Tusk | Nomad, hunter; Hide and Seek and Raise Your Guard | a flint spear made; Old Tusk killed |
+| Light in the Window | Farm, home; A Homely Home | two hide windows made; two set down |
+| A Trough for the Pen | Farm, husbandry; Hens in a Row | a feed trough set down; eight items put in it |
+| A Full Granary | Farm, farming; A Well by the Field | 64 wheat plants harvested; 32 wheat kept |
+
+Twine and Thong also takes ten twine carried, since a knife cuts twine from tall grass, and
+its text and A Sharp Edge's say so. First Harvest says a stone hoe reaps the ripe crops around the one cut, and A Full Granary is the harvest that pays for it. Four goals came with them, each reading a tally:
+`Placed(block, n)` (blocks set from the hand that still stand, by the item: `placed`,
+tallied only for a block a `Placed` of a quest the player has not finished names; the world
+keeps each such cell with its owner and item (`WorldMeta::quest_placed`), and the block
+counts while the one in its cell still drops that item, so a sprung snare still stands and
+a snare set over itself counts once; broken, built over or washed away, it comes off,
+straight away if its owner is playing, else as they join, when their `placed` tallies are
+counted again from the world's cells; a quest finished drops the cells no open quest still
+counts),
+`Stocked(item, store, n)` (that item put in a store of that block and left there:
+`stocked:STORE:ITEM`, in `push_store`, net of what is taken back out), `CraftNear(item,
+near, n)` (made by a recipe with `near`, by that tag: `crafted_near:TAG`, beside `crafted`)
+and `Trapped(creature, n)` (a catch taken from a sprung trap: `trapped`; whoever empties
+the snare gets the credit and the catch, as with a shared lit fire, until traps have
+owners). Loading refuses a `Stocked` store that is not a store, a `CraftNear` tag no
+recipe is made near, and a `Trapped` creature no trap catches. A tally goal naming one
+full name reads its one key; only `any` and `tag:` look across a kind's keys. Nomad has 68 quests, Farm 99, each counting its rite.
+
+## An age's rite (Oct 15)
+
+The next age's stations wait for its rite. A quest with `opens: Some("farm")` is the rite
+of that age (one to an age, and never its own), and a recipe with `age: "farm"` is
+refused, on the server (`allowed_recipes`) and greyed in Can Make and the grid ("opens in
+the Farm Age"), until its rite is done. A recipe naming an age no quest opens fails to
+load. Two goals count the age's own quests, read from what is done rather than a tally:
+`QuestsDone(age, n)` and `Capstones(age, n)`, the latter only quests marked
+`capstone: true` (a path's last quest). Loading refuses a count that is 0, of an age no
+quest is in, or more than the age holds besides the rite.
+
+| Rite | After | Parts | Opens |
+|---|---|---|---|
+| The Farm Age | Homestead Hearth | 20 Nomad quests; 3 Nomad path capstones | pit kiln, crucible, herb planter, stone altar, earth clamp, cooking pot, well, cottage stove, compost heap, skep |
+| The Bronze Age | Crucible Kiln | 30 Farm quests; 4 Farm path capstones | (nothing yet) |
+
+The Farm quests that followed Homestead Hearth follow The Farm Age.
+
+- **Old saves.** A rite also finishes when any quest of the age it opens is done
+  (`QuestRegistry::behind`), so a save from before rites that had reached the Farm age keeps
+  its stations. That is safe only while no quest of the age can be done before its rite, so
+  loading refuses a quest of the age that any way round skips the rite (every `after` is
+  needed, so one that is the rite or follows it is enough; of an `a|b`, both must).
+- **Refused out loud.** A locked recipe crafted in the grid or laid from the book is refused
+  with `craft.age` ("That opens in the Farm Age"), listed under `sent` in `refusals.ron`.
+  Can Make shows it greyed ("Cooking Pot opens in the Farm Age") once half of it is held, after
+  everything that is only short of something, so it never crowds out what can be made.
+- **Capstones are marked.** A quest with `capstone: true` has a gold corner on its cell in the
+  book and a line in its detail ("A path's capstone, gold at its corner"); the rites' texts
+  point to the mark. The gate's `quests: capstones` checks each one drawn carries it.
+- **A capstone closes its whole path.** It waits, through its `after` chain, on every quest
+  of its age and branch but the age's rite and the side quests (`side: true`: chance meetings,
+  conveniences such as pouches); loading refuses one that does not, naming the quests left
+  out. The Farm book's side marks are placeholders until its own pass (piece 13) chains it.
+- `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
+  it for The Farm Age until piece 12 has it earn the rite.
+
+## The Farm book (Oct 20)
+
+The Farm quests stay in `base/quests.ron`'s Farm block, and the road to the lit Crucible
+Kiln is laid out like a long modpack's book: several paths that each make one part of the
+kiln, meeting at the end, with a way round at each fork. Each step is something done in the world (gathered, fired, stored, set down), not
+only crafted.
+
+| Path | Quests to the kiln | Ways round |
+|---|---|---|
+| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
+| Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
+| Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp | |
+| Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln; side quests A Keen Edge (a copper tool mended at the grindstone, after Copper Kit) and A Bronze Edge (a bronze pickaxe, after First Bronze and A Keen Edge) | |
+
+Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore run come after
+it (Hammer and Anvil, from the kiln-age PR, goes before The Crucible when it lands). Crucible
+Kiln waits on all three of its parts: the crucible, the ring of bricks and the charge. The
+Bronze Age rite is unchanged (30 Farm quests, 4 Farm capstones). Rewards that handed out
+what the route asks for (charcoal, clay) are gone, so the charge and the clay are earned; A
+Kiln Load's four kiln bricks stay, by an explicit call, and the rest of the bricks are
+shaped (Brick by Brick counts only those); Brick by Brick pays the Engineering The Crucible asks for until Hammer and Anvil
+does.
+
+Every Farm path's capstone comes after all of its path's quests, directly or through what
+comes before them, but those marked `side: true` (met on the road, the bees and meadow,
+the bow, ducks and such) and the age's rite; `content.rs`
+`a_farm_capstone_comes_after_all_of_its_path` checks it. The kiln bot
+(`a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln`) walks the whole route,
+one quest at a time, and lights the kiln about 330 server seconds in.
+
+Saves (pre-release, accepted): a quest's finished state is kept by name, but quests whose
+tasks changed count from what a save already tallied: Brick by Brick now counts bricks
+crafted rather than held, The Crucible and A Pit Kiln also want theirs set down, and A
+Kiln Yard is gone. A save part way along may have a step to do again.
+
+## Fishing in the Farm book (Oct 20)
+
+Fishing was the Farm book's thinnest path (Patient Angler and Many Kinds of Fish). Five
+side quests (`side: true`) now run along it. Each one teaches where or how a fish bites,
+or what a catch is for, and each pays in bread: no reward hands over an item that a home
+quest's lesson teaches (a rug or a cushion would meet A Rug Underfoot, A Cosy Home or Heart
+of the Home before the player made one). `Ate("tag:fish")` counts raw fish too, as no tag
+names cooked fish alone:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Salt and Sardines | Patient Angler | Sardines bite only in the sea: four caught and cooked | Fishing 80, 2 bread |
+| Still Water Perch | Patient Angler | Perch bite in fresh water from Fishing 10: three caught | Cooking 60, 2 bread |
+| Cold Water Trout | Still Water Perch | The water's climate matters: two trout from cold fresh water (Fishing 15), cooked | Fishing 120, 4 bread |
+| Three Waters | Salt and Sardines, Still Water Perch | A fourth kind past minnow, sardine and perch: a trout or a cod | Fishing 150, 4 bread |
+| Fish on the Table | Salt and Sardines | A lit hearth, eight fish cooked and six eaten | Cooking 120, 4 bread |
+
+None of them is in a capstone's `after`, so Many Kinds of Fish still closes the path.
+
+## Crafting in the Farm book (Oct 20)
+
+The Farm book's Crafting path had only its capstone, Master and Journeyman. Four side
+quests (`side: true`) now teach what the bench makes from what the Farm age brings: trophies,
+cloth and dyes. Each pays in bread:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Fang and Stick | The Farm Age | A fang (wolves, lynx, bears) and a stick make a fang dagger (Crafting 10) | Crafting 60, 2 bread |
+| Lanterns of Cloth | A Rug Underfoot | Paper lanterns (Crafting 6): two made and set down at home, each a light | Crafting 60, 2 bread |
+| A Dooryard | Lanterns of Cloth | An awning and bunting made, then the Dooryard felt (an awning and two yard things under open sky) | Crafting 100, 4 bread |
+| Five Colours | A Rug Underfoot | Five dyed cloths (indigo, white, red, green, amber) and the wind flags they make | Crafting 120, 4 bread |
+
+## About camp in the Nomad book (Oct 20)
+
+Four side quests (`side: true`) join the Nomad book's first path, each teaching a first tool
+or a way to shape what is built, and each paying bread:
+
+| Quest | After | Teaches | Pays |
+|---|---|---|---|
+| Flint First | Crafting Table | The flint pickaxe and the digging stick, the tools before stone | Engineering 20, 1 bread |
+| A Coin Purse | Twine and Thong | A hide and two twine hold a thousand coins in one slot | Crafting 20, 1 bread |
+| Steps and Slabs | A Chopping Block, A Bench to Work At | Slabs and stairs made, two of each set down | Construction 30, 1 bread |
+| A Fence and a Gate | Steps and Slabs, A Bench to Work At | Posts, fences and a gate: a fence is two high to creatures; the gate swings open | Construction 40, 2 bread |
+
+## Fire, food and night in the Nomad book (Oct 20)
+
+Three side quests (`side: true`) on the way to the lit Homestead Hearth teach what a fire, a
+meal and a home at night give, each by the buff it names (`Felt`), so they hold whatever
+the buff comes to need. They sit on the cooking and home paths: the main line's walk
+(`the_main_quest_line_earns_every_level_it_asks_for`) counts no buffs. Each pays bread:
+
+| Quest | Path | After | Teaches | Pays |
+|---|---|---|---|---|
+| A Hot Meal | Cooking | First Night | Eating when hurt; cooked meat leaves you Hearty (`hearty`) | Cooking 20, 1 bread |
+| By the Fire | Home | First Night, Crafting Table | A stool made, and sitting by the fire (`fireside`): heal half as fast again, warmed | Construction 20, 1 bread |
+| An Evening In | Home | Homestead Hearth | After dark, under the roof within four blocks of the lit hearth (`evening_in`) | Construction 40, 2 bread |
+
+A Fence and a Gate counts `plain_fence`, the straight length alone, so gates and corners
+(which carry `fence` too) are not its six fences; `content.rs`
+`a_fence_and_a_gate_wants_fences_not_gates` holds it.
 
 ## Readable to a newcomer (Oct 13)
 
@@ -391,8 +560,8 @@ that quest needs.
 | Milk | 5 min | The Milk Pail | A Full Pen |
 | A herb growing back | Its regrowth | Herb Garden | A Kitchen Garden (opens with it) |
 | Night, which cannot be slept away | A third of each 20-minute day | Torchlight | Digging coal by torchlight; Meat on the Fire and crafting at home |
-| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole; An Earth Clamp smoulders beside it |
-| An earth clamp smouldering | 1 min a load | An Earth Clamp | Firing clay by hand at the pit kiln, digging the next load, Red Metal |
+| Long clay firing | 17 + 55 s of firing for the bot (was 68 + 80) | A Kiln Load | Earthenware, A Place to Pray (its stone fires in the same kiln), Fired Whole |
+| A charcoal clamp smouldering | 2 game hours (about 150 s of the quest-book bot's time, which runs about 75 s a game hour) | Charcoal | Brick by Brick: firing clay at the pit kiln to A Kiln Load's forty and crafting kiln bricks; A Second Clamp |
 | A drying rack drying | 10 min (5 by a fire) | Hung to Dry | Hunting for the next load; Trail Rations |
 | A compost heap rotting | 15 min (10 by water) | A Compost Heap | Sowing and tending the field it will feed, the compost's next part |
 
@@ -430,3 +599,29 @@ Quests that teach it:
 - **A Stone's Throw** (Nomad, combat, after Twine and Thong): craft a sling, reach Ranged 2.
 - **Bow and Arrow** (Farm, combat, after Homestead Hearth): craft a short bow and eight
   arrows, reach Ranged 5.
+
+## The Nomad book in eight paths (Oct 20)
+
+The Nomad chapter is `base/quests_nomad.ron` (read after `quests.ron`, docs above), drawn
+as eight paths, each four to seven quests deep and ending in one capstone. Four of the old
+twelve paths folded into others: Crafting into First Steps, Comforts into Home, Farming into
+Food (was Cooking) and Fishing into Hunting and Fishing. Quest names, and so saves and
+language keys, are unchanged.
+
+| Path | Quests | Capstone |
+|---|---|---|
+| First Steps | Timber, Crafting Table, An Axe to It, A Chopping Block, A Sharp Edge, Twine and Thong | A Full Stone Kit |
+| The Hearth | Look It Up, First Night, Stone in Hand, A Bed of Your Own, Torchlight | Homestead Hearth (then the rite, The Farm Age) |
+| Home | Make Camp, A Lit Corner, A Bench to Work At, Pockets, Company at Camp, Pantry Shelves | From the Shelves |
+| Food | Meat on the Fire, A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore, Break Ground, Tools for Animals, Hung to Dry, Trail Rations | A Varied Table |
+| Hunting and Fishing | A Tempting Bite, A Friend in the Wild, Small Game, Hide and Seek, Set a Snare, Rod and Line, First Catch, A Fish Supper | Old Tusk |
+| Combat | Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw, Hide Wraps, Raise Your Guard | Hard to Put Down |
+| Mining | A Pile of Stone, Dig In, Black Flecks, Reading the Ground, Coal and Cinders, Following the Seam, Red Metal Underfoot, Stockpile | The First Mine |
+| The Wilds | Where to Settle, Wild Neighbours, Lay of the Land, Folk of the Road, A Kind Turn, Found and Thanked, Something for Something, The Market Road, Caught in the Rain, Under Lock and Key, Light Sleepers | Coal by Road |
+
+The Mining path gains three quests on the coal ladder (piece 7's second half): Reading the
+Ground (three ore samples of any kind, after Black Flecks: the first over each vein teaches
+prospecting), Following the Seam (32 coal ore and Mining 8, after Coal and Cinders) and The
+First Mine (48 coal ore, 12 copper ore and Mining 12, after Following the Seam and
+Stockpile). Stockpile moved from First Steps to Mining, where it already followed Red Metal
+Underfoot. Red Metal Underfoot now says copper wants a stone pickaxe.

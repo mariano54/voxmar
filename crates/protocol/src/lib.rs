@@ -45,7 +45,15 @@ pub use voxmar_engine::weather::Weather;
 // 48: ServerMessage::Smoulders, the blocks about to catch fire, for their smoke.
 // 49: a seventh worn slot, the charm (inventory::WORN_SLOTS), moving an open store's slots one
 // on.
-pub const PROTOCOL_VERSION: u32 = 49;
+// 50: kept as a gap.
+// 51: how another player looks up or down and what is in their hand (PlayerView::pitch, held).
+// 54: what another player is doing in a fight (PlayerView::fight): their swing, blows, guard;
+// and Players told as they change (seen, gone), names once (players who left named once more
+// with no name, to be forgotten), only those near enough.
+// 55 is unused.
+// 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
+// 57: tools wear (ItemStack::wear) and ServerMessage::ToolWore.
+pub const PROTOCOL_VERSION: u32 = 57;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -166,7 +174,13 @@ pub enum ServerMessage {
     /// Authoritative position, after a rejected move, a command or a respawn; `seq` counts
     /// the player's teleports, for `PlayerInput::teleport`.
     Teleport { position: Vec3, seq: u32 },
-    Players { players: Vec<PlayerView> },
+    /// Other players near enough to see (`Limits::players_seen`), told as they change:
+    /// `seen` holds only those whose view changed since it was last sent (or who came into
+    /// sight), `gone` those who left or went out of sight. `names`: the names of players
+    /// out of sight not told before (or renamed), so a creature they keep shows who keeps it
+    /// however far off they are; an empty name for one who left the server, to forget. Sent
+    /// only when there is any.
+    Players { seen: Vec<PlayerView>, gone: Vec<PlayerId>, names: Vec<(PlayerId, String)> },
     /// The clocks, every second and whenever a command changes them: `tick` counts
     /// simulation ticks since the world began, at `TICKS_PER_SECOND`, and `day` is the
     /// time of day in ticks (0 at sunrise of the first day), which runs `day_speed` times
@@ -207,8 +221,9 @@ pub enum ServerMessage {
     Struck { creature: u32, damage: u16, killed: bool, blow: voxmar_engine::combat::Blow, pips: u8 },
     /// A creature's blow at the player came down: for `damage`, or turned aside as
     /// `defended` says. Every blow that comes down is answered; a wind-up a daze cuts short
-    /// comes to nothing and is not.
-    Hurt { creature: u32, damage: u16, defended: voxmar_engine::combat::Defended },
+    /// comes to nothing and is not. `spoiled`: the blow spoiled the player's shot being
+    /// drawn, so the client lets its draw go only when the server did.
+    Hurt { creature: u32, damage: u16, defended: voxmar_engine::combat::Defended, spoiled: bool },
     /// Asks for a `ClientMessage::Pong` straight back: the round trip it takes is how late
     /// the player sees what happens and answers it (fights judge guards and dodges by it).
     Ping { id: u32 },
@@ -229,6 +244,9 @@ pub enum ServerMessage {
     /// Blocks smouldering, about to catch fire (`fire.ron`), in order: sent whenever that
     /// changes, to everyone.
     Smoulders { at: Vec<IVec3> },
+    /// What the player holds wore down past its warning (`tool::Wear::warn`), or with
+    /// `broke` wore out and broke: the hand hears it, and a break shows a puff of chips.
+    ToolWore { item: BlockId, broke: bool },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between
@@ -311,10 +329,42 @@ pub enum ChatKind {
 }
 
 /// How other players see a player.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlayerView {
     pub id: PlayerId,
-    pub name: String,
+    /// Their name, sent once: when they come into sight not named before (in a view or in
+    /// `Players::names`), or if it changes. Else `None`, the name told before standing.
+    pub name: Option<String>,
     pub position: Vec3,
     pub yaw: f32,
+    /// How far they look up (positive) or down, radians.
+    pub pitch: f32,
+    /// What is in their hand.
+    pub held: Option<BlockId>,
+    /// What they are doing in a fight, as the server has it.
+    pub fight: FightView,
+}
+
+/// What a player is doing in a fight, for others to see it: all as the server judges it,
+/// so what others are shown is what struck.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct FightView {
+    /// The swing under way, if one is.
+    pub swing: Option<SwingView>,
+    /// Their swings landed so far, counted round: each change is a blow struck (or a shot
+    /// loosed).
+    pub struck: u8,
+    /// Whether their guard is up.
+    pub guard: bool,
+}
+
+/// A swing winding up (a bow drawing) or held for the beat.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SwingView {
+    /// Seconds into it; below 0 while it is held for the beat.
+    pub into: f32,
+    /// Its wind-up, seconds: it lands as `into` reaches this.
+    pub windup: f32,
+    /// Whether it is a shot (a bow or sling drawn), not a stroke.
+    pub shot: bool,
 }

@@ -154,6 +154,9 @@ pub struct MachineDef {
     /// (`{name}_cupboard`: each wood's cupboard).
     pub block: String,
     pub role: Role,
+    /// The heat its fuel must give (a fuel's `heat`): none asked unless given.
+    #[serde(default)]
+    pub heat: u8,
 }
 
 /// Something that burns, and for how long at full output.
@@ -163,6 +166,14 @@ pub struct FuelDef {
     /// An item, `tag:TAG` or `a|b`.
     pub item: String,
     pub seconds: f32,
+    /// How hot it burns, a tier: what a station's or machine's `heat` asks of its fuel (raw
+    /// wood 1, split firewood 2, charcoal and coal 3). 1 unless given.
+    #[serde(default = "heat_one")]
+    pub heat: u8,
+}
+
+fn heat_one() -> u8 {
+    1
 }
 
 #[derive(Deserialize, Default)]
@@ -356,6 +367,8 @@ pub struct Machine {
     pub processes: Vec<ProcessId>,
     /// What it takes, as a bin that `holds` only some things, sorted.
     pub holds: Option<Accepts>,
+    /// The heat its fuel must give (`MachineDef::heat`).
+    pub heat: u8,
 }
 
 impl Role {
@@ -492,7 +505,8 @@ pub struct MachineRegistry {
     machines: Vec<Machine>,
     by_block: FxHashMap<BlockId, usize>,
     /// What burns, for how long, and whether it was named by a tag.
-    fuels: Vec<(Accepts, f32, bool)>,
+    /// Each fuel: what it takes, seconds, whether it names a tag, and its heat.
+    fuels: Vec<(Accepts, f32, bool, u8)>,
     processes: Vec<Process>,
     walkers: Vec<String>,
     /// How the world drives wind and walked machines.
@@ -570,7 +584,7 @@ impl MachineRegistry {
                 let family: Vec<MachineDef> = blocks
                     .ids()
                     .filter(|&id| blocks.def(id).name.strip_prefix(prefix).and_then(|rest| rest.strip_suffix(suffix)).is_some_and(|fill| !fill.is_empty()))
-                    .map(|id| MachineDef { block: blocks.def(id).name.clone(), role: def.role.clone() })
+                    .map(|id| MachineDef { block: blocks.def(id).name.clone(), role: def.role.clone(), heat: def.heat })
                     .collect();
                 if family.is_empty() {
                     return Err(RegistryError(format!("machine: no block fits `{}`", def.block)));
@@ -604,10 +618,13 @@ impl MachineRegistry {
                     Role::Bin { holds: Some(holds), .. } => Some(accepts(holds, blocks).map_err(|e| RegistryError(format!("machine {}: holds {}", def.block, e.0)))?),
                     _ => None,
                 };
-                registry.machines.push(Machine { block, role: def.role, processes, holds });
+                registry.machines.push(Machine { block, role: def.role, processes, holds, heat: def.heat });
             }
             for fuel in file.fuels {
-                registry.fuels.push((accepts(&fuel.item, blocks)?, fuel.seconds.max(0.0), fuel.item.contains("tag:")));
+                if fuel.heat == 0 {
+                    return Err(RegistryError(format!("fuel {}: a heat of 1 or more", fuel.item)));
+                }
+                registry.fuels.push((accepts(&fuel.item, blocks)?, fuel.seconds.max(0.0), fuel.item.contains("tag:"), fuel.heat));
             }
             registry.walkers.extend(file.walkers);
             registry.walkers.retain(|w| !file.not_walkers.contains(w));
@@ -663,7 +680,21 @@ impl MachineRegistry {
     /// else the last tag taking it, so an item's own entry is never shortened by a tag and a
     /// later package may change what an earlier one said.
     pub fn burn_seconds(&self, item: BlockId) -> Option<f32> {
-        let last = |tagged: bool| self.fuels.iter().rev().find(|(accepts, _, tag)| *tag == tagged && accepts.binary_search(&item).is_ok()).map(|&(_, s, _)| s);
+        self.fuel(item).map(|&(_, seconds, _, _)| seconds)
+    }
+
+    /// How hot `item` burns, if it burns: by the same entry as its seconds.
+    pub fn fuel_heat(&self, item: BlockId) -> Option<u8> {
+        self.fuel(item).map(|&(_, _, _, heat)| heat)
+    }
+
+    /// How long `item` burns in `machine`, if it is a fuel hot enough for it.
+    pub fn burns_in(&self, machine: &Machine, item: BlockId) -> Option<f32> {
+        self.fuel(item).filter(|&&(_, _, _, heat)| heat >= machine.heat).map(|&(_, seconds, _, _)| seconds)
+    }
+
+    fn fuel(&self, item: BlockId) -> Option<&(Accepts, f32, bool, u8)> {
+        let last = |tagged: bool| self.fuels.iter().rev().find(|(accepts, _, tag, _)| *tag == tagged && accepts.binary_search(&item).is_ok());
         last(false).or_else(|| last(true))
     }
 
@@ -760,6 +791,26 @@ mod tests {
         assert_eq!(registry.burn_seconds(blocks.id("t:log").unwrap()), Some(15.0));
         assert!(registry.walks("t:aurochs") && registry.walks("m:goat"));
         assert!(!registry.walks("t:camel"), "taken away by the later package");
+    }
+
+    /// A fuel burns at its heat (1 unless given), by the same entry as its seconds; a
+    /// machine asking more heat takes only fuel that hot; a heat of 0 is refused.
+    #[test]
+    fn a_fuel_burns_at_its_heat_and_a_machine_takes_only_what_is_hot_enough() {
+        let blocks = blocks();
+        let file = |heat: &str| {
+            MachineRegistry::read(
+                "t",
+                &format!(r#"(machines: [(block: "crusher", role: Generator(carrier: Steam, power: 4.0, source: Fuel), heat: 2)], fuels: [(item: "tag:log", seconds: 15.0), (item: "ore", seconds: 80.0{heat})])"#),
+            )
+            .unwrap()
+        };
+        let registry = MachineRegistry::new(vec![file(", heat: 3")], Vec::new(), &blocks).unwrap();
+        let (log, ore) = (blocks.id("t:log").unwrap(), blocks.id("t:ore").unwrap());
+        assert_eq!((registry.fuel_heat(log), registry.fuel_heat(ore), registry.fuel_heat(blocks.id("t:dust").unwrap())), (Some(1), Some(3), None));
+        let boiler = registry.get(blocks.id("t:crusher").unwrap()).unwrap();
+        assert_eq!((registry.burns_in(boiler, log), registry.burns_in(boiler, ore)), (None, Some(80.0)), "a log too cool for it");
+        assert!(MachineRegistry::new(vec![file(", heat: 0")], Vec::new(), &blocks).is_err());
     }
 
     #[test]

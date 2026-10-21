@@ -153,6 +153,7 @@ changes don't move it, and checks:
 | prayers | C, the Prayers button, a click on the Bark Skin row, then shuts the screen and presses the first quick key | the book has a row for each prayer in the content; Bark Skin is on as the server says; the strip over the hotbar names it; the quick key turns it off again |
 | held | looks up at the open sky and takes an empty hand, an iron sword, a stone block and the empty hand again in turn, a shot each; then seals itself in a stone box and shoots the sword, and the empty hand, again | the sword and the block each change the lower right of the view by at least 1 level (and differ from each other by as much), and the sky by under 0.5 beyond its own drift between the two empty-hand shots (each held shot judged against the nearer of them); in the dark box the sword changes the lower right by under half what it did under the sky (the hand takes the light where the player stands) |
 | cook | a campfire on the pad, raw rabbit used on it, then counts the fire's particles for 1.5 s | cooked (or burnt) food comes back two seconds later, within 15 server seconds; at least 4 particles (smoke, embers, sparks) rise from the fire, a count that holds at any frame rate |
+| quern | quern stones inside the creatures pad, on its stone floor, a wheat in hand, the quern right clicked until flour comes | a flour comes back and the wheat is gone; the quern goes after, leaving the pad's stone floor and air as they were |
 | home | a sleeping bag and a torch beside them, slept in | the Camp chip comes on (the bed is their home and has a light), the chat names it with what to add next, the sleep gives a rest (Rested); the blocks and the rest go after |
 | party | `/wander start tinker_camp` ahead of the pad, then goes to its trader, right clicks it with nothing to trade, again with four hides in hand, and `/wander end` | the trader and a hound reach the client and draw within 20 server seconds; the click is answered in chat by one of the camp's greetings; the hides are taken and loaves come back with the trader's swap line (the trade read from the hand, through the real inspect path); the party is gone from the client within 10 s of the end. The first run on the Mac is this step's first run anywhere (the cloud has no GPU) |
 | ore | `/locate ore`, then goes there and looks down | the server's world has a sample of ore there on solid ground, with ore of the same kind below it within seven blocks across (its vein), the client has the sample, and no more than one in thirty of the ore blocks around lies alone (no other ore within two blocks) |
@@ -313,6 +314,33 @@ and the play binary is built fresh from that commit in `~/Projects/voxmar-wt/pla
 (`cargo build --release`), never copied from another worktree, so the binary and its
 `assets/` always match. Build it with `VOXMAR_FOREGROUND=1` before memcap: he is waiting
 for it, and at memcap's background priority the last crate alone once took half an hour.
+
+## Disk: `tools/tidy`
+
+Every worktree keeps its own target dir (cargo trusts the first tree's fingerprints, so a
+shared one silently reuses another tree's binaries), and a built one holds about 30 GB:
+on 2026-10-20 the voxmar worktrees held over 900 GB, nearly all of it build output. Most
+of a busy tree's is rustc's incremental cache for crate versions that have since changed
+(15 of the landing tree's 25 GB had not been touched for a day).
+
+`tools/tidy` frees it, every hour on Mariano's Mac (`tools/tidy --install`, a launchd
+agent running the copy on main; `--dry-run` says what it would do and changes nothing). It
+looks only at the trees directly in `~/Projects/voxmar-wt`. A tree goes, its branch kept,
+once it is clean (nothing modified, untracked, or ignored but precious such as saves,
+worlds or `.env`), every worktree inside it (bench baselines) is clean and on origin too,
+and its commit has landed on origin/main and it has been idle for 6 hours, or is on another
+origin branch and idle for 7 days; unpushed work never goes. Otherwise its target dir goes
+after 2 days without a build, a profile dir (`target/debug`, ...) the same, and an
+incremental crate cache after a day untouched.
+
+It never touches `play` or `landing` at all, build output included, nor the checkout of
+main, locked worktrees (`git worktree lock` keeps one), or a tree git fails in. Right
+before every delete it checks again that PLAYING and QUIET are down and that no running
+process works in the tree or names it, and when it cannot tell, it keeps the tree; git's
+refusals are logged, never forced. Every removal is logged, with its size, to
+`~/Projects/voxmar-wt/tidy.log`. `tools/tidy --self-check` runs it against scratch repos
+covering each of those cases; the gate runs it whenever `tools/tidy` changes, since what
+lands on main runs on the Mac within the hour.
 
 ## Staying out of his way, and quiet windows
 

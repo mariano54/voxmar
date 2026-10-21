@@ -271,6 +271,15 @@ and unbounded mutation counts before a world can be created.
   slope, one above another).
 - `houses`: twenty kinds, each with its own size ranges, storeys and leans:
   - homes: cottage, long house, town house, farmhouse, hut, tower house, hall, wing house;
+    a home may have a byre (`byre`: a `chance` and `rows`, fewest and most): its back
+    rows behind a wall across from the room, through one doorway, on an earth floor,
+    with hay by a stall's post, a trough let into the floor and a wide door out the back.
+    Its people live in the rows in front (four at least), the hearth on the side wall
+    there; only homes of one storey on the ground have one. Long houses mostly do (0.7),
+    farmhouses now and then (0.35). Loading fails on a chance outside 0 to 1, fewer than
+    3 rows, a byre on a working building, one not of four walls or with fittings, or a
+    house too shallow for its rows and the home's. Each building's `byre` columns are
+    kept for gameplay;
   - new outlines (`form`): a roundhouse under a cone, an A-frame that is all roof, a
     courtyard house with rooms round an open court and a tree in it (villages), and a
     house over a shop, its counter open to the street under an awning (villages);
@@ -319,6 +328,20 @@ and unbounded mutation counts before a world can be created.
   `shelter:` tags. The gate's "settlement jetties" checks, at the walled town it
   already visits for walls and roofs, that each beam stands with the house behind and
   above it.
+- **Rows** (`row`: a `chance`, `houses` (a number drawn from them, fewer where the street
+  runs out) and `storeys` by size). Along a straight street a four-walled home off stilts
+  may start a terrace on `chance` (times the place's crowding): the homes wanted next are
+  built wall to wall to its right, then its left, on the same floor, each the first's
+  twin but for its seed (its people and what is inside), until the street bends, the
+  ground falls, or a lane or lot is in the way. A row stands at least the storeys its
+  place's size names (`[("town", 2)]`: town terraces are of town houses), the first raised
+  with it. They share their materials and the pieces of their roofs, and whether they are
+  jettied where their roofs slope down to the street (else each rolls its own); a row
+  has no porch, side shed, outside stair, woodpile or barrel, no eave or side window
+  where two meet, and its roofs run on over each join: along the street, gable fronts
+  side by side, or flat (any other roof is laid as a gable). The gate's "settlement
+  rows" checks, at the walled town, that each join stands as two solid walls under one
+  roof height.
 - `extras`: chimney, porch, lean-to shed, flower boxes, garden, hedge, lamp, woodpile,
   moss, wing, dormer, balcony, outside stair, shutters, awning, sign board, rain barrel,
   weathervane, dovecote and herbs drying under the eaves, each by its own chance; a

@@ -304,6 +304,7 @@ struct Sight<'w> {
     creatures: Res<'w, Creatures>,
     drops: Res<'w, Drops>,
     players: Res<'w, RemotePlayers>,
+    figures: Res<'w, crate::figures::Figures>,
 }
 
 impl Sight<'_> {
@@ -315,7 +316,7 @@ impl Sight<'_> {
         let block = self.target.block_hit.and_then(|hit| Some((hit.distance, Subject::Block(self.world.block(hit.block)?))));
         let things = [
             self.creatures.looked_at(&self.launch, eye, look, style.creature).map(|(id, d)| (d, Subject::Creature(id))),
-            self.players.looked_at(eye, look, style.player).map(|(id, d)| (d, Subject::Player(id))),
+            self.players.looked_at(eye, look, style.player, |id| self.figures.drawn_at(id)).map(|(id, d)| (d, Subject::Player(id))),
             self.drops.looked_at(eye, look, style.item, style.item_box).map(|(stack, d)| (d, Subject::Item(stack))),
         ];
         // Beyond reach no block is targeted, but a wall still hides what is behind it.
@@ -529,7 +530,7 @@ mod tests {
 
     #[test]
     fn the_nearest_thing_is_named() {
-        let item = ItemStack { item: BlockId(3), count: 4 };
+        let item = ItemStack::new(BlockId(3), 4);
         assert_eq!(nearest([]), None);
         assert_eq!(nearest([(4.0, Subject::Block(BlockId(1)))]), Some(Subject::Block(BlockId(1))));
         // A dropped item before the ground it lies on, a creature beyond reach before nothing.

@@ -39,6 +39,7 @@ mod capture;
 mod creature_sounds;
 mod creatures;
 mod drops;
+mod figures;
 mod emitters;
 mod fight;
 mod creature_motion;
@@ -54,6 +55,7 @@ mod mix;
 mod music;
 mod net;
 mod player;
+mod priority;
 mod render;
 mod screenshot;
 mod session;
@@ -63,6 +65,7 @@ mod slow_frames;
 mod textures;
 mod ui;
 mod weather;
+mod workers;
 mod world;
 
 use std::sync::Arc;
@@ -311,19 +314,35 @@ fn parse_options() -> Result<Options, String> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let options = parse_options()?;
+    priority::frame_thread();
     // A gate run is a capture that plays and checks a session rather than taking a shot.
     let headless = options.capture.is_some() || options.gate.is_some();
     // Leave two cores for the main and render threads; worldgen, lighting and meshing share
-    // the rest, at a lower priority so bursts of streaming never delay a frame. Cores, not
-    // hardware threads: on a machine with two threads a core (the Linux box's 16-core EPYC),
-    // workers on every thread slowed every frame system about threefold while the world
-    // streamed in, whatever their priority, and took flightfast's p99 frame from 11 to 25 ms.
+    // the rest, at background priority so bursts of streaming never delay a frame
+    // (priority.rs). Cores, not hardware threads: on a machine with two threads a core (the
+    // Linux box's 16-core EPYC), workers on every thread slowed every frame system about
+    // threefold while the world streamed in, whatever their priority, and took flightfast's
+    // p99 frame from 11 to 25 ms. Once the world has loaded, fewer of them stream
+    // (workers.rs). `VOXMAR_WORKERS=n` sets their number instead, loading and playing alike,
+    // for timing how many a busy machine's frames can take and whether streaming keeps up
+    // (tools/perf/play_frames, its `ahead:` lines).
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
+    let mut workers = physical_cores().unwrap_or(threads).min(threads).saturating_sub(2).max(2);
+    let mut given_workers = None;
+    if let Ok(given) = std::env::var("VOXMAR_WORKERS")
+        && !given.is_empty()
+    {
+        match given.parse::<usize>() {
+            Ok(n) if (1..=threads).contains(&n) => (workers, given_workers) = (n, Some(n)),
+            // Before logging starts, so on stderr, where tools/perf/play_frames shows it beside
+            // the numbers, which are then the default's.
+            _ => eprintln!("VOXMAR_WORKERS={given} is not from 1 to {threads}; {workers} workers"),
+        }
+    }
     rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .thread_name(|i| format!("worker-{i}"))
-        .start_handler(|_| lower_thread_priority())
+        .start_handler(|_| priority::streaming_worker())
         .build_global()?;
     // The generator's region builds borrow helper threads besides: no more than there are
     // workers.
@@ -331,8 +350,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let assets = voxmar_server::assets_dir();
     let content = voxmar_server::load_content(&assets)?;
+    // While playing, as many streaming jobs at once as the content says (`streaming.ron`).
+    let playing = given_workers.unwrap_or(workers::Streaming::load(&content.files)?.playing.min(workers));
     let interface = hud::inventory::InterfaceStyle::load(&content.files)?;
     let combat_marks = hud::combat::CombatStyle::load(&content.files)?;
+    let quest_look = hud::quest_look::QuestLook::load(&content.files)?;
+    let menu_bar = hud::screens::MenuBar::load(&content.files)?;
+    if let Some(name) = quest_look.unknown_quests(|name| content.quests.get(name).is_some()).next() {
+        return Err(format!("{}: a shape for `{name}`, which is no quest", hud::quest_look::FILE).into());
+    }
     let fight_look = fight_fx::FightLook::load(&content.files)?;
     if let Some(blow) = fight_look.untold(&content.creatures).first() {
         return Err(format!("{}: no tell for the blow `{blow}`", fight_fx::style::FILE).into());
@@ -349,11 +375,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let look = hud::target::LookStyle::load(&content.files)?;
     let night_light = render::night_light::NightLight::load(&content.files)?;
+    let player_look = figures::PlayerLook::load(&content.files)?;
     let celebrations = hud::celebrate::Celebrations::load(&content.files)?;
     let recorded = sfx::Recordings::load(&content.files)?;
     recorded.check(&content.actions)?;
+    recorded.check_wear()?;
     recorded.covers(&content.actions)?;
     let creature_bank = creature_sounds::Bank::load(&content.files, &content.creatures)?;
+    creature_bank.check_files(&assets)?;
     let unbarked = creature_bank.unbarked(&content.creatures);
     if !unbarked.is_empty() {
         return Err(format!("{}: settlement people with no greet, alarm or content of their own: {}", creature_sounds::defs::FILE, unbarked.join(", ")).into());
@@ -369,6 +398,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
     // Every shelter tag on a block says how it sounds: muffling the rain, or whistling.
     ambience.check_shelter_tags(&content.blocks)?;
+    recorded.check_ways(&content.blocks)?;
+    recorded.check_files(&assets)?;
+    ambience.check_recordings(&assets)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;
     fx::ActionFx::load(&content.files)?.check(&content.actions)?;
     if let Some(effect) = textures::Source::bundled(&assets.join("packs")).unpictured(&content.effects).first() {
@@ -425,8 +457,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // served better: waking two dozen threads for each parallel system cost more than
             // they did, and the frame-bound scenes there gained 5-13% (dig 2.95 to 2.62 ms a
             // frame, mountains 2.98 to 2.65).
+            // Frames wait for the systems' threads, never for the io and async pools'.
             let mut options = bevy::app::TaskPoolOptions::default();
             options.compute.max_threads = SYSTEM_THREADS;
+            options.compute.on_thread_spawn = Some(Arc::new(priority::frame_thread));
+            options.io.on_thread_spawn = Some(Arc::new(priority::background_thread));
+            options.async_compute.on_thread_spawn = Some(Arc::new(priority::background_thread));
             bevy::app::TaskPoolPlugin { task_pool_options: options }
         });
     if muted {
@@ -466,9 +502,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui::UiPlugin,
     ))
     .add_plugins((lang::LangPlugin, mix::MixPlugin));
+    app.add_plugins(priority::PriorityPlugin);
+    app.add_plugins(workers::WorkersPlugin { all: workers, playing });
     app.add_plugins((creatures::CreaturesPlugin, creature_sounds::CreatureSoundsPlugin, butterflies::ButterfliesPlugin));
     app.add_plugins((emitters::EmittersPlugin, fx::FxPlugin));
     app.add_plugins(held::HeldPlugin);
+    app.add_plugins(figures::FiguresPlugin);
     app.add_plugins(fight_fx::FightFxPlugin);
     // GPU time per render pass (timestamp queries, Vulkan and DX12), which captures print
     // beside their frame statistics.
@@ -518,7 +557,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         Screen::Title
     };
-    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light);
+    app.insert_resource(FirstScreen(first)).insert_resource(launch).insert_resource(interface).insert_resource(quest_look).insert_resource(menu_bar).insert_resource(combat_marks).insert_resource(fight_look).insert_resource(creature_motion).insert_resource(look).insert_resource(celebrations).insert_resource(night_light).insert_resource(player_look);
     app.insert_resource(creature_sounds::Checked(creature_bank));
     app.insert_resource(ambience::Checked(ambience, roof_patters));
     if options.loading {
@@ -630,27 +669,6 @@ fn physical_cores() -> Option<usize> {
     (!cores.is_empty()).then_some(cores.len())
 }
 
-/// Lowers the calling thread's scheduling priority below the game's frame threads.
-fn lower_thread_priority() {
-    #[cfg(target_os = "macos")]
-    {
-        unsafe extern "C" {
-            fn pthread_set_qos_class_self_np(qos_class: u32, relative_priority: i32) -> i32;
-        }
-        const QOS_CLASS_UTILITY: u32 = 0x11;
-        // SAFETY: only changes the scheduling class of the current thread.
-        unsafe { pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0) };
-    }
-    #[cfg(target_os = "linux")]
-    {
-        unsafe extern "C" {
-            fn nice(increment: i32) -> i32;
-        }
-        // SAFETY: on Linux `nice` affects only the calling thread.
-        unsafe { nice(5) };
-    }
-}
-
 /// Block definitions and the world generator's definitions from the loaded content
 /// packages (biomes, trees, plants), for distant terrain to match the server's world.
 #[derive(Resource)]
@@ -735,11 +753,14 @@ fn setup(
     for id in 0..registry.len() {
         let block = voxmar_engine::block::BlockId(id as u16);
         let info = registry.info(block);
-        let variety = registry.def(block).texture_variety;
-        for layer in info.layers {
-            let layer = &mut layers[layer as usize];
+        let def = registry.def(block);
+        let variety = def.texture_variety;
+        for face in Face::ALL {
+            let layer = &mut layers[info.layers[face as usize] as usize];
             layer.glow = layer.glow.max(info.emission as f32 / 15.0);
-            layer.through |= registry.def(block).lit_through;
+            // Only a face drawn its own way glows by the light through it (one without a
+            // drawing takes the first layer), as the registry's load check counts them.
+            layer.through |= def.lit_through && def.textures.face(face).is_some();
             if info.render == RenderKind::Opaque {
                 layer.variety.turn |= variety.turn;
                 layer.variety.mirror |= variety.mirror;

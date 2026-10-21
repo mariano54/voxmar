@@ -58,6 +58,13 @@ pub fn warm_skinned<M: Material>(commands: &mut Commands, mesh: Handle<Mesh>, ma
     commands.spawn((Mesh3d(mesh), MeshMaterial3d(material), skinned, Transform::default(), NoFrustumCulling, lifetime));
 }
 
+/// Keeps `root`, something drawn as it is in play (another player's figure, joints and
+/// all), at the eye as a speck from now on, so its pipelines are compiled now. Whatever of
+/// it is culled by where it is needs `NoFrustumCulling` too.
+pub fn at_eye(commands: &mut Commands, root: Entity) {
+    commands.entity(root).insert(FollowEye(SPECK));
+}
+
 fn follow_eye(camera: Query<&GlobalTransform, With<Camera3d>>, mut followers: Query<(&mut Transform, &FollowEye), Without<Camera3d>>) {
     let Ok(eye) = camera.single() else { return };
     for (mut transform, follow) in &mut followers {
@@ -85,6 +92,25 @@ impl PipelineWatch {
     }
 }
 
+/// A render pipeline's specialisation, in brief: its shader defs, vertex attributes,
+/// topology and culling, depth format and samples.
+fn specialisation(descriptor: &PipelineDescriptor) -> String {
+    let PipelineDescriptor::RenderPipelineDescriptor(d) = descriptor else { return "compute".to_owned() };
+    let mut defs: Vec<String> = d.vertex.shader_defs.iter().chain(d.fragment.iter().flat_map(|f| f.shader_defs.iter())).map(|def| format!("{def:?}")).collect();
+    defs.sort();
+    defs.dedup();
+    let attributes: Vec<String> = d.vertex.buffers.iter().map(|b| b.attributes.iter().map(|a| format!("{}:{:?}", a.shader_location, a.format)).collect::<Vec<_>>().join(",")).collect();
+    format!(
+        "defs [{}]; vertex [{}]; {:?} cull {:?}; depth {:?}; samples {}",
+        defs.join(" "),
+        attributes.join(" | "),
+        d.primitive.topology,
+        d.primitive.cull_mode,
+        d.depth_stencil.as_ref().map(|s| s.format),
+        d.multisample.count
+    )
+}
+
 fn note_pipelines(cache: Res<PipelineCache>, watch: Res<PipelineWatch>, mut seen: Local<usize>) {
     let count = cache.pipelines().count();
     if count > *seen && watch.watching.load(Ordering::Relaxed) {
@@ -94,7 +120,11 @@ fn note_pipelines(cache: Res<PipelineCache>, watch: Res<PipelineWatch>, mut seen
                 PipelineDescriptor::RenderPipelineDescriptor(d) => d.label.clone(),
                 PipelineDescriptor::ComputePipelineDescriptor(d) => d.label.clone(),
             };
-            compiled.push(label.map_or_else(|| "unnamed".to_owned(), |l| l.into_owned()));
+            let label = label.map_or_else(|| "unnamed".to_owned(), |l| l.into_owned());
+            // What it was specialised for, so a miss names the variant to warm (in the
+            // gate's log, which shows `voxmar::gate` at info).
+            info!(target: "voxmar::gate", "pipeline compiled while playing: {label}: {}", specialisation(&pipeline.descriptor));
+            compiled.push(label);
         }
     }
     *seen = count;

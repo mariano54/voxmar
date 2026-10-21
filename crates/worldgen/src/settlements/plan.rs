@@ -12,7 +12,7 @@ use voxmar_engine::glam::{IVec2, IVec3, Vec2};
 
 use super::canvas::{Canvas, Facing, Frame, Palette, Put, unit};
 use super::culture::{Culture, Listing, Script, Site};
-use super::def::{CentreKind, Extra, Form, KanaJoin, LanesDef, Lever, Levers, Prop, PropKind, Roof, RulesDef, SettlementsDef, Shape, Special, Spot, StyleDef, fill};
+use super::def::{BYRE_KEEPS, CentreKind, Extra, Form, KanaJoin, LanesDef, Lever, Levers, Prop, PropKind, Roof, RulesDef, SettlementsDef, Shape, Special, Spot, StyleDef, fill};
 use super::house::{self, Fixed, Kind, Mats, Spec};
 use super::centre;
 use super::{Building, Plan, Raster};
@@ -1049,16 +1049,20 @@ pub(super) fn name_owner(reading: &str, span: i32) -> usize {
 pub(super) fn check_name_ownership(def: &SettlementsDef) -> Result<(), crate::content::ContentError> {
     if def.rules.names_apart == 0 { return Ok(()); }
     let span = name_span(def);
-    let mut english = std::collections::BTreeMap::new();
-    let mut japanese = std::collections::BTreeMap::new();
-    let mut alias = |name: (String, String), owner| -> Result<(), crate::content::ContentError> {
-        if english.insert(name.0.clone(), owner).is_some_and(|old| old != owner)
-            || japanese.insert(name.1.clone(), owner).is_some_and(|old| old != owner)
-        {
-            return Err(crate::content::ContentError(format!("cultures.ron: name {:?} has aliases with different owners", name)));
+    let mut english = FxHashMap::<String, usize>::default();
+    let mut japanese = FxHashMap::<String, usize>::default();
+    // Some tens of thousands of names: each is copied only when first seen.
+    let clash = |owners: &mut FxHashMap<String, usize>, name: &str, owner| match owners.get(name) {
+        Some(&old) => old != owner,
+        None => { owners.insert(name.to_owned(), owner); false }
+    };
+    let mut alias = |name: &str, reading: &str, owner| -> Result<(), crate::content::ContentError> {
+        if clash(&mut english, name, owner) || clash(&mut japanese, reading, owner) {
+            return Err(crate::content::ContentError(format!("cultures.ron: name {:?} has aliases with different owners", (name, reading))));
         }
         Ok(())
     };
+    let (mut prefixed, mut prefixed_reading) = (String::new(), String::new());
     for family in &def.cultures.families {
         let names = &family.names;
         let mut colours = vec![false; (span * span) as usize];
@@ -1070,13 +1074,17 @@ pub(super) fn check_name_ownership(def: &SettlementsDef) -> Result<(), crate::co
             for ((name, reading), normal) in full.chain(small) {
                 let owner = name_owner(&reading, span);
                 if normal { colours[owner] = true; }
-                alias((name.clone(), reading.clone()), owner)?;
+                alias(&name, &reading, owner)?;
                 if names.prefix_chance > 0.0 {
                     let joiner = if names.script == Script::Kanji { "" } else { "・" };
                     // Floating-point subtraction in pick() may fall through to
                     // the last entry even at zero weight. Validate every variant.
                     for prefix in &names.prefixes {
-                        alias((format!("{} {name}", prefix.0), format!("{}{joiner}{reading}", prefix.1)), owner)?;
+                        prefixed.clear();
+                        prefixed_reading.clear();
+                        for part in [&prefix.0, " ", &name] { prefixed.push_str(part); }
+                        for part in [&prefix.1, joiner, &reading] { prefixed_reading.push_str(part); }
+                        alias(&prefixed, &prefixed_reading, owner)?;
                     }
                 }
             }
@@ -1189,12 +1197,19 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
     #[cfg(test)]
     let failures = time.map(|_| (PLACE_FAILS.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed)), GIVEN_UP.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))));
     // A size too big for the ground lays out as its `smaller` (a town as a village), with
-    // the same draws.
+    // the same draws. Rows of houses change what else fits (frontage, plots, the homes
+    // left to place): a place given up on after building one is laid out again, the same,
+    // with no rows, so no place is lost to its rows.
     let mut drawn = None;
-    let result = layout(ctx, cell, centre, fresh, rng.clone(), smallest, None, &mut drawn, ground);
+    let with_rows = |ground: &mut Ground, smallest: bool, instead: Option<usize>, drawn: &mut Option<usize>| {
+        let mut rowed = false;
+        let result = layout(ctx, cell, centre, fresh, rng.clone(), smallest, instead, drawn, true, &mut rowed, ground);
+        if result.is_none() && rowed { layout(ctx, cell, centre, fresh, rng.clone(), smallest, instead, drawn, false, &mut rowed, ground) } else { result }
+    };
+    let result = with_rows(ground, smallest, None, &mut drawn);
     let smaller = drawn.and_then(|i| ctx.def.sizes[i].smaller.as_ref()).and_then(|name| ctx.def.sizes.iter().position(|s| s.name == *name));
     let result = match smaller {
-        Some(smaller) if result.is_none() && !smallest => layout(ctx, cell, centre, fresh, rng, false, Some(smaller), &mut drawn, ground),
+        Some(smaller) if result.is_none() && !smallest => with_rows(ground, false, Some(smaller), &mut drawn),
         _ => result,
     };
     #[cfg(test)]
@@ -1219,7 +1234,7 @@ fn lay_out(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, rng: Rng, smalles
 }
 
 #[allow(clippy::too_many_arguments)]
-fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, instead: Option<usize>, drawn: &mut Option<usize>, mut ground: &mut Ground) -> Option<Plan> {
+fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smallest: bool, instead: Option<usize>, drawn: &mut Option<usize>, rows: bool, rowed: &mut bool, mut ground: &mut Ground) -> Option<Plan> {
     #[cfg(test)]
     let time = phase_start();
     let def = ctx.def;
@@ -1629,7 +1644,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     // each counted house; extras still draw in catalogue order for every attempt.
     let house_weights = def.houses.iter().map(|h| h.lean.weigh(h.weight, &levers) * culture.mult(Listing::House, &h.name)).collect();
     let extra_chances = def.extras.iter().map(|e| e.lean.weigh(e.chance, &levers) * culture.mult(Listing::Extra, &format!("{:?}", e.name))).collect();
-    let mut town = Town { ctx, kit: &kit, levers: &levers, house_weights, extra_chances, style, size: &size.name, built: FxHashMap::default(), choices: Vec::new(), spare_extras: Vec::new(), bounds, square: square_rect, gap };
+    let mut town = Town { ctx, kit: &kit, levers: &levers, house_weights, extra_chances, style, size: &size.name, built: FxHashMap::default(), choices: Vec::new(), spare_extras: Vec::new(), bounds, square: square_rect, gap, rows };
     // A mandatory catalogue request with no positive-weight eligible house can
     // never be removed from the queue. Built counts only grow and these weights
     // stay fixed; water is deliberately ignored, making this a necessary check.
@@ -1704,17 +1719,24 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
                 let front = p + normal * setback;
                 // The first of the next few wanted that fits here.
                 let mut placed = false;
+                let mut row = 0.0;
                 for k in 0..queue.len().min(3) {
                     if let Some(lot) = place(&mut town, &mut ground, &mut rng, &queue[k], None, front, Facing::toward(-normal), &occupied, &lanes, Some(p)) {
+                        let home = matches!(queue[k], Want::Home);
                         occupied.extend(lot.taken());
                         town.count(&lot);
                         lots.push(lot);
                         queue.remove(k);
                         placed = true;
+                        if home {
+                            let first = lots.len();
+                            row = grow_row(&mut town, &mut ground, &mut lots, &mut occupied, &mut queue, &lanes, dir);
+                            *rowed |= lots.len() > first;
+                        }
                         break;
                     }
                 }
-                s += if placed { spacing * (0.6 + 0.8 * rng.unit()) } else { 2.0 };
+                s += if placed { spacing * (0.6 + 0.8 * rng.unit()) + row } else { 2.0 };
                 // Orderly places alternate sides; others wander.
                 if order > 0.5 || rng.chance(0.5) {
                     side = -side;
@@ -2129,6 +2151,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
             max: lot.rect.max,
             floor: lot.floor + lot.spec.stilts,
             room: lot.spec.room(&lot.frame),
+            byre: lot.spec.byre_room(&lot.frame),
             // Two blocks out from the door: on its porch, or on the step below the top
             // one when it stands on stilts.
             door: lot.door.map(|(d, _)| {
@@ -2438,7 +2461,7 @@ fn special_spec(kind: Kind, w: i32, d: i32, kit: &Kit, levers: &Levers, rng: &mu
         form: Form::Box,
         inside: Vec::new(),
         centre: None,
-        seed: rng.next_u64(),
+        seed: rng.next_u64(), row: None, byre: 0,
     }
 }
 
@@ -2566,6 +2589,8 @@ struct Town<'a> {
     bounds: Rect,
     square: Rect,
     gap: i32,
+    /// Whether homes may be built on to each other in rows (`StyleDef::row`).
+    rows: bool,
 }
 
 /// What is wanted of a lot.
@@ -2738,6 +2763,15 @@ fn house_spec(town: &mut Town, want: &Want, kind: Kind, rng: &mut Rng, near_wate
     let wing = (boxy && (rng.chance(h.wing) || extras.contains(&Extra::Wing))).then(|| (3 + rng.below(2), 3 + rng.below(3))).filter(|(ww, _)| *ww < w - 1);
     let shed = if boxy && extras.contains(&Extra::Shed) && d >= 5 { 3 + rng.below((d - 4).min(3) as u32) } else { 0 };
     let door = if levers.get(Lever::Order) > rules.middle_door || !boxy { w / 2 } else { rng.range(1, w - 1) };
+    // A byre at the back of a home of one storey on the ground, keeping its people's rows.
+    let stilts = h.stilts.unwrap_or(style.stilts) as i32;
+    let byre = match h.byre {
+        Some(b) if kind == Kind::House && storeys == 1 && wing.is_none() && stilts == 0 && rng.chance(b.chance) => {
+            let rows = between(rng, b.rows).min(d - BYRE_KEEPS as i32 - 3);
+            if rows >= b.rows.0 as i32 { rows } else { 0 }
+        }
+        _ => 0,
+    };
     let ridge_x = match (h.form, roof) {
         (Form::AFrame, _) => false,
         (_, Roof::Saltbox) => true,
@@ -2762,14 +2796,14 @@ fn house_spec(town: &mut Town, want: &Want, kind: Kind, rng: &mut Rng, near_wate
         door,
         shed,
         wing,
-        stilts: h.stilts.unwrap_or(style.stilts) as i32,
+        stilts,
         regular: levers.get(Lever::Order) > rules.regular,
         window_chance: (style.window_chance * (rules.windows.0 + rules.windows.1 * levers.get(Lever::Wealth))).min(rules.windows.2),
         form: h.form,
         // Interiors affect chimney/stair adaptation and drawing, after placement.
         inside: Vec::new(),
         centre: None,
-        seed: rng.next_u64(),
+        seed: rng.next_u64(), row: None, byre,
     };
     Some((spec, index))
 }
@@ -2881,6 +2915,145 @@ fn place(
     let mats = kit.mats(ctx, rng);
     let yard = (rules.lots.yard.0 + ((1.0 - levers.get(Lever::Crowding)) * rules.lots.yard.1) as i32).min(town.gap);
     Some(Lot { spec, rect, frame, floor, mats, door, yard, house, centre: None })
+}
+
+/// The world rectangle a building's own box from `low` to `high` covers in `frame`.
+fn rect_of(frame: &Frame, low: IVec2, high: IVec2) -> Rect {
+    let (a, b) = (frame.at(low.x, 0, low.y), frame.at(high.x, 0, high.y));
+    let (a, b) = (IVec2::new(a.x, a.z), IVec2::new(b.x, b.z));
+    Rect { min: a.min(b), max: a.max(b) }
+}
+
+/// Builds on against the home just placed (the last of `lots`) the rest of a row along its
+/// street, on the style's `row` chance (more where the place is crowded): homes wanted next,
+/// each the first's twin but for its seed, wall to wall to its right (then its left), on
+/// the same floor, while the street runs straight and the ground, the lanes and the lots
+/// round it allow. Only a four-walled home off stilts starts one; the row is raised to the
+/// storeys it asks of its place's size, the first with it. Returns how far along
+/// the street the row runs past the first.
+#[allow(clippy::too_many_arguments)]
+fn grow_row(town: &mut Town, ground: &mut Ground, lots: &mut Vec<Lot>, occupied: &mut Vec<Rect>, queue: &mut Vec<Want>, lanes: &[Lane], dir: Vec2) -> f32 {
+    let Some(row) = town.style.row.clone().filter(|_| town.rows) else { return 0.0 };
+    let crowding = town.levers.get(Lever::Crowding);
+    let Some(first) = lots.last() else { return 0.0 };
+    let spec = &first.spec;
+    let seed = spec.seed;
+    let fits = spec.kind == Kind::House && spec.form == Form::Box && spec.stilts == 0;
+    let along = first.frame.facing.turn(1, 0).as_vec2();
+    if !fits || along.dot(dir).abs() < 0.95 || unit(hash3(seed, 0x7044, 0, 0)) >= row.chance * crowding {
+        return 0.0;
+    }
+    // The row's houses: the first's, with nothing out at their sides (no shed, outside
+    // stair, woodpile or barrel there) nor a porch before them, under a roof that runs on
+    // over a join: along the street (gable ends against each other), gable fronts side by
+    // side with their eaves meeting at one height, or flat. Any other is a gable.
+    let mut base = spec.clone();
+    // As tall as its place's size asks (a town's terraces are of town houses).
+    base.storeys = base.storeys.max(row.storeys_at(town.size) as i32);
+    // A byre is only for a home of one storey: the stair of a taller one stands at the back.
+    if base.storeys > 1 {
+        base.byre = 0;
+    }
+    base.extras.retain(|e| !matches!(e, Extra::Porch | Extra::OutsideStair | Extra::Woodpile | Extra::RainBarrel));
+    base.shed = 0;
+    let runs_on = matches!(base.roof, Roof::Gable | Roof::Gambrel | Roof::Flat) || (base.roof == Roof::Saltbox && base.ridge_x);
+    if !runs_on {
+        base.roof = Roof::Gable;
+    }
+    house::make_room_for_stairs(&mut base);
+    let wanted = row.houses.0 + (unit(hash3(seed, 0x7044, 1, 0)) * (row.houses.1 - row.houses.0 + 1) as f32) as u32;
+    let wanted = wanted.min(row.houses.1);
+    let ctx = town.ctx;
+    let rules = &ctx.def.rules;
+    let index = lots.len() - 1;
+    // The lots round the row, not its own.
+    let others = occupied.len() - lots[index].taken().count();
+    let (floor, mats, door, yard, house) = {
+        let l = &lots[index];
+        (l.floor, l.mats.clone(), l.door, l.yard, l.house)
+    };
+    // How far the first's door stands from the street, for its row to keep to.
+    let first_off = {
+        let outside = lots[index].frame.at(base.door, 0, -2);
+        let outside = Vec2::new(outside.x as f32, outside.z as f32);
+        lanes.iter().map(|l| l.distance(outside)).fold(f32::MAX, f32::min)
+    };
+    // Built on to the right while it can be, then to the left of the first.
+    let mut built = 1;
+    let mut ends = [index, index];
+    for side in [1i32, -1] {
+        while built < wanted {
+            if !queue.iter().any(|w| matches!(w, Want::Home)) {
+                break;
+            }
+            let end = ends[(side < 0) as usize];
+            let prev = &lots[end];
+            if let Some(i) = prev.house
+                && !house_fits(&ctx.def.houses[i], &Want::Home, town.size, &town.style.name, town.built.get(&i).copied().unwrap_or(0), rules.houses.grand)
+            {
+                break;
+            }
+            let mut next = base.clone();
+            next.seed = hash3(seed, 0x7045, built as i32, 0);
+            next.row = Some(house::Row { seed, left: side > 0, right: side < 0 });
+            let origin = prev.frame.at(if side > 0 { prev.spec.w } else { -base.w }, 0, 0);
+            let frame = Frame { origin, facing: prev.frame.facing };
+            let (low, high) = next.envelope();
+            let rect = rect_of(&frame, low, high);
+            if !town.bounds.covers(&rect.grow(FALLOFF + 1)) || occupied[..others].iter().any(|o| o.gap(&rect) < town.gap) || town.square.gap(&rect) < 1 {
+                break;
+            }
+            if lanes.iter().any(|l| l.rect_any(&rect, |d| d < l.half + 0.6)) {
+                break;
+            }
+            let Some((lowest, highest)) = level(ground, &rect, ctx.def.site.bank, 2) else { break };
+            if highest - lowest > rules.lots.slope || (middle_height(ground, &rect) - floor).abs() > 1 {
+                break;
+            }
+            let pad = rect.grow(1);
+            if (pad.min.y..=pad.max.y).any(|z| (pad.min.x..=pad.max.x).any(|x| ground.at(IVec2::new(x, z)).water > floor)) {
+                break;
+            }
+            let outside = frame.at(next.door, 0, -2);
+            let outside = IVec2::new(outside.x, outside.z);
+            // Its path runs out to the street where the first's does, moved along it: on the
+            // lane still, and its door no farther from the lane than the first's (two blocks
+            // more at most), or the row ends here: a lane that bends away, or one a little
+            // off square that the row's square steps would walk away from.
+            let to = door.map(|(d, to)| to + dir * (outside - d).as_vec2().dot(dir)).unwrap_or(outside.as_vec2());
+            let off = |p: Vec2| lanes.iter().map(|l| l.distance(p)).fold(f32::MAX, f32::min);
+            if !lanes.iter().any(|l| l.distance(to) <= l.half) || off(outside.as_vec2()) > first_off + 2.0 || (ground.at(to.round().as_ivec2()).height - floor).abs() > rules.lots.road {
+                break;
+            }
+            // The end it is built on against: no eave or window on that side now.
+            let mut joined = if end == index && lots[end].spec.row.is_none() { base.clone() } else { lots[end].spec.clone() };
+            let mut place = joined.row.unwrap_or(house::Row { seed, left: false, right: false });
+            if side > 0 { place.right = true } else { place.left = true }
+            joined.row = Some(place);
+            let (pl, ph) = joined.envelope();
+            let shrunk = rect_of(&lots[end].frame, pl, ph);
+            if let Some(o) = occupied.iter_mut().rev().find(|o| **o == lots[end].rect) {
+                *o = shrunk;
+            }
+            lots[end].spec = joined;
+            lots[end].rect = shrunk;
+            let lot = Lot { spec: next, rect, frame, floor, mats: mats.clone(), door: Some((outside, to)), yard, house, centre: None };
+            town.count(&lot);
+            occupied.extend(lot.taken());
+            lots.push(lot);
+            ends[(side < 0) as usize] = lots.len() - 1;
+            if let Some(k) = queue.iter().position(|w| matches!(w, Want::Home)) {
+                queue.remove(k);
+            }
+            built += 1;
+        }
+    }
+    // How far past the first, along the street, the row runs on.
+    let past = |end: usize| {
+        let d = (lots[end].frame.origin - lots[index].frame.origin).as_vec3();
+        Vec2::new(d.x, d.z).dot(dir)
+    };
+    past(ends[0]).max(past(ends[1])).max(0.0)
 }
 
 /// The lowest and highest ground under `rect`, its height sampled every `step` blocks and
@@ -3496,7 +3669,7 @@ mod level_tests {
         let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
         let new = || Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
             extra_chances: vec![0.5; def.extras.len()], style, size: "village", built: FxHashMap::default(),
-            choices: Vec::new(), spare_extras: Vec::new(), bounds: rect, square: rect, gap: 1 };
+            choices: Vec::new(), spare_extras: Vec::new(), bounds: rect, square: rect, gap: 1, rows: true };
         let (mut reused, mut fresh) = (new(), new());
         reused.spare_extras = Vec::with_capacity(32);
         reused.spare_extras.extend([Extra::Chimney; 32]);
@@ -3556,7 +3729,7 @@ mod level_tests {
             chimney: Vec::new(), crops: Vec::new(), fruit: Palette(Vec::new()), roofs: Vec::new(), window: None, roof_pieces: Vec::new(), pieced: 0.0, jetty: None };
         let rect = Rect::new(IVec2::ZERO, IVec2::ONE);
         let mut town = Town { ctx: &ctx, kit: &kit, levers: &levers, house_weights: vec![1.0; def.houses.len()],
-            extra_chances: vec![0.0; def.extras.len()], style, size: "village", built: FxHashMap::default(), choices: Vec::new(), spare_extras: Vec::new(), bounds: rect, square: rect, gap: 1 };
+            extra_chances: vec![0.0; def.extras.len()], style, size: "village", built: FxHashMap::default(), choices: Vec::new(), spare_extras: Vec::new(), bounds: rect, square: rect, gap: 1, rows: true };
         let want = Want::Work("boathouse".into());
         let index = def.houses.iter().position(|h| h.name == "boathouse").unwrap();
         assert_eq!(def.houses[index].most, Some(1));

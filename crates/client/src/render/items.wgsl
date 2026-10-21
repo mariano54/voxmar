@@ -37,6 +37,9 @@ struct Item {
 const SHAPE_SPRITE: u32 = 1u;
 // The item in the player's hand (see `Held` in items.rs).
 const FLAG_HELD: u32 = 1u << 10u;
+// An item held still in the world, turned by the rotation vector in its offset (see
+// `ItemModel::posed` in items.rs): one in another player's hand.
+const FLAG_POSED: u32 = 1u << 11u;
 // Where its depth is held: just inside the near plane (reverse depth, 1 at the near plane),
 // so no wall or block the eye stands against can hide or cut it.
 const HELD_DEPTH: f32 = 0.9;
@@ -82,6 +85,11 @@ fn pose_of(item: Item) -> Pose {
         let view_axes = mat3x3<f32>(view.world_from_view[0].xyz, view.world_from_view[1].xyz, view.world_from_view[2].xyz);
         pose.center = view.world_position + view_axes * vec3(item.center.x, item.center.y, -item.center.z);
         pose.rotation = view_axes * rotation_of(vec3(item.offset_x, item.offset_y, item.offset_z));
+        return pose;
+    }
+    if (item.flags & FLAG_POSED) != 0u {
+        pose.center = item.center;
+        pose.rotation = rotation_of(vec3(item.offset_x, item.offset_y, item.offset_z));
         return pose;
     }
     let age = globals.time + item.phase;

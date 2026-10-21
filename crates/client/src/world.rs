@@ -2,7 +2,7 @@
 //! worker threads, and hands the meshes to the terrain renderer.
 
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use bevy::prelude::*;
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -38,6 +38,8 @@ struct ChunkRender {
 /// A finished relight+remesh job.
 struct MeshResult {
     pos: ColumnPos,
+    /// Which job it was (`ClientWorld::in_flight`).
+    job: u64,
     /// The level of detail it was meshed at (see `mesh_chunk`).
     detail: i32,
     chunks: Vec<ChunkResult>,
@@ -78,6 +80,25 @@ impl ChunkResult {
 /// streaming and edits never cause a long frame.
 const UPLOAD_BUDGET: usize = 32_000;
 
+/// Columns an edit changed within this many columns of the camera are remeshed at once,
+/// on threads of their own (`EDITS`): what the player builds or digs, and what changes
+/// around them.
+const NEAR_EDITS: i32 = 2;
+
+/// The threads near edits are relit and remeshed on, at the default class (priority.rs). On the
+/// shared workers such a job waited behind every column being generated (up to 64 at a
+/// time, by the server in this process) and meshed while the land streamed in, at a lower
+/// priority: early in a new world, and on a busy machine, a block broken at spawn stood
+/// there for many seconds after it broke. They are idle but for edits.
+static EDITS: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(2)
+        .thread_name(|i| format!("edit-mesh-{i}"))
+        .start_handler(|_| crate::priority::default_thread())
+        .build()
+        .expect("the edits' meshing threads start")
+});
+
 /// The level of detail a column `distance` columns from the camera is meshed at: full
 /// detail out to `range[0]` columns, two blocks merged into one along x and z out to
 /// `range[1]`, four beyond (see `mesh_chunk` and `settings::FarDetail`). A column keeps its
@@ -104,7 +125,17 @@ pub struct ClientWorld {
     pub registry: Arc<BlockRegistry>,
     /// Columns whose meshes are out of date.
     dirty: FxHashSet<ColumnPos>,
-    in_flight: FxHashSet<ColumnPos>,
+    /// Of those, the ones an edit changed (`set_block`), to be remeshed at once if near.
+    edited: FxHashSet<ColumnPos>,
+    /// Columns being meshed, with their newest job: only its result is shown. An edit's
+    /// job can start while an older one waits on the shared workers, and finish first.
+    in_flight: FxHashMap<ColumnPos, u64>,
+    /// Of those, the ones whose newest job is on the edits' threads: one at a time each,
+    /// or a column edited every tick (flowing water, fire) would start a job every frame,
+    /// each superseding the last, and none would ever be shown.
+    editing: FxHashSet<ColumnPos>,
+    /// Jobs started so far.
+    jobs: u64,
     results_tx: Sender<MeshResult>,
     results_rx: Receiver<MeshResult>,
     chunks: FxHashMap<ChunkPos, ChunkRender>,
@@ -149,7 +180,10 @@ impl ClientWorld {
             voxels: VoxelWorld::default(),
             registry,
             dirty: FxHashSet::default(),
-            in_flight: FxHashSet::default(),
+            edited: FxHashSet::default(),
+            in_flight: FxHashMap::default(),
+            editing: FxHashSet::default(),
+            jobs: 0,
             results_tx,
             results_rx,
             chunks: FxHashMap::default(),
@@ -189,6 +223,45 @@ impl ClientWorld {
         self.visibility_dirty = true;
     }
 
+    /// Whether every column received that can be meshed (its neighbours received too) is
+    /// meshed, and nothing is being meshed: the land in has all been built (workers.rs).
+    pub fn caught_up(&self) -> bool {
+        self.in_flight.is_empty() && self.dirty.iter().all(|&pos| !self.voxels.contains(pos) || !self.meshable(pos))
+    }
+
+    /// Whether every column within `radius` of `center` has come.
+    pub fn all_in(&self, center: ColumnPos, radius: i32) -> bool {
+        (-radius..=radius).all(|dz| (-radius..=radius).all(|dx| self.voxels.contains(center.offset(dx, dz))))
+    }
+
+    /// Whether the land in view of `center` is all built: every column within the view
+    /// distance come, and every one inside its edge (whose neighbours have come too) meshed
+    /// and up to date. An edge waiting for neighbours is no hole; one inside it is.
+    pub fn built_in_view(&self, center: ColumnPos) -> bool {
+        let inner = self.view_distance - 1;
+        let built = |pos: ColumnPos| self.details.contains_key(&pos) && !self.dirty.contains(&pos);
+        self.in_flight.is_empty()
+            && self.all_in(center, self.view_distance)
+            && (-inner..=inner).all(|dz| (-inner..=inner).all(|dx| built(center.offset(dx, dz))))
+    }
+
+    /// How many columns straight ahead of `eye` along `forward` (on the ground plane) are
+    /// meshed before the first that is not, a strip three columns wide, up to the view
+    /// distance: the land a flight has in front of it, which falls short when streaming
+    /// falls behind (the capture's `ahead:` line).
+    pub fn meshed_ahead(&self, eye: Vec3, forward: Vec2) -> i32 {
+        let forward = forward.normalize_or_zero();
+        let side = forward.perp();
+        let column = |at: Vec2| ColumnPos((at / CHUNK_SIZE as f32).floor().as_ivec2());
+        let start = eye.xz();
+        (1..=self.view_distance)
+            .find(|&d| {
+                let at = start + forward * (d * CHUNK_SIZE) as f32;
+                [-1.0, 0.0, 1.0].iter().any(|&s| !self.details.contains_key(&column(at + side * (s * CHUNK_SIZE as f32))))
+            })
+            .map_or(self.view_distance, |d| d - 1)
+    }
+
     pub fn insert_column(&mut self, pos: ColumnPos, column: Arc<Column>) {
         self.terrain.upload_column(pos, column.colors.clone());
         self.voxels.insert(pos, column);
@@ -202,6 +275,10 @@ impl ClientWorld {
     pub fn remove_column(&mut self, pos: ColumnPos) {
         self.voxels.remove(pos);
         self.dirty.remove(&pos);
+        self.edited.remove(&pos);
+        // A job still running was of what is gone.
+        self.in_flight.remove(&pos);
+        self.editing.remove(&pos);
         for cy in 0..COLUMN_CHUNKS {
             let chunk = pos.chunk(cy);
             if let Some(render) = self.chunks.remove(&chunk) {
@@ -233,6 +310,7 @@ impl ClientWorld {
         for dz in reach(local.z) {
             for dx in reach(local.x) {
                 self.dirty.insert(column.offset(dx, dz));
+                self.edited.insert(column.offset(dx, dz));
             }
         }
     }
@@ -248,7 +326,7 @@ impl ClientWorld {
 
     /// Whether `pos` waits to be meshed, or is being meshed.
     pub fn meshing(&self, pos: ColumnPos) -> bool {
-        self.dirty.contains(&pos) || self.in_flight.contains(&pos)
+        self.dirty.contains(&pos) || self.in_flight.contains_key(&pos)
     }
 
     /// Checks that the renderer has `pos` as its blocks are now: no remesh is waiting or
@@ -315,6 +393,28 @@ fn dispatch_jobs(
             }
         }
     }
+    // Near edits first, at once, whatever the shared workers are busy with. Far ones (a
+    // neighbour's, the server's) wait their turn with the rest of the dirty columns.
+    // One whose last edit is still being meshed there waits for it, edited still, and
+    // goes as soon as it is shown; so does one whose neighbours have not all arrived.
+    let edited: Vec<ColumnPos> = world.edited.drain().filter(|&pos| pos.distance(center) <= NEAR_EDITS).collect();
+    for pos in edited {
+        if world.editing.contains(&pos) {
+            world.edited.insert(pos);
+        } else if world.dirty.contains(&pos) {
+            // One still waiting for a neighbour to arrive stays edited until it can go.
+            match world.neighborhood(pos) {
+                Some(columns) => {
+                    world.dirty.remove(&pos);
+                    world.editing.insert(pos);
+                    start_job(world, pos, center, columns, Some(&*EDITS), None);
+                }
+                None => {
+                    world.edited.insert(pos);
+                }
+            }
+        }
+    }
     world.stats.jobs_in_flight = world.in_flight.len();
     // No job can start until a result frees a slot. Keep the detail checks above, but
     // avoid thousands of nine-neighbour lookups on every busy streaming frame.
@@ -330,7 +430,7 @@ fn dispatch_jobs(
     for &pos in &world.dirty {
         if world.meshable(pos) {
             meshable += 1;
-            if !world.in_flight.contains(&pos) {
+            if !world.in_flight.contains_key(&pos) {
                 ready.push(pos);
             }
         }
@@ -346,22 +446,38 @@ fn dispatch_jobs(
     let mut dispatched = 0;
     for pos in ready {
         let Some(columns) = world.neighborhood(pos) else { continue };
+        // Streaming on fewer workers than there are, once playing (workers.rs).
+        let Some(slot) = voxmar_engine::jobs::start(voxmar_engine::jobs::Kind::Meshes) else { break };
         dispatched += 1;
         world.dirty.remove(&pos);
-        world.in_flight.insert(pos);
-        let registry = world.registry.clone();
-        let tx = world.results_tx.clone();
-        let detail = detail_at(pos.distance(center), world.details.get(&pos).copied(), world.detail_range);
-        rayon::spawn(move || {
-            let region = LitRegion::compute(&registry, &columns);
-            let chunks = (0..COLUMN_CHUNKS)
-                .map(|cy| ChunkResult::new(mesh_chunk(&registry, &region, &columns[4], cy, detail)))
-                .collect();
-            let _ = tx.send(MeshResult { pos, detail, chunks });
-        });
+        start_job(world, pos, center, columns, None, Some(slot));
     }
     world.stats.jobs_in_flight = world.in_flight.len();
     world.stats.pending_columns = meshable - dispatched;
+}
+
+/// Relights and remeshes `pos` from `columns` (it and its neighbours) on `pool`, or on the
+/// shared workers, holding `slot` (a streaming job's, `voxmar_engine::jobs`) while it runs.
+/// It is the column's newest job: any older one's result is dropped.
+fn start_job(world: &mut ClientWorld, pos: ColumnPos, center: ColumnPos, columns: Neighborhood, pool: Option<&rayon::ThreadPool>, slot: Option<voxmar_engine::jobs::Slot>) {
+    world.jobs += 1;
+    let job = world.jobs;
+    world.in_flight.insert(pos, job);
+    let registry = world.registry.clone();
+    let tx = world.results_tx.clone();
+    let detail = detail_at(pos.distance(center), world.details.get(&pos).copied(), world.detail_range);
+    let work = move || {
+        let _slot = slot;
+        let region = LitRegion::compute(&registry, &columns);
+        let chunks = (0..COLUMN_CHUNKS)
+            .map(|cy| ChunkResult::new(mesh_chunk(&registry, &region, &columns[4], cy, detail)))
+            .collect();
+        let _ = tx.send(MeshResult { pos, job, detail, chunks });
+    };
+    match pool {
+        Some(pool) => pool.spawn(work),
+        None => rayon::spawn(work),
+    }
 }
 
 /// Hands finished jobs to the renderer, skipping meshes that did not change.
@@ -371,7 +487,13 @@ fn apply_meshes(mut world: ResMut<ClientWorld>) {
     while uploaded < UPLOAD_BUDGET
         && let Ok(result) = world.results_rx.try_recv()
     {
+        // Only the column's newest job is shown: an older one finishing after an edit's
+        // (which started later but on threads of its own) has the blocks before the edit.
+        if world.in_flight.get(&result.pos) != Some(&result.job) {
+            continue;
+        }
         world.in_flight.remove(&result.pos);
+        world.editing.remove(&result.pos);
         if !world.voxels.contains(result.pos) {
             continue;
         }
@@ -461,6 +583,12 @@ impl Culler {
                 }
             }
         };
+        // At the default class, not lowered with the streaming threads (priority.rs): chunks
+        // that arrive show only once a walk has taken them in.
+        let walk = move || {
+            crate::priority::default_thread();
+            walk();
+        };
         std::thread::Builder::new().name("cave-culling".into()).spawn(walk).expect("the cave culling thread starts");
         Self { jobs, results, busy: false }
     }
@@ -532,8 +660,10 @@ mod tests {
 
     fn queue(app: &mut App, pos: ColumnPos, quads: [usize; 5]) {
         let mut world = app.world_mut().resource_mut::<ClientWorld>();
-        world.in_flight.insert(pos);
-        world.results_tx.send(MeshResult { pos, detail: 1, chunks: vec![chunk(quads)] }).unwrap();
+        world.jobs += 1;
+        let job = world.jobs;
+        world.in_flight.insert(pos, job);
+        world.results_tx.send(MeshResult { pos, job, detail: 1, chunks: vec![chunk(quads)] }).unwrap();
         drop(world);
         app.update();
     }
@@ -576,6 +706,50 @@ mod tests {
         assert_stats(&app, 0, 0);
     }
 
+    /// Caught up only with every column whose neighbours have come meshed: one at the edge
+    /// of what has come waits for its neighbours and holds nothing up.
+    #[test]
+    fn caught_up_once_every_meshable_column_is_meshed() {
+        let mut world = test_world();
+        assert!(world.caught_up());
+        let column = Arc::new(Column::default());
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                world.insert_column(ColumnPos::new(dx, dz), column.clone());
+            }
+        }
+        assert!(!world.caught_up(), "the middle one can be meshed");
+        world.dirty.remove(&ColumnPos::new(0, 0));
+        assert!(world.caught_up(), "the rest wait for neighbours");
+        world.in_flight.insert(ColumnPos::new(0, 0), 1);
+        assert!(!world.caught_up(), "one being meshed");
+        world.in_flight.clear();
+        world.view_distance = 1;
+        assert!(world.all_in(ColumnPos::new(0, 0), 1));
+        assert!(!world.all_in(ColumnPos::new(1, 0), 1), "the next ring not come");
+        assert!(!world.built_in_view(ColumnPos::new(0, 0)), "the middle not meshed: a hole");
+        world.details.insert(ColumnPos::new(0, 0), 1);
+        assert!(world.built_in_view(ColumnPos::new(0, 0)), "the edge waits for neighbours");
+    }
+
+    #[test]
+    fn meshed_ahead_stops_at_the_first_hole() {
+        let mut world = test_world();
+        world.view_distance = 8;
+        // Meshed out to five columns east of the origin, three wide; a hole at the sixth.
+        for x in 0..=5 {
+            for z in -1..=1 {
+                world.details.insert(ColumnPos::new(x, z), 1);
+            }
+        }
+        world.details.remove(&ColumnPos::new(4, 1));
+        let eye = Vec3::new(8.0, 100.0, 8.0);
+        assert_eq!(world.meshed_ahead(eye, Vec2::X), 3, "the hole beside the path at four");
+        world.details.insert(ColumnPos::new(4, 1), 1);
+        assert_eq!(world.meshed_ahead(eye, Vec2::X), 5);
+        assert_eq!(world.meshed_ahead(eye, -Vec2::X), 0, "nothing west");
+    }
+
     #[test]
     fn full_workers_defer_the_queue_scan_but_keep_detail_checks() {
         let mut world = test_world();
@@ -583,7 +757,7 @@ mod tests {
         world.details.insert(far, 1);
         world.set_far_detail([2, 4]);
         let max = rayon::current_num_threads() * 2;
-        world.in_flight.extend((0..max).map(|x| ColumnPos::new(x as i32, 0)));
+        world.in_flight.extend((0..max).map(|x| (ColumnPos::new(x as i32, 0), 0)));
         world.stats.pending_columns = 42;
         let mut app = App::new();
         app.insert_resource(world).add_systems(Update, dispatch_jobs);
@@ -599,5 +773,154 @@ mod tests {
         assert!(world.dirty.is_empty(), "the next free slot must discard unloaded columns");
         assert_eq!(world.stats.jobs_in_flight, 0);
         assert_eq!(world.stats.pending_columns, 0, "cached pending work must never prevent idle after a fresh scan");
+    }
+
+    /// A block broken by the camera is shown broken at once, though every shared worker is
+    /// busy with the land streaming in (as early in a new world): its column is meshed on
+    /// threads of its own. A job for it begun before the break, finishing after, does not
+    /// bring the block back.
+    #[test]
+    fn a_block_broken_nearby_shows_broken_while_the_shared_workers_are_full() {
+        let mut world = test_world();
+        let stone = world.registry.id("base:stone").expect("stone");
+        let mut column = Column::default();
+        for x in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                column.set_block(IVec3::new(x, 60, z), stone);
+            }
+        }
+        let column = Arc::new(column);
+        for dz in -2..=2 {
+            for dx in -2..=2 {
+                world.insert_column(ColumnPos::new(dx, dz), column.clone());
+            }
+        }
+        let mut app = App::new();
+        app.insert_resource(world).add_systems(Update, (dispatch_jobs, apply_meshes).chain());
+        let centre = ColumnPos::new(0, 0);
+        let settle = |app: &mut App, what: &str| {
+            let start = std::time::Instant::now();
+            while app.world().resource::<ClientWorld>().meshing(centre) {
+                assert!(start.elapsed() < std::time::Duration::from_secs(20), "{what}: the column at the camera was never meshed");
+                app.update();
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+        };
+        settle(&mut app, "the land as it came");
+        let mut world = app.world_mut().resource_mut::<ClientWorld>();
+        // Every shared worker taken, and among their jobs one for the camera's column.
+        let max = rayon::current_num_threads() * 2;
+        world.in_flight.extend((0..max).map(|x| (ColumnPos::new(100 + x as i32, 0), 0)));
+        world.jobs += 1;
+        let before = world.jobs;
+        world.in_flight.insert(centre, before);
+        world.set_block(IVec3::new(5, 60, 5), BlockId::AIR);
+        drop(world);
+        settle(&mut app, "the broken block");
+        let world = app.world().resource::<ClientWorld>();
+        world.results_tx.send(MeshResult { pos: centre, job: before, detail: 1, chunks: (0..COLUMN_CHUNKS).map(|_| chunk([1, 0, 0, 0, 0])).collect() }).unwrap();
+        app.update();
+        let world = app.world().resource::<ClientWorld>();
+        assert_eq!(world.check_meshed(centre), Ok(()), "the job begun before the break showed the block again");
+    }
+
+    /// A block broken where a neighbouring column has not arrived yet (early in a new
+    /// world) waits for it, and is then meshed at once all the same, the shared workers
+    /// still full.
+    #[test]
+    fn a_block_broken_before_its_neighbours_arrive_shows_once_they_do() {
+        let mut world = test_world();
+        let stone = world.registry.id("base:stone").expect("stone");
+        let mut column = Column::default();
+        for x in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                column.set_block(IVec3::new(x, 60, z), stone);
+            }
+        }
+        let column = Arc::new(column);
+        let late = ColumnPos::new(1, 1);
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                if ColumnPos::new(dx, dz) != late {
+                    world.insert_column(ColumnPos::new(dx, dz), column.clone());
+                }
+            }
+        }
+        let max = rayon::current_num_threads() * 2;
+        world.in_flight.extend((0..max).map(|x| (ColumnPos::new(100 + x as i32, 0), 0)));
+        let centre = ColumnPos::new(0, 0);
+        world.set_block(IVec3::new(5, 60, 5), BlockId::AIR);
+        let mut app = App::new();
+        app.insert_resource(world).add_systems(Update, (dispatch_jobs, apply_meshes).chain());
+        for _ in 0..10 {
+            app.update();
+        }
+        assert!(app.world().resource::<ClientWorld>().meshing(centre), "meshed without all its neighbours");
+        app.world_mut().resource_mut::<ClientWorld>().insert_column(late, column);
+        let start = std::time::Instant::now();
+        while app.world().resource::<ClientWorld>().meshing(centre) {
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "the broken block waited behind the full workers once its neighbour came");
+            app.update();
+        }
+        assert_eq!(app.world().resource::<ClientWorld>().check_meshed(centre), Ok(()));
+    }
+
+    /// A column edited every frame (water flowing past, fire spreading) is still shown as
+    /// it changes, one edit's mesh at a time, and settles once the edits stop: a job started
+    /// for each edit, each superseding the last, would never show any.
+    #[test]
+    fn a_column_edited_every_frame_still_shows_its_changes() {
+        let mut world = test_world();
+        let stone = world.registry.id("base:stone").expect("stone");
+        let mut column = Column::default();
+        for x in 0..CHUNK_SIZE {
+            for z in 0..CHUNK_SIZE {
+                column.set_block(IVec3::new(x, 60, z), stone);
+            }
+        }
+        let column = Arc::new(column);
+        for dz in -2..=2 {
+            for dx in -2..=2 {
+                world.insert_column(ColumnPos::new(dx, dz), column.clone());
+            }
+        }
+        let mut app = App::new();
+        app.insert_resource(world).add_systems(Update, (dispatch_jobs, apply_meshes).chain());
+        let centre = ColumnPos::new(0, 0);
+        let start = std::time::Instant::now();
+        while app.world().resource::<ClientWorld>().meshing(centre) {
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "the land as it came was never meshed");
+            app.update();
+        }
+        // Another block broken every frame, frames coming faster than a column meshes, so
+        // every mesh shown is a change. A column's edit job runs until it is shown: the next
+        // one never takes its place while it is still on its way.
+        let chunk = centre.chunk(60 / CHUNK_SIZE);
+        let shown = |app: &App| app.world().resource::<ClientWorld>().chunks.get(&chunk).map(|c| c.hashes);
+        let (mut last, mut changes, mut frames) = (shown(&app), 0, 0);
+        let mut job = None;
+        let start = std::time::Instant::now();
+        while changes < 3 {
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "the edited chunk changed on screen {changes} times in {frames} frames of edits");
+            let cell = frames % (CHUNK_SIZE * CHUNK_SIZE);
+            let block = if frames / (CHUNK_SIZE * CHUNK_SIZE) % 2 == 0 { BlockId::AIR } else { stone };
+            frames += 1;
+            app.world_mut().resource_mut::<ClientWorld>().set_block(IVec3::new(cell % CHUNK_SIZE, 60, cell / CHUNK_SIZE), block);
+            app.update();
+            let now = shown(&app);
+            changes += usize::from(now != last);
+            last = now;
+            let newest = app.world().resource::<ClientWorld>().in_flight.get(&centre).copied();
+            if let (Some(was), Some(newest)) = (job, newest) {
+                assert_eq!(was, newest, "an edit's job was replaced before it was shown, after {frames} frames of edits");
+            }
+            job = newest;
+        }
+        let start = std::time::Instant::now();
+        while app.world().resource::<ClientWorld>().meshing(centre) {
+            assert!(start.elapsed() < std::time::Duration::from_secs(20), "the column never settled after the edits stopped");
+            app.update();
+        }
+        assert_eq!(app.world().resource::<ClientWorld>().check_meshed(centre), Ok(()));
     }
 }
