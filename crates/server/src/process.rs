@@ -401,57 +401,17 @@ impl Server {
     /// wall behind it, though never stepped down into: a hearthstone set in its ring is floor. Bounded by the home box, so a home in
     /// the open costs no more than the box.
     pub(crate) fn room_walls(&self, anchor: IVec3) -> voxmar_engine::effect::Walls {
-        use voxmar_engine::effect::{Shelter, Walls};
+        use voxmar_engine::effect::{RoomCell, Shelter, Walls};
         let (rules, blocks) = (&self.survival, &self.content.blocks);
-        let (reach, up, down) = (rules.home_reach, rules.home_up, rules.home_down);
-        let inside = |p: IVec3| {
-            let d = p - anchor;
-            d.x.abs() <= reach && d.z.abs() <= reach && d.y <= up && d.y >= -down
-        };
-        // What stands at a cell: open (`None`), or a wall of a shelter. Furniture is looked
-        // past, as open, whatever it is made of.
-        // Furniture is a furniture tag with no shelter tag: a shelter tag always wins.
-        let furniture = |tags: &[String]| rules.furniture(tags);
-        let furnished = |p: IVec3| self.block(p).is_some_and(|b| furniture(&blocks.def(b).tags));
-        let wall = |p: IVec3| -> Option<Option<Shelter>> {
+        // What stands at a cell: open, or a wall of a shelter. Furniture (a furniture tag
+        // with no shelter tag: a shelter tag always wins) is looked past, as open, whatever
+        // it is made of.
+        Walls::of_room(anchor, rules.home_reach, rules.home_up, rules.home_down, |p| {
             let block = self.block(p)?;
-            let tags = &blocks.def(block).tags;
-            Shelter::of_wall(tags, blocks.info(block).solid, furniture(tags)).map(Some)
-        };
-        // A solid block or furniture is never stepped down into: under the room it is floor,
-        // a hearthstone, a barrel or a well set in it as much as the stone round them.
-        let solid = |p: IVec3| self.block(p).is_some_and(|b| blocks.info(b).solid);
-        let mut walls = Walls::default();
-        // A hearth's home is its hearthstone, solid: the room is the first open cell over it.
-        let Some(anchor) = (0..=up).map(|dy| anchor + IVec3::Y * dy).take_while(|&p| self.block(p).is_some()).find(|&p| wall(p).is_none() && !solid(p)) else {
-            return walls;
-        };
-        let mut seen = rustc_hash::FxHashSet::default();
-        let mut queue = vec![anchor];
-        seen.insert(anchor);
-        while let Some(cell) = queue.pop() {
-            for side in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z, IVec3::Y, IVec3::NEG_Y] {
-                let next = cell + side;
-                let face = side != IVec3::NEG_Y;
-                if !inside(next) || self.block(next).is_none() {
-                    if face {
-                        walls.add(None);
-                    }
-                    continue;
-                }
-                match wall(next) {
-                    Some(shelter) if face => walls.add(shelter),
-                    Some(_) => {}
-                    None if !face && (solid(next) || furnished(next)) => {}
-                    None => {
-                        if seen.insert(next) {
-                            queue.push(next);
-                        }
-                    }
-                }
-            }
-        }
-        walls
+            let (tags, solid) = (&blocks.def(block).tags, blocks.info(block).solid);
+            let furniture = rules.furniture(tags);
+            Some(RoomCell { wall: Shelter::of_wall(tags, solid, furniture), solid, furniture })
+        })
     }
 
     /// Whether nothing solid hangs over `at` (within `survival.roof_scan` blocks): out in
