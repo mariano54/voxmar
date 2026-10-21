@@ -56,6 +56,11 @@
         (ingredients: ["{name}_bench", "hide"], output: "{name}_fireside_bench", skill: "core:construction", level: 2, xp: 2.0),
         // Two planks for its posts and ledge, four sticks for its rails.
         (ingredients: ["{name}_planks", "{name}_planks", "stick", "stick", "stick", "stick"], output: "{name}_plate_rack", skill: "core:construction", level: 3, xp: 3.0),
+        // A stool topped with a plank for a bedside table; a stool with rushes woven over it
+        // for a footstool; a plank on two sticks for a spice rack.
+        (ingredients: ["{name}_stool", "{name}_planks"], output: "{name}_bedside_table", skill: "core:construction", level: 3, xp: 3.0),
+        (ingredients: ["{name}_stool", "rush", "rush"], output: "{name}_footstool", skill: "core:construction", level: 2, xp: 2.0),
+        (ingredients: ["{name}_planks", "stick", "stick"], output: "{name}_spice_rack", skill: "core:construction", level: 2, xp: 2.0),
         (ingredients: ["rush", "rush", "rush", "rush"], output: "rush_mat", skill: "core:crafting", level: 1, xp: 1.0),
         // A window box: a trough of planks filled with earth, and a poppy and a dandelion planted in it.
         (ingredients: ["tag:planks", "tag:planks", "tag:planks", "dirt", "poppy", "dandelion"], output: "window_box", skill: "core:construction", level: 3, xp: 3.0),

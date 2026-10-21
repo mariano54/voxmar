@@ -94,6 +94,15 @@
             // A plate rack on the wall, showing the four things stood on its ledge (`shows`).
             (name: "{name}_plate_rack", render: Model, shape: "plate_rack", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "plate_rack", "storage", "decor", "wood"],
                 shows: [(0.15, 0.3125, 0.84), (0.38, 0.3125, 0.84), (0.62, 0.3125, 0.84), (0.85, 0.3125, 0.84)]),
+            // By the bed and the chair: a bedside table, a little table with a drawer that
+            // shows the two things stood on its top (`shows`); a footstool, low, its top woven
+            // of rushes (a `seat`); a spice rack on the wall that keeps only herbs and shows
+            // the three in it.
+            (name: "{name}_bedside_table", render: Model, shape: "bedside_table", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "table", "bedside_table", "storage", "decor", "wood"],
+                shows: [(0.32, 0.75, 0.5), (0.68, 0.75, 0.5)]),
+            (name: "{name}_footstool", render: Model, shape: "footstool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "seat", "footstool", "decor", "wood"]),
+            (name: "{name}_spice_rack", render: Model, shape: "spice_rack", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "shelf", "spice_rack", "storage", "decor", "wood"],
+                shows: [(0.25, 0.5625, 0.86), (0.5, 0.5625, 0.86), (0.75, 0.5625, 0.86)]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings

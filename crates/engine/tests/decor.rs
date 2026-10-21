@@ -51,7 +51,7 @@ fn a_swap_state_keeps_its_partners_colour_and_tags() {
 fn the_templates_make_every_family_in_full() {
     let content = content();
     let names: BTreeSet<String> = made(&content).into_iter().map(|id| content.blocks.def(id).name.clone()).collect();
-    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight", "dresser", "pot_crane", "rocking_chair", "cradle", "mantel_shelf", "fireside_bench", "plate_rack"];
+    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight", "dresser", "pot_crane", "rocking_chair", "cradle", "mantel_shelf", "fireside_bench", "plate_rack", "bedside_table", "footstool", "spice_rack"];
     let cloth = ["cloth", "rug", "banner", "wall_hanging", "curtain", "paper_lantern", "cushion", "bunting", "awning"];
     let crockery = ["plate", "bowl", "jar", "jug", "basket"];
     let woods = ["birch", "oak", "dark_oak"];
@@ -65,7 +65,7 @@ fn the_templates_make_every_family_in_full() {
             }
         }
     }
-    assert_eq!(expected.len(), 3 * 30 + 12 * 9 + 3 * 5);
+    assert_eq!(expected.len(), 3 * 33 + 12 * 9 + 3 * 5);
     let missing: Vec<_> = expected.difference(&names).collect();
     let extra: Vec<_> = names.difference(&expected).collect();
     assert!(missing.is_empty() && extra.is_empty(), "missing {missing:?}, unexpected {extra:?}");
@@ -185,5 +185,5 @@ fn a_mantel_shelf_shows_what_is_put_on_it_whichever_way_it_faces() {
         assert!(kept, "{} keeps things as {} does", blocks.def(id).name, blocks.def(base).name);
         turned += 1;
     }
-    assert!(turned >= 3 * 3 * 5, "the cupboards, blanket chests, dressers, mantel shelves and plate racks turned three ways: {turned}");
+    assert!(turned >= 3 * 3 * 7, "the cupboards, chests, dressers and the shelves, racks and tables that show things, turned three ways: {turned}");
 }
