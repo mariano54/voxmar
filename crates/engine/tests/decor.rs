@@ -117,25 +117,29 @@ fn a_placed_piece_gives_itself_back_and_a_village_one_nothing() {
     }
 }
 
+/// Every recipe's own ingredients, laid out as the book and the lay button lay them, are
+/// matched by a recipe with the same output: none is shadowed by another that takes the same
+/// things (six twine laid as a sack once made thatch, `tag:fibre`).
 #[test]
-fn every_recipe_for_decor_can_be_crafted_as_written() {
+fn every_recipe_can_be_crafted_as_written() {
     let content = content();
-    let decor: BTreeSet<BlockId> = content.blocks.ids().filter(|&id| content.blocks.def(id).has_tag("decor")).collect();
     let mut crafted = 0;
     let mut shadowed = Vec::new();
-    for recipe in content.recipes.iter().filter(|r| decor.contains(&r.output)) {
-        // The recipe's own ingredients, laid out as it asks, are matched by a recipe with the
-        // same output: none is shadowed by another that takes the same things.
+    for recipe in content.recipes.iter() {
         let grid = recipe.cells();
-        let found = content.recipes.find(&grid).unwrap_or_else(|| panic!("{} cannot be crafted", content.blocks.def(recipe.output).name));
-        if found.output != recipe.output {
-            shadowed.push(format!("{} is shadowed by {}", content.blocks.def(recipe.output).name, content.blocks.def(found.output).name));
+        let found = content.recipes.find_near(&grid, |tag| recipe.near.as_deref() == Some(tag));
+        let name = |id| content.blocks.def(id).name.clone();
+        match found {
+            None => shadowed.push(format!("{} cannot be crafted", name(recipe.output))),
+            Some(found) if found.output != recipe.output => shadowed.push(format!("{} is shadowed by {}", name(recipe.output), name(found.output))),
+            Some(_) => {}
         }
         crafted += 1;
     }
     assert!(crafted >= 172, "{crafted} recipes");
     assert!(shadowed.is_empty(), "{}", shadowed.join("\n"));
 }
+
 
 /// The singles and the lanterns and columns of metal and stone: each a block with a way to
 /// make it, a light where it is a light, and a drop that is nothing or the metal it is.

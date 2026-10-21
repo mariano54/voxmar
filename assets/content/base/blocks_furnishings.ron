@@ -217,7 +217,7 @@
         // given back whole where a player set it, nothing where a village did: `furnishing`).
         (
             name: "sack", render: Model, shape: "sack", sound: Grass, textures: Sides(top: "sack_top", bottom: "sack_top", side: "sack_side"),
-            hardness: 0.4, color: (200, 180, 140), tags: ["sack", "cloth", "farm", "storage", "furnishing", "building"],
+            hardness: 0.4, color: (200, 180, 140), tags: ["sack", "farm", "storage", "furnishing", "building"],
         ),
         // A bronze bell hanging from the beam above it.
         (
