@@ -78,7 +78,7 @@ fn a_hip_is_where_both_slopes_are_and_a_valley_where_either_is() {
 }
 
 /// A block set down takes a cell from air, a grass tuft or a flower, but not from water or a
-/// solid block (`BlockInfo::gives_room`, which placing a crop, a sapling and the test bot read).
+/// solid block (`BlockInfo::gives_room`, which planting, tilling and the test bot read).
 #[test]
 fn a_block_set_down_takes_the_room_of_air_and_plants_only() {
     let content = content();
