@@ -266,25 +266,28 @@ mod tests {
         }
     }
 
-    /// A worn flint tool and a flint in the grid by a chopping block: half its uses back, and
-    /// the Nomad side quest that teaches mending, open once the block is, is done.
+    /// A worn tool and a piece of what it is made of in the grid by a chopping block: back
+    /// whole when it is made of that one piece (a flint knife, a stone shovel), else half
+    /// (a flint axe, a stone pickaxe), as A Mended Edge says; and that Nomad side quest,
+    /// open once the block is, is done.
     #[test]
-    fn a_flint_tool_mended_by_the_chopping_block_does_the_mending_quest() {
-        let (mut server, _client) = holding("base:flint_axe", 0);
-        let [axe, flint] = ["base:flint_axe", "base:flint"].map(|n| server.content.blocks.expect(n));
-        let uses = server.content.tools.uses(axe);
-        put(&mut server, "base:chopping_block");
-        let craft = server.content.actions.expect("core:craft");
-        let player = server.players.get_mut(&1).unwrap();
-        player.inventory.slots[0] = None;
-        (player.inventory.craft[0], player.inventory.craft[1]) = (Some(ItemStack { wear: uses - 1, ..ItemStack::new(axe, 1) }), Some(ItemStack::new(flint, 1)));
-        player.quests_done = vec!["base:a_chopping_block".into()];
-        server.propose(1, craft, voxmar_engine::action::ActionTarget::Slot(1), std::time::Instant::now());
-        let player = &server.players[&1];
-        assert_eq!(player.inventory.cursor.map(|s| (s.item, s.wear)), Some((axe, uses - 1 - uses / 2)), "half new, on the pointer");
-        assert_eq!(player.tallies.get("mended:base:flint_axe"), Some(&1));
-        server.update_quests(1);
-        assert!(server.players[&1].quests_done.iter().any(|q| q == "base:a_mended_edge"), "{:?}", server.players[&1].quests_done);
+    fn a_tool_mended_by_the_chopping_block_does_the_mending_quest() {
+        for (tool, by, whole) in [("base:flint_axe", "base:flint", false), ("base:flint_knife", "base:flint", true), ("base:stone_pickaxe", "base:stone_head", false), ("base:stone_shovel", "base:stone_head", true)] {
+            let (mut server, _client) = holding(tool, 0);
+            let [item, by] = [tool, by].map(|n| server.content.blocks.expect(n));
+            let uses = server.content.tools.uses(item);
+            put(&mut server, "base:chopping_block");
+            let craft = server.content.actions.expect("core:craft");
+            let player = server.players.get_mut(&1).unwrap();
+            player.inventory.slots[0] = None;
+            (player.inventory.craft[0], player.inventory.craft[1]) = (Some(ItemStack { wear: uses - 1, ..ItemStack::new(item, 1) }), Some(ItemStack::new(by, 1)));
+            player.quests_done = vec!["base:a_chopping_block".into()];
+            server.propose(1, craft, voxmar_engine::action::ActionTarget::Slot(1), std::time::Instant::now());
+            let left = if whole { 0 } else { uses - 1 - uses / 2 };
+            assert_eq!(server.players[&1].inventory.cursor.map(|s| (s.item, s.wear)), Some((item, left)), "{tool}: whole {whole}, on the pointer");
+            server.update_quests(1);
+            assert!(server.players[&1].quests_done.iter().any(|q| q == "base:a_mended_edge"), "{tool}: {:?}", server.players[&1].quests_done);
+        }
     }
 
     /// Mining saves a pickaxe's wear by the level, `level` times `save_per_level` a use
