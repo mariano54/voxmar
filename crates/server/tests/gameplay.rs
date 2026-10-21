@@ -10719,4 +10719,3 @@ fn quest_xp(client: &Client, quest: &str) -> u32 {
         })
         .unwrap_or_else(|| panic!("{quest} pays no experience"))
 }
-
