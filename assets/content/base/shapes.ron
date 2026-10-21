@@ -310,6 +310,21 @@
             (from: (1, 9, 12), to: (1.5, 10.5, 15)),
             (from: (14.5, 9, 12), to: (15, 10.5, 15)),
         ]),
+        // A candle box on the wall behind it (south): a back board, an open-topped box on it
+        // with a low front, the candles in it standing on its floor (`shows`).
+        "candle_box": (boxes: [
+            (from: (3, 6, 15), to: (13, 14, 16)),
+            (from: (3, 6, 11), to: (13, 7, 15)),
+            (from: (3, 7, 11), to: (13, 10, 11.5)),
+            (from: (3, 7, 11.5), to: (3.5, 12, 15)),
+            (from: (12.5, 7, 11.5), to: (13, 12, 15)),
+        ]),
+        // A bread bin, its front to the north: a box on the floor, a lid over it and a knob.
+        "bread_bin": (boxes: [
+            (from: (2, 0, 3), to: (14, 8, 13), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+            (from: (1.5, 8, 2.5), to: (14.5, 9.5, 13.5)),
+            (from: (7, 9.5, 7), to: (9, 10.5, 9), textures: All("furniture_grain")),
+        ]),
         // A rushlight holder: a foot, a post, an arm to the east and the rush burning in its
         // clip at the arm's end.
         "rushlight": (boxes: [

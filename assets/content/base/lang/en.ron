@@ -401,6 +401,8 @@
     "block.base.{name}_bedside_table": "{name} Bedside Table",
     "block.base.{name}_footstool": "{name} Footstool",
     "block.base.{name}_spice_rack": "{name} Spice Rack",
+    "block.base.{name}_candle_box": "{name} Candle Box",
+    "block.base.{name}_bread_bin": "{name} Bread Bin",
     "block.base.rush_mat": "Rush Mat",
     "block.base.{name}_stair_cupboard": "{name} Stair Cupboard",
     "block.base.{name}_wardrobe": "{name} Wardrobe",

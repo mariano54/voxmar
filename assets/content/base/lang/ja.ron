@@ -398,6 +398,8 @@
     "block.base.{name}_bedside_table": "{name}の枕元の小卓",
     "block.base.{name}_footstool": "{name}の足置き",
     "block.base.{name}_spice_rack": "{name}の薬味棚",
+    "block.base.{name}_candle_box": "{name}の蝋燭箱",
+    "block.base.{name}_bread_bin": "{name}のパン箱",
     "block.base.rush_mat": "い草の敷物",
     "block.base.{name}_stair_cupboard": "{name}の階段箪笥",
     "block.base.{name}_wardrobe": "{name}の洋服だんす",

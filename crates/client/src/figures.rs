@@ -367,7 +367,7 @@ fn figure_material(body: &SpeciesBody, skin: Handle<Image>, atmosphere: Buffer) 
     SkinMaterial { base: StandardMaterial { unlit: true, ..default() }, extension: CreatureSkin { skin, frame, atmosphere } }
 }
 
-fn show(
+pub(crate) fn show(
     mut commands: Commands,
     time: Res<Time>,
     look: Res<PlayerLook>,
