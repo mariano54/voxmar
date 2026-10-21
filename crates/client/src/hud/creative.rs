@@ -119,6 +119,9 @@ pub struct Catalogue {
     pub recipes: bool,
     /// The query, tab and mode `found` was worked out for.
     found_for: Option<(String, Tab, bool)>,
+    /// The recipe book `entries` were read with (its number): a world of other content
+    /// reads its items again.
+    read_for: usize,
 }
 
 impl Catalogue {
@@ -253,9 +256,13 @@ fn spawn(mut commands: Commands, font: Res<UiFont>) {
 
 /// Reads every item's names once the game's content is there.
 fn index(launch: Res<Launch>, viewer: Res<super::recipes::RecipeViewer>, mut catalogue: ResMut<Catalogue>) {
-    if !catalogue.entries.is_empty() {
+    if catalogue.read_for == viewer.book_number() {
         return;
     }
+    // Between games, nothing: the last world's items are not this one's.
+    catalogue.read_for = viewer.book_number();
+    catalogue.entries.clear();
+    (catalogue.found, catalogue.hovered, catalogue.found_for) = (Vec::new(), None, None);
     let Some(book) = viewer.book() else { return };
     let content_dir = voxmar_server::assets_dir().join("content");
     let languages = [Locale::load(&content_dir, "en"), Locale::load(&content_dir, "ja")];

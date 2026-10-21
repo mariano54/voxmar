@@ -12632,13 +12632,13 @@ fn shapes(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
 /// furnishings (blocks_furnishings.ron), in a facing or two. A piece that is not solid (a
 /// window seat or a settle, sat in as every seat is) passes stopping nothing; one that is
 /// not solid and no seat is a mistake.
-const PIECES: [&str; 40] = [
+const PIECES: [&str; 41] = [
     "oak_post", "birch_beam_east", "dark_oak_lattice_window", "thatch_roof", "thatch_ridge", "oak_shingles_south", "birch_shingle_ridge", "cobblestone_stairs_west", "stone_brick_slab",
     "hide_lean_to", "wattle_panel_east", "wooden_shutters", "chimney_stack", "chimney_pot", "oak_jetty_beam_south", "stone_flue", "chimney_hood", "birch_shuttered_window",
     "stone_arrow_slit", "oak_railing", "oak_railing_corner", "birch_newel_post", "dark_oak_landing", "thatch_corner_east", "birch_shingles_inner_corner", "oak_fence",
     "birch_fence_corner_east", "dark_oak_fence_gate", "oak_ladder", "birch_hatch",
     "oak_hatch_open_east", "birch_stair_cupboard_east", "oak_window_seat", "dark_oak_sill_west", "oak_pantry_shelf",
-    "birch_settle", "oak_woodpile_east", "dark_oak_peg_rail", "oak_blanket_chest_south", "birch_washstand",
+    "birch_settle", "oak_woodpile_east", "dark_oak_peg_rail", "oak_blanket_chest_south", "birch_washstand", "window_box_east",
 ];
 /// How many pieces the player judges from one spot before the middle one: three, so the
 /// crosshair turned to a piece beside it reaches it before crossing a neighbour.
@@ -14322,6 +14322,10 @@ struct FeelRun {
     poked: f32,
     clicked: bool,
     bears: u32,
+    /// Whether this bear was let go: each comes held (`/summon ... held`), so a bear that
+    /// warns one who comes close (`creature::Warn`) cannot wind up before the lag has
+    /// settled, and is let go with the first provoking blow.
+    released: bool,
     /// The server's clock when the step began, for `FEEL_LIMIT`.
     started: f32,
     /// The server's pings answered when the step began to run behind, for `FEEL_LAG_SETTLE`.
@@ -14515,7 +14519,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     judge_stagger(world, gate, view, hold, now);
     let dodge_key = world.resource::<Settings>().dodge_key.0;
     let pad = gate.feet + IVec3::new(0, 0, 14);
-    let summon = |world: &mut World| world.resource::<Net>().command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
+    let summon = |world: &mut World| world.resource::<Net>().command(&format!("summon {} 1 {} {} {} held", BEAR.trim_start_matches("base:"), pad.x, pad.y, pad.z + 1));
     if gate.feel.clicked {
         mouse(world, MouseButton::Left, false);
         gate.feel.clicked = false;
@@ -14578,6 +14582,7 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                     gate.feel.bear = None;
                     gate.feel.died = false;
                     gate.feel.calm = false;
+                    gate.feel.released = false;
                     gate.feel.hurts = world.resource::<crate::fight::Fighting>().hurt_count;
                     gate.phase_server = gate.server_now;
                     summon(world);
@@ -14674,6 +14679,10 @@ fn feel(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.feel.poked = gate.server_now;
                 mouse(world, MouseButton::Left, true);
                 gate.feel.clicked = true;
+                if !gate.feel.released {
+                    world.resource::<Net>().command("creatures release");
+                    gate.feel.released = true;
+                }
             }
             // Only this bear's blow, from a wind-up seen to begin, answers the try; any
             // other (another creature's, or one whose wind-up began unseen) is passed over.
@@ -15398,7 +15407,9 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
             // so a fist from the doorway reaches it (the server measures from the eye to its
             // box: about 1.3 blocks, under the fist's 2.5). Where it really lands is what
             // the doorway is cut to.
-            net.command(&format!("summon {} 1 {} {} {}", BEAR.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
+            // Held until it is struck: in the doorway the player stands within the bear's
+            // `near` (`creature::Warn`), and let loose it would wind up before the strike.
+            net.command(&format!("summon {} 1 {} {} {} held", BEAR.trim_start_matches("base:"), at.x + 2, at.y, at.z - 2));
             advance(gate);
         }
         1 => {
@@ -15474,7 +15485,9 @@ fn narrow(world: &mut World, gate: &mut Gate, now: f32) {
                 // it is watched from there.
                 gate.narrow.hurts = fighting.hurt_count;
                 mouse(world, MouseButton::Left, false);
-                world.resource::<Net>().command(&format!("tp {:.2} {:.2} {:.2}", past.x, past.y, past.z));
+                let net = world.resource::<Net>();
+                net.command(&format!("tp {:.2} {:.2} {:.2}", past.x, past.y, past.z));
+                net.command("creatures release");
                 info!("gate: narrow: struck the bear at {:.2} from {:.2}; to {past:.2}", view.position, world.resource::<LocalPlayer>().position);
                 advance(gate);
             } else if gate.waited_out(NARROW_WAIT) || (blocking.is_some() && waited) {

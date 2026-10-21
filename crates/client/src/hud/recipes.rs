@@ -42,9 +42,7 @@ impl Plugin for RecipesPlugin {
             .add_systems(PostStartup, spawn)
             .add_systems(Update, (look_up, click, report, draw, cycle).chain().run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut viewer: ResMut<RecipeViewer>, mut ui: ResMut<UiState>| {
-                viewer.trail.clear();
-                viewer.reported.clear();
-                (viewer.drawn, viewer.quests_drawn) = (None, None);
+                viewer.leave_game();
                 ui.recipes_open = false;
             });
     }
@@ -74,6 +72,9 @@ pub struct Lookup {
 pub struct RecipeViewer {
     pub trail: Vec<Lookup>,
     book: Option<Arc<RecipeBook>>,
+    /// How many books have been built: what was worked out from one is kept only while it
+    /// is the book (an address could come round again for a book built after one dropped).
+    built: usize,
     /// What was drawn last, to draw again only on a change.
     drawn: Option<(Lookup, String, bool, Vec<String>)>,
     /// The item and language the quests row was drawn for: it is drawn again only when
@@ -87,6 +88,25 @@ impl RecipeViewer {
     /// Every way to get and to use each item, once the game's content is read.
     pub fn book(&self) -> Option<&RecipeBook> {
         self.book.as_deref()
+    }
+
+    /// Which book is built, never the same for two (0 while there is none).
+    pub fn book_number(&self) -> usize {
+        if self.book.is_some() { self.built } else { 0 }
+    }
+
+    /// Holds a newly built book.
+    fn build(&mut self, book: RecipeBook) {
+        self.book = Some(Arc::new(book));
+        self.built += 1;
+    }
+
+    /// Forgets the game left. The book goes too: the next world may load other content, and
+    /// nothing may pair that content with this book's items before `look_up` builds its own.
+    fn leave_game(&mut self) {
+        self.trail.clear();
+        self.reported.clear();
+        (self.book, self.drawn, self.quests_drawn) = (None, None, None);
     }
 
     /// Looks `item` up, on top of what is showing.
@@ -210,7 +230,7 @@ fn look_up(
     // what was being looked up there forgotten.
     if viewer.book.is_none() || launch.is_changed() {
         // Its world data parsed as the content loaded (`load_content` refuses it otherwise).
-        viewer.book = Some(Arc::new(voxmar_server::recipe_book(&launch.content).expect("the world data of loaded content parses")));
+        viewer.build(voxmar_server::recipe_book(&launch.content).expect("the world data of loaded content parses"));
         viewer.trail.clear();
     }
     if let Some(StartLookup(name, uses)) = start.as_deref() {
@@ -346,6 +366,22 @@ mod tests {
         assert_eq!(viewer.unreported_item(), None, "reopening and switching to uses report nothing");
         viewer.reported.clear();
         assert_eq!(viewer.unreported_item(), Some(BlockId(1)), "a new game needs its own report");
+    }
+
+    /// Leaving a game drops its book, so the next world's content is never read with this
+    /// one's items, and each book built after has a number of its own.
+    #[test]
+    fn leaving_a_game_drops_its_book() {
+        let mut viewer = RecipeViewer::default();
+        assert_eq!(viewer.book_number(), 0);
+        viewer.build(RecipeBook::default());
+        let first = viewer.book_number();
+        assert_ne!(first, 0);
+        viewer.leave_game();
+        assert!(viewer.book().is_none(), "the book outlived its game");
+        assert_eq!(viewer.book_number(), 0);
+        viewer.build(RecipeBook::default());
+        assert!(![0, first].contains(&viewer.book_number()), "a new book took an old number");
     }
 
     /// A family of recipes cycling and the quests asking for it, drawn by the viewer: a

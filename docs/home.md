@@ -55,6 +55,19 @@ cauldron; workshop is the loom frame, spindle stand and quern. All are craftable
 first two ages (Construction 1 to 8, Crafting 2 to 8), so each step is a few minutes of
 gathering and crafting, not a grind.
 
+## Warm, never hot
+
+A home's warmth (each step's and room's `home_warmth` in effects.ron) is not plain warmth.
+What the air, a fire's heat, food and the weather make of how warm a player feels comes
+first; a home then lifts that toward the top of the comfortable band (`comfort_top`, 29 °C
+in core survival.ron) and no further, and adds nothing on a day already that warm. A full
+home (Heart of the Home, every room, an evening in) is about 20° warmer on a frosty night,
+yet never makes its owner Hot (`FeltAbove(30.0)`), and its heals and other bonuses hold
+whatever the weather. At load `comfort_top` must be below the coolest a debuff comes on at
+as a player feels warmer, and no effect may give a negative `home_warmth` (tests
+`a_homes_warmth_tops_out_at_the_comfortable_band`,
+`a_full_home_in_warm_air_leaves_its_owner_comfortable_not_hot`).
+
 ## Walls (how well a home is built)
 
 Each step from Snug up wants better walls about the room the home stands in, and is warmer

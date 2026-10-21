@@ -53,7 +53,8 @@ pub use voxmar_engine::weather::Weather;
 // 55 is unused.
 // 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
 // 57: tools wear (ItemStack::wear) and ServerMessage::ToolWore.
-pub const PROTOCOL_VERSION: u32 = 57;
+// 58: a creature warning a player off before it attacks (Pose::Warning).
+pub const PROTOCOL_VERSION: u32 = 58;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;

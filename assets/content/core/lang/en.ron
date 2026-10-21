@@ -1184,6 +1184,7 @@
     "creature.doing.stand_to_look": "standing up to look",
     "creature.doing.tempted": "drawn by food",
     "creature.doing.wander": "wandering",
+    "creature.doing.warn": "warning you off",
 
     // Skills, as skills.ron writes them: name, description, and each guide line and how.
     "skill.core.alchemy": "Alchemy",
