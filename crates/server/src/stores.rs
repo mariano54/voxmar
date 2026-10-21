@@ -141,9 +141,12 @@ impl Server {
     }
 }
 
-
 /// Tells players what stands on the blocks that show what they hold, five times a second:
 /// a thing put on a shelf by hand, a chute or another player shows soon after.
+// TODO: it looks over every machine each time and tells everyone the whole world's
+// shelves. Telling only of the stores that changed, to the players who have their chunks
+// (and each player of what stands in a chunk as it loads), wants the factory to say which
+// bins changed; worth it once worlds hold many shelves.
 pub(crate) struct Shelves;
 
 impl crate::process::Process for Shelves {
@@ -254,6 +257,20 @@ mod tests {
         server.watch_stores();
         assert_eq!((server.players[&1].store, server.players[&1].inventory.store.is_some()), (None, false), "closed out of reach");
         assert_eq!(held(&server), vec![(dirt, 10)], "and what it held stays in it");
+    }
+
+    /// A cupboard turned east opens and keeps things as one facing north does, and what goes
+    /// in is tallied by the cupboard itself, whichever way it faces.
+    #[test]
+    fn a_turned_cupboard_is_a_store_tallied_as_the_cupboard() {
+        let mut server = fixture();
+        server.set_block(AT, id(&server, "base:oak_cupboard_east"));
+        give(&mut server, 0, "base:dirt", 4);
+        open(&mut server);
+        assert_eq!(server.players[&1].store, Some(AT), "it opens");
+        act(&mut server, "core:transfer", ActionTarget::Slots { from: 0, to: STORE as u8, count: 4 });
+        assert_eq!(held(&server), vec![(id(&server, "base:dirt"), 4)]);
+        assert_eq!(server.players[&1].tallies.get("stocked:base:oak_cupboard:base:dirt").copied(), Some(4), "tallied as the cupboard");
     }
 
     /// A jar keeps only what is edible (`holds`), from a player's hand or a chute; a

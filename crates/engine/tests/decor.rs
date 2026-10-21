@@ -166,7 +166,7 @@ fn the_singles_load_and_can_be_made() {
 }
 
 /// A mantel shelf shows the three things put on it whichever way it faces: a store with a
-/// slot for each spot it shows, as a cupboard turned east is a store as one facing north.
+/// slot for each spot it shows, as every store turned another way keeps things as it does.
 #[test]
 fn a_mantel_shelf_shows_what_is_put_on_it_whichever_way_it_faces() {
     let content = content();
@@ -176,5 +176,14 @@ fn a_mantel_shelf_shows_what_is_put_on_it_whichever_way_it_faces() {
         assert_eq!(blocks.def(id).shows.len(), 3, "{name} shows three things");
         assert!(content.machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() == 3), "{name} keeps what it shows");
     }
-    assert!(content.machines.get(blocks.expect("base:oak_cupboard_east")).is_some_and(|m| m.is_store()), "a cupboard turned east keeps things");
+    // Every store turned another way keeps things as the store itself does.
+    let mut turned = 0;
+    for id in blocks.ids() {
+        let Some(base) = blocks.def(id).facing_of().map(|name| blocks.expect(name)) else { continue };
+        let Some(store) = content.machines.get(base).filter(|m| m.is_store()) else { continue };
+        let kept = content.machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() == store.bin_slots() && m.holds == store.holds);
+        assert!(kept, "{} keeps things as {} does", blocks.def(id).name, blocks.def(base).name);
+        turned += 1;
+    }
+    assert!(turned >= 3 * 3 * 4, "the cupboards, blanket chests, dressers and mantel shelves turned three ways: {turned}");
 }
