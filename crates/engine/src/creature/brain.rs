@@ -47,6 +47,11 @@ pub const HOMEWARD: f32 = 20.0;
 pub const KEEP_OFF: f32 = 0.5;
 /// Seconds a creature remembers the player who hurt it (`Memory::HurtBy`).
 pub const HURT_REMEMBERED: f32 = 45.0;
+/// Seconds it recalls a player who frightened it (`Memory::ScaredBy`).
+pub const SCARED_REMEMBERED: f32 = 10.0;
+/// Below this liveliness (out of its active hours) a creature that sleeps
+/// (`creature::Sleeps`) is asleep, as it shows resting below it (`modules::resting_pose`).
+const SLEEPY: f32 = 0.4;
 const ANGER_FADE: f32 = 1.0 / 45.0;
 /// Within a band, modules within this share of the best score are all in the draw, and
 /// the running one keeps going while it is.
@@ -112,6 +117,9 @@ pub struct Seen {
     /// Standing in a lit fire's ward at night (`Situation::ward`), where those afraid of
     /// fire go for no one unprovoked. Set only for kinds that keep out of wards.
     pub warded: bool,
+    /// Going faster than a walk (a sprint), which wakes a sleeper further off
+    /// (`creature::Sleeps::wakes`).
+    pub loud: bool,
 }
 
 /// A lit fire's ward at night (`BlockDef::ward`, `MultiblockDef::ward`): `radius` blocks
@@ -583,9 +591,31 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         (*left, *since) = (*left - dt, *since + dt);
     }
     mind.noticed.retain(|n| n.1 > 0.0);
+    // Asleep out of its hours (`creature::Sleeps`), with no one in mind, nothing afraid or
+    // angry, wild and about no errand: eyes shut, it notices only a quiet step within its
+    // `quiet`, and a sprint within its `wakes`, which wakes it with a start.
+    let asleep = def.sleeps.filter(|_| lively < SLEEPY && mind.noticed.is_empty() && mind.fear < 0.3 && mind.anger <= 0.0 && !at.kept && at.errand.is_none());
     for p in at.players {
         let d = p.position.distance(at.position);
         let smelt = p.tempting && d < def.senses.hearing;
+        if let Some(sleeps) = asleep {
+            let hurt = mind.recalls(Memory::HurtBy(p.id));
+            let startled = p.loud && d < sleeps.wakes && !p.friend && !hurt;
+            if !(p.friend || hurt || d <= sleeps.quiet || startled) {
+                continue;
+            }
+            mind.noticed.push((p.id, def.senses.keep, 0.0));
+            // Woken with a start: a fighter comes up provoked, with no warning; the rest bolt.
+            if startled && d > sleeps.quiet {
+                if creature.fights() {
+                    mind.provoked(p.id);
+                } else {
+                    mind.startled(p.position);
+                    mind.remember(Memory::ScaredBy(p.id), SCARED_REMEMBERED);
+                }
+            }
+            continue;
+        }
         if p.friend || d <= def.senses.close || p.in_view && d < sight || smelt || mind.recalls(Memory::HurtBy(p.id)) {
             match mind.noticed.iter_mut().find(|n| n.0 == p.id) {
                 Some(n) => n.1 = def.senses.keep,
@@ -598,6 +628,13 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     let all = at.players.iter().all(known);
     let noticed: Vec<Seen> = if all { Vec::new() } else { at.players.iter().filter(|p| known(p)).copied().collect() };
     let at = &Situation { players: if all { at.players } else { &noticed }, ..*at };
+    // Still asleep, no one woke it: it sleeps on.
+    if asleep.is_some() && mind.noticed.is_empty() {
+        mind.doing = None;
+        lapse_warning(mind, dt);
+        rest(mind, dt);
+        return Decision { pose: Pose::Resting, ..Default::default() };
+    }
     let ctx = Ctx { creature, mind, at, lively, sight };
 
     let wants: Vec<(usize, Band, Want)> = creature
@@ -703,7 +740,7 @@ pub(super) mod tests {
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
-        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true, fire: false, warded: false }
+        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true, fire: false, warded: false, loud: false }
     }
 
     fn doing<'a>(creature: &'a Creature, mind: &Mind) -> &'a str {
@@ -1370,6 +1407,61 @@ pub(super) mod tests {
         }
         assert!(build("scavenge: (takes: [\"tag:nothing\"], reach: 16.0, shy: 6.0)").is_err_and(|e| e.contains("nothing it `takes`")));
         assert!(build("scavenge: (takes: [\"stone\"], reach: 16.0, shy: 6.0)").is_err_and(|e| e.contains("does not exist")));
+    }
+
+    /// A creature that sleeps (`creature::Sleeps`) sleeps out the hours it is not about:
+    /// eyes shut, it notices a player walking up only within its `quiet`, and then as ever
+    /// (its double take, then whatever it does), so a careful hunter gets close. One going
+    /// faster than a walk within its `wakes` wakes it with a start: a fighter comes up
+    /// provoked, with no warning, and prey bolts. In its own hours it is awake as ever.
+    #[test]
+    fn a_sleeper_wakes_to_a_sprint_not_a_quiet_step() {
+        let bear = species(&format!(
+            "(creatures: [(name: \"bear\", health: 10, {BODY}, attack: (damage: (1, 2)), habitat: (active: Night), sleeps: (quiet: 3.0, wakes: 12.0), temperament: (fear: 0.2), behaviours: [(do: Wander(radius: 6.0)), (do: Defend)])])"
+        ));
+        fn noon(players: &[Seen]) -> Situation<'_> {
+            Situation { daylight: 1.0, ..situation(players) }
+        }
+        let quiet = |at: f32| player(Vec3::new(at, 0.0, 0.0));
+        let loud = |at: f32| Seen { loud: true, ..quiet(at) };
+        // Asleep at noon: a quiet step at six blocks, in plain view, goes unnoticed.
+        let mut mind = Mind::new(&bear.def.temperament, 2);
+        for _ in 0..5 {
+            let decision = think(&bear, &mut mind, &noon(&[quiet(6.0)]));
+            assert_eq!((decision.pose, decision.goal, mind.noticed.len()), (Pose::Resting, None, 0), "asleep, a quiet step at six blocks");
+        }
+        // At two, within its quiet, it wakes as it would to anyone close: no grudge.
+        let _ = think(&bear, &mut mind, &noon(&[quiet(2.0)]));
+        assert_eq!((mind.noticed.len(), mind.anger, mind.attacker()), (1, 0.0, None), "woken quietly");
+        // A sprint at ten blocks wakes it with a start, and it comes up fighting.
+        let mut startled = Mind::new(&bear.def.temperament, 2);
+        let _ = think(&bear, &mut startled, &noon(&[loud(10.0)]));
+        assert_eq!((startled.anger, startled.attacker()), (1.0, Some(1)), "woken by a sprint");
+        // Beyond its wakes, a sprint is nothing to it.
+        let mut far = Mind::new(&bear.def.temperament, 2);
+        let _ = think(&bear, &mut far, &noon(&[loud(14.0)]));
+        assert_eq!(far.noticed.len(), 0, "a sprint at fourteen blocks");
+        // At night, its own hours, it sees a quiet step at six as ever.
+        let mut awake = Mind::new(&bear.def.temperament, 2);
+        let _ = think(&bear, &mut awake, &Situation { daylight: 0.0, ..situation(&[quiet(6.0)]) });
+        assert_eq!(awake.noticed.len(), 1, "awake at night");
+        // Prey woken with a start bolts.
+        let deer = species(&format!(
+            "(creatures: [(name: \"deer\", health: 6, {BODY}, habitat: (active: Night), sleeps: (quiet: 3.0, wakes: 12.0), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 4.0))])])"
+        ));
+        let mut bolting = Mind::new(&deer.def.temperament, 2);
+        let _ = think(&deer, &mut bolting, &noon(&[loud(10.0)]));
+        assert_eq!(doing(&deer, &bolting), "flee", "prey woken by a sprint");
+
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("sleeps: (quiet: 3.0, wakes: 12.0)"), Ok(()));
+        for bad in ["(quiet: 0.5, wakes: 12.0)", "(quiet: 8.0, wakes: 12.0)", "(quiet: 3.0, wakes: 30.0)", "(quiet: 3.0, wakes: 2.5)"] {
+            assert!(build(&format!("sleeps: {bad}")).is_err_and(|e| e.contains("`sleeps` needs")), "{bad}");
+        }
+        assert!(build("sleeps: (quiet: 3.0, wakes: 12.0), habitat: (active: Any)").is_err_and(|e| e.contains("never sleeps")));
     }
 
     #[test]

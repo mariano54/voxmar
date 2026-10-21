@@ -340,7 +340,7 @@ impl Module for Flee {
         }
         let side = Vec3::new(-away.z, 0.0, away.x) * if style == Style::Hopper { 0.7 * mind.zig } else { 0.0 };
         if let Some(p) = target {
-            mind.remember(Memory::ScaredBy(p.id), 10.0);
+            mind.remember(Memory::ScaredBy(p.id), super::SCARED_REMEMBERED);
         }
         // A bird takes wing and goes well clear before it settles again.
         let far = if flier(ctx) { 22.0 } else { 8.0 };

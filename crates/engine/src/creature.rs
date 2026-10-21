@@ -334,6 +334,29 @@ impl Scavenge {
     }
 }
 
+/// How a creature sleeps (docs/creature-ai.md, "Sleeping"): out of its active hours,
+/// with no one in mind, it sleeps, eyes shut. A player walking up it notices only within
+/// `quiet` blocks, and then as it would anyone close, so a careful hunter gets near; one
+/// going faster than a walk within `wakes` blocks wakes it with a start, and a fighter
+/// comes up provoked, with no warning, while prey bolts. Kept, or on an errand, it does
+/// not sleep so.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sleeps {
+    pub quiet: f32,
+    pub wakes: f32,
+}
+
+impl Sleeps {
+    /// Close enough that a quiet step is a skill, and a sprint heard well beyond it.
+    pub fn check(&self) -> Result<(), String> {
+        if !(1.0..=6.0).contains(&self.quiet) || !(4.0..=24.0).contains(&self.wakes) || self.wakes <= self.quiet {
+            return Err(format!("`sleeps` needs quiet 1 to 6 blocks and wakes 4 to 24 blocks, beyond its quiet, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
 /// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
 /// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
@@ -786,6 +809,10 @@ pub struct CreatureDef {
     /// hunter's meat. Unset, it lets dropped food lie.
     #[serde(default)]
     pub scavenge: Option<Scavenge>,
+    /// It sleeps out of its active hours (`Sleeps`), woken by a sprint, not a quiet step.
+    /// Unset, it rests but notices players as ever.
+    #[serde(default)]
+    pub sleeps: Option<Sleeps>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -1325,6 +1352,12 @@ impl CreatureRegistry {
                     return Err(error("is a boss or supernatural, and steals no one's food (`scavenge`)".into()));
                 }
                 scavenge.check().map_err(error)?;
+            }
+            if let Some(sleeps) = def.sleeps {
+                if def.habitat.active == Active::Any {
+                    return Err(error("sleeps (`sleeps`), but is about at all hours (`active: Any`), so it never sleeps".into()));
+                }
+                sleeps.check().map_err(error)?;
             }
             if let Some(flush) = def.flush {
                 if def.boss || def.supernatural || def.attack.is_some() {

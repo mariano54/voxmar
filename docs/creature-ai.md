@@ -131,6 +131,14 @@ seconds, facing them, alert, before it runs, hunts or comes to look: the moment 
 back off, or to creep closer behind it. A blow skips the double take. What it then does starts
 afresh after the look, so prey that looks and then runs still raises the alarm to its kin.
 
+Asleep (`sleeps: (quiet, wakes)` in its data, for a kind that keeps hours: refused at load for
+one active at any hour, `quiet` 1..6, `wakes` 4..24 and above `quiet`), out of its waking hours
+with nothing on its mind, it lies down and notices only a friend, someone who hurt it, a player
+within `quiet` blocks, or a loud one (moving faster than a walk) within `wakes`. A player who
+creeps up can pass a sleeping bear or pick a sleeping deer; one who sprints past wakes it with a
+start: a fighter wakes angry at them, prey bolts. A held creature drops any blow it was winding
+up, so a hold means it stands still.
+
 ## Aggression
 
 - **Temperament, not type.** Hostile is high aggression and low fear; neutral is a

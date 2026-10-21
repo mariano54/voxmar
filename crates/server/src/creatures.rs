@@ -107,6 +107,11 @@ const LURED_WITHIN: f32 = 3.0;
 /// Blocks from a scavenger that it snatches food lying on the ground from (its brain asks
 /// within `modules::SNATCH`, 1.3, of where the food lay).
 const SNATCH_REACH: f32 = 1.6;
+/// Ticks over which a player's pace across the ground is measured (`Creatures::paces`).
+const PACE_EVERY: u64 = TICKS_PER_SECOND as u64 / 2;
+/// A player going faster than this share of their walk is loud (a sprint): a sleeper
+/// hears them further off (`creature::Sleeps::wakes`).
+const LOUD_OVER_WALK: f32 = 1.1;
 
 /// A live creature.
 #[derive(Clone, Debug)]
@@ -289,6 +294,10 @@ pub struct Creatures {
     pub(crate) gone: Vec<CreatureGone>,
     /// Where each player settled and since when (RuneScape's tolerance).
     pub(crate) settled: FxHashMap<PlayerId, (Vec3, u64)>,
+    /// How fast each player goes across the ground, in blocks a second, as measured over
+    /// the last `PACE_EVERY` ticks: where and when it was last measured, and the pace.
+    /// Faster than a walk (`LOUD_OVER_WALK`) is loud to a sleeper (`brain::Seen::loud`).
+    pub(crate) paces: FxHashMap<PlayerId, (Vec3, u64, f32)>,
     /// Kept creatures from the save that could not be put back yet (their species is gone
     /// from the content, or the world was full): kept in the save and tried again, never
     /// lost.
@@ -739,6 +748,15 @@ impl Server {
     fn settle_players(&mut self) {
         let tick = self.tick;
         let players: Vec<(PlayerId, Vec3)> = self.players.values().filter(|p| p.joined).map(|p| (p.id, p.position)).collect();
+        let paces = &mut self.creatures.paces;
+        paces.retain(|id, _| players.iter().any(|(p, _)| p == id));
+        for &(id, position) in &players {
+            let entry = paces.entry(id).or_insert((position, tick, 0.0));
+            if tick >= entry.1 + PACE_EVERY {
+                let seconds = (tick - entry.1) as f32 / TICKS_PER_SECOND as f32;
+                *entry = (position, tick, position.with_y(0.0).distance(entry.0.with_y(0.0)) / seconds);
+            }
+        }
         let settled = &mut self.creatures.settled;
         settled.retain(|id, _| players.iter().any(|(p, _)| p == id));
         self.creatures.release_asked.retain(|id, _| players.iter().any(|(p, _)| p == id));
@@ -802,6 +820,7 @@ impl Server {
                     in_view: d < senses.sight && self.in_view(body, senses.field, p.eye()),
                     fire: p.held().is_some_and(|item| self.content.blocks.def(item).has_tag(creature::HELD_FIRE)),
                     warded: false,
+                    loud: self.creatures.paces.get(&p.id).is_some_and(|&(_, _, pace)| pace > self.content.movement.walk_speed * LOUD_OVER_WALK),
                 }
             })
             .collect();
@@ -6234,6 +6253,55 @@ mod fight_tests {
     }
 
     /// Night, a fifth of the way into it.
+    /// A badger asleep at noon (`creature::Sleeps`, a night animal): a player walking straight
+    /// up to it in plain view comes within its `quiet` before it notices them, and then it
+    /// holds no grudge; one sprinting by within its `wakes` wakes it with a start, and it
+    /// comes for them with no warning.
+    #[test]
+    fn a_sleeping_badger_wakes_to_a_sprint_not_a_quiet_walk() {
+        const WALK: f32 = 4.3;
+        const SPRINT: f32 = 6.1;
+        // Ticks the player goes toward the badger at `pace` from `start` blocks off, until
+        // `stop` blocks off or the badger notices them; where they were when it did.
+        let approach = |pace: f32, start: f32, stop: f32| {
+            let mut server = crate::test_server();
+            server.day = TICKS_PER_DAY as f64 * voxmar_engine::calendar::DAYLIGHT_SHARE * 0.5;
+            assert!(server.daylight() > 0.9, "not noon");
+            let c = pen(&mut server, 48);
+            let badger = put(&mut server, "base:badger", c.as_vec3() + Vec3::new(start + 0.5, 0.0, 0.5), -Vec3::X);
+            let player = join(&mut server, c.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+            let mut noticed = None;
+            for _ in 0..30 * TICKS_PER_SECOND {
+                let (at, to) = (server.players[&player].position, server.creatures.live[&badger].body.position);
+                let gap = at.with_y(0.0).distance(to.with_y(0.0));
+                if !server.creatures.live[&badger].mind.noticed.is_empty() {
+                    noticed = Some(gap);
+                    break;
+                }
+                if gap > stop {
+                    let step = (to - at).with_y(0.0).normalize() * (pace / TICKS_PER_SECOND as f32).min(gap - stop);
+                    server.players.get_mut(&player).unwrap().position = at + step;
+                }
+                server.tick += 1;
+                server.tick_creatures();
+            }
+            let mind = &server.creatures.live[&badger].mind;
+            (noticed, mind.attacker() == Some(player), mind.anger)
+        };
+        let sleeps = {
+            let server = crate::test_server();
+            server.content.creatures.get(server.content.creatures.id("base:badger").unwrap()).def.sleeps.expect("a badger sleeps")
+        };
+        // Walking up in plain view, it is noticed only within the badger's quiet, and no grudge.
+        let (noticed, provoked, _) = approach(WALK, 12.0, 1.5);
+        let at = noticed.expect("the badger never noticed a player walking right up to it");
+        assert!(at <= sleeps.quiet + 0.5 && !provoked, "a quiet walk noticed at {at:.1} blocks, provoked {provoked}");
+        // Sprinting, it wakes well beyond its quiet, and comes up provoked.
+        let (noticed, provoked, anger) = approach(SPRINT, 20.0, sleeps.wakes - 2.0);
+        let at = noticed.expect("a sprint within its wakes never woke the badger");
+        assert!(at > sleeps.quiet + 1.0 && at < sleeps.wakes && provoked && anger > 0.0, "a sprint woke it at {at:.1} blocks, provoked {provoked}");
+    }
+
     fn at_night(server: &mut Server) {
         server.day = TICKS_PER_DAY as f64 * (voxmar_engine::calendar::DAYLIGHT_SHARE + 0.1);
         assert!(server.night());
