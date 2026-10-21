@@ -42,7 +42,7 @@ impl Plugin for HeldPlugin {
         app.init_resource::<Handled>()
             .init_resource::<Motion>()
             .init_resource::<HeldClock>()
-            .add_systems(Update, show.after(crate::drops::show).after(crate::fight_fx::Reacted).run_if(in_state(Screen::InGame)))
+            .add_systems(Update, show.after(crate::drops::shelf_things).after(crate::fight_fx::Reacted).run_if(in_state(Screen::InGame)))
             .add_systems(OnExit(Screen::InGame), |mut motion: ResMut<Motion>| *motion = Motion::default());
     }
 }
