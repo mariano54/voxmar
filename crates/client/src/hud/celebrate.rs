@@ -313,16 +313,23 @@ fn finished<'a>(before: &[QuestState], now: &'a [QuestState]) -> Vec<&'a str> {
 
 /// Starts the next moment when its turn comes: its jingle, and its bursts around the
 /// player.
-fn advance(time: Res<Time>, celebrations: Res<Celebrations>, mut stage: ResMut<Stage>, mut sounds: MessageWriter<UiSound>) {
+fn advance(time: Res<Time>, celebrations: Res<Celebrations>, launch: Res<Launch>, mut stage: ResMut<Stage>, mut sounds: MessageWriter<UiSound>) {
     let now = time.elapsed_secs();
     let Some(moment) = stage.next(now, &celebrations).cloned() else { return };
-    sounds.write(match moment {
-        Moment::Quest(_) => UiSound::QuestDone,
-        Moment::Level(_, level) if celebrations.milestone_at(level) => UiSound::Milestone,
-        Moment::Level(..) => UiSound::LevelUp,
-    });
+    sounds.write(jingle(&moment, &celebrations, |name| launch.content.quests.get(name).is_some_and(|q| q.capstone)));
     let bursts: Vec<_> = celebrations.look(&moment).bursts.iter().map(|burst| (now + burst.delay, burst.clone())).collect();
     stage.bursts.extend(bursts);
+}
+
+/// A moment's jingle: a path's capstone (`capstone`, by the quest's name) its own, a
+/// milestone level its own.
+fn jingle(moment: &Moment, celebrations: &Celebrations, capstone: impl Fn(&str) -> bool) -> UiSound {
+    match moment {
+        Moment::Quest(name) if capstone(name) => UiSound::CapstoneDone,
+        Moment::Quest(_) => UiSound::QuestDone,
+        Moment::Level(_, level) if celebrations.milestone_at(*level) => UiSound::Milestone,
+        Moment::Level(..) => UiSound::LevelUp,
+    }
 }
 
 /// Bursts whose time has come throw their motes, around where the player is then (a later
@@ -574,6 +581,21 @@ mod tests {
             assert!(Celebrations::load(&files).is_err(), "{bad}");
         }
         assert!(Celebrations::load(&[file("mod", "(milestone_every: 10)")]).is_err());
+    }
+
+    /// A path's last quest (a base game capstone) rings its own jingle; any other quest a
+    /// quest's, and levels theirs.
+    #[test]
+    fn a_capstone_rings_its_own_jingle() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let capstone = |name: &str| content.quests.get(name).is_some_and(|q| q.capstone);
+        let looks = base();
+        let rite = content.quests.iter().find(|q| q.capstone).expect("a capstone");
+        let plain = content.quests.iter().find(|q| !q.capstone).expect("a quest");
+        assert_eq!(jingle(&Moment::Quest(rite.name.clone()), &looks, capstone), UiSound::CapstoneDone, "{}", rite.name);
+        assert_eq!(jingle(&Moment::Quest(plain.name.clone()), &looks, capstone), UiSound::QuestDone, "{}", plain.name);
+        assert_eq!(jingle(&Moment::Level(SkillId(2), looks.milestone_every), &looks, capstone), UiSound::Milestone);
+        assert_eq!(jingle(&Moment::Level(SkillId(2), looks.milestone_every + 1), &looks, capstone), UiSound::LevelUp);
     }
 
     /// A quest finished by reaching a level shows first, even when the level was told first;

@@ -59,6 +59,11 @@ pub use voxmar_engine::weather::Weather;
 // things), a column at a time to the players who have it.
 pub const PROTOCOL_VERSION: u32 = 60;
 
+/// Lines of news a client shows at once (its toasts). The server keeps one fewer waiting for
+/// a player away, so all of it is seen as they come back on with a line still free for
+/// anything else said then.
+pub const NEWS_LINES: usize = 6;
+
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
 /// A creature's `tell` while it is staggered (a perfect block, a daze): held still, its

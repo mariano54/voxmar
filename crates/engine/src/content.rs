@@ -686,6 +686,14 @@ impl Content {
                 return Err(RegistryError(format!("lang/{}.ron: a quest opens the age `{age}`, and `{key}` has no words", lang.code())));
             }
         }
+        // How a worn tool is mended, by a tag and where, has words in every language: its
+        // tooltip says it, and so does the line when it is nearly worn out.
+        let mend_words: Vec<String> = tools.mend_by_tags().iter().map(|t| format!("item.mend.tag.{t}")).chain(tools.mend_tags().iter().map(|t| format!("item.mend.near.{t}"))).collect();
+        for key in mend_words.into_iter().chain(["item.mend".to_owned(), "tool.nearly_worn".to_owned()]) {
+            if let Some(lang) = languages.iter().find(|lang| !lang.defines(&key)) {
+                return Err(RegistryError(format!("lang/{}.ron: tools are mended, and `{key}` has no words", lang.code())));
+            }
+        }
         let mut content = Self {
             blocks: Arc::new(blocks),
             actions: Arc::new(actions),

@@ -683,6 +683,7 @@ impl Server {
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         // What smoulders now: the others were told as it began, and are told only of changes.
         self.players[&id].connection.send(ServerMessage::Smoulders { at: self.smouldering() });
+        self.tell_waiting(id);
         if let Some(file) = set_aside {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));
             self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Error, text });

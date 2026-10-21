@@ -145,6 +145,10 @@ pub struct WorldMeta {
     /// have none.
     #[serde(default)]
     pub smoulders: Vec<crate::smoulder::Smouldering>,
+    /// News of a firing for a player who was away when it came (`smoulder::Waiting`), told
+    /// when they are on again. Older worlds have none.
+    #[serde(default)]
+    pub news_waiting: Vec<crate::smoulder::Waiting>,
     /// Whose each home hearth is, lit or cold, until its hearthstone is broken
     /// (`hearth::HearthOwner`). Older worlds have none: their lit hearths keep the owner
     /// saved with the fire.
@@ -314,6 +318,7 @@ impl WorldMeta {
             trap_serials: 0,
             lit: Vec::new(),
             smoulders: Vec::new(),
+            news_waiting: Vec::new(),
             hearth_owners: Vec::new(),
             generation: 0,
             worldgen_content: None,

@@ -2597,7 +2597,9 @@ fn a_stick_held_in_a_campfire_comes_back_a_firebrand() {
     client.ok(&format!("/setblock {} {} {} campfire", fire.x, fire.y, fire.z));
     client.tp(Vec3::new(at.x as f32 + 0.5, at.y as f32, at.z as f32 + 0.5));
     let named = |c: &Client, slot: usize| c.inventory.get(slot).map(|s| c.content.blocks.def(s.item).name.clone());
-    for (sticks, hand_after) in [(1, "base:firebrand"), (2, "base:stick")] {
+    // Two in hand (one picked up while it was held there): one catches and is held up all
+    // the same, the other put by in the pack, so a lit brand is never left in the pack.
+    for (sticks, hand_after) in [(1, "base:firebrand"), (2, "base:firebrand")] {
         client.ok("/clear stick");
         client.ok("/clear firebrand");
         client.ok(&format!("/give stick {sticks}"));
@@ -2608,6 +2610,8 @@ fn a_stick_held_in_a_campfire_comes_back_a_firebrand() {
         client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::NegX });
         client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == brand) || c.chat.iter().any(|(_, t)| !t.is_empty()));
         assert_eq!(named(&client, slot).as_deref(), Some(hand_after), "{sticks} sticks in hand; said: {:?}", client.chat);
+        let kept: u8 = client.inventory.slots.iter().flatten().filter(|s| s.item == stick).map(|s| s.count).sum();
+        assert_eq!(kept, sticks as u8 - 1, "the rest kept");
     }
 }
 
@@ -10115,15 +10119,20 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let missed: Vec<&str> = QUEST_BOOK_ORDER.iter().copied().filter(|q| !quest_status(&f.c, q).0).collect();
     assert!(missed.is_empty(), "quests of the line not done: {missed:?}");
     eprintln!("{}", timeline(&f));
+    eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
+    check_pacing(&mut f);
+}
+
+/// Something new comes every three minutes of the line, several things, and no one action
+/// is done over and over for long (docs/first-days.md, "Pacing"): the report printed, and
+/// the run failed past either floor.
+fn check_pacing(f: &mut Fresh) {
     f.look_round();
     let end = f.secs();
     f.pacing.borrow_mut().end(end);
     let pacing = f.pacing.borrow();
     let report = pacing_report(&pacing, end);
     eprintln!("{report}");
-    eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
-    // Something new comes every three minutes of the line, several things, and no one
-    // action is done over and over for long (docs/first-days.md, "Pacing").
     for (i, window) in pacing.windows(PACING_WINDOW, end).iter().enumerate() {
         let full = (i as f32 + 1.0) * PACING_WINDOW <= end;
         let new = window.values().map(Vec::len).sum::<usize>();
@@ -10251,6 +10260,8 @@ fn finish(mut f: Fresh) {
         f.mined, f.c.deaths, f.restocks, settle.0, settle.1, f.secs()
     );
     eprintln!("{report}");
+    // The Nomad line paced as the Farm's is, by the same floors.
+    check_pacing(&mut f);
     for &(name, budget) in FRESH_BUDGETS {
         let m = f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached"));
         assert!(m.at <= budget, "{name} took {:.1} server seconds, over its budget of {budget}", m.at);
