@@ -2481,6 +2481,25 @@ fn the_quern_spindle_and_loom_grind_spin_and_weave() {
     }
 }
 
+/// A stick held in a campfire a player set down comes back a firebrand in the hand, as the
+/// gate's firebrand step does it: the cook goes through the server's own path.
+#[test]
+fn a_stick_held_in_a_campfire_comes_back_a_firebrand() {
+    let mut client = Client::join();
+    let fire = client.position.floor().as_ivec3() + IVec3::new(2, 0, 0);
+    let (campfire, stick, brand) = (client.content.blocks.expect("base:campfire"), client.content.blocks.expect("base:stick"), client.content.blocks.expect("base:firebrand"));
+    client.clear();
+    client.ok("/gamemode survival");
+    client.ok("/time set midnight");
+    client.ok("/setblock ~2 ~ ~ campfire");
+    client.ok("/give stick 1");
+    client.pump_until(|c| c.world.block(fire) == Some(campfire) && c.inventory.get(0).is_some_and(|s| s.item == stick));
+    client.send_position(client.position, false);
+    client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::PosY });
+    client.pump_until(|c| c.inventory.get(0).is_some_and(|s| s.item == brand) || c.chat.iter().any(|(_, t)| !t.is_empty()));
+    assert_eq!(client.inventory.get(0).map(|s| client.content.blocks.def(s.item).name.clone()).as_deref(), Some("base:firebrand"), "said: {:?}", client.chat);
+}
+
 /// The First Night contract uses real grid and cooking events, and both kinds of
 /// progress survive a restart before completion. Clay fired at a kiln (what is not food,
 /// from another station) cannot stand in for a meal at the campfire.

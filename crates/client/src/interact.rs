@@ -959,6 +959,29 @@ mod tests {
         assert_eq!(proposed, 0);
     }
 
+    /// A stick held to a campfire is held in it (`base:cook`), as the gate's firebrand step
+    /// does: what the press proposes.
+    #[test]
+    fn a_stick_held_to_a_campfire_is_held_in_it() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let (mut app, block, server_side) = app(content.actions.clone());
+        let id = |name: &str| content.blocks.expect(name);
+        app.world_mut().resource_mut::<ClientWorld>().set_block(block, id("base:campfire"));
+        app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosX, distance: 2.0 });
+        let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+        player.inventory.slots[3] = Some(voxmar_engine::inventory::ItemStack::new(id("base:stick"), 1));
+        player.selected = 3;
+        app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(30)));
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+        for _ in 0..20 {
+            app.update();
+        }
+        let proposed: Vec<String> = std::iter::from_fn(|| server_side.try_recv().ok().flatten())
+            .filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(content.actions.get(action).map_or_else(|| format!("{action:?}"), |a| a.name.clone())), _ => None })
+            .collect();
+        assert_eq!(proposed, ["base:cook"]);
+    }
+
     /// A log held to a chopping block with an axe about splits on the press; the button held
     /// on lays nothing there, neither the log while it splits nor the firewood once it is
     /// in hand. Let go and pressed again, the firewood is laid.

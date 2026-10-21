@@ -5903,24 +5903,30 @@ fn firebrand(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             if let (true, Some(slot)) = (burning, slot.filter(|&s| s < voxmar_engine::inventory::HOTBAR_SLOTS)) {
                 world.resource_mut::<LocalPlayer>().selected = slot;
                 aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
-                mouse(world, MouseButton::Right, true);
                 gate.advance(now);
             } else if waited {
                 fail(world, gate, "firebrand: lit", format!("the {} ({burning}) or a {} in the hotbar ({slot:?}) never came in {BRAND_WAIT} server seconds", name(plan.fire), name(plan.stick)));
             }
         }
+        // Clicked as a player does, once the crosshair is on the fire: a press the frame the
+        // aim turned spent itself on what the crosshair was on before (the stone behind) and
+        // the button held on asked nothing more.
         2 => {
             let Some(plan) = gate.firebrand else { return };
             aim_at(world, fire_at.as_vec3() + Vec3::new(0.5, 0.3, 0.5));
             let held = in_hand(world);
+            let aimed = world.resource::<crate::interact::Target>().hit.as_ref().is_some_and(|hit| hit.block == fire_at);
+            if !held.is_some_and(|s| s.item == plan.brand) {
+                gate.tap(world, aimed && held.is_some_and(|s| s.item == plan.stick), now);
+            }
             if held.is_some_and(|s| s.item == plan.brand) {
                 mouse(world, MouseButton::Right, false);
                 gate.check("firebrand: lit", Ok(format!("a {} held in a {} came back a {} in hand", name(plan.stick), name(plan.fire), name(plan.brand))));
                 world.resource::<Net>().command(&format!("setblock {} {} {} air", fire_at.x, fire_at.y, fire_at.z));
                 gate.advance(now);
-            } else if gate.server_in_phase() > BRAND_WAIT + 5.0 {
+            } else if gate.waited_out(BRAND_WAIT + 5.0) {
                 let held = held.map(|s| name(s.item));
-                fail(world, gate, "firebrand: lit", format!("holding the {} in the {} for {:.1} server seconds left {held:?} in hand", name(plan.stick), name(plan.fire), gate.server_in_phase()));
+                fail(world, gate, "firebrand: lit", format!("{} clicks of the {} on the {} over {:.1} server seconds left {held:?} in hand", gate.taps, name(plan.stick), name(plan.fire), gate.server_in_phase()));
             }
         }
         // The fire gone and the room's light drawn: the floor before the player, lit by the
