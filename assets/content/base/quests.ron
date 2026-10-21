@@ -315,6 +315,20 @@
             rewards: [Xp("hunter", 200.0), Xp("attack", 100.0)],
         ),
         (
+            name: "a_haunch_for_the_pot", age: "farm", branch: "hunter", title: "A Haunch for the Pot",
+            why: "Big game feeds a house for days, but only cooked. Roast a haunch at the campfire or the stove: mutton once your Cooking is 5, pork at 8, beef at 12, venison at 15. Cook one.",
+            tasks: [[Cook("cooked_mutton", 1)], [Cook("cooked_pork", 1)], [Cook("cooked_beef", 1)], [Cook("cooked_venison", 1)]],
+            after: ["bigger_game"],
+            rewards: [Xp("cooking", 80.0), Xp("hunter", 40.0)],
+        ),
+        (
+            name: "a_line_of_snares", age: "farm", branch: "hunter", title: "A Line of Snares",
+            why: "While the big game is followed, a hunter of this age keeps a line of snares on the runs. Set four snares where rabbits and hares wander, go about your day, and come back for what they hold: three catches.",
+            tasks: [[Placed("snare", 4), Trapped("any", 3)]],
+            after: ["the_farm_age"],
+            rewards: [Xp("hunter", 90.0)],
+        ),
+        (
             name: "full_hide_wraps", age: "farm", branch: "combat", title: "Full Hide Wraps",
             why: "A whole set guards head, body and legs. At the crafting table a hood takes five hides, a tunic eight and trousers seven. Rabbits, deer and boar drop raw hide; hung a while on a drying rack (four sticks and three twine), it turns to hide.",
             tasks: [[Craft("hide_hood", 1), Craft("hide_tunic", 1), Craft("hide_trousers", 1)]],
@@ -806,7 +820,7 @@
             capstone: true,
             why: "A poacher stalks deer in the woods at dusk: be there when he takes one and he cuts you a share, or face him with a weapon in hand (Attack 10) and he leaves. Gamekeepers follow on his trail and say which way he went, and on a later day, once you can fight, his gang may lie in wait for you. Deal with all three.",
             tasks: [[Met("poacher", 1), Met("gamekeepers", 1), Met("poachers_gang", 1)]],
-            after: ["a_share_of_the_hunt"],
+            after: ["a_share_of_the_hunt", "a_haunch_for_the_pot", "a_line_of_snares"],
             rewards: [Xp("hunter", 200.0), Xp("attack", 100.0), Item("snare", 4)],
         ),
         (
