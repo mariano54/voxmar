@@ -651,11 +651,11 @@
             pitch: (0.9, 1.1), reach: 12,
             when: {"settlement_edge": (max: 10, fade: 40), "depth": (max: 2, fade: 4)},
         ),
-        // Trade at the market's stalls by day, busier the bigger the place: a hamlet's
-        // trader never (up to sixteen people), a village's stalls now and then, a town's
-        // market all day (from forty-five).
+        // Trade at the market's stalls by day, busier the bigger the place: a village's
+        // stalls now and then, a town's market all day (from forty-five). Only from stalls,
+        // which a hamlet never has, so its trader is quiet however many live there.
         (
-            name: "market", sound: Coins, volume: 0.22, at: Building(buildings: ["stall", "trader"]), per_minute: 1, cooldown: 12,
+            name: "market", sound: Coins, volume: 0.22, at: Building(buildings: ["stall"]), per_minute: 1, cooldown: 12,
             pitch: (0.92, 1.08), reach: 10,
             when: {"settlement_edge": (max: 6, fade: 30), "settlement_people": (min: 22, fade: 6), "sun": (min: 0.1, fade: 0.15), "depth": (max: 2, fade: 4)},
             duck: {"rain": 0.7},

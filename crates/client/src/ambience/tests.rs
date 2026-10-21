@@ -1327,31 +1327,39 @@ fn the_home_ladder_follows_the_players_home() {
 
 /// The works without a smith's noise have their own: hides scraped at the tannery, the
 /// smokehouse's fire, boats at the boathouse, each from its building; and the market's
-/// trade grows with the place, none at a hamlet's trader, some in a village, a town's
-/// stalls busy all day. By night the tanner and the market rest.
+/// trade grows with the place, some in a village, a town's stalls busy all day, and none
+/// in a hamlet, which has no stalls, however crowded. By night the tanner and the market
+/// rest.
 #[test]
 fn a_towns_market_is_busier_than_a_villages() {
     let ambience = base();
     let sound = |name: &str| ambience.sounds.iter().position(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("no sound {name}"));
     let names = ["tannery", "smokehouse", "moorings", "market", "market_busy"];
-    let heard = |people: f32, sun: f32| {
+    let stalls = ambience.buildings.iter().position(|set| set.names == ["stall"]).expect("the market sounds from stalls");
+    let heard_with = |people: f32, sun: f32, has_stalls: bool| {
         let set = [("settlement", 10.0), ("settlementedge", 0.0), ("settlementpeople", people), ("sun", sun)];
-        let (timeline, _) = run(&ambience, &scene(&ambience, "town", &["plains", "temperate"], &set), 600.0);
+        let mut place = scene(&ambience, "town", &["plains", "temperate"], &set);
+        if !has_stalls {
+            place.buildings[stalls].clear();
+        }
+        let (timeline, _) = run(&ambience, &place, 600.0);
         names.map(|name| {
             let at: Vec<_> = timeline.iter().filter_map(|(_, c)| match c { Cue::Sound { sound: s, at, .. } if *s == sound(name) => Some(*at), _ => None }).collect();
             assert!(at.iter().all(|at| *at == Some(Vec3::new(12.0, 0.0, 0.0))), "{name} from its building: {at:?}");
             at.len()
         })
     };
+    let heard = |people: f32, sun: f32| heard_with(people, sun, true);
     let [tannery, smokehouse, moorings, market, busy] = heard(30.0, 0.8);
     assert!(tannery > 0 && smokehouse > 0 && moorings > 0, "a village's works by day: {tannery} {smokehouse} {moorings}");
     assert!(market > 0 && busy == 0, "a village's stalls now and then: {market}, {busy}");
     let town = heard(90.0, 0.8);
     assert!(town[4] > 0 && town[3] + town[4] > 2 * (market + busy), "a town's market: {town:?}, a village's {market} + {busy}");
-    // The busiest hamlet's trader is quiet, and the busiest village's stalls are never a
-    // town's market.
-    let hamlet = heard(16.0, 0.8);
-    assert_eq!(hamlet[3] + hamlet[4], 0, "a hamlet's trader: {hamlet:?}");
+    // A hamlet has a trader but no stalls: quiet even at its most crowded (six homes of
+    // four and the trader's two); and the busiest village's stalls are never a town's
+    // market.
+    let hamlet = heard_with(26.0, 0.8, false);
+    assert_eq!(hamlet[3] + hamlet[4], 0, "a crowded hamlet's trader: {hamlet:?}");
     assert_eq!(heard(45.0, 0.8)[4], 0, "a big village's stalls");
     let night = heard(90.0, -0.8);
     assert_eq!([night[0], night[3], night[4]], [0, 0, 0], "the tanner and the market at night: {night:?}");
