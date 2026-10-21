@@ -787,6 +787,8 @@ struct Gate {
     kiln: IVec3,
     /// The crafting table the tempered kiln bricks are made at, set over the head.
     brick_table: IVec3,
+    /// The server second the tempered bricks step last asked to open that table, if it has.
+    brick_asked: Option<f32>,
     kiln_since: f32,
     /// Where the shapes step sets its row of shaped blocks: in the air before the player.
     shapes_row: IVec3,
@@ -1151,6 +1153,7 @@ impl Gate {
             gathered: (0, 0.0),
             kiln: IVec3::ZERO,
             brick_table: IVec3::ZERO,
+            brick_asked: None,
             kiln_since: 0.0,
             shapes_row: IVec3::ZERO,
             pieces_open: 0,
@@ -4933,6 +4936,7 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 net.command(&format!("give straw {straw}"));
                 net.command(&format!("setblock {} {} {} crafting_table", table.x, table.y, table.z));
                 gate.brick_table = table;
+                gate.brick_asked = None;
                 gate.advance(now);
             } else if gate.server_in_phase() > 5.0 {
                 gate.check("craft: kiln bricks", Err(format!("{clay} fired clay made {made} kiln bricks, not the recipe's {count}")));
@@ -4947,9 +4951,13 @@ fn screens(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 gate.check("craft: tempered kiln bricks", Err("no recipe makes tempered kiln bricks of fired clay and straw".to_owned()));
                 gate.next(Step::Weather, now);
             } else if world.resource::<LocalPlayer>().station != Some(gate.brick_table) {
-                // The table set over the head, opened as a right click opens it.
+                // The table set over the head, opened as a right click opens it: asked once the
+                // client has the table, and again each server second it stays shut (by the
+                // server's clock, not frames, which a loaded machine draws seconds apart).
                 let client = world.resource::<ClientWorld>();
-                if client.block(gate.brick_table).is_some_and(|b| Some(b) == client.registry.id("base:crafting_table")) && gate.frames % 30 == 0 {
+                let due = gate.brick_asked.is_none_or(|asked| gate.server_now - asked >= 1.0);
+                if client.block(gate.brick_table).is_some_and(|b| Some(b) == client.registry.id("base:crafting_table")) && due {
+                    gate.brick_asked = Some(gate.server_now);
                     let actions = world.resource::<crate::Actions>().0.clone();
                     let target = voxmar_engine::action::ActionTarget::Block { block: gate.brick_table, face: voxmar_engine::coords::Face::NegY };
                     world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:use_table"), target);
