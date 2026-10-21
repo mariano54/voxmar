@@ -91,6 +91,7 @@ fn a_brace_comes_in_every_wood_and_facing_and_turned_over() {
             for id in [up, down] {
                 let def = blocks.def(id);
                 assert!(def.solid && def.has_tag("timber") && def.has_tag("brace") && blocks.is_piece(id), "{} is solid timber, a piece", def.name);
+                assert!(def.has_tag("shelter:sound"), "{} is a sound face of a room as the post and beam it joins are", def.name);
             }
         }
         let brace = blocks.expect(&format!("base:{wood}_brace"));
