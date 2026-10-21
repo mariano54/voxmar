@@ -11235,6 +11235,9 @@ enum View {
     Quests,
     /// First Night's full cooking instructions, in both languages.
     FirstNight,
+    /// First Night with a way of more inputs than any shipped recipe under its first goal,
+    /// as a mod may add (`FIT_LONG_WAY`).
+    LongWay,
     /// The menu on one settings tab.
     Menu(usize),
     /// Dead, waiting to respawn.
@@ -11317,7 +11320,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         [View::Inventory]
             .into_iter()
             .chain((0..FIT_LOOKUPS.len()).map(View::Recipes))
-            .chain([View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::Menu(0)])
+            .chain([View::Character, View::Prayers, View::Journal(0), View::Quests, View::FirstNight, View::LongWay, View::Menu(0)])
             .collect()
     } else if gate.step == Step::FitMenus {
         [View::Title, View::Worlds, View::Create, View::Join].into_iter().chain((0..crate::settings::TABS).map(View::Settings)).collect()
@@ -11327,7 +11330,7 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             .chain((0..FIT_LOOKUP_COUNT).map(View::Recipes))
             .chain([View::Character, View::Prayers])
             .chain((0..skills).map(View::Guide))
-            .chain([View::Quests, View::FirstNight])
+            .chain([View::Quests, View::FirstNight, View::LongWay])
             .chain((0..crate::settings::TABS).map(View::Menu))
             .collect()
     };
@@ -11454,6 +11457,25 @@ fn fit(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
     }
     gate.advance(now);
+}
+
+/// The items a cooked way of `FIT_LONG_WAY` cooks with, beside the one held: more than any
+/// shipped recipe takes, as a mod may ask.
+const FIT_LONG_WAY: [&str; 5] = ["base:wheat", "base:flint", "base:oak_log", "base:wool", "base:raw_perch"];
+
+/// The first cooked way the recipe book has, with every item of `FIT_LONG_WAY` cooked with
+/// it, two of each, and some of it made: a recipe line too long for the quest book's column
+/// unless it wraps.
+fn long_way(world: &World) -> Option<voxmar_engine::recipe_book::Entry> {
+    use voxmar_engine::recipe_book::Method;
+    let content = &world.resource::<Launch>().content;
+    let book = world.resource::<crate::hud::recipes::RecipeViewer>().book()?;
+    let mut way = book.entries().iter().find(|e| matches!(e.method, Method::Cook { .. }))?.clone();
+    if let Method::Cook { with, .. } = &mut way.method {
+        *with = FIT_LONG_WAY.iter().map(|name| (content.blocks.expect(name), 2)).collect();
+    }
+    way.count = (3, 3);
+    Some(way)
 }
 
 /// A window smaller than the gate's own, where the interface steps down to 75% and the HUD
@@ -11693,7 +11715,7 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         Some(View::Character | View::Prayers | View::Guide(_)) => ui.character_open = true,
         Some(View::Menu(_)) => ui.menu_open = true,
         Some(View::Journal(_)) => ui.journal_open = true,
-        Some(View::Quests | View::FirstNight) => ui.quests_open = true,
+        Some(View::Quests | View::FirstNight | View::LongWay) => ui.quests_open = true,
         Some(View::Console) => ui.console_open = true,
         Some(View::Recipes(_)) => (ui.inventory_open, ui.recipes_open) = (true, true),
         _ => {}
@@ -11721,8 +11743,12 @@ fn show_view(world: &mut World, view: Option<View>, now: f32) {
         };
         *world.resource_mut::<QuestView>() = QuestView { chapter: 0, picked, ..default() };
     }
-    if let Some(View::FirstNight) = view {
+    if let Some(View::FirstNight | View::LongWay) = view {
         *world.resource_mut::<crate::hud::quests::QuestView>() = crate::hud::quests::QuestView { chapter: 0, picked: Some("base:first_night".into()), ..default() };
+    }
+    let long = matches!(view, Some(View::LongWay)).then(|| long_way(world)).flatten();
+    if world.resource::<crate::hud::quests::FitWay>().0 != long {
+        world.resource_mut::<crate::hud::quests::FitWay>().0 = long;
     }
     if let Some(View::Journal(page)) = view {
         world.resource_mut::<crate::hud::journal::JournalView>().page = page;

@@ -156,18 +156,23 @@ fn spawn(mut config: ServerConfig, content: Content) -> std::io::Result<ServerHa
 /// planned; one dropped between two tests made the next plan the spawn village again, some
 /// 1.4 s of each join.
 fn keep_world(seed: u64, content: &Content) {
+    /// The columns of each held world kept for the next server on it, about 1100.
+    const REMEMBERED: usize = 128 << 20;
     static HELD: std::sync::Mutex<Vec<(u64, std::sync::Arc<voxmar_worldgen::Overworld>)>> = std::sync::Mutex::new(Vec::new());
     let mut held = HELD.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if held.iter().all(|(s, _)| *s != seed) {
         let world = voxmar_worldgen::WorldContent::load(content).expect("world content loads");
-        held.push((seed, voxmar_worldgen::Overworld::shared(seed, content, &world)));
+        let world = voxmar_worldgen::Overworld::shared(seed, content, &world);
+        // Most tests stand round the same spawn: each server's land is the last one's.
+        world.remember_columns(REMEMBERED);
+        held.push((seed, world));
     }
 }
 
 /// The game's content, loaded and checked once for the whole run: every server a test
 /// starts gets the same, as a player's game gives each world it opens. The item tables a
 /// load sets (stack limits, pouches, worn slots, store holds) are the process's own, so a
-/// test that loads other content checks it set the same tables (`assert_base_tables`).
+/// test that loads other content checks it set the same tables (`load_other`).
 fn content() -> Content {
     base().0.clone()
 }
@@ -188,7 +193,8 @@ struct BaseTables {
     stacks: Vec<u8>,
     pouches: Vec<Option<(voxmar_engine::block::BlockId, u16)>>,
     worn: Vec<Option<usize>>,
-    /// Per store, what of every block it takes.
+    /// Per store, what of every block it takes: the game's stores only, so a mod that makes
+    /// one of the game's other blocks a store is not caught.
     holds: Vec<(voxmar_engine::block::BlockId, Vec<bool>)>,
 }
 
@@ -206,12 +212,18 @@ impl BaseTables {
     }
 }
 
-/// The item tables a load of other content (a mod's) left are still the game's own, for
-/// its blocks: the tables are the process's, shared by every test running beside it.
+/// Loads the content under `assets` (a mod's, say) and checks the item tables it left are
+/// still the game's own, for its blocks: the tables are the process's, shared by every test
+/// running beside it. One such load at a time, each checked before the next, so a bad
+/// mod's tables are never covered by another load landing between.
 #[track_caller]
-fn assert_base_tables() {
-    let (content, tables) = base();
-    assert!(BaseTables::read(content) == *tables, "loading other content changed the game's item tables (stack limits, pouches, worn slots or store holds) for every test");
+fn load_other(assets: &std::path::Path) -> Content {
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let (base, tables) = base();
+    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let content = load_content(assets).expect("content loads");
+    assert!(BaseTables::read(base) == *tables, "loading other content changed the game's item tables (stack limits, pouches, worn slots or store holds) for every test");
+    content
 }
 
 /// Opens and registers a local connection only once its Hello is ready.
@@ -1080,9 +1092,7 @@ fn a_world_whose_worldgen_data_changed_says_so_once_and_still_opens() {
     let mossy = r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound"]"#;
     assert!(source.contains(mossy));
     std::fs::write(&blocks, source.replace(mossy, r#"tags: ["stone", "bricks", "building", "mossy", "wet", "shelter:sound", "tagged"]"#)).unwrap();
-    base();
-    let tagged = load_content(&assets).expect("content loads");
-    assert_base_tables();
+    let tagged = load_other(&assets);
     assert!(warned(tagged), "a block's tags changed");
     std::fs::remove_dir_all(&dir).unwrap();
     std::fs::remove_dir_all(&assets).unwrap();
@@ -2695,8 +2705,6 @@ fn looking_an_item_up_finishes_the_look_it_up_quest() {
 /// A content directory with one more package, `zz_test`, holding `files`: what a mod adds.
 /// Returns where it is (to remove) and the content loaded from it.
 fn with_mod(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Content) {
-    // The game's tables first, to check the mod's load against.
-    base();
     let assets = world_dir(name);
     copy_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), &assets.join("content"));
     let package = assets.join("content/zz_test");
@@ -2704,8 +2712,7 @@ fn with_mod(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, Content)
     for (file, source) in files {
         std::fs::write(package.join(file), source).unwrap();
     }
-    let content = load_content(&assets).expect("content loads");
-    assert_base_tables();
+    let content = load_other(&assets);
     (assets, content)
 }
 
