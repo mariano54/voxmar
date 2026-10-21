@@ -289,7 +289,7 @@ Timber, First Night) and the Crafting Table, and every other path starts from a 
 main line reaches: the crafting table, the stone tools, the first night or the bed. Each path runs as a chain:
 mining runs A Pile of Stone and Dig In, and Black Flecks (a coal sample lifted with flint, or one coal ore, from the Crafting Table), Coal and Cinders (twelve coal, after it and Stone in Hand; Torchlight waits on it), First Ore, Stockpile; fighting runs
 Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw; the camp runs Make
-Camp, Company at Camp, Pantry Shelves, From the Shelves, Put It Away, with A Lit Corner and A Bench to
+Camp, By Rushlight, Company at Camp, Pantry Shelves, From the Shelves, Put It Away, with A Lit Corner and A Bench to
 Work At beside it; grain runs A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore.
 
 Siblings that are one job are now one quest in parts. A task was already a list of parts
@@ -633,7 +633,7 @@ language keys, are unchanged.
 |---|---|---|
 | First Steps | Timber, Crafting Table, An Axe to It, A Chopping Block, A Sharp Edge, Twine and Thong | A Full Stone Kit |
 | The Hearth | Look It Up, First Night, Stone in Hand, A Bed of Your Own, Torchlight | Homestead Hearth (then the rite, The Farm Age) |
-| Home | Make Camp, A Lit Corner, A Bench to Work At, Pockets, Company at Camp, Pantry Shelves, Put It Away | From the Shelves |
+| Home | Make Camp, By Rushlight, A Lit Corner, A Bench to Work At, Pockets, Company at Camp, Pantry Shelves, Put It Away | From the Shelves |
 | Food | Meat on the Fire, A Handful of Grain, Daily Bread, Wild Harvest, Herb Lore, Break Ground, Tools for Animals, Hung to Dry, Trail Rations | A Varied Table |
 | Hunting and Fishing | A Tempting Bite, A Friend in the Wild, Small Game, Hide and Seek, Set a Snare, Rod and Line, First Catch, A Fish Supper | Old Tusk |
 | Combat | Something to Swing, Sharpening Up, Something Hostile, A Stone's Throw, Hide Wraps, Raise Your Guard | Hard to Put Down |

@@ -505,6 +505,30 @@ mod tests {
         assert_eq!(progress.tasks[0][0], (2, 5), "kinds dealt with, out of five");
     }
 
+    /// Rushes cut, rushlights made and one set down finish By Rushlight, the light A Lit
+    /// Corner asks for before candles: two rushes from the water's edge, a rushlight made
+    /// and standing.
+    #[test]
+    fn rushes_cut_and_a_rushlight_set_down_finish_by_rushlight() {
+        use voxmar_engine::action::ActionTarget;
+        use voxmar_engine::coords::Face;
+        let mut server = fixture();
+        server.players.get_mut(&1).unwrap().quests_done.push("base:make_camp".into());
+        let rush = server.content.blocks.expect("base:rush");
+        server.discover_broken(1, rush);
+        server.tally(1, "crafted", "base:oak_rushlight", 2);
+        server.update_quests(1);
+        assert!(!done(&server, "base:by_rushlight"), "one rush cut of two, nothing set down");
+        server.discover_broken(1, rush);
+        hold(&mut server, "base:oak_rushlight", 2);
+        let place = server.content.actions.expect("core:place");
+        server.propose(1, place, ActionTarget::Block { block: IVec3::new(127, 199, 130), face: Face::PosY }, std::time::Instant::now());
+        assert_eq!(tally(&server, "placed:base:oak_rushlight"), 1, "the rushlight set down counts");
+        server.update_quests(1);
+        assert!(done(&server, "base:by_rushlight"), "two rushes cut, rushlights made and one standing");
+        assert!(server.content.quests.get("base:a_lit_corner").is_some_and(|q| q.after.iter().any(|a| a == "base:by_rushlight")), "A Lit Corner comes after it");
+    }
+
     /// What is eaten counts by food (`Ate`), and an effect counts once it has been felt at
     /// all (`Felt`), whatever gave it: Sweet Relief and Smoke That Clings finish from them.
     #[test]

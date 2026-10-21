@@ -175,10 +175,17 @@
             rewards: [Xp("construction", 40.0), Item("torch", 4)],
         ),
         (
-            name: "a_lit_corner", age: "nomad", branch: "home", title: "A Lit Corner",
-            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and a night's sleep in it wakes you well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
-            tasks: [[Built("home_bedside", 1)]],
+            name: "by_rushlight", age: "nomad", branch: "home", title: "By Rushlight",
+            why: "A torch smokes and candles want hides, but a rushlight is cheap and safe by thatch. Rushes grow at the water's edge, along rivers and in marshes and bogs: break two. A plank, a stick and two rushes make two rushlights (Crafting 2). Set one down by your bed: it burns for a day, and a rush lights it again.",
+            tasks: [[Pick("rush", 2), Craft("tag:rushlight", 2), Placed("tag:rushlight", 1)]],
             after: ["make_camp"],
+            rewards: [Xp("crafting", 30.0), Xp("construction", 10.0)],
+        ),
+        (
+            name: "a_lit_corner", age: "nomad", branch: "home", title: "A Lit Corner",
+            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and a night's sleep in it wakes you well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); rushlights are a plank, a stick and two rushes (Crafting 2), and candles twine over two hides (Crafting 3).",
+            tasks: [[Built("home_bedside", 1)]],
+            after: ["by_rushlight"],
             rewards: [Xp("construction", 40.0), Xp("crafting", 20.0)],
         ),
         (
