@@ -683,6 +683,7 @@ impl Server {
         self.players[&id].connection.send(ServerMessage::Fires { lit: self.fires() });
         // What smoulders now: the others were told as it began, and are told only of changes.
         self.players[&id].connection.send(ServerMessage::Smoulders { at: self.smouldering() });
+        self.tell_waiting(id);
         if let Some(file) = set_aside {
             let text = Words::key("save.player_set_aside").with("file", Words::text(file));
             self.players[&id].connection.send(ServerMessage::Chat { kind: ChatKind::Error, text });
@@ -1532,6 +1533,73 @@ mod tests {
         let client = join(&mut server, 2, "Late");
         let told: Vec<Vec<IVec3>> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Smoulders { at } => Some(at), _ => None }).collect();
         assert_eq!(told, [vec![at]]);
+    }
+
+    /// What stands on a mantel shelf is told with its column, and as it changes to the
+    /// players who have the column, only them: the item in each of its slots, in order, a
+    /// spot apiece. A shelf turned east keeps things as one facing north does.
+    #[test]
+    fn what_stands_on_a_shelf_is_told_to_whoever_has_its_column() {
+        use voxmar_engine::coords::ColumnPos;
+        use voxmar_engine::glam::IVec3;
+        use voxmar_engine::inventory::ItemStack;
+        type Told = Vec<(ColumnPos, Vec<(IVec3, Vec<Option<BlockId>>)>)>;
+        let mut server = crate::test_server();
+        let at = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let column = ColumnPos::of_block(at);
+        let (shelf, stick) = (server.content.blocks.expect("base:oak_mantel_shelf_east"), server.content.blocks.expect("base:stick"));
+        server.set_block(at, shelf);
+        let machines = server.content.machines.clone();
+        assert!(server.factory.insert(at, shelf, &machines), "a shelf turned east is a store");
+        let spots = server.content.blocks.def(shelf).shows.len();
+        server.factory.state_mut(at).unwrap().bin[1] = Some(ItemStack::new(stick, 1));
+        let shown = |client: &ClientConnection| -> Told {
+            std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Shown { column, at } => Some((column, at)), _ => None }).collect()
+        };
+        let near = join(&mut server, 2, "Near");
+        let far = join(&mut server, 3, "Far");
+        server.players.get_mut(&3).unwrap().sent.clear();
+        server.send_shown();
+        server.stream_columns(2);
+        let mut things = vec![None; spots];
+        things[1] = Some(stick);
+        assert_eq!(shown(&near), [(column, vec![(at, things)])], "told once, with the column or as it changed");
+        // Taken off, it is told gone, once, and only to whoever has the column.
+        server.factory.state_mut(at).unwrap().bin[1] = None;
+        server.send_shown();
+        server.send_shown();
+        assert_eq!(shown(&near), [(column, Vec::new())]);
+        assert_eq!(shown(&far), Told::new(), "a player without the column is told nothing of it");
+    }
+
+    /// A full shelf broken drops its things, and whoever has its column is told it shows
+    /// nothing there now.
+    #[test]
+    fn a_full_shelf_broken_is_told_empty_to_whoever_has_its_column() {
+        use voxmar_engine::coords::ColumnPos;
+        use voxmar_engine::glam::IVec3;
+        use voxmar_engine::inventory::ItemStack;
+        type Told = Vec<(ColumnPos, Vec<(IVec3, Vec<Option<BlockId>>)>)>;
+        let mut server = crate::test_server();
+        let at = ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let column = ColumnPos::of_block(at);
+        let (shelf, stick) = (server.content.blocks.expect("base:oak_mantel_shelf"), server.content.blocks.expect("base:stick"));
+        server.set_block(at, shelf);
+        let spots = server.content.blocks.def(shelf).shows.len();
+        let state = server.factory.state_mut(at).expect("a shelf is a store");
+        for slot in state.bin.iter_mut().take(spots) {
+            *slot = Some(ItemStack::new(stick, 1));
+        }
+        let shown = |client: &ClientConnection| -> Told {
+            std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Shown { column, at } => Some((column, at)), _ => None }).collect()
+        };
+        let near = join(&mut server, 2, "Near");
+        server.send_shown();
+        server.stream_columns(2);
+        assert_eq!(shown(&near), [(column, vec![(at, vec![Some(stick); spots])])], "full, every spot shown");
+        server.set_block(at, BlockId::AIR);
+        server.send_shown();
+        assert_eq!(shown(&near), [(column, Vec::new())], "broken, its column shows nothing");
     }
 
     /// A player let down lands on a post's top only where they are over it: beside it, in

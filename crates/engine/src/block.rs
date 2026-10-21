@@ -299,6 +299,13 @@ pub struct BlockDef {
     /// (`into`): clay on a wattle panel daubs it. It takes the level of the recipe that makes
     /// `into` and teaches its experience a piece (server `coat.rs`).
     pub coat: Option<Coat>,
+    /// Where what it holds stands on it, as a shelf shows the things put on its boards: a
+    /// spot for each of its store's first slots, in order, each the bottom middle of the
+    /// item, from the cell's lower corner in blocks for the block facing north (turned with
+    /// it). Only a store (`Bin` in machines.ron) with a slot for each spot shows (a load
+    /// check, content.rs); the server tells players what stands where
+    /// (`ServerMessage::Shown`), and the client draws it still.
+    pub shows: Vec<[f32; 3]>,
 }
 
 /// A coating (see [`BlockDef::coat`]): the block held to coat it, and the block it becomes.
@@ -607,6 +614,7 @@ impl Default for BlockDef {
             upper: None,
             beside: None,
             coat: None,
+            shows: Vec::new(),
         }
     }
 }
@@ -1110,6 +1118,7 @@ impl BlockRegistry {
                         ..base.clone()
                     };
                     turned.particles.iter_mut().for_each(|emission| emission.at = facing.turn(emission.at));
+                    turned.shows.iter_mut().for_each(|spot| *spot = facing.turn(*spot));
                     defs.push(turned);
                 }
                 if !base.variants.is_empty() {
@@ -1142,6 +1151,12 @@ impl BlockRegistry {
         for (i, def) in defs.iter().enumerate() {
             if by_name.insert(def.name.clone(), BlockId(i as u16)).is_some() {
                 return Err(RegistryError(format!("duplicate block `{}`", def.name)));
+            }
+            if !def.shows.is_empty() && (def.flips || def.flipped) {
+                return Err(RegistryError(format!("block `{}` shows what it holds, so it cannot come upside down", def.name)));
+            }
+            if let Some(spot) = def.shows.iter().find(|spot| spot.iter().any(|v| !(0.0..=1.0).contains(v))) {
+                return Err(RegistryError(format!("block `{}` shows a thing at {spot:?}, outside its cell (0 to 1 each way)", def.name)));
             }
             for emission in &def.particles {
                 if emission.range.is_some_and(|range| !(1.0..=MAX_EMISSION_RANGE).contains(&range)) {
@@ -1788,6 +1803,20 @@ mod tests {
         assert!(BlockRegistry::from_ron("base", &block("(range: Some(500.0))")).is_err());
         assert!(BlockRegistry::from_ron("base", &block("(over: Some((\"\", 3)))")).is_err());
         assert!(BlockRegistry::from_ron("base", &block("(over: Some((\"hearth\", 0)))")).is_err());
+    }
+
+    /// What a shelf shows stands where its spots say, turned with it; a spot outside its
+    /// cell does not load, nor a shelf that comes upside down.
+    #[test]
+    fn a_shelfs_spots_turn_with_it_and_stay_in_its_cell() {
+        let shelf = |rest: &str| format!("(blocks: [(name: \"shelf\", textures: All(\"shelf\"), {rest})])");
+        let registry = BlockRegistry::from_ron("base", &shelf("facing: true, shows: [(0.25, 0.5, 0.75)]")).unwrap();
+        let spots = |name: &str| registry.def(registry.expect(name)).shows.clone();
+        assert_eq!(spots("base:shelf"), [[0.25, 0.5, 0.75]]);
+        assert_eq!(spots("base:shelf_south"), [[0.75, 0.5, 0.25]]);
+        assert_eq!(spots("base:shelf_east"), [Facing::East.turn([0.25, 0.5, 0.75])]);
+        assert!(BlockRegistry::from_ron("base", &shelf("shows: [(0.5, 1.5, 0.5)]")).is_err());
+        assert!(BlockRegistry::from_ron("base", &shelf("flips: true, shows: [(0.5, 0.5, 0.5)]")).is_err());
     }
 
     #[test]

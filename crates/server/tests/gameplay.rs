@@ -2480,19 +2480,20 @@ fn quests_finish_from_what_was_done_and_reward_it() {
     }
     client.propose("core:craft", ActionTarget::Slot(0));
     client.chat.clear();
-    // Finished, it waits to be claimed: the chat line points to the quest screen, and the
-    // Engineering (18) is not given with it.
+    // Finished, it waits to be claimed: the chat line points to the quest screen, and its
+    // Engineering is not given with it.
+    let paid = quest_xp(&client, "base:crafting_table");
     client.pump_until(|c| done(c, "base:crafting_table") && c.chat.iter().any(|(_, t)| t.contains("Quest done: Crafting Table. Claim its reward in the quest book")));
     client.settle();
-    assert!(!client.earned.contains(&180), "finishing paid before it was claimed: {:?}", client.earned);
+    assert!(!client.earned.contains(&paid), "finishing paid before it was claimed: {:?}", client.earned);
     assert!(!client.claimed("base:crafting_table"));
     client.claim("base:crafting_table");
-    client.pump_until(|c| c.claimed("base:crafting_table") && c.earned.contains(&180));
+    client.pump_until(|c| c.claimed("base:crafting_table") && c.earned.contains(&paid));
     // Claiming again, or a quest not finished, pays nothing.
     client.claim("base:crafting_table");
     client.claim("base:first_ore");
     client.after_server_ticks(TICKS_PER_SECOND as u64);
-    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == 180).count(), 1, "{:?}", client.earned);
+    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == paid).count(), 1, "{:?}", client.earned);
     assert!(!client.claimed("base:first_ore"));
 }
 
@@ -2597,7 +2598,9 @@ fn a_stick_held_in_a_campfire_comes_back_a_firebrand() {
     client.ok(&format!("/setblock {} {} {} campfire", fire.x, fire.y, fire.z));
     client.tp(Vec3::new(at.x as f32 + 0.5, at.y as f32, at.z as f32 + 0.5));
     let named = |c: &Client, slot: usize| c.inventory.get(slot).map(|s| c.content.blocks.def(s.item).name.clone());
-    for (sticks, hand_after) in [(1, "base:firebrand"), (2, "base:stick")] {
+    // Two in hand (one picked up while it was held there): one catches and is held up all
+    // the same, the other put by in the pack, so a lit brand is never left in the pack.
+    for (sticks, hand_after) in [(1, "base:firebrand"), (2, "base:firebrand")] {
         client.ok("/clear stick");
         client.ok("/clear firebrand");
         client.ok(&format!("/give stick {sticks}"));
@@ -2608,6 +2611,8 @@ fn a_stick_held_in_a_campfire_comes_back_a_firebrand() {
         client.propose("base:cook", ActionTarget::Block { block: fire, face: Face::NegX });
         client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == brand) || c.chat.iter().any(|(_, t)| !t.is_empty()));
         assert_eq!(named(&client, slot).as_deref(), Some(hand_after), "{sticks} sticks in hand; said: {:?}", client.chat);
+        let kept: u8 = client.inventory.slots.iter().flatten().filter(|s| s.item == stick).map(|s| s.count).sum();
+        assert_eq!(kept, sticks as u8 - 1, "the rest kept");
     }
 }
 
@@ -2798,12 +2803,13 @@ fn looking_an_item_up_finishes_the_look_it_up_quest() {
     client.connection.send(ClientMessage::LookedUp { item: pickaxe });
     client.pump_until(|c| done(c) && c.chat.iter().any(|(_, t)| t.contains("Quest done: Look It Up")));
     client.claim("base:look_it_up");
-    client.pump_until(|c| c.earned.contains(&400));
+    let paid = quest_xp(&client, "base:look_it_up");
+    client.pump_until(|c| c.earned.contains(&paid));
     for _ in 0..20 {
         client.connection.send(ClientMessage::LookedUp { item: pickaxe });
     }
     client.wait_server(2);
-    assert_eq!(client.earned.iter().filter(|&&xp| xp == 400).count(), 1, "repeated look-ups rewarded XP again");
+    assert_eq!(client.earned.iter().filter(|&&xp| xp == paid).count(), 1, "repeated look-ups rewarded XP again");
     assert_eq!(client.chat.iter().filter(|(_, text)| text.contains("Quest done: Look It Up")).count(), 1, "the quest completed again");
 }
 
@@ -2942,12 +2948,16 @@ fn a_level_quest_waits_for_the_level_and_grants_its_experience() {
     client.ok("/skill mining 10");
     client.pump_until(|c| done(c, "zz_test:miner"));
     client.after_server_ticks(TICKS_PER_SECOND as u64);
-    assert!(!client.earned.contains(&500), "finishing paid before it was claimed: {:?}", client.earned);
+    let paid = quest_xp(&client, "zz_test:miner");
+    // The 50 Crafting it writes, paid through the book's scale.
+    let quests = &client.content.quests;
+    assert_eq!(paid, (50.0 * quests.pays().of(quests.get("zz_test:miner").unwrap()) * 10.0).round() as u32);
+    assert!(!client.earned.contains(&paid), "finishing paid before it was claimed: {:?}", client.earned);
     client.claim("zz_test:miner");
-    client.pump_until(|c| c.earned.contains(&500));
+    client.pump_until(|c| c.earned.contains(&paid));
     client.claim("zz_test:miner");
     client.after_server_ticks(2 * TICKS_PER_SECOND as u64);
-    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == 500).count(), 1, "{:?}", client.earned);
+    assert_eq!(client.earned.iter().filter(|&&tenths| tenths == paid).count(), 1, "{:?}", client.earned);
     drop(client);
     std::fs::remove_dir_all(&assets).unwrap();
 }
@@ -4088,7 +4098,9 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     // Waiting for any of the settlement's people, not for those at the bed: the dead one
     // may have lived alone.
     let gone = |c: &Client| villagers(c).iter().all(|v| v.seed != victim.seed);
-    // A restart (dropping the server saves the world).
+    // A restart (dropping the server saves the world), from the bed as the first was: the
+    // kill may have moved the player, and a crossing on the way could bring in a newcomer.
+    client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
     drop(client);
     assert!(dir.join("villagers.ron").is_file());
     let mut client = Client::join_with(config());
@@ -5986,8 +5998,6 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     let mut client = Client::join();
     let (bow, arrow) = (client.content.blocks.expect("base:short_bow"), client.content.blocks.expect("base:arrow"));
     let bear = client.content.creatures.find("brown_bear").expect("a brown bear in the content");
-    // Bees sting only those who can be hurt: no creative here.
-    client.ok("/gamemode survival");
     client.ok("/fill ~-12 ~-1 ~-12 ~12 ~-1 ~12 stone");
     client.ok("/fill ~-12 ~ ~-12 ~12 ~4 ~12 air");
     client.ok("/clear");
@@ -6007,6 +6017,10 @@ fn a_shot_by_a_bees_nest_stirs_the_bees_unless_smoke_calms_them() {
     client.ok(&format!("/tp {} {} {}", at.x + 10.0, at.y, at.z));
     let yaw = yaw_toward(client.position, at);
     client.connection.send(ClientMessage::Input(PlayerInput { teleport: client.teleports, position: client.position, yaw, pitch: 0.0, selected_slot: slot as u8, flying: false }));
+    // Bees sting only those who can be hurt, so no creative from here; till now creative, so
+    // the bear summoned at the player's feet began no fight (a blow wound up walks a held
+    // bear after the player, off from beside the nest).
+    client.ok("/gamemode survival");
     client.wait_server_asked(1);
     let stung = |c: &Client| c.chat.iter().any(|(_, line)| line.starts_with("Stung!"));
     client.chat.clear();
@@ -7880,18 +7894,14 @@ fn crafting_all_stops_when_the_grid_makes_another_recipe() {
     client.propose("core:craft", ActionTarget::Slot(0));
     let (table, stick) = (client.content.blocks.expect("base:crafting_table"), client.content.blocks.expect("base:stick"));
     client.pump_until(|c| c.inventory.slots.iter().flatten().any(|s| s.item == table));
-    // The first table also finishes the Crafting Table quest, whose reward (18 Engineering)
+    // The first table also finishes the Crafting Table quest, whose reward (its Engineering)
     // waits to be claimed: claim it, so both grants are counted exactly.
     client.pump_until(|c| c.quests.iter().any(|q| q.name == "base:crafting_table" && q.done));
     client.claim("base:crafting_table");
     client.pump_until(|c| c.claimed("base:crafting_table"));
     client.settle();
     assert!(!client.inventory.slots.iter().flatten().any(|s| s.item == stick), "crafting all went on into another recipe");
-    let reward = client.content.quests.get("base:crafting_table").unwrap().rewards.iter().find_map(|r| match r {
-        voxmar_engine::quest::Reward::Xp(_, xp) => Some((xp * 10.0).round() as u32),
-        _ => None,
-    });
-    assert_eq!(client.earned[earned..], [80, reward.unwrap()], "one table's Engineering, once, then the quest's reward");
+    assert_eq!(client.earned[earned..], [80, quest_xp(&client, "base:crafting_table")], "one table's Engineering, once, then the quest's reward");
 }
 
 /// A server started on a world another server holds open answers its first player: the
@@ -10126,15 +10136,20 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let missed: Vec<&str> = QUEST_BOOK_ORDER.iter().copied().filter(|q| !quest_status(&f.c, q).0).collect();
     assert!(missed.is_empty(), "quests of the line not done: {missed:?}");
     eprintln!("{}", timeline(&f));
+    eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
+    check_pacing(&mut f);
+}
+
+/// Something new comes every three minutes of the line, several things, and no one action
+/// is done over and over for long (docs/first-days.md, "Pacing"): the report printed, and
+/// the run failed past either floor.
+fn check_pacing(f: &mut Fresh) {
     f.look_round();
     let end = f.secs();
     f.pacing.borrow_mut().end(end);
     let pacing = f.pacing.borrow();
     let report = pacing_report(&pacing, end);
     eprintln!("{report}");
-    eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
-    // Something new comes every three minutes of the line, several things, and no one
-    // action is done over and over for long (docs/first-days.md, "Pacing").
     for (i, window) in pacing.windows(PACING_WINDOW, end).iter().enumerate() {
         let full = (i as f32 + 1.0) * PACING_WINDOW <= end;
         let new = window.values().map(Vec::len).sum::<usize>();
@@ -10262,6 +10277,8 @@ fn finish(mut f: Fresh) {
         f.mined, f.c.deaths, f.restocks, settle.0, settle.1, f.secs()
     );
     eprintln!("{report}");
+    // The Nomad line paced as the Farm's is, by the same floors.
+    check_pacing(&mut f);
     for &(name, budget) in FRESH_BUDGETS {
         let m = f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached"));
         assert!(m.at <= budget, "{name} took {:.1} server seconds, over its budget of {budget}", m.at);
@@ -10703,4 +10720,17 @@ fn a_bed_far_out_in_a_town_is_someones() {
     client.propose("base:sleep", ActionTarget::Block { block: bed, face: Face::PosY });
     client.pump_until(|c| c.refused.iter().any(|t| t.contains("belongs to someone")));
     assert!(!client.chat.iter().any(|(_, t)| t.contains("wake here")), "the bed {far:.0} blocks out in {} took as where the player wakes", town.name.0);
+}
+
+/// A quest's experience reward in tenths, as the quest book pays it: the content's own
+/// number, which carries the book's scale (`core/quests.ron` `pays`).
+fn quest_xp(client: &Client, quest: &str) -> u32 {
+    let rewards = &client.content.quests.get(quest).unwrap_or_else(|| panic!("no quest {quest}")).rewards;
+    rewards
+        .iter()
+        .find_map(|r| match r {
+            voxmar_engine::quest::Reward::Xp(_, xp) => Some((xp * 10.0).round() as u32),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{quest} pays no experience"))
 }
