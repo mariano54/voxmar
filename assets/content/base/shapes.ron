@@ -258,6 +258,73 @@
             (from: (3, 2.5, 2), to: (13, 5, 14), textures: All("furniture_linen")),
             (from: (5, 5, 10), to: (11, 6.5, 13.5), textures: All("furniture_linen")),
         ]),
+        // A mantel shelf on the wall behind it (south), high in its cell: a deep board on two
+        // brackets, a lip along its front. What it holds stands on the board (`shows`).
+        "mantel_shelf": (boxes: [
+            (from: (0, 12, 10), to: (16, 14, 16)),
+            (from: (2, 7, 13), to: (4, 12, 16)),
+            (from: (12, 7, 13), to: (14, 12, 16)),
+            (from: (0, 14, 10), to: (16, 14.5, 10.5)),
+        ]),
+        // A fireside bench, low and long, its seat across the cell, a fleece thrown over it.
+        "fireside_bench": (boxes: [
+            (from: (0, 5, 3), to: (16, 7, 13)),
+            (from: (1, 0, 4), to: (3, 5, 12), textures: All("furniture_grain")),
+            (from: (13, 0, 4), to: (15, 5, 12), textures: All("furniture_grain")),
+            (from: (2, 7, 3.5), to: (14, 8, 12.5), textures: All("furniture_linen")),
+            (from: (2, 4, 2.5), to: (14, 7, 3.5), textures: All("furniture_linen")),
+        ]),
+        // A plate rack on the wall behind it (south): a post at each end, a ledge low down
+        // and a rail across the front to keep what stands on it (`shows`) from tipping out.
+        "plate_rack": (boxes: [
+            (from: (0, 3, 13), to: (1, 15, 16)),
+            (from: (15, 3, 13), to: (16, 15, 16)),
+            (from: (1, 4, 11), to: (15, 5, 16)),
+            (from: (1, 7, 11), to: (15, 8, 12)),
+            (from: (1, 13, 14), to: (15, 14, 16)),
+        ]),
+        // A bedside table, its drawer to the north: a top on four legs, a drawer under it.
+        "bedside_table": (boxes: [
+            (from: (2, 10, 2), to: (14, 12, 14)),
+            (from: (2, 0, 2), to: (4, 10, 4), textures: All("furniture_grain")),
+            (from: (12, 0, 2), to: (14, 10, 4), textures: All("furniture_grain")),
+            (from: (2, 0, 12), to: (4, 10, 14), textures: All("furniture_grain")),
+            (from: (12, 0, 12), to: (14, 10, 14), textures: All("furniture_grain")),
+            (from: (4, 6, 2.5), to: (12, 10, 13.5), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+        ]),
+        // A footstool: a low frame on four legs, its top woven of rushes.
+        "footstool": (boxes: [
+            (from: (3, 4, 3), to: (13, 5, 13)),
+            (from: (3.5, 5, 3.5), to: (12.5, 6, 12.5), textures: All("furniture_linen")),
+            (from: (3, 0, 3), to: (5, 4, 5), textures: All("furniture_grain")),
+            (from: (11, 0, 3), to: (13, 4, 5), textures: All("furniture_grain")),
+            (from: (3, 0, 11), to: (5, 4, 13), textures: All("furniture_grain")),
+            (from: (11, 0, 11), to: (13, 4, 13), textures: All("furniture_grain")),
+        ]),
+        // A spice rack on the wall behind it (south): a back board, a ledge and a rail, the
+        // herbs in it standing on the ledge (`shows`).
+        "spice_rack": (boxes: [
+            (from: (1, 8, 15), to: (15, 14, 16)),
+            (from: (1, 8, 12), to: (15, 9, 15)),
+            (from: (1, 10, 12), to: (15, 10.5, 12.5)),
+            (from: (1, 9, 12), to: (1.5, 10.5, 15)),
+            (from: (14.5, 9, 12), to: (15, 10.5, 15)),
+        ]),
+        // A candle box on the wall behind it (south): a back board, an open-topped box on it
+        // with a low front, the candles in it standing on its floor (`shows`).
+        "candle_box": (boxes: [
+            (from: (3, 6, 15), to: (13, 14, 16)),
+            (from: (3, 6, 11), to: (13, 7, 15)),
+            (from: (3, 7, 11), to: (13, 10, 11.5)),
+            (from: (3, 7, 11.5), to: (3.5, 12, 15)),
+            (from: (12.5, 7, 11.5), to: (13, 12, 15)),
+        ]),
+        // A bread bin, its front to the north: a box on the floor, a lid over it and a knob.
+        "bread_bin": (boxes: [
+            (from: (2, 0, 3), to: (14, 8, 13), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+            (from: (1.5, 8, 2.5), to: (14.5, 9.5, 13.5)),
+            (from: (7, 9.5, 7), to: (9, 10.5, 9), textures: All("furniture_grain")),
+        ]),
         // A rushlight holder: a foot, a post, an arm to the east and the rush burning in its
         // clip at the arm's end.
         "rushlight": (boxes: [
@@ -766,6 +833,39 @@
         "fence_gate_open": (boxes: [
             (from: (0, 0, 6.5), to: (2, 16, 9.5)),
             (from: (14, 0, 6.5), to: (16, 16, 9.5)),
+            (from: (2, 4, 0), to: (3.5, 6, 7)),
+            (from: (2, 11, 0), to: (3.5, 13, 7)),
+            (from: (2, 6, 0), to: (3.5, 11, 1.5)),
+            (from: (2, 6, 5.5), to: (3.5, 11, 7)),
+        ]),
+        // A double gate's two leaves, two cells wide between a half post at each outer end:
+        // each leaf a frame of two rails and two uprights, the leaves meeting in the middle
+        // with no post between. `double_gate` is the leaf set, its post on the east; the
+        // leaf beside it (west, to the right of whoever set it) has its post on the west.
+        // Open, each stands swung out to the north, folded against its own post.
+        "double_gate": (boxes: [
+            (from: (14, 0, 6.5), to: (16, 16, 9.5)),
+            (from: (0, 4, 7.25), to: (14, 6, 8.75)),
+            (from: (0, 11, 7.25), to: (14, 13, 8.75)),
+            (from: (12.5, 6, 7.25), to: (14, 11, 8.75)),
+            (from: (0, 6, 7.25), to: (1.5, 11, 8.75)),
+        ]),
+        "double_gate_open": (boxes: [
+            (from: (14, 0, 6.5), to: (16, 16, 9.5)),
+            (from: (12.5, 4, 0), to: (14, 6, 7)),
+            (from: (12.5, 11, 0), to: (14, 13, 7)),
+            (from: (12.5, 6, 0), to: (14, 11, 1.5)),
+            (from: (12.5, 6, 5.5), to: (14, 11, 7)),
+        ]),
+        "double_gate_leaf": (boxes: [
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
+            (from: (2, 4, 7.25), to: (16, 6, 8.75)),
+            (from: (2, 11, 7.25), to: (16, 13, 8.75)),
+            (from: (2, 6, 7.25), to: (3.5, 11, 8.75)),
+            (from: (14.5, 6, 7.25), to: (16, 11, 8.75)),
+        ]),
+        "double_gate_leaf_open": (boxes: [
+            (from: (0, 0, 6.5), to: (2, 16, 9.5)),
             (from: (2, 4, 0), to: (3.5, 6, 7)),
             (from: (2, 11, 0), to: (3.5, 13, 7)),
             (from: (2, 6, 0), to: (3.5, 11, 1.5)),

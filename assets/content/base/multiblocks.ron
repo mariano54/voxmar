@@ -8,7 +8,8 @@
 // fuel heat). One `lit_by` an item tagged so in hand uses nothing up; one that `smoulder`s
 // chars its `wood` cells for `hours` of game time into `done` (`early` if it was opened
 // first, `spoiled` for the share of the burn rain fell on its open core), its core
-// `burning` meanwhile and `spent` after (engine/src/multiblock.rs, server smoulder.rs).
+// `burning` meanwhile and `spent` after, or its `stages` from a share of the burn on, so it
+// is seen catching and dying down (engine/src/multiblock.rs, server smoulder.rs).
 (
     multiblocks: [
         // The Homestead Hearth, the Nomad age's gate: a hearthstone in a ring of stone, a
@@ -52,12 +53,15 @@
             name: "charcoal_clamp", title: "Charcoal Clamp",
             hint: "A clamp is nine firewood laid three by three on the ground, walled round and roofed over with earth, with kindling in place of the roof's middle earth for a flue. Light the kindling from a torch, a firebrand or a campfire.",
             lit_by: Some("firelighter"),
-            smoulder: Some((hours: 2.0, wood: 'F', done: "charcoal_heap", early: "charred_wood_heap", spoiled: "ash_heap", burning: "clamp_flue", spent: "core:air")),
+            smoulder: Some((hours: 2.0, wood: 'F', done: "charcoal_heap", early: "charred_wood_heap", spoiled: "ash_heap", burning: "clamp_flue", spent: "core:air",
+                // Its flue catching for the first tenth of the burn, steady, then dying down
+                // for the last sixth: a clamp near done is seen from afar.
+                stages: [(0.0, "clamp_flue_catching"), (0.1, "clamp_flue"), (0.85, "clamp_flue_dying")])),
             layers: [
                 ["sssss", "sFFFs", "sFFFs", "sFFFs", "sssss"],
                 [".....", ".sss.", ".sKs.", ".sss.", "....."],
             ],
-            key: {'F': "firewood", 's': "tag:soil", 'K': "kindling|clamp_flue"},
+            key: {'F': "firewood", 's': "tag:soil", 'K': "kindling|clamp_flue|clamp_flue_catching|clamp_flue_dying"},
             core: 'K',
         ),
     ],

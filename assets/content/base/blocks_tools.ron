@@ -37,6 +37,15 @@
             name: "pit_kiln", sound: Stone, textures: Sides(top: "pit_kiln_top", bottom: "cobblestone", side: "pit_kiln_side"),
             hardness: 1.5, color: (120, 90, 70), tags: ["pit_kiln", "station", "heat"], light: 8,
         ),
+        // Loaded and firing (stations.ron), then fired and cooling with the wares in it.
+        (
+            name: "pit_kiln_firing", sound: Stone, textures: Sides(top: "pit_kiln_firing_top", bottom: "cobblestone", side: "pit_kiln_firing_side"),
+            drops: "pit_kiln", hardness: 1.5, color: (150, 90, 60), tags: ["creative_only", "pit_kiln", "heat"], light: 12,
+        ),
+        (
+            name: "pit_kiln_fired", sound: Stone, textures: Sides(top: "pit_kiln_fired_top", bottom: "cobblestone", side: "pit_kiln_fired_side"),
+            drops: "pit_kiln", hardness: 1.5, color: (120, 100, 90), tags: ["creative_only", "pit_kiln", "heat"], light: 4,
+        ),
         (
             name: "kiln_bricks", sound: Stone, textures: All("kiln_bricks"),
             hardness: 2.0, color: (160, 90, 60), tags: ["kiln_bricks", "bricks", "building", "shelter:fine"],
@@ -124,7 +133,7 @@
         (template: "drop", name: "stick", tags: ["stick", "wood", "fuel"], all: (color: (130, 95, 55))),
         // A firebrand: a stick held in any fire (cooking.ron) until it catches, the first light
         // before coal. It lights the way around the hand that holds it (`held_light:N`) and
-        // scares what fears fire, but burns while carried (`burns:N` seconds, counted like a
+        // scares what fears fire, but burns while held (`burns:N` seconds, counted like a
         // tool's wear) and leaves a charred stick (`burns_to:`). It `kindles`: lights a torch's
         // stub again (flame.rs).
         (template: "drop", name: "firebrand", tags: ["fire", "firelighter", "kindles", "burns:90", "burns_to:charred_stick", "held_light:8"], all: (color: (240, 140, 40))),

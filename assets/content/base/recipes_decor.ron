@@ -50,6 +50,21 @@
         // bedded with rushes.
         (ingredients: ["{name}_chair", "{name}_planks", "{name}_planks"], output: "{name}_rocking_chair", skill: "core:construction", level: 4, xp: 4.0),
         (ingredients: ["{name}_planks", "{name}_planks", "{name}_planks", "stick", "stick", "rush", "rush"], output: "{name}_cradle", skill: "core:construction", level: 4, xp: 4.0),
+        // Lived in: a shelf hung high on two stick brackets for a mantel; a bench with a hide
+        // thrown over it.
+        (ingredients: ["{name}_shelf", "stick", "stick"], output: "{name}_mantel_shelf", skill: "core:construction", level: 3, xp: 3.0),
+        (ingredients: ["{name}_bench", "hide"], output: "{name}_fireside_bench", skill: "core:construction", level: 2, xp: 2.0),
+        // Two planks for its posts and ledge, four sticks for its rails.
+        (ingredients: ["{name}_planks", "{name}_planks", "stick", "stick", "stick", "stick"], output: "{name}_plate_rack", skill: "core:construction", level: 3, xp: 3.0),
+        // A stool topped with a plank for a bedside table; a stool with rushes woven over it
+        // for a footstool; a plank on two sticks for a spice rack.
+        (ingredients: ["{name}_stool", "{name}_planks"], output: "{name}_bedside_table", skill: "core:construction", level: 3, xp: 3.0),
+        (ingredients: ["{name}_stool", "rush", "rush"], output: "{name}_footstool", skill: "core:construction", level: 2, xp: 2.0),
+        (ingredients: ["{name}_planks", "stick", "stick"], output: "{name}_spice_rack", skill: "core:construction", level: 2, xp: 2.0),
+        // A slab boxed on a plank for a candle box; a lidded box of three planks for a bread
+        // bin.
+        (ingredients: ["{name}_slab", "{name}_planks"], output: "{name}_candle_box", skill: "core:construction", level: 2, xp: 2.0),
+        (ingredients: ["{name}_planks", "{name}_planks", "{name}_planks", "{name}_slab"], output: "{name}_bread_bin", skill: "core:construction", level: 2, xp: 2.0),
         (ingredients: ["rush", "rush", "rush", "rush"], output: "rush_mat", skill: "core:crafting", level: 1, xp: 1.0),
         // A window box: a trough of planks filled with earth, and a poppy and a dandelion planted in it.
         (ingredients: ["tag:planks", "tag:planks", "tag:planks", "dirt", "poppy", "dandelion"], output: "window_box", skill: "core:construction", level: 3, xp: 3.0),
@@ -91,11 +106,13 @@
 
         // Singles. Tallow lights a candle, and beeswax better; a lantern holds a torch in
         // metal, a stone one in four blocks of stone.
-        (pattern: [["twine", ""], ["hide", "hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
+        // Tallow from rendered fat: a wick over a lump of lard makes two. First, as a wild
+        // boar or a bear drops lard: the quest book and the tracker lead with it.
+        (pattern: [["twine"], ["lard"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
         // Beeswax burns cleaner and longer: one cake and a wick make three (bees.ron).
         (pattern: [["twine"], ["beeswax"]], output: "candle", count: 3, skill: "core:crafting", level: 3, xp: 3.0),
-        // Tallow from rendered fat: a wick over a lump of lard makes two.
-        (pattern: [["twine"], ["lard"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
+        // Two hides make two, once raw hide is hung to dry.
+        (pattern: [["twine", ""], ["hide", "hide"]], output: "candle", count: 2, skill: "core:crafting", level: 3, xp: 2.0),
         // A clay oil lamp, made empty: a twine wick in a fired clay bowl. Filled with fat by
         // a right click, it is lit (blocks_furnishings.ron).
         (pattern: [["", "twine"], ["fired_clay", "fired_clay"]], output: "clay_oil_lamp_empty", skill: "core:crafting", level: 4, xp: 4.0),

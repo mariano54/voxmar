@@ -6,9 +6,9 @@ sitting on a wooden seat,
 casting a line, picking an item up, feeding an animal, emptying a pouch, loading a machine, picking a lock, praying at an altar,
 spreading fertiliser, throwing an item down, a snare springing shut, a fish landed, food
 coming off the fire done or burnt, a loaf baked, and a tool nearly worn out and breaking;
-for the interface, a quest book's page turned and a soft "no" when something is refused;
-and the building materials' steps, placings and breakings (timber, thatch, shingle,
-cobblestone, stone brick, wattle, daub, hide, terracotta) under materials/;
+for the interface, a quest book's page turned, a soft "no" when something is refused, and
+a firing finished; and the building materials' steps, placings and breakings (timber,
+thatch, shingle, cobblestone, stone brick, wattle, daub, hide, terracotta) under materials/;
 and the work of the first two ages under work/: flint knapped,
 a hide scraped, clay shaped, pottery, stone dressed, cord twisted, wood whittled, the
 home stations loaded, a kiln fed and what it fires (pottery, charcoal), ore
@@ -447,6 +447,19 @@ def cooked(rng):
     sizzle = bandpass(rng.standard_normal(n), 4800, 0.8) * np.exp(-t / 0.22) * 0.6
     out = sizzle + crackles(rng, seconds, 18, 0.5) * np.exp(-t / 0.3)
     place(out, 0.3, knock(rng, rng.uniform(380, 460), 0.8))
+    return out
+
+
+def fired(rng):
+    """A firing finished (a clamp charred through, a kiln gone cold), heard wherever the
+    player is: the last embers crackling away, a deep earthen settle, and fired ware ringing
+    once as it cools."""
+    seconds = 1.6
+    n = int(seconds * RATE)
+    t = np.arange(n) / RATE
+    out = crackles(rng, seconds, 14, 0.55) * np.exp(-t / 0.45)
+    place(out, 0.12, knock(rng, rng.uniform(150, 180), 0.9))
+    place(out, 0.42, modes(rng.uniform(610, 660), 1.1, [(1.0, 0.35, 0.5), (2.76, 0.12, 0.25), (5.4, 0.05, 0.12)]))
     return out
 
 
@@ -1129,6 +1142,34 @@ def seat_wood(rng):
     return out
 
 
+def rocking_chair(rng):
+    """Sitting in a rocking chair: the seat's knock and creak, then it rocking back and
+    forth twice on its runners, each rock softer, settling still."""
+    out = np.zeros(int(1.4 * RATE))
+    place(out, 0.0, seat_wood(rng), 1.0)
+    at, level = 0.45, 0.5
+    for _ in range(2):
+        place(out, at, creak(rng, rng.uniform(0.22, 0.3), 30, 60, rng.uniform(300, 380)), level)
+        place(out, at + 0.2, knock(rng, rng.uniform(110, 140)), level * 0.4)
+        at += rng.uniform(0.38, 0.45)
+        level *= 0.6
+    return out
+
+
+def rocker_place(rng):
+    """A rocking chair or cradle set down: a knock of its runners on the floor, then it
+    rocking to rest, a creak and a tap each way, smaller each time."""
+    out = np.zeros(int(0.55 * RATE))
+    place(out, 0.0, knock(rng, rng.uniform(130, 160)))
+    at, level = 0.08, 0.5
+    for _ in range(3):
+        place(out, at, creak(rng, rng.uniform(0.08, 0.11), 35, 70, rng.uniform(380, 460)), level * 0.6)
+        place(out, at + 0.07, knock(rng, rng.uniform(170, 210)), level * 0.5)
+        at += rng.uniform(0.14, 0.16)
+        level *= 0.6
+    return out
+
+
 def grind(rng):
     """A quern turned: the upper stone rumbling round on the lower, a turn and more of gritty,
     low grinding, and grain crunching between them."""
@@ -1290,11 +1331,13 @@ SOUNDS = {
     "catch": (catch, 2),
     "burnt": (burnt, 2),
     "cooked": (cooked, 2),
+    "fired": (fired, 2),
     "page": (page, 2),
     "refuse": (refuse, 2),
     "materials/timber_step": (timber_step, 4),
     "materials/timber_place": (timber_place, 3),
     "materials/timber_break": (timber_break, 3),
+    "materials/rocker_place": (rocker_place, 3),
     "materials/thatch_step": (thatch_step, 4),
     "materials/thatch_place": (thatch_place, 3),
     "materials/thatch_break": (thatch_break, 3),
@@ -1348,6 +1391,7 @@ SOUNDS = {
     "store_basket": (store_basket, 2),
     "bed_frame": (bed_frame, 2),
     "seat_wood": (seat_wood, 2),
+    "rocking_chair": (rocking_chair, 2),
     "work/grind": (grind, 2),
     "work/spin": (spin, 2),
     "work/weave": (weave, 2),

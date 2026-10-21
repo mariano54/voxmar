@@ -14,7 +14,7 @@ the server's side in `crates/server/src/stations.rs`.
   item, `tag:TAG`, tags that must all hold (`tag:raw+meat`), with `!` for one that must not
   (`tag:grain+!vegetable`), or several of these joined by `|`.
 - The load is done `minutes` later on the world's clock (`due` is a server tick, saved with
-  the world), near or far, loaded column or not. A look every 5 s (`base:stations`, Low tier)
+  the world), near or far, loaded column or not. A look every second (`base:stations`, Low tier)
   turns done stations in loaded columns to their ready block; one far away shows it when used.
 - Right-click a done station (ready, or still showing working because nobody was near) to take
   `gives` of the output for each `takes` loaded, and `xp` per output in the skill. What does not
@@ -57,6 +57,7 @@ and a fertiliser reach outside 0 to 4.
 | Drying rack | Nomad | (the same rack) | up to 8 raw hides into hide, one for one: a beast's hide comes off raw | open sky; a `fire` within 3 doubles the speed | 10 min (5 by a fire) | Crafting 1, 2 xp each; a cured hide is worth 3 to a raw one's 2 |
 | Cooking pot | Farm (after its rite) | 7 fired clay about a clay pot (Crafting 3) | up to 6: two grain, not seed (`tag:grain+!vegetable+!seed`), into porridge (Cooking 3, 14 xp); three raw meat, roots, vegetables or other edible produce, none of it cooked, grain or fruit, into a stew (Cooking 14, 36 xp) | a `hob` within 1 (a campfire beside it, or the hearthstone under it) and water within 4 (a well counts), both at load and take | 2 min (porridge), 3 min (stew) | Cooking 3 / 14 |
 | Compost heap | Farm | 7 planks in a U (Construction 5) | up to 16 produce, vegetables, fruit, seed or burnt food (`compost` tag), four into one compost | water within 2 makes it x1.5 | 15 min (10 by water) | Farming 5, 8 xp each |
+| Pit kiln | Farm | 4 cobbles round a campfire (Construction 1) | up to 12 clay into fired clay (never cracked), or 12 cobblestone into stone, one for one; quests count both as cooked | anywhere | 12 s | Crafting 1, 6 xp each (clay); Construction 1, 1 xp each (stone) |
 | Earth clamp | Farm | 8 dirt round a log (Construction 3) | up to 16 clay into fired clay (never cracked), or 16 logs into charcoal, one for one; quests count both as cooked | anywhere | 1 min | Crafting 1, 4 xp each (clay); Cooking 1, 3 xp each (charcoal) |
 
 | Fertiliser | Reach | Grows | Xp per crop |

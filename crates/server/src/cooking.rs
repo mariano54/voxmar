@@ -68,12 +68,23 @@ impl Server {
         let burnt = roll < recipe.burn_chance(level);
         let result = if burnt { recipe.burnt.map(|b| (b, 1)) } else { Some((recipe.output, recipe.def.count)) };
         if let Some((made, n)) = result {
-            // The last one held comes back cooked into the emptied hand (a lit firebrand
-            // is held up at once), unless it tops up a stack already carried; the rest go
-            // where they fit.
+            // The last one held comes back cooked into the emptied hand, unless it tops up a
+            // stack already carried; the rest go where they fit. A light (a lit firebrand) is
+            // held up at once even from more than one held: what is left of them is put by in
+            // the pack, if it fits, so the light is never left burning out of hand.
             let most = voxmar_engine::inventory::max_stack(made);
             let tops_up = player.inventory.slots.iter().flatten().any(|s| s.item == made && s.wear == 0 && s.count < most);
-            if player.inventory.get(selected).is_none() && !tops_up {
+            if self.content.tools.held_light(made) > 0
+                && let Some(rest) = player.inventory.get(selected)
+            {
+                let mut lifted = player.inventory.clone();
+                lifted.slots[selected] = Some(ItemStack::new(made, n.min(most)));
+                if lifted.add_stack(rest) == 0 && lifted.add(made, n - n.min(most)) == 0 {
+                    player.inventory = lifted;
+                } else {
+                    player.inventory.add(made, n);
+                }
+            } else if player.inventory.get(selected).is_none() && !tops_up {
                 let here = n.min(most);
                 player.inventory.slots[selected] = Some(ItemStack::new(made, here));
                 player.inventory.add(made, n - here);

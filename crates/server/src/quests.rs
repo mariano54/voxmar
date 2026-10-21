@@ -75,14 +75,20 @@ impl Server {
     }
 
     /// The cell at `pos` now holds `block`: a block recorded there for a quest stands while
-    /// this one still drops its item (a sprung snare still drops a snare). Gone (broken,
-    /// built over, washed away), its record goes and it comes off its owner's count, now if
-    /// they are here, else as they next join.
+    /// this one still drops its item (a sprung snare still drops a snare), or the item of the
+    /// same light lit, guttering or burnt out (an oil lamp filled, a torch down to its stub).
+    /// Gone (broken, built over, washed away), its record goes and it comes off its owner's
+    /// count, now if they are here, else as they next join.
     pub(crate) fn unplaced(&mut self, pos: IVec3, block: BlockId) {
         let Some((_, item)) = self.quest_placed.get(&pos) else { return };
-        let blocks = &self.content.blocks;
+        let (blocks, flames) = (&self.content.blocks, &self.content.flames);
         let drops = |id: BlockId| Some(blocks.info(id).drops).filter(|d| !d.is_air());
-        if blocks.id(item).and_then(drops).is_some_and(|wanted| drops(block) == Some(wanted)) {
+        let standing = blocks.id(item).is_some_and(|set| {
+            let out = flames.burns_out(blocks, set).map(|(_, to)| to);
+            let lit = [Some(set), flames.relit(blocks, set), flames.gutters(blocks, set), out, out.and_then(|to| flames.relit(blocks, to))];
+            lit.into_iter().flatten().filter_map(drops).any(|wanted| drops(block) == Some(wanted))
+        });
+        if standing {
             return;
         }
         let (owner, item) = self.quest_placed.remove(&pos).expect("found above");
@@ -313,7 +319,8 @@ mod tests {
 
     /// A block set down counts for a quest's `Placed` only while the block in its cell still
     /// drops it: broken, built over or washed away, it comes off; a snare sprung (its block
-    /// changed, not gone) or set again over itself counts once; broken while its player is
+    /// changed, not gone) or set again over itself counts once, and so does a lamp filled
+    /// and burnt dry; broken while its player is
     /// away, it comes off as they join; a block no open quest asks to be set down is never
     /// tallied.
     #[test]
@@ -345,6 +352,15 @@ mod tests {
         assert_eq!(tally(&server, "placed:base:snare"), 1, "a snare set over its own cell counts once");
         set(&mut server, "base:cobblestone", 129);
         assert_eq!(tally(&server, "placed:base:snare"), 0, "built over, the snare no longer counts");
+        // An oil lamp set down dry counts on as it is filled and lit, and as it burns dry.
+        let lamp = set(&mut server, "base:clay_oil_lamp_empty", 131);
+        let (dry, lit) = (server.block(lamp).expect("the dry lamp"), server.content.flames.relit(&server.content.blocks, server.block(lamp).unwrap()).expect("a dry lamp is filled"));
+        server.set_block(lamp, lit);
+        assert_eq!(tally(&server, "placed:base:clay_oil_lamp_empty"), 1, "filled and lit, the lamp still counts");
+        server.set_block(lamp, dry);
+        assert_eq!(tally(&server, "placed:base:clay_oil_lamp_empty"), 1, "burnt dry, it still counts");
+        server.set_block(lamp, BlockId::AIR);
+        assert_eq!(tally(&server, "placed:base:clay_oil_lamp_empty"), 0, "broken, it no longer counts");
         assert!(!server.quest_placed.contains_key(&snare));
         set(&mut server, "base:cobblestone", 131);
         assert_eq!(tally(&server, "placed:base:cobblestone"), 0, "no quest asks for cobblestone set down");

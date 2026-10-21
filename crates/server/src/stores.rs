@@ -6,6 +6,7 @@
 //! player walks out of reach or dies, or when the store is broken.
 
 use voxmar_engine::block::BlockId;
+use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::IVec3;
 use voxmar_engine::inventory::{HOTBAR_SLOTS, ItemStack, SLOTS, Store, max_stack};
 use voxmar_engine::lang::Words;
@@ -18,6 +19,49 @@ use crate::Server;
 const SLACK: f32 = 1.5;
 
 impl Server {
+    /// What stands on the block at `pos`, if it shows what it holds (`BlockDef::shows`: a
+    /// mantel shelf's things): the item in each of its first slots, a spot apiece. None for
+    /// one with nothing on it, or no such block.
+    fn shown_at(&self, pos: IVec3) -> Option<Vec<Option<BlockId>>> {
+        let (block, state) = self.factory.get(pos)?;
+        let spots = self.content.blocks.def(block).shows.len();
+        let items: Vec<Option<BlockId>> = state.bin.iter().take(spots).map(|slot| slot.as_ref().map(|stack| stack.item)).collect();
+        items.iter().any(Option::is_some).then_some(items)
+    }
+
+    /// Tells the players who have a column what stands on its shelves, when that changed
+    /// since they were last told: only the bins the factory says changed are looked at. A
+    /// player is told of a column's shelves as the column is sent (`stream_columns`).
+    pub(crate) fn send_shown(&mut self) {
+        let mut columns: Vec<ColumnPos> = Vec::new();
+        for pos in self.factory.take_bins_changed() {
+            let now = self.shown_at(pos);
+            let column = ColumnPos::of_block(pos);
+            let told = self.shown.get(&column).and_then(|at| at.iter().find(|(p, _)| *p == pos)).map(|(_, items)| items);
+            if told == now.as_ref() {
+                continue;
+            }
+            let at = self.shown.entry(column).or_default();
+            at.retain(|(p, _)| *p != pos);
+            if let Some(items) = now {
+                at.push((pos, items));
+                at.sort_by_key(|(p, _)| p.to_array());
+            }
+            if !columns.contains(&column) {
+                columns.push(column);
+            }
+        }
+        for column in columns {
+            let at = self.shown.get(&column).cloned().unwrap_or_default();
+            if at.is_empty() {
+                self.shown.remove(&column);
+            }
+            for player in self.players.values().filter(|p| p.joined && p.sent.contains(&column)) {
+                player.connection.send(ServerMessage::Shown { column, at: at.clone() });
+            }
+        }
+    }
+
     /// `agent` opens the store at `pos`. One the world placed (a village's barrel) is made
     /// a store the first time it is opened.
     pub(crate) fn open_store(&mut self, agent: PlayerId, pos: IVec3) {
@@ -91,7 +135,8 @@ impl Server {
         count(&state.bin, -1);
         state.bin.clone_from(&store.slots);
         let blocks = &self.content.blocks;
-        let kind = format!("stocked:{}", blocks.def(block).name);
+        // A store turned another way is tallied as the store itself.
+        let kind = format!("stocked:{}", blocks.def(block).form_of().unwrap_or(&blocks.def(block).name));
         let moved: Vec<(String, i64)> = moved.into_iter().filter(|&(_, n)| n != 0).map(|(item, n)| (blocks.def(item).name.clone(), n)).collect();
         for (item, n) in moved {
             if n > 0 {
@@ -157,7 +202,8 @@ impl Server {
                 }
                 matched = true;
                 let blocks = &self.content.blocks;
-                let (kind, item) = (format!("stocked:{}", blocks.def(block).name), blocks.def(stack.item).name.clone());
+                // A turned store counts as its base form, as a move into it does.
+                let (kind, item) = (format!("stocked:{}", blocks.def(block).form_of().unwrap_or(&blocks.def(block).name)), blocks.def(stack.item).name.clone());
                 let before = stack.count;
                 let state = self.factory.state_mut(pos).expect("got above");
                 // Onto its stacks first, then into empty slots.
@@ -209,6 +255,21 @@ impl Server {
         if let Some(player) = self.players.get(&agent) {
             player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
+    }
+}
+
+/// Tells players what stands on the blocks that show what they hold, five times a second:
+/// a thing put on a shelf by hand, a chute or another player shows soon after. Only the
+/// bins that changed are looked at, and only the players who have their columns told.
+pub(crate) struct Shelves;
+
+impl crate::process::Process for Shelves {
+    fn tier(&self) -> voxmar_engine::schedule::Tier {
+        voxmar_engine::schedule::Tier::Medium
+    }
+
+    fn run(&mut self, server: &mut Server) {
+        server.send_shown();
     }
 }
 
@@ -310,6 +371,38 @@ mod tests {
         server.watch_stores();
         assert_eq!((server.players[&1].store, server.players[&1].inventory.store.is_some()), (None, false), "closed out of reach");
         assert_eq!(held(&server), vec![(dirt, 10)], "and what it held stays in it");
+    }
+
+    /// A cupboard turned east opens and keeps things as one facing north does, and what goes
+    /// in is tallied by the cupboard itself, whichever way it faces.
+    #[test]
+    fn a_turned_cupboard_is_a_store_tallied_as_the_cupboard() {
+        let mut server = fixture();
+        server.set_block(AT, id(&server, "base:oak_cupboard_east"));
+        give(&mut server, 0, "base:dirt", 4);
+        open(&mut server);
+        assert_eq!(server.players[&1].store, Some(AT), "it opens");
+        act(&mut server, "core:transfer", ActionTarget::Slots { from: 0, to: STORE as u8, count: 4 });
+        assert_eq!(held(&server), vec![(id(&server, "base:dirt"), 4)]);
+        assert_eq!(server.players[&1].tallies.get("stocked:base:oak_cupboard:base:dirt").copied(), Some(4), "tallied as the cupboard");
+    }
+
+    /// Put away with H into a turned cupboard, what goes in is tallied as the cupboard too.
+    #[test]
+    fn putting_away_into_a_turned_cupboard_tallies_the_cupboard() {
+        let mut server = fixture();
+        let cupboard = id(&server, "base:oak_cupboard_east");
+        server.set_block(AT, cupboard);
+        let machines = server.content.machines.clone();
+        if server.factory.get(AT).is_none() {
+            server.factory.insert(AT, cupboard, &machines);
+        }
+        assert_eq!(server.factory.put(AT, ItemStack::new(id(&server, "base:dirt"), 1), &machines), None);
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(8.5, (FLOOR + 1) as f32, 8.5));
+        give(&mut server, 12, "base:dirt", 5);
+        act(&mut server, "base:put_away", ActionTarget::None);
+        assert_eq!(held(&server), vec![(id(&server, "base:dirt"), 6)]);
+        assert_eq!(server.players[&1].tallies.get("stocked:base:oak_cupboard:base:dirt").copied(), Some(5), "tallied as the cupboard");
     }
 
     /// A jar keeps only what is edible (`holds`), from a player's hand or a chute; a

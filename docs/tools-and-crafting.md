@@ -190,9 +190,10 @@ you wake on it after dying; if not, you are told what it needs.
 
 A sleeping bag (three wool and two hide, four pelts, or feathers and two hide) is where
 you wake after dying until a hearth gives you a home: right click it to sleep
-(`base:sleep`, `Player::bed`, saved). A pit kiln (cobbles round a campfire, Construction 1) fires clay into fired clay (`cooking.ron` at the
-`pit_kiln` station; a station recipe may name its own `skill`, here Crafting), which pots,
-vials and kiln bricks are made of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
+(`base:sleep`, `Player::bed`, saved). A pit kiln (cobbles round a campfire, Construction 1) fires clay into fired clay: loaded with up
+to twelve and left, it fires them in twelve seconds while the player does something else
+(`stations.ron`, docs/stations.md), and fired clay is what pots, vials and kiln bricks are made
+of at the grid. The Crucible Kiln, the Farm age's gate, is a multiblock:
 a crucible (kiln bricks round a clay pot) ringed with tempered kiln bricks, with a pillar
 on each corner. Tempered kiln bricks are four fired clay and a straw (two, as plain bricks
 are); straw comes of grain: one from a wild wheat or rice tuft picked, one or two from a

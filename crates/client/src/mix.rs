@@ -27,6 +27,10 @@ use crate::sfx::Recordings;
 /// Positions are scaled by this for Bevy's panning, so that every sound within reach keeps
 /// its full volume there and only its side changes; [`falloff`] sets loudness.
 pub(crate) const PAN_SCALE: f32 = 1.0 / 96.0;
+/// The most voices a category may play at once (`voices`), so that no package's mix, nor a
+/// crowded town, costs frames: the town bench (`ambience::tests::big_town_sound_cost`)
+/// plays at most 6 of the ambience's at once against its 8.
+pub(crate) const VOICES_MOST: usize = 32;
 /// Seconds a voice made room for takes to fade out, so it stops without a click.
 const MAKE_ROOM: f32 = 0.06;
 
@@ -116,6 +120,9 @@ impl MixDef {
             }
             if category != Category::Music && self.voices.get(&category).is_none_or(|&n| n == 0) {
                 return Err(format!("mix: {category:?} may play no voices"));
+            }
+            if let Some(&n) = self.voices.get(&category).filter(|&&n| n > VOICES_MOST) {
+                return Err(format!("mix: {category:?} may play {n} voices at once, past {VOICES_MOST}"));
             }
         }
         if let Some(duck) = &self.duck {

@@ -204,8 +204,17 @@ impl Server {
         // structure's reach of the change is kept without looking its structure up.
         let reach = structures.reach();
         let before = self.lit.len();
-        self.lit.retain(|&core, fire| fire.until > tick && ((changed - core).abs().max_element() > reach || structures.get(&fire.structure)
-            .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p)))));
+        // A fire whose fuel has run out goes from here as from anywhere; it is told gone cold
+        // (`tell_fires_out`) for it all the same.
+        let cold = &mut self.fires_out;
+        self.lit.retain(|&core, fire| {
+            let keep = fire.until > tick && ((changed - core).abs().max_element() > reach || structures.get(&fire.structure)
+                .is_some_and(|m| !m.includes(core, changed) || m.stands(core, |p| world.block(p))));
+            if !keep && fire.until <= tick {
+                cold.push(fire.clone());
+            }
+            keep
+        });
         if self.lit.len() != before {
             self.send_fires();
         }
@@ -583,8 +592,9 @@ mod tests {
         assert!(matches!(told.as_slice(), [Words::Key(key, _)] if key == "multiblock.cold"), "told {told:?}");
     }
 
-    /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks; a
-    /// hearthstone with no ring round it does not, and says what it lacks.
+    /// A standing Homestead Hearth and a Cottage Stove cook what a campfire cooks, and the
+    /// hearth lights a firebrand or a torch's stub as any fire does; a hearthstone with no
+    /// ring round it does not, and says what it lacks.
     #[test]
     fn the_hearth_and_the_stove_cook_as_a_campfire_does() {
         let mut server = crate::test_server();
@@ -622,6 +632,13 @@ mod tests {
         assert_eq!(cook(&mut server, core), Some(cooked), "the standing hearth cooked nothing");
         assert_eq!(cook(&mut server, stove), Some(cooked), "the stove cooked nothing");
         assert_eq!(server.players[&1].tallies["cooked_at:campfire:base:cooked_small_game"], 2, "counted as campfire cooking, for First Night");
+        // A stick held in it catches, and a torch's stub lights again, as at any fire.
+        for (held, lit) in [("base:stick", "base:firebrand"), ("base:torch_stub", "base:torch")] {
+            server.players.get_mut(&1).unwrap().inventory.slots.iter_mut().for_each(|slot| *slot = None);
+            server.players.get_mut(&1).unwrap().inventory.slots[0] = Some(ItemStack::new(block(&server, held), 1));
+            server.cook(1, core);
+            assert_eq!(server.players[&1].inventory.get(0).map(|s| s.item), Some(block(&server, lit)), "{held} at the hearth");
+        }
         // The stove is a fire: it warms, and holds a pot.
         let def = server.content.blocks.def(block(&server, "base:cottage_stove"));
         assert!(def.has_tag("hob") && def.has_tag("heat"));
@@ -677,35 +694,5 @@ mod tests {
         server.cook(1, fire);
         assert_eq!(server.players[&1].inventory.get(0).unwrap().item, burnt);
         assert!(!server.players[&1].tallies.keys().any(|key| key.starts_with("cooked")), "a burnt output counted");
-    }
-
-    /// A full pack fires its clay as long as the fired clay has room: a crack gives back
-    /// the clay into the stack it came from.
-    #[test]
-    fn a_full_pack_fires_clay_whether_it_cracks_or_not() {
-        let mut server = crate::test_server();
-        player(&mut server);
-        let kiln = server.spawn.floor().as_ivec3() + IVec3::Y * 4;
-        server.set_block(kiln, server.content.blocks.expect("base:pit_kiln"));
-        let (clay, fired, stone) = (server.content.blocks.expect("base:clay"), server.content.blocks.expect("base:fired_clay"), server.content.blocks.expect("base:cobblestone"));
-        let recipe = server.content.cooking.for_item(clay, &server.content.blocks.def(server.content.blocks.expect("base:pit_kiln")).tags).unwrap();
-        let burn = recipe.burn_chance(1);
-        assert!(burn > 0.0 && recipe.burnt == Some(clay), "clay cracks back to clay at level 1");
-        for cracks in [true, false] {
-            let key = server.players[&1].draw_key;
-            let cooks = (0..1000).find(|&n| (crate::save::numbered_draws(key, Draw::Cook.salt(), n)[0] < burn) == cracks).unwrap();
-            server.players.get_mut(&1).unwrap().draws.cooks = cooks;
-            let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
-            for slot in inventory.slots.iter_mut() {
-                *slot = Some(ItemStack::new(stone, 64));
-            }
-            inventory.slots[0] = Some(ItemStack::new(clay, 64));
-            inventory.slots[1] = Some(ItemStack::new(fired, 10));
-            server.players.get_mut(&1).unwrap().selected = 0;
-            server.cook(1, kiln);
-            let inventory = &server.players[&1].inventory;
-            let (clay_left, fired_now) = (inventory.get(0).unwrap().count, inventory.get(1).unwrap().count);
-            assert_eq!((clay_left, fired_now), if cracks { (64, 10) } else { (63, 11) }, "cracks: {cracks}");
-        }
     }
 }

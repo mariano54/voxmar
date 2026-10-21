@@ -54,7 +54,15 @@ pub use voxmar_engine::weather::Weather;
 // 56: whether a creature's blow spoiled the player's draw (ServerMessage::Hurt::spoiled).
 // 57: tools wear (ItemStack::wear) and ServerMessage::ToolWore.
 // 58: a creature warning a player off before it attacks (Pose::Warning).
-pub const PROTOCOL_VERSION: u32 = 58;
+// 59: a firing finished while the player was away (ServerMessage::Fired).
+// 60: ServerMessage::Shown, what stands on the blocks that show what they hold (a shelf's
+// things), a column at a time to the players who have it.
+pub const PROTOCOL_VERSION: u32 = 60;
+
+/// Lines of news a client shows at once (its toasts). The server keeps one fewer waiting for
+/// a player away, so all of it is seen as they come back on with a line still free for
+/// anything else said then.
+pub const NEWS_LINES: usize = 6;
 
 /// A creature's `tell` while it rears into a new phase of its fight.
 pub const REARING: u8 = u8::MAX;
@@ -195,6 +203,10 @@ pub enum ServerMessage {
     /// Something the player tried was refused, and why: shown where the interface shows
     /// refusals (by the hotbar, as for a level the player lacks), not in the console.
     Refused { why: Words },
+    /// Something the player set going finished (a clamp they lit charred through, a kiln
+    /// they fired gone cold), wherever they are: a note at the side of the screen and a
+    /// sound, so one who walked away knows to come back.
+    Fired { words: Words },
     /// The weather where the player is, sent when it changes and every few seconds, with
     /// the names of the effects showing (`valley_fog`, `hail`), strongest first, and the
     /// rain around, to show storms coming. `quick` asks the client to change to it within
@@ -248,6 +260,12 @@ pub enum ServerMessage {
     /// What the player holds wore down past its warning (`tool::Wear::warn`), or with
     /// `broke` wore out and broke: the hand hears it, and a break shows a puff of chips.
     ToolWore { item: BlockId, broke: bool },
+    /// What stands on each block in `column` that shows what it holds (`BlockDef::shows`:
+    /// a mantel shelf's things), by place, in order: the item in each of its first slots, a
+    /// spot apiece; a block with nothing on it is left out. It replaces what was said of the
+    /// column before. Sent with the column when it is sent, and whenever it changes, to the
+    /// players who have the column.
+    Shown { column: ColumnPos, at: Vec<(IVec3, Vec<Option<BlockId>>)> },
 }
 
 /// A creature as players see it. Its velocity lets clients carry it on smoothly between
