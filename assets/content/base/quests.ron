@@ -526,7 +526,7 @@
             name: "earthenware", age: "farm", branch: "pottery", title: "Earthenware",
             why: "Fired clay makes plates, bowls, jars and jugs for the shelf. Two fired clay side by side make two plates, and three in a V make two bowls (Crafting 2); a jar takes three and a jug five (Crafting 3), and a basket is five twine. Make three pieces of crockery at the crafting table.",
             tasks: [[Craft("tag:crockery", 3)]],
-            after: ["a_kiln_load"],
+            after: ["the_potter"],
             rewards: [Xp("crafting", 120.0)],
         ),
         (
