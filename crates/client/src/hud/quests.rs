@@ -2161,13 +2161,14 @@ pub(crate) fn creature_lines(locale: &Locale, content: &Content, package: &str, 
     look.into_iter().chain(hold).collect()
 }
 
-/// Where to look for a creature: where it lives, as the journal says; without a habitat, a
-/// monster comes in the dark and an animal is about in the wild, and a spirit (where the
-/// aether is high) or a villager (in a settlement) has no line.
+/// Where to look for a creature: where it lives, as the journal says (a boss that roams,
+/// Old Tusk, too); without a habitat, a boss waits in its lair, a monster comes in the dark
+/// and an animal is about in the wild, and a spirit (where the aether is high) or a villager
+/// (in a settlement) has no line.
 fn where_to_look(locale: &Locale, def: &voxmar_engine::creature::CreatureDef) -> Option<String> {
     match super::journal::creature_home(locale, def) {
-        _ if def.boss => Some(locale.get("journal.hint.bosses").to_owned()),
         Some(home) => Some(locale.format("journal.hint.lives_in", &[("biome", &home)])),
+        None if def.boss => Some(locale.get("journal.hint.bosses").to_owned()),
         None if def.kind == Kind::Monster => Some(locale.get("journal.hint.monsters").to_owned()),
         None if def.kind == Kind::Animal => Some(locale.get("journal.hint.animals").to_owned()),
         None => None,
@@ -2830,7 +2831,7 @@ pub(crate) mod tests {
     }
 
     /// Under a goal to fight, tame or lure a creature, the tracker says where it lives (a
-    /// boss: in its lair), and to tame or lure it, what to hold out: for each shipped one.
+    /// boss with no habitat: in its lair), and to tame or lure it, what to hold out: for each shipped one.
     #[test]
     fn the_tracker_says_where_a_creature_lives_and_what_tames_it() {
         let content = content();
@@ -2844,8 +2845,8 @@ pub(crate) mod tests {
                 let def = &creature.def;
                 let hint = |key: &str| locale.get(&format!("journal.hint.{key}")).to_owned();
                 match (def.boss, def.habitat.biomes.is_empty(), def.kind) {
-                    (true, ..) => assert_eq!(lines[0], hint("bosses"), "{}: {goal:?}", quest.name),
-                    (false, false, _) => assert!(lines[0].starts_with("Lives in "), "{}: {goal:?} reads {lines:?}", quest.name),
+                    (_, false, _) => assert!(lines[0].starts_with("Lives in "), "{}: {goal:?} reads {lines:?}", quest.name),
+                    (true, true, _) => assert_eq!(lines[0], hint("bosses"), "{}: {goal:?}", quest.name),
                     (false, true, Kind::Monster) => assert_eq!(lines[0], hint("monsters"), "{}: {goal:?}", quest.name),
                     (false, true, Kind::Animal) => assert_eq!(lines[0], hint("animals"), "{}: {goal:?}", quest.name),
                     (false, true, kind) => panic!("{}: {goal:?} on a {kind:?} with no habitat reads {lines:?}", quest.name),
@@ -2863,6 +2864,9 @@ pub(crate) mod tests {
         assert_eq!(rabbit.len(), 2, "{rabbit:?}");
         assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("any".into(), 1)), Vec::<String>::new());
         assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("rootmother".into(), 1)), vec![locale.get("journal.hint.bosses").to_owned()]);
+        // A boss that roams says where, as an animal does.
+        let tusk = creature_lines(&locale, &content, "base", &Goal::Kill("old_tusk".into(), 1));
+        assert!(tusk.len() == 1 && tusk[0].starts_with("Lives in "), "{tusk:?}");
         assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("cave_bat".into(), 1)), vec![locale.get("journal.hint.monsters").to_owned()]);
         // A spirit with no habitat has no line, and leaves the goal to the next.
         assert_eq!(creature_lines(&locale, &content, "base", &Goal::Kill("wisp".into(), 1)), Vec::<String>::new());
