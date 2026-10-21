@@ -579,6 +579,12 @@ impl Server {
             }
             return Ok(Words::key("command.creatures.dispersed").with("count", Words::text(wild.len())));
         }
+        // How many of the settlements' people near players are out, of those due out.
+        if what == "people" && species.is_none() {
+            let (out, due, seen) = self.people_out(at);
+            let seen = Words::List(seen.into_iter().map(Words::text).collect());
+            return Ok(Words::key("command.creatures.people").with("out", Words::text(out)).with("due", Words::text(due)).with("seen", seen));
+        }
         // One of a settlement's people near makes a bark: `/creatures bark greet`.
         if what == "bark" {
             let (name, made) = species.and_then(|name| Some((name, self.bark_command(at, name)?))).ok_or_else(|| Words::key("command.creatures.bark_what"))?;

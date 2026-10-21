@@ -50,6 +50,8 @@ struct Client {
     quick: bool,
     /// Console lines received.
     chat: Vec<(ChatKind, String)>,
+    /// The same, as the server's words before any language renders them.
+    said: Vec<voxmar_engine::lang::Words>,
     /// Refusals received, in English.
     refused: Vec<String>,
     /// The time of day and how fast it runs, as last told.
@@ -316,6 +318,7 @@ impl Client {
             weather: None,
             quick: false,
             chat: Vec::new(),
+            said: Vec::new(),
             refused: Vec::new(),
             day: None,
             server_tick: 0,
@@ -467,7 +470,10 @@ impl Client {
                 self.weather = Some(weather);
                 self.quick = quick;
             }
-            ServerMessage::Chat { kind, text } => self.chat.push((kind, self.content.english.render(&text, &self.content.blocks))),
+            ServerMessage::Chat { kind, text } => {
+                self.chat.push((kind, self.content.english.render(&text, &self.content.blocks)));
+                self.said.push(text);
+            }
             ServerMessage::Refused { why } => self.refused.push(self.content.english.render(&why, &self.content.blocks)),
             ServerMessage::Time { tick, day, day_speed } => {
                 self.day = Some((day, day_speed));
@@ -601,6 +607,7 @@ impl Client {
     #[track_caller]
     fn command(&mut self, line: &str) -> Vec<(ChatKind, String)> {
         self.chat.clear();
+        self.said.clear();
         self.connection.send(ClientMessage::Command { line: line.into() });
         self.pump_until(|c| !c.chat.is_empty());
         std::mem::take(&mut self.chat)
@@ -1587,7 +1594,8 @@ fn a_sword_hits_harder_than_a_fist_from_the_level_that_wields_it() {
 
 #[test]
 fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
-    let mut client = Client::join();
+    // No mutation, so the chick's genes are only its parents'.
+    let mut client = Client::join_with(ServerConfig { view_distance: 2, mutation: Some(0.0), ..Default::default() });
     let hen = client.content.creatures.find("junglefowl").expect("junglefowl in the content");
     let wheat = client.content.blocks.id("base:wheat").unwrap();
     client.ok("/summon junglefowl 2 ~ ~ ~");
@@ -1625,7 +1633,8 @@ fn creatures_are_tamed_by_feeding_and_kept_ones_breed() {
         client.pump_until(|_| Instant::now() > until);
     }
     // The chick inherits its plumage from its parents: each of its two alleles is one of
-    // theirs (no mutation is that likely here).
+    // theirs (mutation is off on this server; at the game's rate, a few chicks in a
+    // thousand would carry a new allele).
     let genes = &client.content.creatures.get(hen).def.genes;
     assert!(!genes.is_empty(), "junglefowl have genes");
     let alleles = |v: &voxmar_protocol::CreatureView| match voxmar_engine::genes::unpack(genes, &v.genes).0[0] {
@@ -3897,9 +3906,42 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     eprintln!("VILLAGER lifecycle: {name} seed {} resting at {bed:?}", victim.seed);
     // Where they lie: a block to one side may be a wall.
     client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
-    client.pump_ticks(2 * TICKS_PER_SECOND as u64, |_| false);
-    let near = |c: &Client| -> Vec<u32> { villagers(c).into_iter().filter(|v| v.position.distance(bed) < 16.0).map(|v| v.seed).collect() };
-    let housemates = near(&client);
+    // Everyone of their kind in sight, once all have come out: a person comes out only onto
+    // land the server holds, and as its search allows, so the look waits until the server
+    // says everyone due out near the player is (`/creatures people`), then until the
+    // client holds every one of them the server tells it of.
+    let kind = |c: &Client| -> std::collections::BTreeSet<u32> { villagers(c).into_iter().filter(|v| species_name(c, v) == name).map(|v| v.seed).collect() };
+    let settle = |client: &mut Client| -> std::collections::BTreeSet<u32> {
+        use voxmar_engine::lang::Words;
+        client.land_within(SETTLEMENT_VIEW);
+        let mut said = String::new();
+        for _ in 0..60 {
+            said = client.ok("/creatures people");
+            // Read from the server's words, not from any language's rendering of them.
+            let Some(Words::Key(_, args)) = client.said.first().cloned() else { panic!("/creatures people: {said}") };
+            let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+            let number = |name: &str| match arg(name) {
+                Some(Words::Text(n)) => n.parse::<usize>().ok(),
+                _ => None,
+            };
+            let seen: Vec<u32> = match arg("seen") {
+                Some(Words::List(ids)) => ids.iter().filter_map(|w| if let Words::Text(id) = w { id.parse().ok() } else { None }).collect(),
+                _ => panic!("/creatures people named no one in sight: {said}"),
+            };
+            if let (Some(out), Some(due)) = (number("out"), number("due"))
+                && out == due
+                && due > 0
+            {
+                client.pump_ticks(10 * TICKS_PER_SECOND as u64, |c| seen.iter().all(|id| c.creatures.contains_key(id)));
+                assert!(seen.iter().all(|id| client.creatures.contains_key(id)), "the server told of people in sight the client never heard of: {said}");
+                return kind(client);
+            }
+            client.pump_ticks(TICKS_PER_SECOND as u64 / 2, |_| false);
+        }
+        panic!("the settlement's people never all came out: {said}");
+    };
+    let housemates = settle(&mut client);
+    assert!(housemates.contains(&victim.seed), "the {name} asleep was not among those in sight");
     arm_for_villager_death(&mut client);
     strike_until(&mut client, victim.id, 20, |c| !c.creatures.contains_key(&victim.id));
     assert!(!client.creatures.contains_key(&victim.id), "the {name} did not die");
@@ -3910,13 +3952,20 @@ fn a_dead_villager_stays_dead_across_a_restart_until_a_newcomer_comes() {
     drop(client);
     assert!(dir.join("villagers.ron").is_file());
     let mut client = Client::join_with(config());
-    client.ok(&format!("/tp {} {} {}", bed.x + 1.0, bed.y + 1.0, bed.z));
-    client.pump_until(|c| !villagers(c).is_empty());
-    client.pump_ticks(4 * TICKS_PER_SECOND as u64, |_| false);
+    // From the same spot, settled the same way: a {name} never seen before is a newcomer.
+    client.ok(&format!("/tp {} {} {}", bed.x, bed.y, bed.z));
+    settle(&mut client);
+    // Everyone seen before but the dead one back, before anyone is judged a stranger: a
+    // look at no one would find no stranger.
+    let back: std::collections::BTreeSet<u32> = housemates.iter().copied().filter(|&s| s != victim.seed).collect();
+    client.pump_ticks(20 * TICKS_PER_SECOND as u64, |c| back.is_subset(&kind(c)));
+    let after = kind(&client);
+    assert!(back.is_subset(&after), "not everyone came back after the restart: {after:?} of {back:?}");
     assert!(gone(&client), "the {name} came back with a restart");
+    let strangers: Vec<u32> = after.iter().copied().filter(|s| !housemates.contains(s)).collect();
+    assert!(strangers.is_empty(), "a newcomer came the same night: {strangers:?} beside {housemates:?}");
     // `newcomer` days on (the base game's five), someone new lives there.
     let newcomer = |c: &Client| villagers(c).into_iter().any(|v| species_name(c, &v) == name && v.position.distance(bed) < 16.0 && !housemates.contains(&v.seed) && v.seed != victim.seed);
-    assert!(!newcomer(&client), "a newcomer came the same night");
     client.ok("/time add 6d");
     client.ok("/time set midnight");
     client.pump_ticks(6 * TICKS_PER_SECOND as u64, |c| newcomer(c));

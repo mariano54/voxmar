@@ -69,7 +69,7 @@ const NEAR: f32 = 64.0;
 /// Wild creatures further than this from every player go.
 const DESPAWN: f32 = 128.0;
 /// Players are told about creatures within this many blocks.
-const SEEN_WITHIN: f32 = 96.0;
+pub(crate) const SEEN_WITHIN: f32 = 96.0;
 /// How far kin hear an alarm, and are counted as kin by herding.
 const KIN_RANGE: f32 = 14.0;
 /// The width of a `Neighbours` cell, in blocks: the widest search (kin) and a block more for

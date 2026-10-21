@@ -714,6 +714,12 @@ impl Overworld {
         self.settlements.planned(self, centre, keep).unwrap_or_default()
     }
 
+    /// As [`Overworld::settlement_planned`], the blocks set at a height over the ground of
+    /// their column (a lamp's torch on its post), each with its height over the ground.
+    pub fn settlement_planned_on_ground(&self, centre: IVec2, keep: &dyn Fn(voxmar_engine::block::BlockId) -> bool) -> Vec<(IVec3, voxmar_engine::block::BlockId)> {
+        self.settlements.planned_on_ground(self, centre, keep).unwrap_or_default()
+    }
+
     /// Whether `block` is one of settlements' own flames (`rules.fire.flames`).
     pub fn settlement_flame(&self, block: voxmar_engine::block::BlockId) -> bool {
         self.settlements.fire().is_some_and(|f| f.flame(block))

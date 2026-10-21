@@ -130,6 +130,10 @@ pub struct ServerConfig {
     /// game days in, when a test slowed by load is still running; `/wander start` and
     /// the wandering tests start theirs by hand either way.
     pub wandering_starts: bool,
+    /// The chance a gene mutates in a birth, in place of `genes::MUTATION` (aether still
+    /// raises it). `None` but in tests, which set 0 where a birth must take only its
+    /// parents' genes.
+    pub mutation: Option<f32>,
 }
 
 /// How much any one connection may ask of the server: a server operator's numbers, read
@@ -255,6 +259,7 @@ impl Default for ServerConfig {
             draw_key: None,
             lockstep: false,
             wandering_starts: true,
+            mutation: None,
         }
     }
 }

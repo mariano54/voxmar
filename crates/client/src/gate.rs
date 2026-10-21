@@ -473,6 +473,10 @@ steps! {
     /// with none of its flames in reach of its thatch, its jettied houses stand out on
     /// their beams, and its row houses stand wall to wall under one roof.
     Settlements,
+    /// The home with a byre nearest the walled town (in the nearest place that has one)
+    /// stands as planned: earth floor, a trough, hay, one doorway through the wall across
+    /// and a back door, the family's beds in the room before it.
+    Byres,
     /// Over a log in the inventory, the uses key shows what it goes into (planks, a
     /// campfire); clicking planks shows their recipe, and Back returns.
     Recipes,
@@ -823,6 +827,11 @@ struct Gate {
     /// The look for the walled town nearest the town `/locate` found, off the frame: it
     /// plans every square nearer than the answer, seconds of work.
     town_search: Option<std::thread::JoinHandle<Option<IVec3>>>,
+    /// The home with a byre the observer goes to after the walled town: in the place with
+    /// one nearest the town, nearest its square (none until found).
+    byre: Option<voxmar_worldgen::SettlementBuilding>,
+    /// The look for it, off the frame, as it may plan squares round the town.
+    byre_search: Option<std::thread::JoinHandle<Option<voxmar_worldgen::SettlementBuilding>>>,
     /// Where the struck creature was last seen, for walking over its loot.
     quarry: Vec3,
     /// The snail struck, so a fallen mark on another creature cannot end its watch.
@@ -1134,6 +1143,8 @@ impl Gate {
             settlement_reply: String::new(),
             town: IVec3::ZERO,
             town_search: None,
+            byre: None,
+            byre_search: None,
             ore: IVec3::ZERO,
             ore_mining: None,
             ore_sample: None,
@@ -1821,6 +1832,8 @@ fn guard(world: &mut World, gate: &mut Gate, now: f32, screen: Screen) -> Result
         // A fresh area around the settlement to generate: up to `SETTLEMENT_LOAD` of the
         // server's seconds.
         Step::Settlements => 2.0 * SETTLEMENT_LOAD + SETTLEMENT_PEOPLE + SETTLEMENT_BARK + STEP_LIMIT,
+        // The look for a byre, a fresh area round it to generate, and the observer home.
+        Step::Byres => BYRE_SEARCH + SETTLEMENT_LOAD + 20.0 + STEP_LIMIT,
         // A storm and snow, each waited on, then drying off by a campfire.
         Step::Weather => STEP_LIMIT + 10.0 + ROOF_RAIN,
         _ => STEP_LIMIT,
@@ -2151,6 +2164,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::Gorge => gorge(world, gate, now, in_phase),
         Step::Tarns => tarns(world, gate, now, in_phase),
         Step::Settlements => settlements(world, gate, now, in_phase),
+        Step::Byres => byres(world, gate, now, in_phase),
         Step::Ore => ore(world, gate, now, in_phase),
         Step::Recipes => recipes(world, gate, now, in_phase),
         Step::Chop => chop(world, gate, now),
@@ -18163,6 +18177,8 @@ const TOWN_RADIUS: i32 = 10000;
 /// How far round a town's square its wall is judged: as far as the observer is sent the
 /// world at the gate's least view distance.
 const TOWN_REACH: i32 = 56;
+/// How far from the walled town the gate looks for a home with a byre.
+const BYRE_RADIUS: i32 = 4000;
 
 /// `/locate settlement` names the nearest hamlet or village; the player and the observer go
 /// there, and once the server's world around it has loaded, its blocks are judged against
@@ -18405,6 +18421,101 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 if !observer_home {
                     gate.check("settlements: back", Err("the observer never came back over the test ground".into()));
+                }
+                gate.observer_home = None;
+                gate.next(Step::Byres, now);
+            }
+        }
+    }
+}
+
+/// Server seconds the look for a byre may take, on a thread of its own.
+const BYRE_SEARCH: f32 = 30.0;
+
+/// The home with a byre nearest the walled town the Settlements step judged (or, with no
+/// town, the settlement it went to), in the nearest place that has one: the observer goes
+/// over it, and once the server has sent the world round it, its byre is judged as
+/// worldgen planned it (`judge_byre`). Then the observer goes back over the test ground.
+fn byres(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
+    match gate.phase {
+        // The look, on a thread of its own: planning the places about takes a while.
+        0 => {
+            let from = if gate.town != IVec3::ZERO { gate.town } else { gate.settlement };
+            gate.observer_home = gate.observer.as_ref().and_then(|o| o.position);
+            let generator = world.resource::<crate::render::lod::WorldGenerator>().get().cloned();
+            gate.byre_search = Some(std::thread::spawn(move || {
+                let place = generator?.nearest_settlement(from.xz(), BYRE_RADIUS, |s| s.buildings.iter().any(|b| !b.byre.is_empty()))?;
+                let middle = place.centre.xz();
+                place.buildings.into_iter().filter(|b| !b.byre.is_empty()).min_by_key(|b| ((b.min + b.max) / 2 - middle).abs().max_element())
+            }));
+            gate.byre = None;
+            gate.advance(now);
+        }
+        // The observer goes over the byre's house once it is found.
+        1 => {
+            let Some(search) = gate.byre_search.take_if(|search| search.is_finished()) else {
+                if gate.server_in_phase() > BYRE_SEARCH {
+                    gate.check("settlement byres", Err(format!("the look for a byre within {BYRE_RADIUS} took over {BYRE_SEARCH} server seconds")));
+                    gate.phase = 2;
+                    gate.advance(now);
+                }
+                return;
+            };
+            match search.join() {
+                Ok(Some(b)) => {
+                    if let Some(observer) = gate.observer.as_mut() {
+                        let middle = (b.min + b.max) / 2;
+                        observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", middle.x, b.floor + 60, middle.y) });
+                    }
+                    gate.byre = Some(b);
+                    gate.advance(now);
+                }
+                found => {
+                    let why = match found {
+                        Ok(_) => format!("no home with a byre within {BYRE_RADIUS} of the walled town at {}", gate.town),
+                        Err(panic) => format!("the look for a byre panicked: {}", panic.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| panic.downcast_ref::<String>().cloned()).unwrap_or_else(|| "no message".into())),
+                    };
+                    gate.check("settlement byres", Err(why));
+                    gate.phase = 2;
+                    gate.advance(now);
+                }
+            }
+        }
+        // Once the observer has the byre's house round it, the byre is judged.
+        2 => {
+            let Some(b) = gate.byre.clone() else {
+                gate.advance(now);
+                return;
+            };
+            let (low, high) = (ColumnPos::of_block(IVec3::new(b.min.x - 2, 0, b.min.y - 2)).0, ColumnPos::of_block(IVec3::new(b.max.x + 2, 0, b.max.y + 2)).0);
+            let columns: Vec<ColumnPos> = (low.x..=high.x).flat_map(|x| (low.y..=high.y).map(move |z| ColumnPos::new(x, z))).collect();
+            let held = gate.observer.as_ref().map_or(0, |o| columns.iter().filter(|&&c| o.world.contains(c)).count());
+            if held < columns.len() {
+                if gate.server_in_phase() > SETTLEMENT_LOAD {
+                    gate.check("settlement byres", Err(format!("the world around the byre at {} did not load: the server sent {held} of its {} columns in {SETTLEMENT_LOAD} server seconds", b.min, columns.len())));
+                    gate.advance(now);
+                }
+                return;
+            }
+            let byre = judge_byre(world, gate, &b);
+            gate.check("settlement byres", byre);
+            gate.advance(now);
+        }
+        // The observer back over the test ground, where the steps after read its world.
+        3 => {
+            if let (Some(at), Some(observer)) = (gate.observer_home, gate.observer.as_mut()) {
+                observer.connection.send(ClientMessage::Command { line: format!("tp {} {} {}", at.x, at.y, at.z) });
+            }
+            gate.advance(now);
+        }
+        _ => {
+            let back = match (gate.observer_home, gate.observer.as_ref()) {
+                (Some(at), Some(observer)) => observer.position.is_some_and(|p| p.distance(at) < 3.0),
+                _ => true,
+            };
+            if back || gate.server_in_phase() > 20.0 {
+                if !back {
+                    gate.check("settlement byres: back", Err("the observer never came back over the test ground".into()));
                 }
                 gate.observer_home = None;
                 gate.next(Step::Recipes, now);
@@ -18737,13 +18848,56 @@ fn judge_rows(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> {
             }
         }
     }
-    if joins == 0 {
-        return Err(format!("{name}: no homes planned wall to wall within {TOWN_REACH} of its square at {at}"));
+    // Two joins at least, so the line never rests on one house.
+    if joins < 2 {
+        return Err(format!("{name}: {joins} joins between homes planned wall to wall within {TOWN_REACH} of its square at {at}, under 2"));
     }
     if !wrong.is_empty() {
         return Err(format!("{name}: of {joins} joins between row houses within {TOWN_REACH}: {}", wrong.join("; ")));
     }
     Ok(format!("{name}: {joins} joins between row houses within {TOWN_REACH} stand wall to wall under one roof"))
+}
+
+/// A home's byre as the server built it, behind its room and never in it: an earth floor
+/// (but for the trough let into it), a wall across from the room with one doorway, a door
+/// out the back, and hay.
+fn judge_byre(world: &World, gate: &Gate, b: &voxmar_worldgen::SettlementBuilding) -> Result<String, String> {
+    let Some(observer) = gate.observer.as_ref() else { return Err("no observer".into()) };
+    let client = world.resource::<ClientWorld>();
+    let name = |p: IVec3| observer.world.block(p).map_or("unloaded".to_owned(), |b| client.registry.def(b).name.clone());
+    let solid = |p: IVec3| observer.world.block(p).is_some_and(|b| client.registry.def(b).solid);
+    let at = |p: IVec2, y: i32| IVec3::new(p.x, y, p.y);
+    let open = |p: IVec2| !solid(at(p, b.floor + 1)) && !solid(at(p, b.floor + 2));
+    let what = format!("the {} at {}", b.what, b.min);
+    let back = b.facing.turn(0, 1);
+    let mut wrong = Vec::new();
+    if b.byre.iter().any(|p| b.room.contains(p)) {
+        wrong.push("its byre is in its room".to_owned());
+    }
+    let floors: Vec<String> = b.byre.iter().map(|&p| name(at(p, b.floor))).collect();
+    let earth = floors.iter().filter(|n| n.contains("dirt")).count();
+    let trough = floors.iter().filter(|n| n.contains("water")).count();
+    if earth + 1 != b.byre.len() || trough != 1 {
+        wrong.push(format!("{earth} of its {} byre columns floored in earth and {trough} troughs, under {:?}", b.byre.len(), floors.iter().filter(|n| !n.contains("dirt")).collect::<Vec<_>>()));
+    }
+    let front = b.byre.iter().map(|p| p.dot(back)).min().unwrap_or(0);
+    let last = b.byre.iter().map(|p| p.dot(back)).max().unwrap_or(0);
+    let across: Vec<IVec2> = b.byre.iter().filter(|p| p.dot(back) == front).map(|&p| p - back).collect();
+    let doorways = across.iter().filter(|&&p| open(p)).count();
+    if doorways != 1 || across.iter().any(|&p| !open(p) && !solid(at(p, b.floor + 1))) {
+        wrong.push(format!("{doorways} doorways in the wall across from the room"));
+    }
+    let out = b.byre.iter().filter(|p| p.dot(back) == last).filter(|&&p| open(p + back)).count();
+    if out == 0 {
+        wrong.push("no door out the back".into());
+    }
+    if !b.byre.iter().any(|&p| name(at(p, b.floor + 1)).contains("hay")) {
+        wrong.push("no hay".into());
+    }
+    if !wrong.is_empty() {
+        return Err(format!("{what}: {}", wrong.join("; ")));
+    }
+    Ok(format!("{what}: a byre of {} columns behind its room, on earth with a trough, a doorway through the wall across, {out} wide out the back, hay", b.byre.len()))
 }
 
 /// The town's shaped roofs as the server built them: every roof piece its plan lays within
@@ -18770,21 +18924,49 @@ fn judge_roofs(world: &World, gate: &Gate, at: IVec3) -> Result<String, String> 
     if !wrong.is_empty() {
         return Err(format!("{name}: {} of its {} roof pieces within {TOWN_REACH} are not as planned: {}", wrong.len(), planned.len(), wrong.into_iter().take(4).collect::<Vec<_>>().join("; ")));
     }
-    // The town's flames first (by the settlements' own table, not a tag looked up per
-    // block over the whole town), then only the blocks within their reach.
-    let mut flames: Vec<IVec3> = Vec::new();
-    for z in at.z - TOWN_REACH..=at.z + TOWN_REACH {
-        for x in at.x - TOWN_REACH..=at.x + TOWN_REACH {
-            for y in at.y - 24..=at.y + 40 {
-                let p = IVec3::new(x, y, z);
-                if observer.world.block(p).is_some_and(|b| generator.settlement_flame(b)) {
-                    flames.push(p);
+    // The flames the town's plan sets (by the settlements' own table), each standing where
+    // planned, then only the blocks within their reach: never a look at every block of the
+    // town in one frame.
+    let all_flames = generator.settlement_planned(at.xz(), &|b| generator.settlement_flame(b));
+    let planned_flames: Vec<(IVec3, BlockId)> = all_flames.iter().copied().filter(|r| within(r.0)).collect();
+    let missing: Vec<String> = planned_flames.iter().filter(|&&(p, b)| observer.world.block(p) != Some(b)).map(|&(p, b)| format!("{} at {p} is {}", block(Some(b)), block(observer.world.block(p)))).collect();
+    if !missing.is_empty() {
+        return Err(format!("{name}: {} of its {} flames within {TOWN_REACH} are not as planned: {}", missing.len(), planned_flames.len(), missing.into_iter().take(4).collect::<Vec<_>>().join("; ")));
+    }
+    let flames: Vec<IVec3> = planned_flames.into_iter().map(|r| r.0).collect();
+    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
+    let reach = generator.settlement_fire_reach() + 1;
+    // No flame the plan never set within a fire's reach of its roofs: a look about each
+    // roof piece, each cell once, knowing the planned flames as far out as that look goes.
+    // Those set over the ground (a lamp's torch on its post) stand where the generator finds
+    // that ground; once found they are judged for reach with the rest.
+    let planned_at: rustc_hash::FxHashSet<IVec3> = all_flames.iter().map(|r| r.0).filter(|p| (p.xz() - at.xz()).abs().max_element() <= TOWN_REACH + reach).collect();
+    let on_ground: FxHashMap<IVec3, BlockId> = generator.settlement_planned_on_ground(at.xz(), &|b| generator.settlement_flame(b)).into_iter().collect();
+    let mut flames = flames;
+    let mut looked: rustc_hash::FxHashSet<IVec3> = rustc_hash::FxHashSet::default();
+    let mut unplanned: Vec<String> = Vec::new();
+    for &(r, _) in &planned {
+        for z in -reach..=reach {
+            for y in -reach..=reach {
+                for x in -reach..=reach {
+                    let p = r + IVec3::new(x, y, z);
+                    if looked.insert(p)
+                        && !planned_at.contains(&p)
+                        && let Some(b) = observer.world.block(p).filter(|&b| generator.settlement_flame(b))
+                    {
+                        if on_ground.get(&p) == Some(&b) {
+                            flames.push(p);
+                        } else {
+                            unplanned.push(format!("{} at {p}", block(Some(b))));
+                        }
+                    }
                 }
             }
         }
     }
-    let mut blocks: FxHashMap<IVec3, BlockId> = FxHashMap::default();
-    let reach = generator.settlement_fire_reach() + 1;
+    if !unplanned.is_empty() {
+        return Err(format!("{name}: {} flames the plan never set stand within {reach} of its roofs: {}", unplanned.len(), unplanned.into_iter().take(4).collect::<Vec<_>>().join("; ")));
+    }
     for &f in &flames {
         for z in -reach..=reach {
             for y in -reach..=reach {
