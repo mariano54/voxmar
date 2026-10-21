@@ -145,7 +145,7 @@ fn the_singles_load_and_can_be_made() {
     let obtained: BTreeSet<BlockId> = content.recipes.iter().map(|r| r.output).collect();
     let singles = [
         "candle", "brazier", "cauldron", "cottage_stove", "loom_frame", "spindle_stand", "quern_stones", "wind_flags", "stone_grave_slab", "mossy_grave_slab", "stone_headstone",
-        "mossy_headstone", "iron_hanging_lantern", "copper_hanging_lantern", "stone_lantern", "sandstone_lantern", "calcite_column", "sandstone_column", "stone_column", "window_box", "rush_mat",
+        "mossy_headstone", "iron_hanging_lantern", "copper_hanging_lantern", "stone_lantern", "sandstone_lantern", "calcite_column", "sandstone_column", "stone_column", "window_box", "rush_mat", "sack",
     ];
     for name in singles {
         let id = content.blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("no {name}"));
@@ -225,4 +225,24 @@ fn a_kindling_box_keeps_fuel_to_hand() {
         assert!(content.machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() == 4), "{name} keeps four");
         assert!(keeps(id, stick) && keeps(id, charcoal) && !keeps(id, bread), "{name} keeps what burns alone");
     }
+}
+
+/// The sack of grain a village's farmers and millers keep is one a player can weave and
+/// fill at home: a store of grain alone, home storage, given back whole where a player set
+/// it and nothing where a village did (`furnishing`).
+#[test]
+fn a_sack_is_woven_at_home_and_keeps_grain() {
+    let content = content();
+    let blocks = &content.blocks;
+    let sack = blocks.expect("base:sack");
+    let (def, info) = (blocks.def(sack), blocks.info(sack));
+    assert!(!def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "a sack is a survival piece");
+    assert!(def.has_tag("furnishing") && def.has_tag("storage"), "a village's sack gives nothing, a home's is storage");
+    assert_eq!((info.drops, info.drop_count), (sack, 1), "a sack set at home comes back whole");
+    let keeps = |thing| content.machines.get(sack).and_then(|m| m.holds.as_ref()).is_some_and(|holds| holds.contains(&thing));
+    assert!(content.machines.get(sack).is_some_and(|m| m.is_store() && m.bin_slots() == 4), "a sack keeps four");
+    assert!(keeps(blocks.expect("base:wheat")) && !keeps(blocks.expect("base:bread")) && !keeps(blocks.expect("base:stick")), "a sack keeps grain alone");
+    let twine = blocks.expect("base:twine");
+    let recipe = content.recipes.iter().find(|r| r.output == sack).expect("a sack is made");
+    assert!(recipe.cells().iter().flatten().all(|&cell| cell == twine), "woven of twine");
 }

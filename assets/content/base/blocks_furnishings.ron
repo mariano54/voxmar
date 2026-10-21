@@ -209,10 +209,12 @@
             name: "crate", render: Model, shape: "crate", sound: Wood, textures: Sides(top: "crate_top", bottom: "crate_top", side: "crate_side"),
             drops: "core:air", hardness: 1.5, color: (160, 120, 70), tags: ["creative_only", "crate", "wood", "storage", "building"],
         ),
-        // A sack of grain, its neck tied off.
+        // A sack of grain, its neck tied off: a village's farmers and millers keep them, and a
+        // player weaves one of twine to keep grain in at home (a store of 4, machines.ron;
+        // given back whole where a player set it, nothing where a village did: `furnishing`).
         (
             name: "sack", render: Model, shape: "sack", sound: Grass, textures: Sides(top: "sack_top", bottom: "sack_top", side: "sack_side"),
-            drops: "core:air", hardness: 0.4, color: (200, 180, 140), tags: ["creative_only", "sack", "cloth", "farm", "building"],
+            hardness: 0.4, color: (200, 180, 140), tags: ["sack", "cloth", "farm", "storage", "furnishing", "building"],
         ),
         // A bronze bell hanging from the beam above it.
         (
