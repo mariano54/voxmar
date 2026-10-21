@@ -325,6 +325,15 @@
             (from: (1.5, 8, 2.5), to: (14.5, 9.5, 13.5)),
             (from: (7, 9.5, 7), to: (9, 10.5, 9), textures: All("furniture_grain")),
         ]),
+        // A kindling box, its front to the north: an open box on the floor, its front lower
+        // than its back, what is in it heaped on its floor (`shows`).
+        "kindling_box": (boxes: [
+            (from: (2, 0, 3), to: (14, 2, 13)),
+            (from: (2, 2, 3), to: (14, 7, 4), textures: Sides(top: "furniture_wood", bottom: "furniture_wood", side: "furniture_panel")),
+            (from: (2, 2, 12), to: (14, 9, 13)),
+            (from: (2, 2, 4), to: (3, 8, 12)),
+            (from: (13, 2, 4), to: (14, 8, 12)),
+        ]),
         // A rushlight holder: a foot, a post, an arm to the east and the rush burning in its
         // clip at the arm's end.
         "rushlight": (boxes: [

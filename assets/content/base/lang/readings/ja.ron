@@ -270,6 +270,7 @@
     "block.base.{name}_spice_rack": "{name}のやくみだな",
     "block.base.{name}_candle_box": "{name}のろうそくばこ",
     "block.base.{name}_bread_bin": "{name}のぱんばこ",
+    "block.base.{name}_kindling_box": "{name}のたきつけばこ",
     "block.base.rush_mat": "いぐさのしきもの",
     "block.base.{name}_stair_cupboard": "{name}のかいだんだんす",
     "block.base.{name}_wardrobe": "{name}のようふくだんす",
