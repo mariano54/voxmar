@@ -1615,7 +1615,12 @@ pub(crate) fn test_server_on(content: Content) -> Server {
     // each shares (`Overworld::shared`), with the land round spawn planned once rather than
     // again for each (1.7 s a server; a test that made 34 took 75 s).
     static HELD: std::sync::OnceLock<Arc<Overworld>> = std::sync::OnceLock::new();
-    HELD.get_or_init(|| Overworld::shared(meta.seed, &content, &WorldContent::load(&content).expect("checked by load_content")));
+    // Its columns too, about 1100 of them: every test server stands round the same spawn.
+    HELD.get_or_init(|| {
+        let world = Overworld::shared(meta.seed, &content, &WorldContent::load(&content).expect("checked by load_content"));
+        world.remember_columns(128 << 20);
+        world
+    });
     let (_, incoming) = crossbeam_channel::unbounded();
     let (_, console) = crossbeam_channel::unbounded();
     Server::new(config, meta, save, save::WorldState::default(), content, incoming, console)

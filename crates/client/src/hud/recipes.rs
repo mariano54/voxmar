@@ -503,11 +503,12 @@ fn draw(
                 card.spawn(shadowed(font, "→", LARGE, GOLD));
                 // A fixed count sits on the slot's corner, as in the inventory; a range of
                 // amounts is too wide for that and goes with the name instead.
-                let (low, high) = entry.count;
-                let count = (high > 1 && low == high).then(|| format!("{high}"));
-                // Burnt food looked up shows the cooking it is left from, burnt.
+                // Burnt food looked up shows the cooking it is left from, burnt: always one,
+                // whatever the dish makes.
                 let burnt = !lookup.uses && matches!(&entry.method, Method::Cook { burnt: Some(b), .. } if content.blocks.item_of(*b) == lookup.item && entry.output != lookup.item);
                 let output = if burnt { lookup.item } else { entry.output };
+                let (low, high) = if burnt { (1, 1) } else { entry.count };
+                let count = (high > 1 && low == high).then(|| format!("{high}"));
                 item_cell(card, font, &images, Some(output), count);
                 let title = if low == high { name(output) } else { locale.format("recipes.amount", &[("item", &name(output)), ("low", &low), ("high", &high)]) };
                 // How, in words.
