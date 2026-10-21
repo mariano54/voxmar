@@ -1218,7 +1218,7 @@ def baked(rng):
     return out
 
 
-def fired(rng):
+def fired_clay(rng):
     """Fired clay drawn out of the kiln: the fine ticks of pottery cooling and a clear ring
     as it is knocked, sound and whole."""
     out = np.zeros(int(0.7 * RATE))
@@ -1355,7 +1355,7 @@ SOUNDS = {
     "work/twine": (twine_wound, 2),
     "work/cloth": (cloth_off, 2),
     "baked": (baked, 2),
-    "work/fired": (fired, 2),
+    "work/fired": (fired_clay, 2),
     "work/ingot": (ingot, 2),
     "work/charcoal": (charcoal, 2),
 }
