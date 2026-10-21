@@ -77,6 +77,17 @@ fn a_hip_is_where_both_slopes_are_and_a_valley_where_either_is() {
     }
 }
 
+/// A block set down takes a cell from air, a grass tuft or a flower, but not from water or a
+/// solid block (`BlockInfo::gives_room`, which planting, tilling and the test bot read).
+#[test]
+fn a_block_set_down_takes_the_room_of_air_and_plants_only() {
+    let content = content();
+    let blocks = &content.blocks;
+    let gives = |name: &str| blocks.info(blocks.expect(name)).gives_room();
+    assert!(gives("core:air") && gives("base:short_grass") && gives("base:poppy"));
+    assert!(!gives("base:water") && !gives("base:stone"));
+}
+
 /// A knee brace runs corner to corner between a post and the beam it carries: timber as
 /// they are, in every wood and facing, and turned over to brace a beam from below.
 #[test]
