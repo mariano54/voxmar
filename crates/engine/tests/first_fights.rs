@@ -93,7 +93,7 @@ fn a_wild_boar_struck_gores_back_until_badly_hurt() {
     let content = content();
     let boar = content.creatures.get(content.creatures.find("wild_boar").unwrap());
     let doing = |mind: &Mind| mind.doing.map_or("nothing", |i| boar.modules[i].0.name());
-    let near = [Seen { id: 1, position: glam::Vec3::new(1.2, 0.0, 0.0), tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true }];
+    let near = [Seen { id: 1, position: glam::Vec3::new(1.2, 0.0, 0.0), tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_sight: true }];
     let at = |health| Situation { position: glam::Vec3::ZERO, home: glam::Vec3::ZERO, health, phase: 0, scale: 1.0, daylight: 1.0, players: &near, kin: &[], food: None, mate: None, kept: false, errand: None, dt: 0.2, seed: 7 };
     // Thinking a blow's worth of time (`every` 1.6 s of the player's swings, near enough).
     let between = |mind: &mut Mind, health: f32, thinks: u32| {
