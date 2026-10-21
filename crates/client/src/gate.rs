@@ -73,7 +73,8 @@ pub struct GatePlugin {
 /// other action is proposed. Mariano's play builds lost blocks he broke to both: a server whose
 /// word came late (fixed in 17bf62f), and one stalled when the break was proposed, whose
 /// own clock then started late (fixed by the client's `Finished`).
-/// It runs behind only in the steps that play against it (`Step::lagged`).
+/// It runs behind only in the steps that play against it (`Step::lagged`): the world's
+/// load is not one, and runs against a server at full speed (no load check reads lag).
 pub const SERVER_LAG: Lag = Lag {
     per_tick: Duration::from_millis(60),
     stall: Duration::from_millis(400),
