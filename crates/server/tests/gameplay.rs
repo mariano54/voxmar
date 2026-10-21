@@ -3873,6 +3873,7 @@ fn a_settlement_come_back_to_holds_its_people_once() {
         before = now;
     }
     assert!(settled, "the people never held still: {before:?}");
+    let seen_before: Vec<String> = villagers(&client).iter().map(|v| format!("{} {} {:?} at {:.1}", species_name(&client, v), v.seed, v.pose, v.position)).collect();
     // Away past `release` (well inside `forget`): the server lets them go.
     let far = client.position + Vec3::new(400.0, 0.0, 0.0);
     client.ok(&format!("/tp {} {}", far.x as i32, far.z as i32));
@@ -3888,7 +3889,8 @@ fn a_settlement_come_back_to_holds_its_people_once() {
             once.dedup();
             assert_eq!(&once, seeds, "{species} twice over: {seeds:?}");
         }
-        assert_eq!(after, before, "the people came back other than they were");
+        let seen_after: Vec<String> = villagers(&client).iter().map(|v| format!("{} {} {:?} at {:.1}", species_name(&client, v), v.seed, v.pose, v.position)).collect();
+        assert_eq!(after, before, "the people came back other than they were: before {seen_before:?}, after {seen_after:?}");
     }
 }
 

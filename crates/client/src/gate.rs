@@ -720,6 +720,9 @@ struct Gate {
     motif_starts: u32,
     /// How many times the settlement motif had started before the step into a settlement.
     settlement_motif_starts: Option<u32>,
+    /// The settlement's people heard greeting the player since the Settlements step came
+    /// (each waits `people.react.greet_every` to greet them again).
+    settlement_greeters: rustc_hash::FxHashSet<u32>,
     /// The window step's lit pane, kept to judge against it snuffed.
     window_lit: Option<[f64; 3]>,
     /// The door step's ground lit by a campfire, kept to judge against it put out.
@@ -1117,6 +1120,7 @@ impl Gate {
             motif_time: 0,
             motif_starts: 0,
             settlement_motif_starts: None,
+            settlement_greeters: Default::default(),
             window_lit: None,
             fire_lit: None,
             natural_before: Vec::new(),
@@ -19411,6 +19415,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             // By day, from outside any settlement as the music last saw: the step in starts
             // the settlement motif.
             gate.settlement_motif_starts = crate::music::settlement_motif_heard(world).filter(|heard| heard.at.inside == Some(false)).map(|heard| heard.at.starts);
+            gate.settlement_greeters.clear();
             let net = world.resource::<Net>();
             net.command("time set noon");
             net.command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
@@ -19470,6 +19475,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             gate.check("settlement sounds", heard);
             gate.check("settlement motif: starts", motif);
             // The nearest of them greets the player (`Server::bark`, by its command).
+            remember_greeters(world, gate);
             world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
             world.resource::<Net>().command("creatures bark greet");
             gate.advance(now);
@@ -19482,6 +19488,7 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
             }
             let greeted = settlement_greeted(world, &asked);
             gate.check("settlement bark", greeted);
+            remember_greeters(world, gate);
             let feet = gate.feet;
             world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
             // The observer looks for a town from where it is, the player going home.
@@ -19618,12 +19625,10 @@ fn settlements(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
 /// Server seconds a person stood beside has to greet the player unasked.
 const GREETING_WAIT: f32 = 10.0;
 
-/// Blocks within which a greeting heard counts as the person stood beside's.
-const GREETING_NEAR: f32 = 6.0;
-
 /// Back in the settlement the Settlements step judged, the player stands where one of its
-/// people stands, and someone there greets them unasked (`people.react.greet`, a bark of
-/// the server's own, not `/creatures bark`). Then the player goes back to the test ground.
+/// people stands who has yet to greet them, and someone there greets them unasked
+/// (`people.react.greet`, a bark of the server's own, not `/creatures bark`). Then the
+/// player goes back to the test ground.
 fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
     let feet = gate.feet;
     let home = |world: &mut World| world.resource::<Net>().command(&format!("tp {} {} {}", feet.x as f32 + 0.5, feet.y, feet.z as f32 + 0.5));
@@ -19635,10 +19640,14 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 gate.next(Step::Byres, now);
                 return;
             }
+            // Only greetings from here on count, the Settlements step's asked one gone.
+            remember_greeters(world, gate);
+            world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
             world.resource::<Net>().command(&format!("tp {} {} {}", at.x as f32 + 0.5, at.y, at.z as f32 + 0.5));
             gate.advance(now);
         }
-        // The nearest of its people drawn, and the player where they stand.
+        // The nearest of its people drawn who has yet to greet the player (one who has waits
+        // `greet_every` to again), and the player where they stand.
         1 => {
             let content = world.resource::<Launch>().content.clone();
             let feet = world.resource::<LocalPlayer>().position;
@@ -19646,6 +19655,7 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 .resource::<crate::creatures::Creatures>()
                 .views()
                 .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager && v.position.distance(feet) < 32.0)
+                .filter(|v| !gate.settlement_greeters.contains(&v.id))
                 .min_by(|a, b| a.position.distance(feet).total_cmp(&b.position.distance(feet)).then(a.id.cmp(&b.id)))
                 .map(|v| v.position);
             let Some(to) = nearest else {
@@ -19657,24 +19667,27 @@ fn greeting(world: &mut World, gate: &mut Gate, now: f32, _in_phase: f32) {
                 }
                 return;
             };
-            world.resource_mut::<crate::creature_sounds::Heard>().barks.clear();
             world.resource::<Net>().command(&format!("tp {} {} {}", to.x, to.y, to.z));
             gate.advance(now);
         }
-        // A greeting heard, unasked, of someone near.
+        // A greeting heard, unasked, of one of its people.
         2 => {
             let content = world.resource::<Launch>().content.clone();
-            let feet = world.resource::<LocalPlayer>().position;
             let creatures = world.resource::<crate::creatures::Creatures>();
-            let greeter = world.resource::<crate::creature_sounds::Heard>().barks.iter().filter(|b| b.1 == crate::creature_sounds::Kind::Greet).find_map(|b| {
-                let v = creatures.views().find(|v| v.id == b.0)?;
-                let d = v.position.distance(feet);
-                (d <= GREETING_NEAR).then(|| (content.creatures.get(v.species).def.name.clone(), d))
-            });
-            if greeter.is_none() && gate.server_in_phase() < GREETING_WAIT {
+            let greetings: Vec<String> = world
+                .resource::<crate::creature_sounds::Heard>()
+                .barks
+                .iter()
+                .filter(|b| b.1 == crate::creature_sounds::Kind::Greet)
+                .filter_map(|b| creatures.views().find(|v| v.id == b.0))
+                .filter(|v| content.creatures.get(v.species).def.kind == voxmar_engine::creature::Kind::Villager)
+                .map(|v| content.creatures.get(v.species).def.name.clone())
+                .collect();
+            if greetings.is_empty() && gate.server_in_phase() < GREETING_WAIT {
                 return;
             }
-            gate.check("settlement greeting", greeter.map(|(name, d)| format!("a {name} {d:.1} blocks off greeted the player unasked")).ok_or_else(|| format!("no one within {GREETING_NEAR} greeted the player in {GREETING_WAIT} server seconds")));
+            let ok = greetings.first().map(|name| format!("a {name} greeted the player unasked ({} greetings)", greetings.len()));
+            gate.check("settlement greeting", ok.ok_or_else(|| format!("no one of the settlement greeted the player in {GREETING_WAIT} server seconds beside one who had yet to ({} had)", gate.settlement_greeters.len())));
             home(world);
             gate.advance(now);
         }
@@ -19796,11 +19809,18 @@ fn settlement_motif_started(world: &World, before: Option<u32>) -> Result<String
     }
 }
 
+/// Remembers who has been heard greeting the player (`Gate::settlement_greeters`).
+fn remember_greeters(world: &World, gate: &mut Gate) {
+    let heard = world.resource::<crate::creature_sounds::Heard>();
+    gate.settlement_greeters.extend(heard.barks.iter().filter(|b| b.1 == crate::creature_sounds::Kind::Greet).map(|b| b.0));
+}
+
 /// Whether one of the settlement's people greeted, asking for its own voice's greeting
 /// clips (`creature_sounds.ron`'s `greet`, not a hum it falls back to).
 fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind, Vec<String>)]) -> Result<String, String> {
     use crate::creature_sounds::{Kind, Voices};
-    let Some((id, kind, clips)) = asked.first() else { return Err("no greeting was heard of anyone (asked with /creatures bark greet)".into()) };
+    // The greeting by its bark: an alarm or a sigh heard meanwhile is neither.
+    let Some((id, _, clips)) = asked.iter().find(|b| b.1 == Kind::Greet) else { return Err("no greeting was heard of anyone (asked with /creatures bark greet)".into()) };
     let content = &world.resource::<Launch>().content;
     let Some(view) = world.resource::<crate::creatures::Creatures>().views().find(|v| v.id == *id).copied() else {
         return Err(format!("creature {id} greeted but is not drawn"));
@@ -19808,9 +19828,7 @@ fn settlement_greeted(world: &World, asked: &[(u32, crate::creature_sounds::Kind
     let name = &content.creatures.get(view.species).def.name;
     let voices = world.get_resource::<Voices>().ok_or("no creature sound bank")?;
     let own: Vec<String> = voices.bank.voice(view.species).and_then(|v| v.events[Kind::Greet as usize].as_ref()).map(|e| e.clips.iter().map(|&i| voices.bank.clips[i].path.clone()).collect()).unwrap_or_default();
-    if *kind != Kind::Greet {
-        Err(format!("{name} was asked to greet but made {kind:?}"))
-    } else if own.is_empty() || *clips != own {
+    if own.is_empty() || *clips != own {
         Err(format!("{name} greeted with {clips:?}, not its voice's greeting {own:?}"))
     } else {
         Ok(format!("{name} greeted the player with its own clips ({})", clips.join(", ")))

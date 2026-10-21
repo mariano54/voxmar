@@ -347,6 +347,12 @@ impl Neighbours {
 
 impl Creatures {
     /// Whether `player` was last told of creature `id`: it is in their sight.
+    /// For tests: player `player` is shown creature `id`, as a sent view does.
+    #[cfg(test)]
+    pub(crate) fn show(&mut self, player: PlayerId, id: u32) {
+        self.seen.entry(player).or_default().insert(id);
+    }
+
     pub(crate) fn sees(&self, player: PlayerId, id: u32) -> bool {
         self.seen.get(&player).is_some_and(|seen| seen.contains(&id))
     }
@@ -707,7 +713,7 @@ impl Server {
     /// looks: within `field` degrees either way of where it faces, from high in its body,
     /// with nothing that hides it between (`BlockInfo::occludes`, as a player's look is
     /// judged). Seeing all round, it sees through nothing all the same.
-    fn in_view(&self, body: &Body, field: f32, eye: Vec3) -> bool {
+    pub(crate) fn in_view(&self, body: &Body, field: f32, eye: Vec3) -> bool {
         let from = body.position + Vec3::Y * body.size.1 * 0.8;
         let to = eye - from;
         let distance = to.length();

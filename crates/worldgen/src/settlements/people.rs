@@ -570,7 +570,6 @@ impl PeopleDef {
     /// villager (placed by settlements, never by the land), and every job and folk work,
     /// the shrine and each of `react.outdoor` names a work or kind of building there is
     /// (`works`).
-
     pub fn check_against(&self, creatures: &voxmar_engine::creature::CreatureRegistry, works: &[String]) -> Result<(), ContentError> {
         let fail = |what: String| Err(ContentError(format!("settlements.ron: people: {what}")));
         let species = self.jobs.iter().map(|j| &j.species).chain(self.folk.iter().map(|f| &f.species)).chain(self.guards.iter().map(|g| &g.species));
