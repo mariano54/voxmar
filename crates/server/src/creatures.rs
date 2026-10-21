@@ -104,6 +104,9 @@ const SHORE_RANGE: i32 = 12;
 /// How near a wild creature comes to a player holding its favourite food to count as drawn
 /// to them (`Server::note_lured`): about a blow's reach.
 const LURED_WITHIN: f32 = 3.0;
+/// Blocks from a scavenger that it snatches food lying on the ground from (its brain asks
+/// within `modules::SNATCH`, 1.3, of where the food lay).
+const SNATCH_REACH: f32 = 1.6;
 
 /// A live creature.
 #[derive(Clone, Debug)]
@@ -204,6 +207,10 @@ pub struct Live {
     pub needs: Needs,
     /// How well its home suits its kind's climate (`Server::settle`).
     pub climate_fit: f32,
+    /// A piece of food it stole off the ground and is making off home with
+    /// (`creature::Scavenge`): it drops it if killed first. Only wild ones steal, and those
+    /// are never saved, so it goes with one that leaves the loaded world.
+    pub carrying: Option<ItemStack>,
     /// The last view each player was sent, to send only changes.
     sent: Option<CreatureView>,
     pub(crate) changed: bool,
@@ -904,6 +911,8 @@ impl Server {
                     kept: creature.owner.is_some(),
                     errand: self.villagers.errand(id, handoff).or_else(|| self.wandering.errand(id)),
                     ward: if warded { self.creatures.ward_at(position) } else { None },
+                    scrap: species.def.scavenge.as_ref().filter(|_| creature.owner.is_none()).and_then(|s| self.items.scrap_near(position, s.reach, &species.scraps)),
+                    carrying: creature.carrying.is_some(),
                     dt: every as f32 * dt,
                     // By its own count of thoughts, never the tick it thinks on.
                     seed: own_roll(creature.seed, creature.rolls, THOUGHT),
@@ -1315,6 +1324,20 @@ impl Server {
                 self.set_block(cell, BlockId::AIR);
             }
         }
+        // A scavenger snatches a piece of the food it reached, or eats what it carried home.
+        if decision.take.is_some() {
+            let scraps = &self.content.creatures.get(species_id).scraps;
+            if let Some(piece) = self.items.snatch(position, SNATCH_REACH, scraps)
+                && let Some(creature) = self.creatures.live.get_mut(&id)
+            {
+                creature.carrying = Some(piece);
+            }
+        }
+        if decision.swallow
+            && let Some(creature) = self.creatures.live.get_mut(&id)
+        {
+            creature.carrying = None;
+        }
         if let Some(to) = decision.blink {
             let height = self.content.creatures.get(species_id).def.body.size;
             let landing = (0..6).map(|dy| (to + Vec3::Y * 3.0 - Vec3::Y * dy as f32).floor()).find(|cell| {
@@ -1598,7 +1621,9 @@ impl Server {
         journal.extend(found.iter().map(|&(item, count)| (voxmar_engine::journal::Page::Collection, self.content.blocks.def(item).name.clone(), count as u32)));
         // Its loot comes out once its body has fallen, never from an animal still standing.
         let due = self.tick + (species.def.death.drops_after() * TICKS_PER_SECOND as f32).round() as u64;
-        for (i, (item, count)) in found.into_iter().enumerate() {
+        // And what it was making off with, if anything.
+        let stolen = creature.carrying.map(|stack| (stack.item, stack.count));
+        for (i, (item, count)) in found.into_iter().chain(stolen).enumerate() {
             let body = dropped::popped(cell, self.meta.next_pop(cell, i as u32 + id));
             self.creatures.falling_loot.push((due, ItemStack::new(item, count), body));
         }
@@ -1772,6 +1797,7 @@ impl Server {
             fed: self.day,
             needs: Needs::default(),
             climate_fit: 1.0,
+            carrying: None,
             sent: None,
             changed: true,
         };
@@ -6288,6 +6314,40 @@ mod fight_tests {
             let pace = server.creatures.live[&id].mind.personality.pace();
             assert!(top > run * pace * 1.2, "{name} went at most {top:.2} blocks a second; its run is {:.2}", run * pace);
         }
+    }
+
+    /// A fox (`creature::Scavenge`) slinks in to meat left lying with nobody by it, snatches
+    /// a piece and makes off with it, and drops it if killed first; with a player standing
+    /// over the meat, it lets it lie.
+    #[test]
+    fn a_fox_steals_meat_left_lying() {
+        // Whether the fox has the venison by `seconds` on, with a player at `by` from the meat.
+        let steal = |by: Vec3, seconds: u32| {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 48);
+            let id = put(&mut server, "base:fox", c.as_vec3() + Vec3::new(0.5, 0.0, 0.5), Vec3::X);
+            let meat = c.as_vec3() + Vec3::new(9.5, 0.0, 0.5);
+            let venison = server.content.blocks.id("base:raw_venison").expect("venison");
+            server.items.spawn(ItemStack::new(venison, 3), voxmar_engine::dropped::Loose::new(meat, Vec3::ZERO), 0.0);
+            join(&mut server, meat + by);
+            for _ in 0..seconds * TICKS_PER_SECOND {
+                server.tick += 1;
+                server.tick_creatures();
+                if server.creatures.live[&id].carrying.is_some() {
+                    break;
+                }
+            }
+            (server, id, venison)
+        };
+        let (mut server, id, venison) = steal(Vec3::new(0.0, 0.0, 20.0), 20);
+        let carried = server.creatures.live[&id].carrying;
+        assert_eq!(carried.map(|s| (s.item, s.count)), Some((venison, 1)), "the fox never stole a piece");
+        let left: u32 = server.items.take_all().filter(|d| d.stack.item == venison).map(|d| d.stack.count as u32).sum();
+        assert_eq!(left, 2, "it took one piece of three");
+        server.creature_dies(id);
+        assert!(server.creatures.falling_loot.iter().any(|(_, s, _)| s.item == venison), "killed, it drops what it stole");
+        let (server, id, _) = steal(Vec3::new(0.0, 0.0, 3.0), 20);
+        assert!(server.creatures.live[&id].carrying.is_none(), "it stole from under a player's nose");
     }
 
     /// At night a wolf in a campfire's ward (`BlockDef::ward`) walks out of it. Not by day,

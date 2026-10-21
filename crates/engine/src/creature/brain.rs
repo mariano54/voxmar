@@ -173,6 +173,11 @@ pub struct Situation<'a> {
     /// The lit fire's ward it stands in, at night, for kinds that keep out of wards
     /// (`creature::Fire::ward`).
     pub ward: Option<Ward>,
+    /// The nearest food it steals lying on the ground, for kinds that scavenge
+    /// (`creature::Scavenge`).
+    pub scrap: Option<Vec3>,
+    /// It carries a stolen piece of food off home (`creature::Scavenge`).
+    pub carrying: bool,
     /// Seconds since the last decision.
     pub dt: f32,
     /// The seed for this decision's random choices.
@@ -474,6 +479,10 @@ pub struct Decision {
     pub blink: Option<Vec3>,
     /// A leap toward a point (pounce).
     pub leap: Option<Vec3>,
+    /// It snatches a piece of the food lying here (`creature::Scavenge`).
+    pub take: Option<Vec3>,
+    /// It eats what it carries (`creature::Scavenge`), home with it.
+    pub swallow: bool,
     /// It raises the alarm for kin nearby.
     pub alarm: bool,
     pub pose: Pose,
@@ -683,7 +692,7 @@ pub(super) mod tests {
     pub(super) const BODY: &str = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
 
     pub(super) fn situation<'a>(players: &'a [Seen]) -> Situation<'a> {
-        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, scale: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, ward: None, dt: 0.2, seed: 7 }
+        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, scale: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, ward: None, scrap: None, carrying: false, dt: 0.2, seed: 7 }
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
@@ -1241,6 +1250,64 @@ pub(super) mod tests {
             assert!(build(bad).is_err_and(|e| e.contains("`flush` needs")), "{bad}");
         }
         assert!(build("flush: (hold: 3.0, burst: 1.8, seconds: 1.0), attack: (damage: (1, 3))").is_err_and(|e| e.contains("for prey")));
+    }
+
+    /// A scavenger (`creature::Scavenge`) slinks in, crouched, to food lying on the ground
+    /// while no player is within its `shy` of it or the food, snatches a piece when close,
+    /// and makes off home with it, eating it there. Watched, kept or hurt it lets it lie.
+    /// Bad numbers, and takes that are no item, are refused.
+    #[test]
+    fn a_fox_steals_meat_left_lying() {
+        let meat_blocks = || BlockRegistry::new(vec![crate::block::BlockDef { name: "test:venison".into(), tags: vec!["meat".into()], ..Default::default() }]).unwrap();
+        let defs = CreatureRegistry::read("test", &format!(
+            "(creatures: [(name: \"fox\", health: 6, {BODY}, movement: (walk: 1.5, run: 6.0), scavenge: (takes: [\"tag:meat\"], reach: 16.0, shy: 6.0), temperament: (fear: 0.3, curiosity: 0.8), behaviours: [(do: Wander(radius: 8.0))])])"
+        ))
+        .unwrap()
+        .defs;
+        let fox = CreatureRegistry::new(defs, Default::default(), &meat_blocks(), &SkillRegistry::default()).unwrap().get(CreatureId(0)).clone();
+        let scrap = Vec3::new(10.0, 0.0, 0.0);
+        fn at(players: &[Seen]) -> Situation<'_> {
+            Situation { scrap: Some(Vec3::new(10.0, 0.0, 0.0)), ..situation(players) }
+        }
+        let mut mind = Mind::new(&fox.def.temperament, 2);
+        let decision = think(&fox, &mut mind, &at(&[]));
+        assert_eq!((doing(&fox, &mind), decision.goal, decision.pose, decision.take), ("scavenge", Some(scrap), Pose::Crouched, None));
+        // A player by the meat, or by the fox, and it keeps off.
+        for by in [Vec3::new(13.0, 0.0, 0.0), Vec3::new(-3.0, 0.0, 0.0)] {
+            let mut wary = Mind::new(&fox.def.temperament, 2);
+            let _ = think(&fox, &mut wary, &at(&[player(by)]));
+            assert_ne!(doing(&fox, &wary), "scavenge", "a player at {by}");
+        }
+        // One further off, it comes all the same.
+        let mut bold = Mind::new(&fox.def.temperament, 2);
+        let _ = think(&fox, &mut bold, &at(&[player(Vec3::new(-8.0, 0.0, 0.0))]));
+        assert_eq!(doing(&fox, &bold), "scavenge");
+        // Up to it, it snatches a piece; carrying it, it runs home and eats it there.
+        let decision = think(&fox, &mut mind, &Situation { position: scrap - Vec3::X, ..at(&[]) });
+        assert_eq!((decision.take, decision.goal), (Some(scrap), None));
+        let away = Vec3::new(9.0, 0.0, 0.0);
+        let decision = think(&fox, &mut mind, &Situation { position: away, carrying: true, ..situation(&[]) });
+        assert_eq!((doing(&fox, &mind), decision.goal, decision.speed > 5.0, decision.swallow), ("scavenge", Some(Vec3::ZERO), true, false));
+        let decision = think(&fox, &mut mind, &Situation { position: Vec3::new(1.0, 0.0, 0.0), carrying: true, ..situation(&[]) });
+        assert!(decision.swallow, "home, it eats it");
+        let mut kept = Mind::new(&fox.def.temperament, 2);
+        let _ = think(&fox, &mut kept, &Situation { kept: true, ..at(&[]) });
+        assert_ne!(doing(&fox, &kept), "scavenge", "a kept fox lets food lie");
+        let mut hurt = Mind::new(&fox.def.temperament, 2);
+        hurt.hurt(&fox, Some(1), 0.9);
+        let _ = think(&fox, &mut hurt, &at(&[player(Vec3::new(-12.0, 0.0, 0.0))]));
+        assert_ne!(doing(&fox, &hurt), "scavenge", "hurt, it thinks of nothing but its hide");
+
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &meat_blocks(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("scavenge: (takes: [\"tag:meat\"], reach: 16.0, shy: 6.0)"), Ok(()));
+        for bad in ["(takes: [], reach: 16.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 30.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 16.0, shy: 1.0)", "(takes: [\"tag:meat\"], reach: 6.0, shy: 8.0)"] {
+            assert!(build(&format!("scavenge: {bad}")).is_err_and(|e| e.contains("`scavenge` needs")), "{bad}");
+        }
+        assert!(build("scavenge: (takes: [\"tag:nothing\"], reach: 16.0, shy: 6.0)").is_err_and(|e| e.contains("nothing it `takes`")));
+        assert!(build("scavenge: (takes: [\"stone\"], reach: 16.0, shy: 6.0)").is_err_and(|e| e.contains("does not exist")));
     }
 
     #[test]
