@@ -465,6 +465,9 @@ pub struct Ambience {
     /// The home ladder's effects, lowest first (`home`): the `home` axis is how far up it
     /// the player stands.
     pub home: Vec<String>,
+    /// The effects beds and sounds hear held (`effect:NAME`), each an axis after the
+    /// patters': 1 while the player holds it. The server's room survey, heard as it judged.
+    pub held: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -597,6 +600,15 @@ fn default_pitch() -> (f32, f32) {
     (0.95, 1.05)
 }
 
+/// Sets each effect heard held (`held`, from [`Ambience::held_effects`]) to 1 if the
+/// player holds it, else 0.
+pub fn set_held(env: &mut Environment, ambience: &Ambience, held: &[Option<voxmar_engine::effect::EffectId>], holding: &[voxmar_engine::effect::ActiveEffect]) {
+    for (i, effect) in held.iter().enumerate() {
+        let on = effect.is_some_and(|id| holding.iter().any(|a| a.effect == id));
+        env.values[ambience.held_axis(i)] = on as u8 as f32;
+    }
+}
+
 /// How far up the home `ladder` (see [`Ambience::home_ladder`]) a player holding `held`
 /// stands: 1 + the place of the highest step they hold, 0 for none.
 pub fn home_step(ladder: &[voxmar_engine::effect::EffectId], held: &[voxmar_engine::effect::ActiveEffect]) -> f32 {
@@ -685,6 +697,15 @@ impl Ambience {
         ambience.roofs.patters = patters;
         ambience.roofs.shelter = shelter.into_iter().collect();
         let draughts: Vec<(String, BTreeMap<String, Vec<String>>)> = parsed.iter_mut().map(|(package, def)| (package.to_string(), std::mem::take(&mut def.draughts))).collect();
+        // Effects held next, as each `effect:NAME` a bed or sound names is an axis.
+        let keys = |when: &BTreeMap<String, Range>, duck: &BTreeMap<String, f32>| when.keys().chain(duck.keys()).filter_map(|k| k.strip_prefix("effect:")).map(str::to_owned).collect::<Vec<_>>();
+        let mut held: Vec<String> = parsed
+            .iter()
+            .flat_map(|(_, def)| def.beds.iter().flat_map(|b| keys(&b.when, &b.duck)).chain(def.sounds.iter().flat_map(|s| keys(&s.when, &s.duck))))
+            .collect();
+        held.sort();
+        held.dedup();
+        ambience.held = held;
         // Beds next, so sounds and beds can be ducked by any bed.
         let bed_names: Vec<String> =
             parsed.iter().flat_map(|(package, def)| def.beds.iter().map(move |b| format!("{package}:{}", b.name))).collect();
@@ -779,8 +800,12 @@ impl Ambience {
         Ok(ambience)
     }
 
-    /// Fails, for the launch, on a `home` step that names no effect, or names one twice.
+    /// Fails, for the launch, on a `home` step that names no effect, or names one twice, or
+    /// an `effect:NAME` heard held that is no effect.
     pub fn check_home(&self, effects: &voxmar_engine::effect::EffectRegistry) -> Result<(), String> {
+        if let Some(name) = self.held.iter().find(|name| effects.find(name).is_none()) {
+            return Err(format!("{FILE}: effect:{name} is heard held, but {name} is no effect"));
+        }
         for (i, name) in self.home.iter().enumerate() {
             if effects.find(name).is_none() {
                 return Err(format!("{FILE}: home names {name}, which is no effect"));
@@ -796,6 +821,12 @@ impl Ambience {
     /// which the launch refuses, is no step).
     pub fn home_ladder(&self, effects: &voxmar_engine::effect::EffectRegistry) -> Vec<voxmar_engine::effect::EffectId> {
         self.home.iter().filter_map(|name| effects.find(name)).collect()
+    }
+
+    /// The effects heard held (`held`), looked up once, in order (one that is no effect,
+    /// which the launch refuses, is never held).
+    pub fn held_effects(&self, effects: &voxmar_engine::effect::EffectRegistry) -> Vec<Option<voxmar_engine::effect::EffectId>> {
+        self.held.iter().map(|name| effects.find(name)).collect()
     }
 
     /// Fails, for the launch, on a block's `shelter:` tag that neither keeps the rain's
@@ -821,11 +852,17 @@ impl Ambience {
             .position(|a| a.name() == name)
             .or_else(|| self.groups.iter().position(|g| g.name == name).map(|g| Fixed::ALL.len() + g))
             .or_else(|| self.roofs.patters.iter().position(|p| p == name).map(|p| self.patter_axis(p)))
+            .or_else(|| name.strip_prefix("effect:").and_then(|e| self.held.iter().position(|h| h == e)).map(|i| self.held_axis(i)))
     }
 
-    /// The axes after the fixed ones: the groups' and the roof patters'.
+    /// The axes after the fixed ones: the groups', the roof patters' and the effects held.
     pub fn axes(&self) -> usize {
-        self.groups.len() + self.roofs.patters.len()
+        self.groups.len() + self.roofs.patters.len() + self.held.len()
+    }
+
+    /// The axis of the `i`th effect heard held.
+    pub fn held_axis(&self, i: usize) -> usize {
+        self.patter_axis(self.roofs.patters.len()) + i
     }
 
     /// The axis of roof patter `patter`.

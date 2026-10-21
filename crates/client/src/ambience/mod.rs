@@ -271,6 +271,8 @@ struct Ambient {
     logged: String,
     /// The home ladder's effects, lowest first, for the `home` axis.
     home: Vec<voxmar_engine::effect::EffectId>,
+    /// The effects heard held, for their `effect:` axes.
+    held: Vec<Option<voxmar_engine::effect::EffectId>>,
 }
 
 #[derive(Component)]
@@ -373,8 +375,10 @@ impl Ambient {
     fn new(ambience: Ambience, roof_patters: Vec<Option<u8>>, kinds: Arc<Kinds>, content: Content, clips_rx: Receiver<Synthesized>) -> Self {
         let axes = ambience.axes();
         let home = ambience.home_ladder(&content.effects);
+        let held = ambience.held_effects(&content.effects);
         Self {
             home,
+            held,
             mixer: Mixer::new(&ambience, 0x616d_6269),
             roof_patters,
             roof: RoofLook::default(),
@@ -782,6 +786,7 @@ fn listen(
     env.set(Fixed::SettlementEdge, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.edge));
     env.set(Fixed::SettlementPeople, ambient.place.as_ref().map_or(0.0, |place| place.people));
     env.set(Fixed::Home, defs::home_step(&ambient.home, &player.vitals.effects));
+    defs::set_held(env, &ambient.ambience, &ambient.held, &player.vitals.effects);
     surroundings.settlement = ambient.place.as_ref().and_then(|place| Some((place.id?, place.edge)));
     surroundings.surveyed = ambient.place_survey;
     let shown = &weather.current;
