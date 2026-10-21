@@ -178,6 +178,8 @@ pub struct Settings {
     /// Keys that show, over an item, the recipes that make it and the ones it goes into.
     pub recipes_key: Key,
     pub uses_key: Key,
+    /// Key that, at home, puts the pack away into the home's stores (`base:put_away`).
+    pub put_away_key: Key,
     /// Key that copies the frame to the clipboard and saves it (`screenshot`).
     pub screenshot_key: Key,
     /// Quick prayers: each key turns its prayer (by name, as content calls it) on or off.
@@ -383,6 +385,7 @@ impl Default for Settings {
             quests_key: Key(KeyCode::KeyL),
             recipes_key: Key(KeyCode::KeyR),
             uses_key: Key(KeyCode::KeyU),
+            put_away_key: Key(KeyCode::KeyH),
             screenshot_key: Key(KeyCode::F2),
             // The design's X C V B N, with G for C, which shows the character.
             prayer_keys: [KeyCode::KeyX, KeyCode::KeyV, KeyCode::KeyB, KeyCode::KeyN, KeyCode::KeyG].map(Key),
@@ -914,13 +917,14 @@ enum Binding {
     Quests,
     Recipes,
     Uses,
+    PutAway,
     Screenshot,
     /// A quick prayer's key, by its place.
     Prayer(usize),
 }
 
 impl Binding {
-    const ALL: [Binding; 16] = [
+    const ALL: [Binding; 17] = [
         Binding::Sprint,
         Binding::Dodge,
         Binding::Zoom,
@@ -931,6 +935,7 @@ impl Binding {
         Binding::Quests,
         Binding::Recipes,
         Binding::Uses,
+        Binding::PutAway,
         Binding::Screenshot,
         Binding::Prayer(0),
         Binding::Prayer(1),
@@ -966,6 +971,7 @@ impl Binding {
             Binding::Quests => "settings.key.quests",
             Binding::Recipes => "settings.key.recipes",
             Binding::Uses => "settings.key.uses",
+            Binding::PutAway => "settings.key.put_away",
             Binding::Screenshot => "settings.key.screenshot",
             Binding::Prayer(i) => ["settings.key.prayer_1", "settings.key.prayer_2", "settings.key.prayer_3", "settings.key.prayer_4", "settings.key.prayer_5"][i],
         }
@@ -983,6 +989,7 @@ impl Binding {
             Binding::Quests => settings.quests_key,
             Binding::Recipes => settings.recipes_key,
             Binding::Uses => settings.uses_key,
+            Binding::PutAway => settings.put_away_key,
             Binding::Screenshot => settings.screenshot_key,
             Binding::Prayer(i) => settings.prayer_keys[i],
         }
@@ -1000,6 +1007,7 @@ impl Binding {
             Binding::Quests => &mut settings.quests_key,
             Binding::Recipes => &mut settings.recipes_key,
             Binding::Uses => &mut settings.uses_key,
+            Binding::PutAway => &mut settings.put_away_key,
             Binding::Screenshot => &mut settings.screenshot_key,
             Binding::Prayer(i) => &mut settings.prayer_keys[i],
         } = key;
@@ -1132,6 +1140,7 @@ const SECTIONS: [(&str, &[Control]); 6] = [
             Control::Key(Binding::Quests),
             Control::Key(Binding::Recipes),
             Control::Key(Binding::Uses),
+            Control::Key(Binding::PutAway),
             Control::Key(Binding::Screenshot),
             Control::Key(Binding::Chat),
             Control::Key(Binding::Sprint),

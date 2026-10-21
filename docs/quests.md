@@ -54,7 +54,11 @@ Goals:
 | `Felt(effect)` | whether the player has ever been under an effect, whatever gave it (`felt:<effect>`, set once by the survival tick) |
 
 Items and creatures may be `any` or `tag:TAG`. Rewards are `Xp(skill, xp)` and
-`Item(item, count)`. Titles and reasons are translated as `quest.<package>.<name>` and
+`Item(item, count)`. The experience a quest file writes is scaled as the quests load by
+`pays` in `core/quests.ron` (Oct 21, Mariano: bigger quest rewards): `xp: 2.0` doubles every
+quest's experience, and `capstone_xp: 1.5` pays a capstone half as much again, 3x in all
+(`xp` times `capstone_xp`). What the server pays, the book and tracker show, and the walks
+count is the scaled number; a later package changes either field. Titles and reasons are translated as `quest.<package>.<name>` and
 `quest.<package>.<name>.why`.
 
 ## On the server
@@ -81,9 +85,10 @@ it was paid then.
 
 The sounds: a jingle as a quest is finished and coins into the purse as it is claimed,
 played by the client as the server's states change (not for the states a session starts
-with). A skill's new level rings too, and every tenth level a grander tune. They are
-recordings the base package's `sounds.ron` lists (`quest_done`, `quest_claim`, `level_up`,
-`level_milestone`), our own, composed by `tools/generate_jingles.py` (short brass fanfares
+with). A path's last quest (its capstone, `capstone: true`) rings its own, warmer tune
+instead of the quest's. A skill's new level rings too, and every tenth
+level a grander tune. They are recordings the base package's `sounds.ron` lists
+(`quest_done`, `quest_claim`, `level_up`, `level_milestone`, `capstone_done`), our own, composed by `tools/generate_jingles.py` (short brass fanfares
 played from the FluidR3 sound font, and synthesized coins); a later package that
 lists any for an event replaces them. They follow the sound volume, not the choice of click
 sounds.
@@ -405,8 +410,8 @@ only crafted.
 | Path | Quests to the kiln | Ways round |
 |---|---|---|
 | Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
-| Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
-| Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp | |
+| Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone); side quests Opened Too Soon (four part-burnt wood from a clamp opened early, after A Second Clamp) and, after A Table for Two on the Home path, A Woodpile (a woodpile set down by the hearth, half a Hearth corner) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
+| Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp; side quests A Lamp of Clay (two oil lamps made and set down) and A Pot on the Chimney (chimney pots made, one set down), both after Earthenware | |
 | Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln; side quests A Keen Edge (a copper tool mended at the grindstone, after Copper Kit) and A Bronze Edge (a bronze pickaxe, after First Bronze and A Keen Edge) | |
 
 Copper is smelted only in the lit kiln: Red Metal, the copper kit and the ore run come after
@@ -504,7 +509,7 @@ item a Nomad or Farm quest asks for that nothing reaches. Run it with
 
 | Quest | Gap | Fix |
 | --- | --- | --- |
-| A Place to Pray | Nothing gave stone (stone breaks to cobblestone), so stone bricks, and the altar, could not be made; the text gave the wrong shape | Cobblestone fires to stone in the pit kiln (`cooking.ron`, Construction 1, never cracks). The quest comes after A Pit Kiln and says the chain: cobblestone fired to stone, four stone to four bricks, seven bricks to the altar in its real shape |
+| A Place to Pray | Nothing gave stone (stone breaks to cobblestone), so stone bricks, and the altar, could not be made; the text gave the wrong shape | Cobblestone fires to stone in the pit kiln, loaded and left as clay is (`stations.ron`, Construction 1). The quest comes after A Pit Kiln and says the chain: cobblestone fired to stone, four stone to four bricks, seven bricks to the altar in its real shape |
 | A Pit Kiln | Said five cobblestones; the recipe takes four | Four, and where each goes |
 | Workshop and Stove | Said six cobblestones for the stove (it takes five); no recipe for the quern, spindle or loom | Five, and each workshop piece's recipe and level |
 | Ducks on the Pond | "Hold its favourite food" named no food | Wheat seeds or wheat; rivers and wetlands |

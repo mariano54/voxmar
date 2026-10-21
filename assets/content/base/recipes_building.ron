@@ -44,6 +44,8 @@
         // A town's house: jetties carry an upper floor out over the street on beams and posts;
         // a doorway without a door has a frame of the same timber.
         (pattern: [["{name}_beam", "{name}_beam"], ["", "{name}_post"]], output: "{name}_jetty_beam", count: 2, skill: "core:construction", level: 4, xp: 4.0),
+        // Two posts laid corner to corner, cut into braces.
+        (pattern: [["", "{name}_post"], ["{name}_post", ""]], output: "{name}_brace", count: 4, skill: "core:construction", level: 3, xp: 2.0),
         (pattern: [["{name}_post", "{name}_beam", "{name}_post"]], output: "{name}_door_frame", skill: "core:construction", level: 3, xp: 3.0),
         // A window frame: a beam for the lintel and one for the sill between two posts; a
         // lattice window with a pair of shutters hung on it.

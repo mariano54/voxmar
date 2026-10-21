@@ -20,6 +20,7 @@ mod death;
 mod doors;
 #[cfg(test)]
 mod seats;
+mod guests;
 mod hearth;
 mod journal;
 mod lairs;
@@ -757,8 +758,8 @@ pub(crate) struct Server {
     lit: FxHashMap<IVec3, hearth::Lit>,
     /// Structures smouldering, by core cell: a charcoal clamp charring (smoulder.rs).
     smoulders: FxHashMap<IVec3, smoulder::Smouldering>,
-    /// The tick fuelled fires were last looked over for going out (`Server::tell_fires_out`).
-    fires_out_seen: u64,
+    /// News of firings for players away when it came, told when they are on again.
+    news_waiting: Vec<smoulder::Waiting>,
     /// Fuelled fires gone cold since then, taken out of `lit` wherever that happened, to be
     /// told (`Server::tell_fires_out`).
     fires_out: Vec<hearth::Lit>,
@@ -789,6 +790,9 @@ pub(crate) struct Server {
     blaze_risked: Vec<IVec3>,
     /// The smouldering blocks players were last told of.
     smoulders_sent: Vec<IVec3>,
+    /// What stands on the blocks that show what they hold, by column, as players who have
+    /// the column were last told (`stores::Shelves`); a column with nothing shown has none.
+    shown: FxHashMap<ColumnPos, Vec<(IVec3, Vec<Option<voxmar_engine::block::BlockId>>)>>,
     /// Whose doing a fire that starts now is (a player's key, `player_key`): the player whose
     /// message is being handled or whose action commits, whoever lights a hearth as it is lit
     /// (`hearth_blaze`), a burning block's own fire as it spreads; none for a flood or a
@@ -931,6 +935,7 @@ impl Server {
             .map(|fire| (IVec3::from_array(fire.position), fire.clone())).collect::<FxHashMap<_, _>>();
         let hearth_owners = hearth::HearthOwner::restore(&meta.hearth_owners, &lit, |name| content.multiblocks.get(name).is_some_and(|m| m.home));
         let smoulders = smoulder::restore(&meta.smoulders, |name| content.multiblocks.get(name).is_some_and(|m| m.smoulder.is_some()));
+        let news_waiting = meta.news_waiting.clone();
         let survival = Arc::new(rules::SurvivalRules::load(&content.files, &content.blocks, &mut Vec::new()).expect("checked by load_content"));
         let mut server = Self {
             config,
@@ -950,7 +955,7 @@ impl Server {
             factory: voxmar_engine::factory::Factory::default(),
             lit,
             smoulders,
-            fires_out_seen: 0,
+            news_waiting,
             fires_out: Vec::new(),
             hearth_owners,
             fires_sent: Vec::new(),
@@ -961,6 +966,7 @@ impl Server {
             blazes,
             blaze_risked: Vec::new(),
             smoulders_sent: Vec::new(),
+            shown: FxHashMap::default(),
             fire_origin: None,
             changed_by: None,
             planter_grown,
@@ -1355,6 +1361,7 @@ impl Server {
         meta.lit = self.lit.values().filter(|fire| fire.until > self.tick).cloned().collect();
         meta.lit.sort_by_key(|fire| fire.position);
         meta.smoulders = self.saved_smoulders();
+        meta.news_waiting = self.news_waiting.clone();
         meta.hearth_owners = hearth::HearthOwner::saved(&self.hearth_owners);
         meta.day = Some(self.day as u64);
         meta.day_speed = self.day_speed;
@@ -1460,6 +1467,9 @@ impl Server {
                 if let Some(column) = self.world.column(pos) {
                     if sent < COLUMNS_PER_TICK {
                         player.connection.send(ServerMessage::Column { pos, column: column.clone() });
+                        if let Some(at) = self.shown.get(&pos) {
+                            player.connection.send(ServerMessage::Shown { column: pos, at: at.clone() });
+                        }
                         player.sent.insert(pos);
                         sent += 1;
                     }
@@ -1522,7 +1532,7 @@ impl Server {
 
     /// Whether a live creature's body is in `cell`.
     pub(crate) fn creature_in(&self, cell: IVec3) -> bool {
-        self.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+        self.creatures.live.values().any(|c| c.health > 0 && c.body.takes(cell))
     }
 
     /// Whether putting `block` at `cell` would shut a player inside it: a solid block where
@@ -1740,6 +1750,18 @@ mod tests {
         };
         let mut walled = Vec::new();
         let mut clamp_raised = false;
+        // The quests the lit Crucible Kiln comes after: on the way to it, every route is taught,
+        // not only one (a coal seam may be far, so charcoal's clamp must be taught too).
+        let mut kiln_line: Vec<&str> = Vec::new();
+        let mut next = vec!["base:crucible_kiln"];
+        while let Some(name) = next.pop() {
+            let q = content.quests.get(name).expect("the kiln quest and what it comes after");
+            if !kiln_line.contains(&q.name.as_str()) {
+                kiln_line.push(q.name.as_str());
+                next.extend(q.after.iter().filter(|a| !a.contains('|')).map(String::as_str));
+            }
+        }
+        let mut half_taught = Vec::new();
         for quest in content.quests.iter() {
             // The quests it surely comes after ("a|b" makes sure of neither), and itself.
             let mut before: Vec<&voxmar_engine::quest::QuestDef> = Vec::new();
@@ -1813,6 +1835,9 @@ mod tests {
                         .collect()
                 })
                 .collect();
+            if kiln_line.contains(&quest.name.as_str()) {
+                half_taught.extend(routes.iter().enumerate().filter(|(_, walls)| !walls.is_empty()).map(|(i, walls)| format!("{}: route {} walled by {}", quest.name, i + 1, walls.join(", "))));
+            }
             match routes.iter().position(Vec::is_empty) {
                 Some(route) => println!("{}: route {} of {} is taught: {:?}", quest.name, route + 1, routes.len(), quest.tasks[route]),
                 None => {
@@ -1821,6 +1846,7 @@ mod tests {
             }
         }
         assert!(walled.is_empty(), "these quests have no route whose stations the quests before them have the player make: {walled:#?}");
+        assert!(half_taught.is_empty(), "on the way to the lit kiln, these routes ask for stations no quest before has the player make: {half_taught:#?}");
         assert!(clamp_raised, "no quest has the player build a smouldering structure by a name the check knows");
     }
 

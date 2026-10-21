@@ -85,6 +85,33 @@
             // a cradle, a crib of boards on rockers with a rush bed and a pillow in it.
             (name: "{name}_rocking_chair", render: Model, shape: "rocking_chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "rocking_chair", "decor", "wood"]),
             (name: "{name}_cradle", render: Model, shape: "cradle", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "cradle", "decor", "wood"]),
+            // Lived in: a mantel shelf, a deep board on two brackets on the wall over the hearth,
+            // that shows the three things put on it (`shows`, its store's three slots, a
+            // `storage` the home counts); a fireside bench, a low bench with a fleece over it.
+            (name: "{name}_mantel_shelf", render: Model, shape: "mantel_shelf", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "mantel_shelf", "storage", "decor", "wood"],
+                shows: [(0.22, 0.875, 0.8), (0.5, 0.875, 0.8), (0.78, 0.875, 0.8)]),
+            (name: "{name}_fireside_bench", render: Model, shape: "fireside_bench", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "fireside_bench", "decor", "wood"]),
+            // A plate rack on the wall, showing the four things stood on its ledge (`shows`).
+            (name: "{name}_plate_rack", render: Model, shape: "plate_rack", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "plate_rack", "storage", "decor", "wood"],
+                shows: [(0.15, 0.3125, 0.84), (0.38, 0.3125, 0.84), (0.62, 0.3125, 0.84), (0.85, 0.3125, 0.84)]),
+            // By the bed and the chair: a bedside table, a little table with a drawer that
+            // shows the two things stood on its top (`shows`); a footstool, low, its top woven
+            // of rushes (a `seat`); a spice rack on the wall that keeps only herbs and shows
+            // the three in it.
+            (name: "{name}_bedside_table", render: Model, shape: "bedside_table", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "bedside_table", "storage", "decor", "wood"],
+                shows: [(0.32, 0.75, 0.5), (0.68, 0.75, 0.5)]),
+            (name: "{name}_footstool", render: Model, shape: "footstool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "seat", "footstool", "decor", "wood"]),
+            (name: "{name}_spice_rack", render: Model, shape: "spice_rack", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "shelf", "spice_rack", "storage", "decor", "wood"],
+                shows: [(0.25, 0.5625, 0.86), (0.5, 0.5625, 0.86), (0.75, 0.5625, 0.86)]),
+            // By the hearth: a candle box on the wall that keeps only candles and shows the two
+            // standing in it; a bread bin with a lid, the loaves kept under it.
+            (name: "{name}_candle_box", render: Model, shape: "candle_box", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 0.8, color: (160, 120, 70), tags: ["furniture", "candle_box", "storage", "decor", "wood"],
+                shows: [(0.4, 0.4375, 0.8125), (0.6, 0.4375, 0.8125)]),
+            (name: "{name}_bread_bin", render: Model, shape: "bread_bin", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "bread_bin", "storage", "decor", "wood"]),
+            // A kindling box: an open box on the floor by the fire that keeps only what burns,
+            // the top two things in it showing over its sides.
+            (name: "{name}_kindling_box", render: Model, shape: "kindling_box", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "kindling_box", "storage", "decor", "wood"],
+                shows: [(0.35, 0.375, 0.5), (0.65, 0.375, 0.5)]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
         // Cloth in one dye (`dyes: true` fills `{name}` and the tint): the greyscale drawings
@@ -98,7 +125,7 @@
             // across a window it keeps most of the room's light in (`light_filter`), so a lit
             // home's window glows low at night; drawn back, the light goes through as air.
             (name: "{name}_curtain", render: Model, shape: "curtain", facing: true, solid: false, light_filter: 8, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
-                swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
+                swaps: "{name}_curtain_open", tags: ["cloth", "curtain", "curtain_drawn", "drape", "decor", "colour:{name}"]),
             (name: "{name}_curtain_open", render: Model, shape: "curtain_open", facing: true, solid: false, sound: Moss, textures: All("curtain_grey"), hardness: 0.2, color: (200, 200, 200),
                 swaps: "{name}_curtain", drops: "{name}_curtain", tags: ["cloth", "curtain", "drape", "decor", "colour:{name}"]),
             // `paper_lantern` is this alone, not the metal or stone lanterns, for a quest that asks
