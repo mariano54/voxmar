@@ -7998,8 +7998,11 @@ fn celebrate(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
             let recorded = crate::sfx::Recordings::load(&launch.content.files).unwrap_or_default();
             // A milestone without clips of its own rings as a level; a moment with none is silent.
             let milestone = if recorded.level_milestone.is_empty() { recorded.level_up.clone() } else { recorded.level_milestone };
+            // The quest of step 1 rings as a capstone if it is one (one without clips as a quest).
+            let first = launch.content.quests.iter().next().is_some_and(|q| q.capstone);
+            let quest = if first && !recorded.capstone_done.is_empty() { (UiSound::CapstoneDone, recorded.capstone_done) } else { (UiSound::QuestDone, recorded.quest_done) };
             let wanted: Vec<(UiSound, Vec<String>)> =
-                [(UiSound::Milestone, milestone), (UiSound::QuestDone, recorded.quest_done), (UiSound::LevelUp, recorded.level_up)].into_iter().filter(|(_, clips)| !clips.is_empty()).collect();
+                [(UiSound::Milestone, milestone), quest, (UiSound::LevelUp, recorded.level_up)].into_iter().filter(|(_, clips)| !clips.is_empty()).collect();
             let asked = world.resource::<JinglesAsked>().0.clone();
             if asked.len() < wanted.len() && in_phase < 0.5 {
                 return;

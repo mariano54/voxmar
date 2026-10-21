@@ -7,10 +7,11 @@
 //! modulated or blip twice, and may carry a breath of high noise.
 //!
 //! Events play jingles instead, whatever the set chosen: a quest finished, its rewards
-//! claimed (coins), a skill's level reached, and a grander one at a milestone level. They
-//! are recordings each package's `sounds.ron` lists (the base package's are our own, from
-//! `tools/generate_jingles.py`). The HUD's moments (`hud::celebrate`) ask for the tunes as
-//! each one shows, so two never start over each other.
+//! claimed (coins), a skill's level reached, and a grander one at a milestone level or a
+//! path's capstone. They are recordings each package's `sounds.ron` lists (the base
+//! package's are our own, from `tools/generate_jingles.py`). The HUD's moments
+//! (`hud::celebrate`) ask for the tunes as each one shows, so two never start over each
+//! other.
 
 use std::f32::consts::TAU;
 use std::sync::Arc;
@@ -68,10 +69,12 @@ pub enum UiSound {
     LevelUp,
     /// A skill reached a milestone level (`hud::celebrate`).
     Milestone,
+    /// A path's capstone finished (`hud::celebrate`): an age's step.
+    CapstoneDone,
 }
 
 impl UiSound {
-    pub const ALL: [UiSound; 12] = [
+    pub const ALL: [UiSound; 13] = [
         UiSound::Click,
         UiSound::Hover,
         UiSound::Item,
@@ -84,6 +87,7 @@ impl UiSound {
         UiSound::QuestClaim,
         UiSound::LevelUp,
         UiSound::Milestone,
+        UiSound::CapstoneDone,
     ];
 
     /// Its name in `sounds.ron`'s `interface`.
@@ -101,6 +105,7 @@ impl UiSound {
             UiSound::QuestClaim => "quest_claim",
             UiSound::LevelUp => "level_up",
             UiSound::Milestone => "level_milestone",
+            UiSound::CapstoneDone => "capstone_done",
         }
     }
 
@@ -110,7 +115,7 @@ impl UiSound {
 
     /// Whether its tune is one of the events' jingles, which sound whatever the set chosen.
     pub fn is_jingle(self) -> bool {
-        matches!(self, UiSound::QuestDone | UiSound::QuestClaim | UiSound::LevelUp | UiSound::Milestone)
+        matches!(self, UiSound::QuestDone | UiSound::QuestClaim | UiSound::LevelUp | UiSound::Milestone | UiSound::CapstoneDone)
     }
 }
 
@@ -306,14 +311,16 @@ struct Jingles {
     claim: Vec<Handle<AudioSource>>,
     level: Vec<Handle<AudioSource>>,
     milestone: Vec<Handle<AudioSource>>,
+    capstone: Vec<Handle<AudioSource>>,
 }
 
 impl Jingles {
     /// The clips `sound` takes turns among and how loud it plays, or `None` for no jingle. A
-    /// milestone without clips of its own rings as a level.
+    /// milestone without clips of its own rings as a level, a capstone without any as a quest.
     fn of(&self, sound: UiSound) -> Option<(&[Handle<AudioSource>], f32)> {
         let list = match sound {
-            UiSound::QuestDone => &self.done,
+            UiSound::CapstoneDone if !self.capstone.is_empty() => &self.capstone,
+            UiSound::QuestDone | UiSound::CapstoneDone => &self.done,
             UiSound::QuestClaim => &self.claim,
             UiSound::Milestone if !self.milestone.is_empty() => &self.milestone,
             UiSound::LevelUp | UiSound::Milestone => &self.level,
@@ -378,6 +385,7 @@ fn jingle_clips(mut commands: Commands, assets: Res<AssetServer>, launch: Res<La
         claim: load(&recorded.quest_claim),
         level: load(&recorded.level_up),
         milestone: load(&recorded.level_milestone),
+        capstone: load(&recorded.capstone_done),
     });
 }
 
@@ -519,6 +527,7 @@ mod tests {
             (UiSound::QuestClaim, &recorded.quest_claim),
             (UiSound::LevelUp, &recorded.level_up),
             (UiSound::Milestone, &recorded.level_milestone),
+            (UiSound::CapstoneDone, &recorded.capstone_done),
         ];
         let jingles = events.into_iter().flat_map(|(sound, paths)| paths.iter().map(move |path| (path.clone(), measure(path)[0] * jingle_gain(sound))));
         all([within(Category::Ui, taps), within(Category::Jingles, jingles)]);
@@ -631,17 +640,20 @@ mod tests {
         }
     }
 
-    /// Each event takes its own clips, a milestone without any rings as a level, and clicks
-    /// are no jingle.
+    /// Each event takes its own clips, a milestone without any rings as a level, a capstone
+    /// without any as a quest, and clicks are no jingle.
     #[test]
     fn events_take_their_jingles() {
         let clip = |n: usize| vec![Handle::<AudioSource>::default(); n];
-        let jingles = Jingles { done: clip(1), claim: clip(3), level: clip(1), milestone: clip(2) };
+        let jingles = Jingles { done: clip(1), claim: clip(3), level: clip(1), milestone: clip(2), capstone: clip(4) };
         let count = |sound| jingles.of(sound).map(|(list, _)| list.len());
         assert_eq!([count(UiSound::QuestDone), count(UiSound::QuestClaim), count(UiSound::LevelUp), count(UiSound::Milestone)], [Some(1), Some(3), Some(1), Some(2)]);
         assert_eq!([count(UiSound::Click), count(UiSound::Refuse), count(UiSound::QuestPick)], [None, None, None]);
+        assert_eq!(jingles.of(UiSound::CapstoneDone).map(|(list, _)| list.len()), Some(4));
         let plain = Jingles { milestone: Vec::new(), ..jingles };
         assert_eq!(plain.of(UiSound::Milestone).map(|(list, _)| list.len()), Some(1));
+        let plain = Jingles { capstone: Vec::new(), ..plain };
+        assert_eq!(plain.of(UiSound::CapstoneDone).map(|(list, _)| list.len()), Some(1), "a capstone without its own rings as a quest");
     }
 
     #[test]

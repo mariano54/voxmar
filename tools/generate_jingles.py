@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Composes the game's event jingles: a quest finished, its rewards claimed, a level reached
-and every tenth level reached.
+"""Composes the game's event jingles: a quest finished, its rewards claimed, a level reached,
+every tenth level reached, and a path's capstone finished.
 
-Our own work. The three tunes are short brass fanfares (trumpets, horns, trombone, strings,
+Our own work. The four tunes are short brass fanfares (trumpets, horns, trombone, strings,
 timpani, harp and glockenspiel), written here as notes and played by FluidSynth from the
 FluidR3 General MIDI sound font (Frank Wen, MIT; see THIRD_PARTY_NOTICES.md). The claim's
 coins and glint are synthesized from scratch. Run once offline; the clips are written to
@@ -10,7 +10,7 @@ assets/content/base/sounds/ as Ogg Vorbis and listed in sounds.ron, so nothing i
 from a sound font at runtime and a package can replace any of them. Needs numpy, ffmpeg,
 fluidsynth and FluidR3_GM.sf2 (found at the usual places, or named by VOXMAR_SF2).
 
-    python3 tools/generate_jingles.py
+    python3 tools/generate_jingles.py [JINGLE ...]
 """
 
 import os
@@ -30,7 +30,7 @@ RATE = 44_100
 # How loud each clip is at its loudest 50 ms (RMS), as the game measures clips (sfx.rs,
 # `loudness`): as loud as the synthesized chimes these replaced. The game plays each at its
 # own gain (ui/sound.rs), the claim softest.
-LOUDNESS = {"quest_done": 0.30, "quest_claim": 0.30, "level_up": 0.30, "level_milestone": 0.31}
+LOUDNESS = {"quest_done": 0.30, "quest_claim": 0.30, "level_up": 0.30, "level_milestone": 0.31, "capstone_done": 0.31}
 PEAK = 0.89
 
 
@@ -299,6 +299,38 @@ def level_milestone(rng):
     return perform(score)
 
 
+def capstone_done(rng):
+    """A path's capstone finished (the hearth of a homestead lit, a kiln fired): a horn call
+    rising over warm strings, answered by the trumpet a fourth higher, then a slow plagal
+    close (IV - I, the hymn's amen) held full and soft by the horns and brass under harp
+    and bells. About four
+    seconds: warmer and broader than a level's milestone, the age's own."""
+    score = Score([(0, TRUMPET, 104, 72), (1, HORN, 108, 50), (2, STRINGS, 96, 64), (3, TIMPANI, 104, 64), (4, GLOCK, 64, 84), (5, HARP, 95, 40), (6, TROMBONE, 88, 56), (7, BRASS, 92, 58)])
+    for at, name, length, velocity in [(0.0, "G4", 0.22, 92), (0.24, "C5", 0.22, 98), (0.48, "E5", 0.5, 106)]:
+        score.play(1, at, name, length, velocity)
+    score.play(2, 0.0, ["C3", "G3", "E4"], 1.0, 72)
+    score.play(3, 0.0, "C2", 0.4, 96)
+    for at, name, length, velocity in [(1.0, "C5", 0.2, 98), (1.22, "F5", 0.22, 104), (1.46, "A5", 0.42, 110)]:
+        score.play(0, at, name, length, velocity)
+    score.play(2, 1.0, ["F3", "C4", "A4"], 0.9, 80)
+    score.play(6, 1.46, "F2", 0.42, 88)
+    amen = 2.0
+    score.play(7, 1.46, ["F3", "A3", "C4"], 0.52, 92)
+    score.play(3, 1.46, "F1", 0.3, 92)
+    score.play(1, amen, ["C4", "E4", "G4", "C5"], 1.3, 92)
+    score.play(7, amen, ["C3", "G3", "E4"], 1.3, 86)
+    score.play(6, amen, "C2", 1.3, 86)
+    score.play(2, amen, ["C3", "G3", "E4", "C5"], 1.5, 86)
+    for i in range(6):
+        score.play(3, amen - 0.24 + i * 0.04, "C2", 0.05, 56 + 6 * i)
+    score.play(3, amen, "C2", 0.7, 88)
+    for i, name in enumerate(["C5", "E5", "G5", "C6", "E6", "G6", "C7"]):
+        score.play(5, amen + i * 0.04, name, 1.0, 56 + 4 * i)
+    for i, name in enumerate(["G6", "C7", "E7", "C7"]):
+        score.play(4, amen + 0.12 + i * 0.16, name, 0.7, 60 - 4 * i)
+    return perform(score)
+
+
 def write_ogg(stereo, path, comment=None):
     """Writes `stereo` as Ogg Vorbis, with `comment` (say, what rendered it) in its tags."""
     pcm = (np.clip(stereo.T, -1, 1) * 32767).astype("<i2")
@@ -319,12 +351,16 @@ JINGLES = {
     "quest_claim": (quest_claim, 3, True),
     "level_up": (level_up, 1, False),
     "level_milestone": (level_milestone, 1, False),
+    "capstone_done": (capstone_done, 1, False),
 }
 
 
 def main() -> None:
+    only = set(sys.argv[1:])
     OUT.mkdir(parents=True, exist_ok=True)
     for name, (compose, takes, roomed) in JINGLES.items():
+        if only and name not in only:
+            continue
         for take in range(1, takes + 1):
             rng = np.random.default_rng(1000 * take + sum(map(ord, name)))
             played = compose(rng)
