@@ -203,6 +203,10 @@ struct Person {
     /// Each player found in their home at night, by `player_key`, is told to leave again
     /// no sooner than this tick.
     shooed: BTreeMap<String, u64>,
+    /// Come to stand by a player holding out food they like (`coax`).
+    coaxed: Option<u32>,
+    /// Given a treat, they want another no sooner than this tick.
+    treated_after: u64,
 }
 
 /// What came of looking for a way.
@@ -722,7 +726,7 @@ impl Server {
             let was = person.afraid_until > tick;
             person.afraid_until = tick + ticks(react.afraid);
             // A greeting or a talk cut short: off home from where they stand.
-            let talking = person.chat.take().is_some();
+            let talking = person.chat.take().is_some() | person.coaxed.take().is_some();
             if let Some(trip) = person.trip.as_mut().filter(|_| person.greeting.take().is_some() || talking) {
                 trip.next_spot = Some(tick);
                 trip.face = None;
@@ -737,6 +741,10 @@ impl Server {
         // One struck, running from whoever struck them, greets no one.
         let afraid = person.afraid_until > tick || self.creatures.live.get(&id).is_some_and(|c| c.mind.attacker().is_some());
         let asleep = person.trip.as_ref().is_none_or(|t| t.place == Place::Sleep || t.pursuit.is_some());
+        if self.coax(id, town, i, at, react, !afraid && !asleep && !guard) {
+            return true;
+        }
+        let person = &self.villagers.towns[&town].people[i];
         let due = |p: &crate::player::Player| person.greet_after.get(&crate::player_key(&p.name)).is_none_or(|&after| tick >= after);
         let me = &self.creatures.live[&id];
         let noticed = |p: &crate::player::Player| me.mind.noticed.iter().any(|n| n.0 == p.id) && self.in_view(&body, field, p.eye());
@@ -780,6 +788,93 @@ impl Server {
             self.bark(id, Bark::Greet);
         }
         true
+    }
+
+    /// Person `i` (creature `id`, at `at`), `free` (not afraid, abed nor a guard), of a
+    /// kind that likes a food (`diet.favourite`: children), comes to a player they have
+    /// noticed and see within `people.react.treat` (and their sight) holding it out: they
+    /// walk up to stand by them, turned to them, with a contented hum, and keep by them while
+    /// it is held and they stay within half as far again; given one, they want another no
+    /// sooner than `treat_every` (`treat`). Whether they are coming, their day waiting.
+    fn coax(&mut self, id: u32, town: u64, i: usize, at: Vec3, react: &ReactDef, free: bool) -> bool {
+        let tick = self.tick;
+        let Some(me) = self.creatures.live.get(&id) else { return false };
+        let species = self.content.creatures.get(me.species);
+        let (body, field) = (me.body, species.def.senses.field);
+        let reach = react.treat.min(species.def.senses.sight);
+        let person = &self.villagers.towns[&town].people[i];
+        let wants = free && reach > 0.0 && !species.favourite.is_empty() && tick >= person.treated_after;
+        let holds = |p: &crate::player::Player| p.joined && p.health.alive() && p.held().is_some_and(|item| species.favourite.contains(&item));
+        let within = |p: &crate::player::Player, d: f32| p.position.with_y(0.0).distance(at.with_y(0.0)) <= d && (p.position.y - at.y).abs() <= d;
+        let sees = |p: &crate::player::Player| me.mind.noticed.iter().any(|n| n.0 == p.id) && self.in_view(&body, field, p.eye());
+        let kept = person.coaxed.and_then(|p| self.players.get(&p)).filter(|p| holds(p) && within(p, reach * 1.5));
+        let target = kept
+            .or_else(|| self.players.values().filter(|p| holds(p) && within(p, reach) && sees(p)).min_by(|a, b| a.position.distance(at).total_cmp(&b.position.distance(at))))
+            .filter(|_| wants)
+            .map(|p| (p.id, p.position));
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        let Some((player, eyes)) = target else {
+            // Put away or gone: back to their day from where they stand.
+            if person.coaxed.take().is_some()
+                && let Some(trip) = person.trip.as_mut()
+            {
+                trip.next_spot = Some(tick);
+                trip.face = None;
+            }
+            return false;
+        };
+        let new = person.coaxed != Some(player);
+        (person.coaxed, person.greeting, person.chat) = (Some(player), None, None);
+        let Some(trip) = person.trip.as_mut() else { return false };
+        // A step and a half short of the player, on their side of them.
+        let keep = 1.5;
+        let stand = if at.with_y(0.0).distance(eyes.with_y(0.0)) <= keep + 0.5 { at } else { eyes + (at - eyes).with_y(0.0).normalize_or(Vec3::X) * keep };
+        trip.path = vec![IVec3::new(stand.x.floor() as i32, at.y.floor() as i32, stand.z.floor() as i32)];
+        trip.step = 0;
+        trip.pose = Pose::Idle;
+        trip.face = Some(eyes + Vec3::new(0.0, 1.6, 0.0));
+        if new {
+            self.bark(id, Bark::Content);
+        }
+        true
+    }
+
+    /// `base:treat`: the player gives creature `id`, one of a settlement's people who likes
+    /// what they hold (`diet.favourite`), one of it; they take it, say thanks and go back to
+    /// their day, wanting another no sooner than `people.react.treat_every`. Refused, with
+    /// why, for what they do not like or within that wait.
+    pub(crate) fn treat(&mut self, player: voxmar_protocol::PlayerId, id: u32) {
+        use voxmar_engine::lang::Words;
+        let tick = self.tick;
+        let (Some(p), Some(c)) = (self.players.get(&player), self.creatures.live.get(&id)) else { return };
+        let held = p.held().filter(|item| self.content.creatures.get(c.species).favourite.contains(item));
+        let (Some(item), Some(&(town, i))) = (held, self.villagers.by_creature.get(&id)) else {
+            self.refuse(player, Words::key("treat.unwanted"));
+            return;
+        };
+        if tick < self.villagers.towns[&town].people[i].treated_after {
+            self.refuse(player, Words::key("treat.not_now"));
+            return;
+        }
+        let p = self.players.get_mut(&player).expect("checked");
+        let first = p.selected;
+        if !p.inventory.take_all(&[(item, 1)], first) {
+            return;
+        }
+        p.changed(voxmar_engine::traits::INVENTORY);
+        let every = self.overworld.settlement_people().react.treat_every;
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        person.treated_after = tick + ticks(every);
+        if person.coaxed.take().is_some()
+            && let Some(trip) = person.trip.as_mut()
+        {
+            trip.next_spot = Some(tick);
+            trip.face = None;
+        }
+        if let (Some(p), Some(who)) = (self.players.get(&player), self.speaker_name(id)) {
+            p.connection.send(voxmar_protocol::ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key("treat.thanks")) });
+        }
+        self.bark(id, Bark::Content);
     }
 
     /// Person `i` (creature `id`), at night (by the sky) bound for bed or in it, tells any
@@ -1525,6 +1620,126 @@ mod tests {
         assert!(server.villagers.towns[&1].people[0].greeting.is_some(), "no greeting once greet_every had passed");
     }
 
+    /// A child who notices and sees a player within `people.react.treat` holding out food
+    /// they like (their kind's `diet.favourite`) comes to stand by them, turned to them,
+    /// while it is held: not to an empty hand, nor through a wall. Given one (`base:treat`),
+    /// they take it, say thanks and go back to their day, and come for another no sooner
+    /// than `treat_every`; wanting none just then, or offered what they do not like, they
+    /// take nothing.
+    #[test]
+    fn a_child_comes_to_food_held_out_and_takes_one() {
+        let mut server = fixture("base:child", 1);
+        out_in_the_open(&mut server);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let live = server.live();
+        let react = server.overworld.settlement_people().react.clone();
+        assert!(react.treat > react.greet, "a treat is seen from no further than a greeting");
+        let bread = server.content.blocks.expect("base:bread");
+        let stick = server.content.blocks.expect("base:stick");
+        assert!(server.content.creatures.get(server.creatures.live[&id].species).favourite.contains(&bread), "children like no bread");
+        server.tick = 1_000;
+        server.follow_day(id, 1, 0, &live);
+        player(&mut server);
+        let at = server.creatures.live[&id].body.position;
+        let stand = at + Vec3::new(react.treat - 1.0, 0.0, 0.0);
+        server.players.get_mut(&1).unwrap().position = stand;
+        notice(&mut server, id, 1);
+        let step = |server: &mut Server| {
+            server.tick += 1;
+            server.follow_day(id, 1, 0, &live);
+        };
+        let hold = |server: &mut Server, item: BlockId| {
+            let p = server.players.get_mut(&1).unwrap();
+            p.inventory = Default::default();
+            p.inventory.add(item, 3);
+            p.selected = 0;
+        };
+        // Empty-handed, or holding a stick: they keep to their day.
+        step(&mut server);
+        assert!(server.villagers.towns[&1].people[0].coaxed.is_none(), "came to an empty hand");
+        hold(&mut server, stick);
+        step(&mut server);
+        assert!(server.villagers.towns[&1].people[0].coaxed.is_none(), "came to a stick");
+        // Bread, behind a wall: not seen, not come to.
+        hold(&mut server, bread);
+        let wall: Vec<IVec3> = (0..3).map(|y| at.floor().as_ivec3() + IVec3::new(1, y, 0)).collect();
+        let stone = server.content.blocks.expect("base:stone");
+        wall.iter().for_each(|&cell| server.set_block(cell, stone));
+        step(&mut server);
+        assert!(server.villagers.towns[&1].people[0].coaxed.is_none(), "came to bread through a wall");
+        wall.iter().for_each(|&cell| server.set_block(cell, BlockId::AIR));
+        // Seen: they come and stand by the player, turned to them.
+        step(&mut server);
+        let person = &server.villagers.towns[&1].people[0];
+        assert_eq!(person.coaxed, Some(1), "did not come to bread held out");
+        let trip = person.trip.as_ref().unwrap();
+        let to = trip.path.last().expect("nowhere to go").as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        assert!(to.with_y(0.0).distance(stand.with_y(0.0)) <= 2.5, "not coming to stand by the player: {to}");
+        assert!(trip.face.is_some_and(|f| f.x > at.x), "not turned to the player: {:?}", trip.face);
+        // Put away: back to their day; held out again, they come again.
+        hold(&mut server, stick);
+        step(&mut server);
+        assert!(server.villagers.towns[&1].people[0].coaxed.is_none(), "kept coming once the bread was put away");
+        hold(&mut server, bread);
+        step(&mut server);
+        assert_eq!(server.villagers.towns[&1].people[0].coaxed, Some(1), "did not come again");
+        // Offered a stick: nothing taken.
+        hold(&mut server, stick);
+        server.treat(1, id);
+        assert_eq!(server.players[&1].inventory.count(stick), 3, "took a stick");
+        // Given bread: one taken, and back to their day.
+        hold(&mut server, bread);
+        server.treat(1, id);
+        assert_eq!(server.players[&1].inventory.count(bread), 2, "did not take one loaf");
+        step(&mut server);
+        assert!(server.villagers.towns[&1].people[0].coaxed.is_none(), "still after bread once given some");
+        // Another straight away (bread held again): none wanted, nothing taken, and they do
+        // not come.
+        hold(&mut server, bread);
+        server.treat(1, id);
+        assert_eq!(server.players[&1].inventory.count(bread), 3, "took a second treat within treat_every");
+        let after = server.villagers.towns[&1].people[0].treated_after;
+        server.tick = after - 2;
+        step(&mut server);
+        assert!(server.villagers.towns[&1].people[0].coaxed.is_none(), "came for another before treat_every");
+        server.tick = after;
+        step(&mut server);
+        assert_eq!(server.villagers.towns[&1].people[0].coaxed, Some(1), "never came again after treat_every");
+        // Come to the bread, they were not lured as a wild creature is.
+        server.players.get_mut(&1).unwrap().position = at + Vec3::X;
+        server.tick = server.tick.next_multiple_of(TICKS_PER_SECOND as u64);
+        server.note_lured();
+        assert!(server.players[&1].tallies.keys().all(|k| !k.contains("lured")), "a child counted as lured: {:?}", server.players[&1].tallies);
+    }
+
+    /// Food grown-ups do not care for draws none of them: only a kind that likes it comes.
+    #[test]
+    fn grown_ups_do_not_come_to_food_held_out() {
+        let mut server = fixture("base:villager", 1);
+        out_in_the_open(&mut server);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let live = server.live();
+        let react = server.overworld.settlement_people().react.clone();
+        let bread = server.content.blocks.expect("base:bread");
+        assert!(server.content.creatures.get(server.creatures.live[&id].species).favourite.is_empty());
+        server.tick = 1_000;
+        server.follow_day(id, 1, 0, &live);
+        player(&mut server);
+        let at = server.creatures.live[&id].body.position;
+        let p = server.players.get_mut(&1).unwrap();
+        p.position = at + Vec3::new(react.treat - 1.0, 0.0, 0.0);
+        p.inventory.add(bread, 3);
+        p.selected = 0;
+        notice(&mut server, id, 1);
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        assert!(server.villagers.towns[&1].people[0].coaxed.is_none(), "a grown-up came to bread");
+        server.treat(1, id);
+        assert_eq!(server.players[&1].inventory.count(bread), 3, "a grown-up took a treat");
+    }
+
     /// The wait to greet again is each player's own; and one struck stops greeting the
     /// player who struck them, and greets no one while they remember the blow.
     #[test]
@@ -2237,7 +2452,7 @@ mod tests {
     /// Cook or Pick goal of a nomad or farm quest names it), and gives nothing any quest asks
     /// a player to hold or hand over (a Have or Offered goal), so a trade skips no lesson.
     #[test]
-    fn stall_trades_want_what_the_first_ages_teach_and_skip_no_lesson() {
+    fn stall_trades_and_treats_are_what_the_first_ages_teach_and_skip_no_lesson() {
         use voxmar_engine::quest::Goal;
         let server = crate::test_server();
         let content = &server.content;
@@ -2263,6 +2478,15 @@ mod tests {
             }
         }
         assert!(trades > 0, "no stall trades to check");
+        // What draws a settlement's children (their treats) is food the first ages teach.
+        let mut treats = 0;
+        for (_, species) in content.creatures.iter().filter(|(_, s)| s.def.kind == Kind::Villager) {
+            for &item in &species.favourite {
+                treats += 1;
+                assert!(taught.contains(&item), "{} likes {}, which no nomad or farm quest teaches a player to make", species.def.name, blocks.def(item).name);
+            }
+        }
+        assert!(treats > 0, "no treats to check");
     }
 
     /// A villager a player kills in one blow calls the guards as one wounded does: they

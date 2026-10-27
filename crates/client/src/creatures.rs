@@ -2014,6 +2014,8 @@ pub fn aim(
         // One keeping a market stall wants what is held, some day: the server judges whether
         // they are at it and want it today.
         let trades = held.is_some_and(|item| species.trades.iter().any(|t| t.wants.0 == item));
+        // One of a settlement's people who likes what is held (a child) takes it as a treat.
+        let treats = species.def.kind == voxmar_engine::creature::Kind::Villager && held.is_some_and(|item| species.favourite.contains(&item));
         let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
         let engaged = !view.kept && (matches!(view.pose, Pose::Attacking | Pose::Warning) || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
         let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
@@ -2023,6 +2025,8 @@ pub fn aim(
             Some("base:tend")
         } else if trades {
             Some("base:trade")
+        } else if treats {
+            Some("base:treat")
         } else if !(guards && engaged) {
             Some("base:inspect")
         } else {
