@@ -101,7 +101,11 @@
 //   a place's middle they stand there. `react`: a player within `greet` is greeted (they
 //   stop, turn and hum for `greet_for`, once in `greet_every`); a monster or a hunter
 //   within `fear` sends them home crying out for `afraid` (guards stay); rain of at least
-//   `rain` sends them home from the `shelter` places and from work at the `outdoor` works.
+//   `rain` sends them home from the `shelter` places and from work at the `outdoor` works;
+//   two neighbours (no guards) within `chat` who see each other stop and talk for
+//   `chat_for`, each again no sooner than `chat_every` (`chat` no farther than `greet`);
+//   a player one of them sees in their home at night is told to leave with a cry, each
+//   again no sooner than `intruder_every`.
 (
     grid: (spacing: 1024, chance: 0.45, margin: 160),
     // site: where a settlement stands (design wiki, settlements, draft 60).
@@ -496,7 +500,7 @@
         (name: "Boat", weight: 1.0, lean: {"outlook": 0.5}, water: true),
         (name: "Nets", weight: 1.0, water: true, lean: {"wealth": -0.3, "craft": 0.3}),
         // Props of their own: blocks from the spot, y 1 on the ground.
-        (name: "log_bench", weight: 0.8, lean: {"order": 0.4, "festivity": 0.4}, blocks: [((0, 1, 0), "stripped_oak_log"), ((1, 1, 0), "stripped_oak_log")]),
+        (name: "log_bench", weight: 0.8, lean: {"order": 0.4, "festivity": 0.4}, blocks: [((0, 1, 0), "oak_log_bench"), ((1, 1, 0), "oak_log_bench")]),
         (name: "stone_cairn", weight: 0.4, lean: {"age": 1.0, "order": -0.4, "lore": 0.7, "piety": 0.3}, blocks: [((0, 1, 0), "cobblestone"), ((0, 2, 0), "mossy_cobblestone"), ((0, 3, 0), "cobblestone")]),
         (name: "drying_rack", weight: 0.5, lean: {"wealth": -0.4, "green": 0.3, "craft": 0.4}, blocks: [((0, 1, 0), "spruce_log"), ((0, 2, 0), "spruce_log"), ((2, 1, 0), "spruce_log"), ((2, 2, 0), "spruce_log"), ((1, 2, 0), "spruce_planks")]),
         (name: "trough", weight: 0.5, lean: {"green": 0.4}, blocks: [((0, 1, 0), "oak_planks"), ((1, 1, 0), "water"), ((2, 1, 0), "oak_planks")]),
@@ -807,7 +811,7 @@
             // A monster or a hunter within 12: home crying out for half a minute (guards stay).
             fear: 12.0, afraid: 30.0,
             // Rain empties the square, the well and the yards, and the fields and pens.
-            rain: 0.2, shelter: [Square, Well, Yard, Neighbour], outdoor: ["field", "orchard", "pen", "woodyard"],
+            rain: 0.2, shelter: [Square, Well, Yard, Neighbour], outdoor: ["field", "orchard", "pen", "woodyard"], chat: 2.5, chat_for: 6.0, chat_every: 120.0, intruder_every: 30.0,
         ),
         jobs: [
             (at: "bakery", species: "baker", count: (1, 2), routine: "worker", lean: {"crowding": 0.5}),

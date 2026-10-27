@@ -60,6 +60,13 @@ pub struct Body {
     pub bold: bool,
 }
 
+/// Whether a body of `size` (width, height) standing at `position` takes up any of `cell`,
+/// as the server judges a creature in the way of a block (a client judges it from what it
+/// is shown of the creature by the same rule).
+pub fn takes_cell(position: Vec3, size: (f32, f32), cell: IVec3) -> bool {
+    Aabb::standing(position, size.0, size.1).intersects(|at| at == cell)
+}
+
 impl Body {
     pub fn new(position: Vec3, yaw: f32, size: (f32, f32)) -> Self {
         Self { position, velocity: Vec3::ZERO, yaw, on_ground: false, in_water: false, size, against_wall: false, reach: 0.0, head: 0.0, turn_way: 0.0, turn_to: 0.0, lift: 0.0, bold: false }
@@ -67,6 +74,11 @@ impl Body {
 
     pub fn aabb(&self) -> Aabb {
         Aabb::standing(self.position, self.size.0, self.size.1)
+    }
+
+    /// Whether its body takes up any of `cell`: what keeps a block from being set there.
+    pub fn takes(&self, cell: IVec3) -> bool {
+        takes_cell(self.position, self.size, cell)
     }
 
     /// The direction it faces.
@@ -309,6 +321,16 @@ pub fn chase_with_hop(movement: &Movement, way: f32, speed: f32, dt: f32) -> f32
 /// goes at: a step its head meets is up only for a hop that carries it there at that pace;
 /// `dt` is how long a `step` is, which the hop is judged by.
 pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, heading: Vec3, pace: f32, dt: f32) -> bool {
+    open_way_edging(body, world, movement, water, heading, pace, dt, false)
+}
+
+/// As `open_way`; `edging`, its head may also be clear there still facing the way it faces,
+/// going on that way: `step` holds its facing where its turned head would meet something.
+/// So a creature following its way (`path::find`) edges into a gap with a fence across the
+/// corner before it, its head held off the fence, where turned toward the gap its head
+/// would meet it. Only on a way: going straight at a wall, it does not edge along it.
+#[allow(clippy::too_many_arguments)]
+pub fn open_way_edging(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, heading: Vec3, pace: f32, dt: f32, edging: bool) -> bool {
     let probe = body.size.0 * 0.5 + 0.3;
     let boxes = |p: IVec3| world.boxes(p);
     let goes = |lift: f32| {
@@ -338,9 +360,13 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // where it gets most of the way at its level but its head meets a step (`head_step`),
     // not round it. A high head at a wall two high, or under a lintel, finds no way there.
     let ahead = |to: Vec3| Body { position: to, yaw: yaw_of(heading), ..*body };
+    // Its head clear there facing the way it goes, or, edging, going on the way it faces
+    // and still facing that way.
+    let onward = edging && heading.dot(body.forward()) >= -1e-4;
+    let clear = |to: Vec3| !ahead(to).head_blocked(world) || onward && !Body { position: to, ..*body }.head_blocked(world);
     let level = goes(0.0);
     let up = movement.jump > 0.0 && level.is_none_or(|to| ahead(to).head_step(world, heading, pace, hop_speed(movement, dt), movement.step));
-    let Some(to) = level.filter(|&to| !ahead(to).head_blocked(world)).or_else(|| if up { goes(1.05).filter(|&to| !ahead(to).head_blocked(world)) } else { None }) else {
+    let Some(to) = level.filter(|&to| clear(to)).or_else(|| if up { goes(1.05).filter(|&to| !ahead(to).head_blocked(world)) } else { None }) else {
         return false;
     };
     // What it would come down on along its way, from here to as far ahead as it carries
@@ -490,6 +516,13 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
 /// how anything walking gets round a wall, a corner or a tree rather than pressing into it.
 /// `pace` is the speed it goes at (`open_way`).
 pub fn steer(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, wish: Vec3, side: f32, pace: f32, dt: f32) -> (Vec3, f32) {
+    steer_edging(body, world, movement, water, wish, side, pace, dt, false)
+}
+
+/// As `steer`, judging each way it might take as `open_way_edging` does.
+#[allow(clippy::too_many_arguments)]
+pub fn steer_edging(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, wish: Vec3, side: f32, pace: f32, dt: f32, edging: bool) -> (Vec3, f32) {
+    let open_way = |body: &Body, world, movement, water, heading, pace, dt| open_way_edging(body, world, movement, water, heading, pace, dt, edging);
     if wish == Vec3::ZERO || open_way(body, world, movement, water, wish, pace, dt) {
         return (wish, 0.0);
     }

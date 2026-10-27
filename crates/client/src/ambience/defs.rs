@@ -311,6 +311,9 @@ pub struct Group {
     /// Whether its blocks count only while they smoulder (`ClientWorld::smoulders`): thatch
     /// about to catch, heard crackling before it does.
     pub smouldering: bool,
+    /// The lit group whose cores it counts once their fire has gone out, and for how many
+    /// seconds after: a kiln's bricks ticking as they cool. It selects nothing itself.
+    pub cools: Option<(usize, f32)>,
 }
 
 /// What a bed plays: a synthesized sound, or recorded segments shipped in its package.
@@ -523,6 +526,9 @@ struct GroupDef {
     /// A structure's core counts only while lit.
     #[serde(default)]
     lit: bool,
+    /// The cores of this lit group, for these seconds after their fire goes out.
+    #[serde(default)]
+    cools: Option<(String, f32)>,
     /// Walls of this shelter, as a home's room is judged (`Shelter::of_wall`: by the
     /// block's tag, a solid untagged block draughty, furniture none), and never the floor.
     #[serde(default)]
@@ -608,6 +614,8 @@ pub fn home_step(ladder: &[voxmar_engine::effect::EffectId], held: &[voxmar_engi
 /// package deafens the player or fills the world.
 pub const VOLUME_MOST: f32 = 2.0;
 pub const REACH_MOST: f32 = 128.0;
+/// The longest a group may count a fire gone out (`cools`), in seconds.
+pub const COOLS_MOST: f32 = 600.0;
 
 fn default_reach() -> f32 {
     12.0
@@ -637,6 +645,7 @@ impl Ambience {
             }
         }
         // Groups first, so every file's conditions may name any group.
+        let mut cools = Vec::new();
         for (package, def) in &mut parsed {
             for group in def.groups.drain(..) {
                 if ambience.groups.iter().any(|g| g.name == group.name) || Fixed::ALL.iter().any(|a| a.name() == group.name) {
@@ -645,9 +654,28 @@ impl Ambience {
                 if group.shelter.is_some() && (!group.tags.is_empty() || !group.materials.is_empty() || group.falling || group.lit || group.smouldering) {
                     return Err(format!("{package}/{FILE}: group {} selects walls by shelter, and nothing else", group.name));
                 }
-                ambience.groups.push(Group { name: group.name, range: group.range, lit: group.lit, smouldering: group.smouldering });
+                if group.cools.is_some() && (!group.tags.is_empty() || !group.materials.is_empty() || group.falling || group.lit || group.smouldering || group.shelter.is_some()) {
+                    return Err(format!("{package}/{FILE}: group {} counts cooling cores, and nothing else", group.name));
+                }
+                cools.push(group.cools.map(|(of, seconds)| (package.to_string(), of, seconds)));
+                ambience.groups.push(Group { name: group.name, range: group.range, lit: group.lit, smouldering: group.smouldering, cools: None });
                 ambience.selectors.push((group.tags, group.materials, group.falling, group.shelter));
             }
+        }
+        // Each cooling group names a lit group, any file's.
+        for (index, cools) in cools.into_iter().enumerate() {
+            let Some((package, of, seconds)) = cools else { continue };
+            let name = &ambience.groups[index].name;
+            let Some(lit) = ambience.groups.iter().position(|g| g.name == of && g.lit) else {
+                return Err(format!("{package}/{FILE}: group {name} cools {of}, which is no lit group"));
+            };
+            if !(seconds > 0.0 && seconds <= COOLS_MOST) {
+                return Err(format!("{package}/{FILE}: group {name} cools for {seconds} s, not over 0 to {COOLS_MOST}"));
+            }
+            if let Some(other) = ambience.groups.iter().find(|g| g.cools.is_some_and(|(cooled, _)| cooled == lit)) {
+                return Err(format!("{package}/{FILE}: group {name} cools {of}, which {} already cools", other.name));
+            }
+            ambience.groups[index].cools = Some((lit, seconds));
         }
         // Roofs next, as each patter is an axis.
         let (mut shelter, mut patter, mut patter_shelter) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
@@ -898,6 +926,7 @@ impl Ambience {
     /// Each block's group, by block id, for the enclosure scan: the first group that
     /// selects it by tag or material (a group selecting by shelter is a wall group).
     pub fn block_groups(&self, registry: &BlockRegistry) -> Vec<Option<u8>> {
+        // (A cooling group selects nothing: no tags, no materials.)
         (0..registry.len())
             .map(|id| {
                 let id = voxmar_engine::block::BlockId(id as u16);
@@ -911,6 +940,23 @@ impl Ambience {
                     .map(|g| g as u8)
             })
             .collect()
+    }
+
+    /// By group, for the enclosure scan: where a lit group's cores count once their fire
+    /// has gone out, and for how long (`Kinds::cooling`).
+    pub fn cooling(&self) -> Vec<Option<(u8, f32)>> {
+        let mut cooling = vec![None; self.groups.len()];
+        for (index, group) in self.groups.iter().enumerate() {
+            if let Some((lit, seconds)) = group.cools {
+                cooling[lit] = Some((index as u8, seconds));
+            }
+        }
+        cooling
+    }
+
+    /// The longest any group counts a fire gone out: how long one is worth remembering.
+    pub fn cools_longest(&self) -> f32 {
+        self.groups.iter().filter_map(|g| g.cools.map(|c| c.1)).fold(0.0, f32::max)
     }
 
     /// Whether every recorded bed's files are there under `assets`, so a mistyped path
@@ -1004,6 +1050,23 @@ mod tests {
         env.neighbour_tags = vec!["forest".into()];
         env.home = 0.5;
         assert_eq!(ambience.sounds[0].when.weight(&env), 0.5);
+    }
+
+    /// A cooling group names a lit group, for a while, once, and selects nothing else.
+    #[test]
+    fn a_cooling_group_cools_one_lit_group() {
+        let lit = r#"(name: "kiln", tags: ["crucible"], range: (1, 4), lit: true)"#;
+        let groups = |more: &str| format!("(groups: [{lit}, (name: \"rock\", tags: [\"stone\"], range: (1, 4)), {more}])");
+        let ambience = Ambience::load(&file(&groups(r#"(name: "cooling", cools: ("kiln", 90), range: (1, 4))"#))).unwrap();
+        assert_eq!(ambience.groups[2].cools, Some((0, 90.0)));
+        assert_eq!(ambience.cooling(), vec![Some((2, 90.0)), None, None]);
+        assert_eq!(ambience.cools_longest(), 90.0);
+        let error = |more: &str| Ambience::load(&file(&groups(more))).unwrap_err();
+        assert!(error(r#"(name: "cooling", cools: ("rock", 90), range: (1, 4))"#).contains("no lit group"));
+        assert!(error(r#"(name: "cooling", cools: ("kiln", 0), range: (1, 4))"#).contains("not over 0"));
+        assert!(error(r#"(name: "cooling", cools: ("kiln", 601), range: (1, 4))"#).contains("not over 0"));
+        assert!(error(r#"(name: "cooling", cools: ("kiln", 90), tags: ["brick"], range: (1, 4))"#).contains("nothing else"));
+        assert!(error(r#"(name: "a", cools: ("kiln", 90), range: (1, 4)), (name: "b", cools: ("kiln", 30), range: (1, 4))"#).contains("already cools"));
     }
 
     #[test]

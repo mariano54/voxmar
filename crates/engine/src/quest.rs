@@ -92,6 +92,9 @@ pub enum Goal {
     /// Laid a recipe for this item (or `any`, or a `tag:TAG`) into the crafting grid this
     /// many times with the recipe viewer's Lay, taking from a store in the home.
     Laid(String, u32),
+    /// Put this many of an item (or `any`, or a `tag:TAG`) away into a home's stores with the
+    /// Put away key (`base:put_away`); a move into an open store by hand is `Stocked`'s.
+    PutAway(String, u32),
     /// Mended this many worn tools or weapons (one, `any`, or a `tag:TAG`) at the crafting
     /// grid, by the block each is mended at.
     Mended(String, u32),
@@ -101,7 +104,8 @@ pub enum Goal {
     /// Set down this many of a block (an item, `any` or a `tag:TAG`) from the hand.
     Placed(String, u32),
     /// Has this many of an item (or `any`, or a `tag:TAG`) put into stores of one kind (a
-    /// store block) and left there: what is taken back out again counts against it.
+    /// store block, or a `tag:TAG` some store has) and left there: what is taken back out
+    /// again counts against it.
     Stocked(String, String, u32),
     /// Made this many of an item (or a `tag:TAG`) by a recipe made near a block with this
     /// tag (`near` in recipes.ron), such as planks split on a chopping block.
@@ -132,6 +136,7 @@ impl Goal {
             | Goal::Offered(item, _)
             | Goal::Ate(item, _)
             | Goal::Laid(item, _)
+            | Goal::PutAway(item, _)
             | Goal::Mended(item, _)
             | Goal::Watering(item, _)
             | Goal::Fertilised(item, _) => Some(item),
@@ -205,6 +210,10 @@ pub struct QuestFile {
     /// changes what it gives, field by field.
     #[serde(default)]
     pub tracker: Option<TrackerPatch>,
+    /// What the quests' experience rewards are worth (`core/quests.ron`); a later package
+    /// changes it field by field.
+    #[serde(default)]
+    pub pays: Option<PaysPatch>,
     /// Where it was read from, `package/file`, for the load checks to name.
     #[serde(skip)]
     pub source: String,
@@ -229,6 +238,43 @@ pub struct TrackerPatch {
     pub ways: Option<usize>,
     #[serde(default)]
     pub book_key: Option<bool>,
+}
+
+/// What a package changes of what quests pay.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaysPatch {
+    #[serde(default)]
+    pub xp: Option<f32>,
+    #[serde(default)]
+    pub capstone_xp: Option<f32>,
+}
+
+/// What the quests' experience rewards are worth: each `Xp` a quest file writes is paid,
+/// shown and counted times `xp`, and a capstone's times `capstone_xp` again, so a whole
+/// book's rewards move with one setting. Applied as the quests load, so everything that
+/// reads a quest's rewards (the server paying them, the book and tracker showing them,
+/// the walks counting them) reads the same number.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Pays {
+    pub xp: f32,
+    pub capstone_xp: f32,
+}
+
+impl Default for Pays {
+    fn default() -> Self {
+        Self { xp: 1.0, capstone_xp: 1.0 }
+    }
+}
+
+impl Pays {
+    /// The most either scale may be: more would make a book's numbers meaningless.
+    pub const MOST: f32 = 10.0;
+
+    /// What one experience written in `quest`'s rewards is worth.
+    pub fn of(&self, quest: &QuestDef) -> f32 {
+        if quest.capstone { self.xp * self.capstone_xp } else { self.xp }
+    }
 }
 
 /// How the interface follows pinned quests on screen.
@@ -260,6 +306,7 @@ impl Default for Tracker {
 pub struct QuestRegistry {
     quests: Vec<QuestDef>,
     tracker: Tracker,
+    pays: Pays,
     start_pins: Vec<String>,
     /// Each quest's `Placed` goals, by the quest's name and what it wants set down (a name,
     /// `any` or `tag:`), gathered once the content is named (`resolve`).
@@ -335,9 +382,20 @@ impl Progress<'_> {
             Goal::Ate(food, n) => (tally("ate", food), *n),
             Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
             Goal::Laid(item, n) => (tally("laid", item), *n),
+            Goal::PutAway(item, n) => (tally("put_away", item), *n),
             Goal::Mended(item, n) => (tally("mended", item), *n),
             Goal::Watering(block, n) => (tally("watering", block), *n),
             Goal::Placed(block, n) => (tally("placed", block), *n),
+            // A store tag sums every store kind with it (`stocked:STORE:ITEM`, a store's
+            // full name being one `package:name`).
+            Goal::Stocked(item, store, n) if store.starts_with("tag:") => {
+                let kept = self.tallies.iter().filter_map(|(key, &n)| {
+                    let rest = key.strip_prefix("stocked:")?;
+                    let split = rest.match_indices(':').nth(1)?.0;
+                    (matches(store, &rest[..split]) && matches(item, &rest[split + 1..])).then_some(n)
+                });
+                (kept.sum::<u32>(), *n)
+            }
             Goal::Stocked(item, store, n) => (tally(&format!("stocked:{store}"), item), *n),
             Goal::CraftNear(item, near, n) => (tally(&format!("crafted_near:{near}"), item), *n),
             Goal::Trapped(creature, n) => (tally("trapped", creature), *n),
@@ -467,6 +525,14 @@ impl QuestRegistry {
             return Err(RegistryError(format!("{tracker_from}: the tracker needs a pin or more, a stay of 0 s or more and a backing from 0 to 1, not {tracker:?}")));
         }
         let (tracker_from, pins_from) = (tracker_from.to_owned(), pins_from.to_owned());
+        let mut pays = Pays::default();
+        for (patch, source) in files.iter().filter_map(|f| Some((f.pays.as_ref()?, f.source.as_str()))) {
+            pays.xp = patch.xp.unwrap_or(pays.xp);
+            pays.capstone_xp = patch.capstone_xp.unwrap_or(pays.capstone_xp);
+            if ![pays.xp, pays.capstone_xp].iter().all(|x| x.is_finite() && *x > 0.0 && *x <= Pays::MOST) {
+                return Err(RegistryError(format!("{source}: quests pay experience times more than 0 and at most {}, not {pays:?}", Pays::MOST)));
+            }
+        }
         // Each quest with the file it was written in.
         let written: Vec<(QuestDef, String)> = files.into_iter().flat_map(|f| f.quests.into_iter().map(move |q| (q, f.source.clone()))).collect();
         // One book or several files, a quest is written once: a second of a name, in the
@@ -556,7 +622,16 @@ impl QuestRegistry {
         if let Some(name) = start_pins.iter().find(|name| !quests.iter().any(|q| &q.name == *name)) {
             return Err(RegistryError(format!("{pins_from}: the start pin `{name}` is not a quest")));
         }
-        Ok(Self { quests, tracker, start_pins, placing: Vec::new() })
+        let mut quests = quests;
+        for quest in &mut quests {
+            let worth = pays.of(quest);
+            for reward in &mut quest.rewards {
+                if let Reward::Xp(_, xp) = reward {
+                    *xp *= worth;
+                }
+            }
+        }
+        Ok(Self { quests, tracker, pays, start_pins, placing: Vec::new() })
     }
 
     /// The quests a new player's book starts with pinned.
@@ -605,7 +680,8 @@ impl QuestRegistry {
         let effect_names: Vec<&str> = effects.iter().map(String::as_str).collect();
         let effect = Kind { what: "effect", names: &effect_names, any: false, tagged: &[] };
         let store_names: Vec<&str> = stores.iter().map(String::as_str).collect();
-        let store = Kind { what: "store", names: &store_names, any: false, tagged: &[] };
+        let store_ids: Vec<BlockId> = store_names.iter().filter_map(|name| blocks.id(name)).collect();
+        let store = Kind { what: "store", names: &store_names, any: false, tagged: &store_ids };
         let trapped_names: Vec<&str> = trapped.iter().map(String::as_str).collect();
         let trappable = Kind { what: "creature a trap catches", names: &trapped_names, ..creature };
         for quest in &mut self.quests {
@@ -660,7 +736,7 @@ impl QuestRegistry {
                     Goal::Fertilised(name, _) => find(name, &made)?,
                     Goal::Ate(name, _) => find(name, &made)?,
                     Goal::Felt(name) => find(name, &effect)?,
-                    Goal::Laid(name, _) => find(name, &made)?,
+                    Goal::Laid(name, _) | Goal::PutAway(name, _) => find(name, &made)?,
                     Goal::Mended(name, _) => find(name, &made)?,
                     Goal::Watering(name, _) | Goal::Placed(name, _) => find(name, &made)?,
                     Goal::Stocked(name, kept, _) => {
@@ -821,6 +897,11 @@ impl QuestRegistry {
     /// How the interface follows pinned quests.
     pub fn tracker(&self) -> Tracker {
         self.tracker
+    }
+
+    /// What the quests' experience rewards are worth, as already applied to them.
+    pub fn pays(&self) -> Pays {
+        self.pays
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &QuestDef> {
@@ -1214,12 +1295,14 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1), ("placed:base:hide_window", 2), ("stocked:base:feed_trough:base:wheat", 8), ("crafted_near:chopping_block:base:oak_planks", 6), ("trapped:base:rabbit", 1), ("mended:base:bone", 2)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1), ("placed:base:hide_window", 2), ("stocked:base:feed_trough:base:wheat", 8), ("stocked:base:oak_crate_stack:base:oak_planks", 20), ("stocked:base:barrel:base:oak_planks", 12), ("put_away:base:oak_planks", 20), ("crafted_near:chopping_block:base:oak_planks", 6), ("trapped:base:rabbit", 1), ("mended:base:bone", 2)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
         let carried = |_: &str| 0u32;
-        let has_tag = |name: &str, tag: &str| (name == "base:bone" && tag == "offering") || (name == "base:honey" && tag == "sweet");
+        let has_tag = |name: &str, tag: &str| {
+            (name == "base:bone" && tag == "offering") || (name == "base:honey" && tag == "sweet") || (matches!(name, "base:oak_crate_stack" | "base:barrel") && tag == "storage") || (name == "base:oak_planks" && tag == "planks")
+        };
         let drops = |_: &str| None;
         let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &|_| 0, home: false };
         let goal = |goal: Goal| progress.goal(&goal);
@@ -1243,6 +1326,10 @@ mod tests {
         assert_eq!(goal(Goal::Placed("base:hide_window".into(), 2)), (2, 2), "blocks set down");
         assert_eq!(goal(Goal::Stocked("base:wheat".into(), "base:feed_trough".into(), 8)), (8, 8), "wheat put in a store");
         assert_eq!(goal(Goal::Stocked("base:bone".into(), "base:feed_trough".into(), 1)), (0, 1), "only the item asked for");
+        assert_eq!(goal(Goal::Stocked("tag:planks".into(), "tag:storage".into(), 32)), (32, 32), "into any store with the tag, the crate stack and the barrel together");
+        assert_eq!(goal(Goal::Stocked("any".into(), "tag:storage".into(), 40)), (32, 40), "the feed trough is no store of the tag");
+        assert_eq!(goal(Goal::Stocked("base:oak_planks".into(), "base:barrel".into(), 12)), (12, 12), "one store kind still counts alone");
+        assert_eq!(goal(Goal::PutAway("tag:planks".into(), 32)), (20, 32), "only what was put away, not all that was stocked");
         assert_eq!(goal(Goal::CraftNear("base:oak_planks".into(), "chopping_block".into(), 6)), (6, 6));
         assert_eq!(goal(Goal::CraftNear("base:oak_planks".into(), "oven".into(), 1)), (0, 1), "made near another block");
         assert_eq!(goal(Goal::Trapped("any".into(), 1)), (1, 1), "a catch taken from a trap");
@@ -1309,6 +1396,31 @@ mod tests {
         assert!(QuestRegistry::new(vec![none]).is_err());
         let clear = QuestRegistry::read("core", "(tracker: (backing_alpha: 1.5))").unwrap();
         assert!(QuestRegistry::new(vec![clear]).is_err());
+    }
+
+    /// The quests' experience is paid times `pays.xp`, a capstone's times `capstone_xp`
+    /// again, item rewards untouched; a later package changes it field by field, and a
+    /// scale of nothing or past `Pays::MOST` is refused, naming its file.
+    #[test]
+    fn quests_pay_experience_times_the_scale_and_capstones_more() {
+        let quests = r#"quests: [
+            (name: "plain", age: "nomad", branch: "main", title: "Plain", why: "", tasks: [[Home]], rewards: [Xp("cooking", 10.0), Item("torch", 4)]),
+            (name: "top", age: "nomad", branch: "main", title: "Top", why: "", tasks: [[Home]], after: ["plain"], capstone: true, rewards: [Xp("cooking", 10.0)]),
+        ]"#;
+        let paid = |files: &[(&str, &str)]| QuestRegistry::new(files.iter().map(|(ns, s)| QuestRegistry::read(ns, s).unwrap()).collect());
+        let xp = |q: &QuestRegistry, name: &str| q.get(name).unwrap().rewards.iter().find_map(|r| if let Reward::Xp(_, xp) = r { Some(*xp) } else { None }).unwrap();
+        let book = format!("({quests})");
+        let once = paid(&[("t", &book)]).unwrap();
+        assert_eq!((xp(&once, "t:plain"), xp(&once, "t:top"), once.pays()), (10.0, 10.0, Pays::default()));
+        let scaled = paid(&[("core", "(pays: (xp: 2.0, capstone_xp: 1.5))"), ("t", &book)]).unwrap();
+        assert_eq!((xp(&scaled, "t:plain"), xp(&scaled, "t:top")), (20.0, 30.0));
+        assert!(scaled.get("t:plain").unwrap().rewards.iter().any(|r| matches!(r, Reward::Item(name, 4) if name.ends_with("torch"))), "items are paid as written");
+        let patched = paid(&[("core", "(pays: (xp: 2.0, capstone_xp: 1.5))"), ("mod", "(pays: (xp: 3.0))"), ("t", &book)]).unwrap();
+        assert_eq!(patched.pays(), Pays { xp: 3.0, capstone_xp: 1.5 });
+        for wrong in ["(pays: (xp: 0.0))", "(pays: (capstone_xp: -1.0))", "(pays: (xp: 11.0))"] {
+            let refused = paid(&[("mod", wrong), ("t", &book)]).err().expect(wrong);
+            assert!(refused.0.contains("mod"), "{}", refused.0);
+        }
     }
 
     /// Content to check quests against: blocks (a log tagged, fish, a kiln's pieces), core
@@ -1463,6 +1575,9 @@ mod tests {
         // The store, the tag made near and the creature trapped are each one there is.
         assert!(refused(r#"Stocked("oak_log", "brick", 1)"#, "").is_none());
         assert_eq!(refused(r#"Stocked("oak_log", "torch", 1)"#, ""), Some("quest base:dig names the store `torch`, which no package has".to_owned()), "a torch holds nothing");
+        assert!(refused(r#"Stocked("oak_log", "tag:multiblock_core", 1)"#, "").is_none(), "a tag some store has");
+        assert_eq!(refused(r#"PutAway("bon", 1)"#, ""), Some("quest base:dig names the item `bon`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Stocked("oak_log", "tag:ore", 1)"#, ""), Some("quest base:dig names the tag `ore`, which no package has".to_owned()), "copper ore has the tag but holds nothing");
         assert!(refused(r#"CraftNear("tag:log", "chopping_block", 1)"#, "").is_none());
         assert_eq!(refused(r#"CraftNear("tag:log", "choping_block", 1)"#, ""), Some("quest base:dig names the tag no recipe is made near `choping_block`, which no package has".to_owned()));
         assert!(refused(r#"Trapped("rabbit", 1)"#, "").is_none() && refused(r#"Trapped("any", 1)"#, "").is_none());

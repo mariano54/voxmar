@@ -146,6 +146,10 @@ pub(super) struct ReactFile {
     rain: Option<f32>,
     shelter: Option<Vec<Place>>,
     outdoor: Option<Vec<String>>,
+    chat: Option<f32>,
+    chat_for: Option<f32>,
+    chat_every: Option<f32>,
+    intruder_every: Option<f32>,
 }
 
 /// `people.live` as written: each number it gives replaces the one before.
@@ -304,11 +308,20 @@ pub struct ReactDef {
     pub rain: f32,
     pub shelter: Vec<Place>,
     pub outdoor: Vec<String>,
+    /// Two of them out on their day within `chat` of each other, seeing each other, stop
+    /// and talk a while (`chat_for`), turned to each other with a hum each, each talking
+    /// again no sooner than `chat_every`. Guards keep to their watch; 0 talks never.
+    pub chat: f32,
+    pub chat_for: f32,
+    pub chat_every: f32,
+    /// A player one of them sees in their home at night (they are bound for bed or in it)
+    /// is told to leave, with a cry, each again no sooner than `intruder_every`.
+    pub intruder_every: f32,
 }
 
 impl Default for ReactDef {
     fn default() -> Self {
-        Self { greet: 4.0, greet_for: 3.0, greet_every: 90.0, fear: 12.0, afraid: 30.0, rain: 0.2, shelter: Vec::new(), outdoor: Vec::new() }
+        Self { greet: 4.0, greet_for: 3.0, greet_every: 90.0, fear: 12.0, afraid: 30.0, rain: 0.2, shelter: Vec::new(), outdoor: Vec::new(), chat: 2.5, chat_for: 6.0, chat_every: 120.0, intruder_every: 30.0 }
     }
 }
 
@@ -485,7 +498,7 @@ impl PeopleDef {
                 })*
             };
         }
-        react!(greet, greet_for, greet_every, fear, afraid, rain, shelter, outdoor);
+        react!(greet, greet_for, greet_every, fear, afraid, rain, shelter, outdoor, chat, chat_for, chat_every, intruder_every);
         Ok(())
     }
 
@@ -555,8 +568,15 @@ impl PeopleDef {
         let r = &self.react;
         // Sleep and Home are where rain sends people: sheltering from them would leave
         // nowhere to go.
-        if [r.greet_for, r.greet_every, r.afraid].iter().any(|&t| t <= 0.0) || r.greet_for >= r.greet_every || r.greet < 0.0 || r.fear < 0.0 || !(0.0..=1.0).contains(&r.rain) || r.shelter.iter().any(|p| matches!(p, Place::Sleep | Place::Home)) {
-            return fail("react: times above nothing, a greeting shorter than the wait between them, no distance below nothing, rain within 0 to 1, and no shelter from Sleep or Home".into());
+        if [r.greet_for, r.greet_every, r.afraid, r.chat_for, r.chat_every, r.intruder_every].iter().any(|&t| !(t > 0.0))
+            || r.greet_for >= r.greet_every
+            || r.chat_for >= r.chat_every
+            || [r.greet, r.fear, r.chat].iter().any(|&d| !(d >= 0.0))
+            || r.chat > r.greet
+            || !(0.0..=1.0).contains(&r.rain)
+            || r.shelter.iter().any(|p| matches!(p, Place::Sleep | Place::Home))
+        {
+            return fail("react: times above nothing, a greeting and a talk each shorter than the wait between them, no distance below nothing (a talk no farther apart than a greeting), rain within 0 to 1, and no shelter from Sleep or Home".into());
         }
         Ok(())
     }

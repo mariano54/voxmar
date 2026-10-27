@@ -556,13 +556,16 @@ pub struct Senses {
     pub keep: f32,
 }
 
-/// How one of a settlement's people barks (`Server::bark`): heard by players within
-/// `range` blocks who see them, each bark to the same player no more than once in `every`
-/// seconds (a greeting, an alarm and a sigh each keep their own).
+/// How one of a settlement's people barks (`Server::bark`): each bark heard by players
+/// within its own range, in blocks, who see them (a cry of alarm carries farther than a
+/// hum), and to the same player no more than once in `every` seconds (a greeting, an alarm
+/// and a sigh each keep their own).
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Barking {
-    pub range: f32,
+    pub greet: f32,
+    pub alarm: f32,
+    pub content: f32,
     pub every: f32,
 }
 
@@ -573,14 +576,26 @@ pub const MOST_BARK_EVERY: f32 = 600.0;
 
 impl Default for Barking {
     fn default() -> Self {
-        Self { range: 24.0, every: 6.0 }
+        Self { greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0 }
     }
 }
 
 impl Barking {
+    /// Blocks within which `bark` is heard.
+    pub fn range(&self, bark: Bark) -> f32 {
+        match bark {
+            Bark::Greet => self.greet,
+            Bark::Alarm => self.alarm,
+            Bark::Content => self.content,
+        }
+    }
+
     pub fn check(&self) -> Result<(), String> {
-        if !(self.range >= 1.0 && self.range <= MOST_BARK_RANGE) {
-            return Err(format!("`barking.range` is from 1 to {MOST_BARK_RANGE} blocks, not {}", self.range));
+        for bark in Bark::ALL {
+            let range = self.range(bark);
+            if !(range >= 1.0 && range <= MOST_BARK_RANGE) {
+                return Err(format!("`barking.{}` is from 1 to {MOST_BARK_RANGE} blocks, not {range}", bark.name()));
+            }
         }
         if !(self.every.is_finite() && (0.0..=MOST_BARK_EVERY).contains(&self.every)) {
             return Err(format!("`barking.every` is from 0 to {MOST_BARK_EVERY} seconds, not {}", self.every));
@@ -1597,8 +1612,9 @@ mod tests {
         let good = Barking::default();
         assert!(good.check().is_ok());
         let broken = [
-            Barking { range: 0.5, ..good },
-            Barking { range: MOST_BARK_RANGE + 1.0, ..good },
+            Barking { greet: 0.5, ..good },
+            Barking { alarm: MOST_BARK_RANGE + 1.0, ..good },
+            Barking { content: f32::NAN, ..good },
             Barking { every: -1.0, ..good },
             Barking { every: MOST_BARK_EVERY + 1.0, ..good },
             Barking { every: f32::NAN, ..good },

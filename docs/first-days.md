@@ -477,6 +477,29 @@ pit kiln fires a dozen clay at a time while the bot digs the next load. Six runs
 Crucible Kiln at 473 to 545 s; the window from 360 s brings 14 to 16 new things; the longest
 single-action stretch is 39 s (49 gravel dug in a row for the clamp's flint).
 
+### Farm pacing from the hearth (Oct 21)
+
+From the lit hearth to the lit Crucible Kiln, the quest-book bot went 71 to 75 s with nothing
+new in four runs of five (47 s in the other). That was A Kiln Load, firing forty clay, and it
+ended with the four kiln bricks the quest gives. A Kiln Load's own text says to make crockery
+between loads, but Earthenware opened only after it. Earthenware now opens after The Potter,
+and the bot makes the bowls after one load and the jar after the next. Five runs: the longest
+wait with nothing new from the hearth is 32 to 46 s, now the wait for the charcoal.
+The test fails the Farm line past a minute with nothing new from the hearth (`PACING_WAIT`,
+as long as `PACING_STRETCH`). The longest single action there is the 30 to 35 s idle wait for
+the clamp.
+
+### Nomad pacing (Oct 21)
+
+The Nomad walk now runs the same pacing check as the Farm walk, by the same floors. Two runs:
+the lit Homestead Hearth at 167 to 190 s; the first three minutes bring 37 to 43 new things
+(the floor is 5); the longest single-action stretch is 34 s (50 gravel dug for the flint
+tools; the floor is 60); the longest wait with nothing new is 29 s (the same digging) or 34 s
+(the hunt for the bag's hides, ended by the first raw hide). Luring the first rabbit with a
+wild carrot, as A Tempting Bite teaches, was tried for that hunt and made it longer (four
+runs, 37 to 83 s against 34 to 58 s), since a rabbit takes its time to come, so the walk
+still runs the animals down.
+
 ## Measured pacing
 
 Run it with `cargo test -p voxmar_server --test gameplay a_fresh_survival -- --ignored --nocapture`
@@ -491,9 +514,10 @@ comes from a command: no /give, /skill, /xp, /clear, no /tp of the player, no fi
 inventory. Times are server seconds (20 ticks per second, counted from the server's own tick
 counter, never wall clock), measured from the first action. The test runs in real time
 because mining and cooking are timed by message arrival, so it takes 3 to 4 minutes of wall
-time. It asserts only the budget table at the top of the test (generous ceilings, so a
-regression such as a recipe that suddenly needs ten times the work fails it) and prints one
-summary block to stderr (`--nocapture`).
+time. It asserts the budget table at the top of the test (generous ceilings, so a
+regression such as a recipe that suddenly needs ten times the work fails it) and the Farm
+walk's pacing floors (`PACING_NEW`, `PACING_STRETCH`, below), and prints one summary block
+and the pacing report to stderr (`--nocapture`).
 
 Medians of three runs each. "Before" is the first measurement (four runs, with the old
 starting kit and before the balance defaults below); "Kit" is after the balance defaults,

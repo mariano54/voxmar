@@ -1,7 +1,8 @@
 //! Tools and weapons wearing out in the hand (`voxmar_engine::tool::Wear`, each package's
 //! `tools.ron`): a block broken, soil tilled or a blow that lands takes uses from what the
 //! player holds, the skill its kind trains saves one now and then, and worn to nothing it
-//! breaks (leaving nothing, or a head a pack names). The player hears it warn once it is nearly worn
+//! breaks (leaving nothing, or a head a pack names), a spare of its kind coming up into the
+//! hand where `Wear::spare` says. The player hears it warn once it is nearly worn
 //! out, and hears and sees it break (`ServerMessage::ToolWore`). Creative play wears nothing.
 
 use voxmar_engine::inventory::{CURSOR, ItemStack};
@@ -52,6 +53,19 @@ impl Server {
             CURSOR => player.inventory.cursor = now,
             _ => player.inventory.slots[slot] = now,
         }
+        // Broken in the hand with nothing left there, a spare of its kind comes up from the
+        // pack: its like first, else the one of its kind with most uses left.
+        if worn == Worn::Broke && now.is_none() && slot == player.selected && tools.wear().spare {
+            let kind = tools.tool(Some(item)).kind.filter(|_| !blocks.def(item).has_tag("weapon"));
+            let spare = (0..player.inventory.slots.len())
+                .filter_map(|i| player.inventory.slots[i].map(|s| (i, s)))
+                .filter(|&(i, s)| i != slot && (s.item == item || kind.is_some() && tools.tool(Some(s.item)).kind == kind) && tools.uses(s.item) > 0)
+                .max_by_key(|&(i, s)| (s.item == item, tools.uses(s.item).saturating_sub(s.wear), std::cmp::Reverse(i)))
+                .map(|(i, _)| i);
+            if let Some(i) = spare {
+                player.inventory.slots[slot] = player.inventory.slots[i].take();
+            }
+        }
         let mut left = Vec::new();
         for piece in rest.into_iter().flat_map(voxmar_engine::inventory::split_stack) {
             let over = player.inventory.add_stack(piece);
@@ -62,6 +76,20 @@ impl Server {
         player.changed(voxmar_engine::traits::INVENTORY);
         if worn != Worn::Fine {
             player.connection.send(ServerMessage::ToolWore { item, broke: worn == Worn::Broke });
+        }
+        // Nearly worn out, it says how it is mended, as its tooltip does: what with, and at
+        // what, the first time that matters being before it breaks.
+        if worn == Worn::Warned
+            && let Some(&by) = tools.mends(item).first()
+        {
+            use voxmar_engine::lang::Words;
+            let by = match tools.mend_by_tag(item) {
+                Some(tag) => Words::key(&format!("item.mend.tag.{tag}")),
+                None => Words::Block(blocks.def(by).name.clone()),
+            };
+            let how = Words::key("item.mend").with("item", by).with("station", Words::key(&format!("item.mend.near.{}", tools.mend_near(item))));
+            let text = Words::key("tool.nearly_worn").with("item", Words::Block(blocks.def(item).name.clone())).with("how", how);
+            player.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text });
         }
         let (feet, owner) = (player.position.floor().as_ivec3(), crate::items::owner_of(&player.name));
         let lifetime = (self.content.value.death.grave * voxmar_protocol::TICKS_PER_SECOND as f32) as u32;
@@ -95,9 +123,9 @@ impl Server {
     }
 }
 
-/// What burns while carried (a firebrand, `burns:N`) burns down a second at a time,
-/// wherever it is in the inventory, counted in its stack's `wear`; burnt out it becomes
-/// what it leaves (`burns_to:`), or nothing. Once a second.
+/// What burns while held (a firebrand, `burns:N`) burns down a second at a time in the
+/// hand (the selected slot; carried elsewhere it keeps), counted in its stack's `wear`;
+/// burnt out it becomes what it leaves (`burns_to:`), or nothing. Once a second.
 #[derive(Default)]
 pub(crate) struct Burning {
     /// Seconds gone by not yet burnt, under one.
@@ -120,27 +148,23 @@ impl crate::process::Process for Burning {
 }
 
 impl Server {
-    /// Burns everything every living player carries that burns by `seconds`.
+    /// Burns what every living player holds in hand, if it burns, by `seconds`. Only the
+    /// hand burns: what is carried elsewhere keeps until it is held.
     pub(crate) fn burn_carried(&mut self, seconds: u16) {
         let tools = self.content.tools.clone();
         for player in self.players.values_mut().filter(|p| p.joined && p.health.alive()) {
-            let inventory = &mut player.inventory;
-            let mut burnt = false;
-            for slot in inventory.slots.iter_mut().chain(std::iter::once(&mut inventory.cursor)).chain(inventory.craft.iter_mut()) {
-                let Some(stack) = slot.as_mut() else { continue };
-                let lasts = tools.burns(stack.item);
-                if lasts == 0 {
-                    continue;
-                }
-                burnt = true;
-                stack.wear = stack.wear.saturating_add(seconds);
-                if stack.wear >= lasts {
-                    *slot = tools.burnt(stack.item).map(|left| ItemStack::new(left, 1));
-                }
+            let selected = player.selected;
+            let Some(slot) = player.inventory.slots.get_mut(selected) else { continue };
+            let Some(stack) = slot.as_mut() else { continue };
+            let lasts = tools.burns(stack.item);
+            if lasts == 0 {
+                continue;
             }
-            if burnt {
-                player.changed(voxmar_engine::traits::INVENTORY);
+            stack.wear = stack.wear.saturating_add(seconds);
+            if stack.wear >= lasts {
+                *slot = tools.burnt(stack.item).map(|left| ItemStack::new(left, 1));
             }
+            player.changed(voxmar_engine::traits::INVENTORY);
         }
     }
 }
@@ -217,6 +241,117 @@ mod tests {
         let left = server.content.tools.head(pick).map(|head| ItemStack::new(head, 1));
         assert_eq!(server.players[&1].inventory.slots[0], left, "broken, nothing but a head it names is left in the hand");
         assert_eq!(told(&client), (0, 1));
+    }
+
+    /// A tool that breaks in the hand with a spare of its kind in the pack: the spare comes
+    /// up into the hand (the same tool first, else the one of its kind with most uses
+    /// left), so the work goes on; a weapon's spare is the same weapon. With none, the
+    /// hand stays empty, and a broken tool on the pointer brings nothing up.
+    #[test]
+    fn a_tool_broken_in_hand_brings_up_a_spare_of_its_kind() {
+        let worn_out = |server: &mut Server, slot: usize| {
+            let player = server.players.get_mut(&1).unwrap();
+            let stack = player.inventory.slots[slot].as_mut().unwrap();
+            stack.wear = server.content.tools.uses(stack.item) - 1;
+        };
+        let (mut server, client) = holding("base:flint_axe", 0);
+        let [flint_axe, stone_axe, flint_pick] = ["base:flint_axe", "base:stone_axe", "base:flint_pickaxe"].map(|n| server.content.blocks.expect(n));
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.slots[3] = Some(ItemStack { wear: 20, ..ItemStack::new(stone_axe, 1) });
+        player.inventory.slots[12] = Some(ItemStack { wear: 100, ..ItemStack::new(stone_axe, 1) });
+        player.inventory.slots[20] = Some(ItemStack::new(flint_pick, 1));
+        worn_out(&mut server, 0);
+        let log = put(&mut server, "base:oak_log");
+        server.wear_on_block(1, log, false, server.tool_in_hand(1));
+        let slots = &server.players[&1].inventory.slots;
+        assert_eq!((slots[0], slots[3], slots[12]), (Some(ItemStack { wear: 20, ..ItemStack::new(stone_axe, 1) }), None, Some(ItemStack { wear: 100, ..ItemStack::new(stone_axe, 1) })), "the axe of most uses left came up");
+        assert_eq!(told(&client), (0, 1), "the break is still told");
+        // The same tool before a better one.
+        let (mut server, _client) = holding("base:flint_axe", 0);
+        let player = server.players.get_mut(&1).unwrap();
+        (player.inventory.slots[5], player.inventory.slots[6]) = (Some(ItemStack::new(stone_axe, 1)), Some(ItemStack::new(flint_axe, 1)));
+        worn_out(&mut server, 0);
+        let log = put(&mut server, "base:oak_log");
+        server.wear_on_block(1, log, false, server.tool_in_hand(1));
+        assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(flint_axe, 1)), "its like first");
+        // No spare of its kind: the hand stays empty; the pickaxe stays where it was.
+        let (mut server, _client) = holding("base:flint_axe", 0);
+        server.players.get_mut(&1).unwrap().inventory.slots[20] = Some(ItemStack::new(flint_pick, 1));
+        worn_out(&mut server, 0);
+        let log = put(&mut server, "base:oak_log");
+        server.wear_on_block(1, log, false, server.tool_in_hand(1));
+        let slots = &server.players[&1].inventory.slots;
+        assert_eq!((slots[0], slots[20]), (None, Some(ItemStack::new(flint_pick, 1))));
+        // A weapon: only the same weapon comes up.
+        let (mut server, _client) = holding("base:bone_club", 0);
+        let [club, tusk] = ["base:bone_club", "base:tusk_club"].map(|n| server.content.blocks.expect(n));
+        let player = server.players.get_mut(&1).unwrap();
+        (player.inventory.slots[7], player.inventory.slots[8]) = (Some(ItemStack::new(tusk, 1)), Some(ItemStack::new(club, 1)));
+        worn_out(&mut server, 0);
+        server.wear_held(1, 1);
+        let slots = &server.players[&1].inventory.slots;
+        assert_eq!((slots[0], slots[7], slots[8]), (Some(ItemStack::new(club, 1)), Some(ItemStack::new(tusk, 1)), None));
+    }
+
+    /// Nearly worn out, a tool says in words how it is mended, by what and where, as its
+    /// tooltip does: the player learns it the first time it matters, before it breaks.
+    #[test]
+    fn a_tool_nearly_worn_says_how_it_is_mended() {
+        use voxmar_engine::lang::Words;
+        let said = |client: &voxmar_protocol::ClientConnection| {
+            let mut said = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let ServerMessage::Chat { text: Words::Key(key, args), .. } = message {
+                    said.push((key, args));
+                }
+            }
+            said
+        };
+        for (tool, by, near) in [("base:flint_pickaxe", "base:flint", "chopping_block"), ("base:copper_pickaxe", "base:copper_ingot", "grindstone")] {
+            let (mut server, client) = holding(tool, 0);
+            let item = server.content.blocks.expect(tool);
+            let uses = server.content.tools.uses(item);
+            assert_eq!(server.content.tools.mend_near(item), near, "{tool}");
+            let warn_at = (uses as f32 * server.content.tools.wear().warn).ceil() as u16;
+            server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - warn_at - 2;
+            let stone = put(&mut server, "base:stone");
+            server.wear_on_block(1, stone, false, server.tool_in_hand(1));
+            assert!(said(&client).is_empty(), "{tool}: not yet");
+            server.wear_on_block(1, stone, false, server.tool_in_hand(1));
+            let said = said(&client);
+            let [(key, args)] = &said[..] else { panic!("{tool}: told {said:?}") };
+            assert_eq!(key, "tool.nearly_worn");
+            let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+            assert_eq!(arg("item"), Some(Words::Block(tool.into())));
+            let Some(Words::Key(how, how_args)) = arg("how") else { panic!("{tool}: no how in {args:?}") };
+            assert_eq!(how, "item.mend");
+            let named = |name: &str| how_args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+            assert_eq!((named("item"), named("station")), (Some(Words::Block(by.into())), Some(Words::key(&format!("item.mend.near.{near}")))), "{tool}");
+        }
+    }
+
+    /// A worn tool and a piece of what it is made of in the grid by a chopping block: back
+    /// whole when it is made of that one piece (a flint knife, a stone shovel), else half
+    /// (a flint axe, a stone pickaxe, a digging stick), as A Mended Edge says; and that
+    /// Nomad side quest, open once the block and the first flint tools are, is done.
+    #[test]
+    fn a_tool_mended_by_the_chopping_block_does_the_mending_quest() {
+        for (tool, by, whole) in [("base:flint_axe", "base:flint", false), ("base:flint_knife", "base:flint", true), ("base:stone_pickaxe", "base:stone_head", false), ("base:stone_shovel", "base:stone_head", true), ("base:digging_stick", "base:stick", false)] {
+            let (mut server, _client) = holding(tool, 0);
+            let [item, by] = [tool, by].map(|n| server.content.blocks.expect(n));
+            let uses = server.content.tools.uses(item);
+            put(&mut server, "base:chopping_block");
+            let craft = server.content.actions.expect("core:craft");
+            let player = server.players.get_mut(&1).unwrap();
+            player.inventory.slots[0] = None;
+            (player.inventory.craft[0], player.inventory.craft[1]) = (Some(ItemStack { wear: uses - 1, ..ItemStack::new(item, 1) }), Some(ItemStack::new(by, 1)));
+            player.quests_done = vec!["base:a_chopping_block".into(), "base:flint_first".into()];
+            server.propose(1, craft, voxmar_engine::action::ActionTarget::Slot(1), std::time::Instant::now());
+            let left = if whole { 0 } else { uses - 1 - uses / 2 };
+            assert_eq!(server.players[&1].inventory.cursor.map(|s| (s.item, s.wear)), Some((item, left)), "{tool}: whole {whole}, on the pointer");
+            server.update_quests(1);
+            assert!(server.players[&1].quests_done.iter().any(|q| q == "base:a_mended_edge"), "{tool}: {:?}", server.players[&1].quests_done);
+        }
     }
 
     /// Mining saves a pickaxe's wear by the level, `level` times `save_per_level` a use
@@ -489,8 +624,8 @@ mod tests {
     }
 
     /// A stick held in any fire catches: the last one comes back a firebrand in the hand
-    /// that held it, from a campfire or a torch alike; from a bundle, one is lit and the
-    /// rest stay in hand.
+    /// that held it, from a campfire or a torch alike; from a bundle, one is lit and held
+    /// up, and the rest are put by in the pack.
     #[test]
     fn a_stick_held_in_any_fire_becomes_a_firebrand() {
         for fire in ["base:campfire", "base:torch"] {
@@ -506,8 +641,8 @@ mod tests {
         let at = put(&mut server, "base:campfire");
         server.cook(1, at);
         let inventory = &server.players[&1].inventory;
-        assert_eq!(inventory.slots[0], Some(ItemStack::new(stick, 2)));
-        assert_eq!(inventory.count(server.content.blocks.expect("base:firebrand")), 1);
+        assert_eq!(inventory.slots[0], Some(ItemStack::new(server.content.blocks.expect("base:firebrand"), 1)), "the light in hand");
+        assert_eq!(inventory.count(stick), 2, "the rest put by");
         let (mut server, _client) = holding("base:stick", 0);
         let at = put(&mut server, "base:stone");
         server.cook(1, at);
@@ -520,10 +655,48 @@ mod tests {
         server.cook(1, at);
         let inventory = &server.players[&1].inventory;
         assert_eq!((inventory.slots[0], inventory.slots[5]), (None, Some(ItemStack::new(torch, 4))));
+        // A torch keeps, so from a stack of stubs it tops up the torches carried and the
+        // stubs left stay in hand to relight the next.
+        let (mut server, _client) = holding("base:torch_stub", 0);
+        let stub = server.content.blocks.expect("base:torch_stub");
+        let player = server.players.get_mut(&1).unwrap();
+        (player.inventory.slots[0], player.inventory.slots[5]) = (Some(ItemStack::new(stub, 3)), Some(ItemStack::new(torch, 3)));
+        let at = put(&mut server, "base:campfire");
+        server.cook(1, at);
+        let inventory = &server.players[&1].inventory;
+        assert_eq!((inventory.slots[0], inventory.slots[5]), (Some(ItemStack::new(stub, 2)), Some(ItemStack::new(torch, 4))), "stubs in hand, torch topped up");
     }
 
-    /// A firebrand burns a second at a time wherever it is carried, held or not, and burnt
-    /// out leaves a charred stick; the once-a-second pass burns it by the server's clock.
+    /// A bundle of sticks in a fire with the pack one place short of full: the brand is held
+    /// up and the sticks left go to that place. Full, nothing is cooked and nothing lost.
+    #[test]
+    fn a_bundle_lit_with_a_pack_nearly_full_keeps_every_stick() {
+        for free in [true, false] {
+            let (mut server, _client) = holding("base:stick", 0);
+            let [stick, brand, pick] = ["base:stick", "base:firebrand", "base:iron_pickaxe"].map(|n| server.content.blocks.expect(n));
+            let player = server.players.get_mut(&1).unwrap();
+            for slot in player.inventory.slots.iter_mut() {
+                *slot = Some(ItemStack::new(pick, 1));
+            }
+            player.inventory.slots[0] = Some(ItemStack::new(stick, 3));
+            let last = player.inventory.slots.len() - 1;
+            if free {
+                player.inventory.slots[last] = None;
+            }
+            let at = put(&mut server, "base:campfire");
+            server.cook(1, at);
+            let inventory = &server.players[&1].inventory;
+            if free {
+                assert_eq!((inventory.slots[0], inventory.slots[last]), (Some(ItemStack::new(brand, 1)), Some(ItemStack::new(stick, 2))));
+            } else {
+                assert_eq!((inventory.slots[0], inventory.count(brand)), (Some(ItemStack::new(stick, 3)), 0), "no room, not cooked");
+            }
+        }
+    }
+
+    /// A firebrand burns a second at a time in hand, and burnt out leaves a charred stick;
+    /// one carried elsewhere keeps until it is held. The once-a-second pass burns it by the
+    /// server's clock.
     #[test]
     fn a_firebrand_burns_out_to_a_charred_stick() {
         let (mut server, _client) = holding("base:firebrand", 0);
@@ -531,33 +704,38 @@ mod tests {
         let lasts = server.content.tools.burns(brand);
         server.players.get_mut(&1).unwrap().inventory.slots[20] = Some(ItemStack::new(brand, 1));
         server.burn_carried(lasts - 1);
-        for slot in [0, 20] {
-            assert_eq!(server.players[&1].inventory.slots[slot], Some(ItemStack { wear: lasts - 1, ..ItemStack::new(brand, 1) }), "slot {slot}");
-        }
+        assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack { wear: lasts - 1, ..ItemStack::new(brand, 1) }), "in hand");
+        assert_eq!(server.players[&1].inventory.slots[20], Some(ItemStack::new(brand, 1)), "carried, not held: it keeps");
         let mut pass = super::Burning::default();
         for _ in 0..(voxmar_protocol::TICKS_PER_SECOND as u64 / voxmar_engine::schedule::Tier::Low.period()) {
             crate::process::Process::run(&mut pass, &mut server);
         }
-        for slot in [0, 20] {
-            assert_eq!(server.players[&1].inventory.slots[slot], Some(ItemStack::new(charred, 1)), "slot {slot} burnt out");
-        }
+        assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(charred, 1)), "burnt out in hand");
+        assert_eq!(server.players[&1].inventory.slots[20], Some(ItemStack::new(brand, 1)), "still keeping");
+        // Taken in hand, it burns from there.
+        server.players.get_mut(&1).unwrap().selected = 20;
+        server.burn_carried(lasts);
+        assert_eq!(server.players[&1].inventory.slots[20], Some(ItemStack::new(charred, 1)), "burnt out once held");
+        server.players.get_mut(&1).unwrap().selected = 0;
         server.burn_carried(lasts);
         assert_eq!(server.players[&1].inventory.slots[0], Some(ItemStack::new(charred, 1)), "a charred stick burns no more");
     }
 
-    /// Monsters keep off where a player holds a light (a firebrand), as off a lit torch:
-    /// the spot by them counts as lit, and only while it is in hand and they live (one dead
-    /// burns no light down, so lights nothing).
+    /// Monsters keep off where a player holds a light (a firebrand, a torch), as off a lit
+    /// torch set down: the spot by them counts as lit, and only while it is in hand and they
+    /// live (one dead burns no light down, so lights nothing).
     #[test]
-    fn a_held_firebrand_lights_the_spot_for_spawning() {
-        let (mut server, _client) = holding("base:firebrand", 0);
-        let cell = server.players[&1].position.floor().as_ivec3() + IVec3::new(3, 0, 0);
-        let lit = server.lit_near(cell);
-        server.players.get_mut(&1).unwrap().health.current = 0;
-        assert!(!server.lit_near(cell), "held by the dead, it does not");
-        server.players.get_mut(&1).unwrap().health.current = 10;
-        server.players.get_mut(&1).unwrap().selected = 1;
-        assert!(lit, "held, it lights");
-        assert!(!server.lit_near(cell), "carried, it does not");
+    fn a_held_firebrand_or_torch_lights_the_spot_for_spawning() {
+        for light in ["base:firebrand", "base:torch"] {
+            let (mut server, _client) = holding(light, 0);
+            let cell = server.players[&1].position.floor().as_ivec3() + IVec3::new(3, 0, 0);
+            let lit = server.lit_near(cell);
+            server.players.get_mut(&1).unwrap().health.current = 0;
+            assert!(!server.lit_near(cell), "{light} held by the dead, it does not");
+            server.players.get_mut(&1).unwrap().health.current = 10;
+            server.players.get_mut(&1).unwrap().selected = 1;
+            assert!(lit, "{light} held, it lights");
+            assert!(!server.lit_near(cell), "{light} carried, it does not");
+        }
     }
 }

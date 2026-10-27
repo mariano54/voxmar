@@ -1158,7 +1158,7 @@ impl Server {
     }
 
     /// The name a creature is spoken of by.
-    fn speaker_name(&self, id: u32) -> Option<Words> {
+    pub(crate) fn speaker_name(&self, id: u32) -> Option<Words> {
         let species = self.creatures.live.get(&id)?.species;
         let def = &self.content.creatures.get(species).def;
         Some(Words::Own(def_key("creature", &def.name), def.title.clone()))

@@ -321,6 +321,9 @@ pub enum Effect {
     /// Open the target store beside the actor's inventory, its slots theirs to move items
     /// in and out of until the screen closes (`inventory::STORE`).
     OpenStore,
+    /// Put the actor's pack away into their home's stores: each stack off the hotbar whose
+    /// item a store there already holds goes into that store, as far as it fits.
+    PutAway,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -652,7 +655,7 @@ impl ActionDef {
                 let Some(crop) = ctx.actor_seed().and_then(|b| ctx.crops().planted_by(b)) else { return Ok(false) };
                 let ground = ctx.block(block).map(|b| ctx.blocks().def(b));
                 let fits = ground.is_some_and(|def| ctx.crops().get(crop).def.ground.iter().any(|tag| def.has_tag(tag)));
-                let room = ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || (ctx.info(b).replaceable && ctx.info(b).fluid.is_none()));
+                let room = ctx.block(block + IVec3::Y).is_some_and(|b| ctx.info(b).gives_room());
                 face == Face::PosY && fits && room
             }
             Requirement::HoldingFood => ctx.actor_held().is_some_and(|b| ctx.info(b).food > 0),
@@ -726,7 +729,7 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 let tilled = ctx.block(block).map(|b| ctx.blocks().def(b));
                 let soil = tilled.is_some_and(|def| def.has_tag("soil") && !def.has_tag("tilled"));
-                soil && ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || (ctx.info(b).replaceable && ctx.info(b).fluid.is_none()))
+                soil && ctx.block(block + IVec3::Y).is_some_and(|b| ctx.info(b).gives_room())
             }
             Requirement::Fishable => {
                 let (block, _) = block_target()?;
@@ -860,8 +863,11 @@ impl ActionDef {
                 let solid = ctx.actor_held().is_some_and(|b| ctx.info(b).solid);
                 let cell = placement_cell(ctx, block, face);
                 let placed = ctx.actor_held().map(|held| placed_block(ctx, held, block, face));
-                let with_clear = placed.is_none_or(|placed| ctx.blocks().placed_with(placed).all(|(by, b)| !ctx.info(b).solid || !ctx.occupied(cell + by)));
-                (!solid || !ctx.occupied(cell)) && with_clear
+                // A player or a creature standing there keeps a solid block out, and out of
+                // every cell a block placed with it fills (a door's top, a double gate's leaf).
+                let taken = |p: IVec3| ctx.occupied(p) || ctx.creature_in(p);
+                let with_clear = placed.is_none_or(|placed| ctx.blocks().placed_with(placed).all(|(by, b)| !ctx.info(b).solid || !taken(cell + by)));
+                (!solid || !taken(cell)) && with_clear
             }
             Requirement::Supported => {
                 let (block, face) = block_target()?;

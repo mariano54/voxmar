@@ -15,6 +15,9 @@
         (pattern: [["stick", "stick", "stick"], ["stick", "hide", "stick"], ["stick", "stick", "stick"]], output: "hide_window", count: 2, skill: "core:construction", level: 3, xp: 5.0),
         (pattern: [["{name}_planks", "{name}_planks"], ["stick", "stick"]], output: "{name}_stool", skill: "core:construction", level: 1, xp: 2.0),
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_bench", skill: "core:construction", level: 2, xp: 3.0),
+        // Two stripped logs, one split for the seat and one cut into stumps, for two log
+        // benches: the village's, for a home.
+        (ingredients: ["stripped_{name}_log", "stripped_{name}_log"], output: "{name}_log_bench", count: 2, skill: "core:construction", level: 1, xp: 2.0),
         (pattern: [["stick", "", ""], ["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_chair", skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"], ["stick", "", "stick"]], output: "{name}_table", skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_planks", "stick", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_crate_stack", skill: "core:construction", level: 2, xp: 3.0),
@@ -50,6 +53,23 @@
         // bedded with rushes.
         (ingredients: ["{name}_chair", "{name}_planks", "{name}_planks"], output: "{name}_rocking_chair", skill: "core:construction", level: 4, xp: 4.0),
         (ingredients: ["{name}_planks", "{name}_planks", "{name}_planks", "stick", "stick", "rush", "rush"], output: "{name}_cradle", skill: "core:construction", level: 4, xp: 4.0),
+        // Lived in: a shelf hung high on two stick brackets for a mantel; a bench with a hide
+        // thrown over it.
+        (ingredients: ["{name}_shelf", "stick", "stick"], output: "{name}_mantel_shelf", skill: "core:construction", level: 3, xp: 3.0),
+        (ingredients: ["{name}_bench", "hide"], output: "{name}_fireside_bench", skill: "core:construction", level: 2, xp: 2.0),
+        // Two planks for its posts and ledge, four sticks for its rails.
+        (ingredients: ["{name}_planks", "{name}_planks", "stick", "stick", "stick", "stick"], output: "{name}_plate_rack", skill: "core:construction", level: 3, xp: 3.0),
+        // A stool topped with a plank for a bedside table; a stool with rushes woven over it
+        // for a footstool; a plank on two sticks for a spice rack.
+        (ingredients: ["{name}_stool", "{name}_planks"], output: "{name}_bedside_table", skill: "core:construction", level: 3, xp: 3.0),
+        (ingredients: ["{name}_stool", "rush", "rush"], output: "{name}_footstool", skill: "core:construction", level: 2, xp: 2.0),
+        (ingredients: ["{name}_planks", "stick", "stick"], output: "{name}_spice_rack", skill: "core:construction", level: 2, xp: 2.0),
+        // A slab boxed on a plank for a candle box; a lidded box of three planks for a bread
+        // bin.
+        (ingredients: ["{name}_slab", "{name}_planks"], output: "{name}_candle_box", skill: "core:construction", level: 2, xp: 2.0),
+        (ingredients: ["{name}_planks", "{name}_planks", "{name}_planks", "{name}_slab"], output: "{name}_bread_bin", skill: "core:construction", level: 2, xp: 2.0),
+        // Two planks boxed on a slab for a kindling box.
+        (ingredients: ["{name}_planks", "{name}_planks", "{name}_slab"], output: "{name}_kindling_box", skill: "core:construction", level: 2, xp: 2.0),
         (ingredients: ["rush", "rush", "rush", "rush"], output: "rush_mat", skill: "core:crafting", level: 1, xp: 1.0),
         // A window box: a trough of planks filled with earth, and a poppy and a dandelion planted in it.
         (ingredients: ["tag:planks", "tag:planks", "tag:planks", "dirt", "poppy", "dandelion"], output: "window_box", skill: "core:construction", level: 3, xp: 3.0),
@@ -117,6 +137,11 @@
         (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "feed_trough", skill: "core:construction", level: 4, xp: 8.0),
         // Two herbs tied up with twine, to hang and dry: a home's herb nook.
         (pattern: [["twine", "twine"], ["tag:herb", "tag:herb"]], output: "hanging_herbs", count: 2, skill: "core:crafting", level: 4, xp: 3.0),
+        // Six twine woven into a sack for grain, as a village's millers keep: two across and
+        // three down, where thatch lays its fibre three across.
+        (pattern: [["twine", "twine"], ["twine", "twine"], ["twine", "twine"]], output: "sack", skill: "core:crafting", level: 2, xp: 2.0),
+        // Four twine knotted into a net on a stick to hang it from: the fisher's, for a home.
+        (ingredients: ["twine", "twine", "twine", "twine", "stick"], output: "fishing_net", skill: "core:crafting", level: 3, xp: 3.0),
         (pattern: [["copper_ingot"], ["torch"], ["copper_ingot"]], output: "copper_hanging_lantern", skill: "core:engineering", level: 5, xp: 12.0),
         (pattern: [["iron_ingot"], ["torch"], ["iron_ingot"]], output: "iron_hanging_lantern", skill: "core:engineering", level: 15, xp: 24.0),
         (pattern: [["", "{name}", ""], ["{name}", "torch", "{name}"], ["", "{name}", ""]], output: "{name}_lantern", skill: "core:construction", level: 9, xp: 6.0),

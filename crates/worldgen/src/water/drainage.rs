@@ -272,28 +272,33 @@ fn steepest_inside(heights: &[f32], width: i32) -> Vec<Option<u8>> {
     // Of two cells of equal height, the lower in the total order is the one first by x,
     // then by z: the neighbour, where it lies towards −x, or straight towards −z.
     let first_on_ties = DIRS.map(|d| (d.x, d.y) < (0, 0));
-    (0..inner * inner)
-        .map(|i| {
-            let at = ((i / inner + 1) * width + i % inner + 1) as isize;
-            let here = heights[at as usize];
+    // Each height as an integer in `total_cmp`'s order, worked out once rather than for
+    // every neighbour that reads it.
+    let order: Vec<i32> = heights.iter().map(|h| total_order(*h)).collect();
+    let mut out = Vec::with_capacity((inner * inner) as usize);
+    for row in 1..=inner {
+        for at in (row * width + 1) as isize..(row * width + 1 + inner) as isize {
+            let (here, rank) = (heights[at as usize], order[at as usize]);
             let mut best: Option<(f32, u8)> = None;
             for k in 0..8 {
-                let height = heights[(at + offsets[k]) as usize];
-                let lower = match height.total_cmp(&here) {
-                    Ordering::Less => true,
-                    Ordering::Equal => first_on_ties[k],
-                    Ordering::Greater => false,
-                };
-                if lower {
-                    let slope = (here - height) / LENGTH[k];
+                let n = (at + offsets[k]) as usize;
+                if order[n] < rank || (order[n] == rank && first_on_ties[k]) {
+                    let slope = (here - heights[n]) / LENGTH[k];
                     if best.is_none_or(|(steepest, _)| slope > steepest) {
                         best = Some((slope, k as u8));
                     }
                 }
             }
-            best.map(|(_, k)| k)
-        })
-        .collect()
+            out.push(best.map(|(_, k)| k));
+        }
+    }
+    out
+}
+
+/// `f32::total_cmp`'s order as an integer's.
+fn total_order(h: f32) -> i32 {
+    let bits = h.to_bits() as i32;
+    bits ^ (((bits >> 31) as u32) >> 1) as i32
 }
 
 /// Where water at a cell goes before pits are resolved: a direction, `SEA`, `ABSORBED`
@@ -418,6 +423,9 @@ pub struct Lake {
     pub spring: bool,
     /// Filled by the highland tarn rule, rather than an ordinary or closed lake.
     pub tarn: bool,
+    /// Whether the pit passes the tarn rule's tests that read no climate or geometry, so
+    /// that weighing tarns may decide it otherwise than the ordinary pass did.
+    tarn_roll: bool,
 }
 
 impl Lake {
@@ -492,6 +500,8 @@ pub struct Basin {
     pub lakes: Vec<Arc<Lake>>,
     flow: Arc<Flow>,
     totals: Shared<Box<[f32]>>,
+    /// Whether the tarn rule passes over every pit the basin examined.
+    tarn_free: bool,
 }
 
 impl Basin {
@@ -638,7 +648,17 @@ impl Drainage {
     }
 
     pub fn basin(&self, ground: &dyn Ground, region: IVec2) -> Arc<Basin> {
-        self.basins.get(region, || Arc::new(self.compute_basin(ground, region, true)))
+        self.basins.get(region, || {
+            // Where the tarn rule passes over every pit, weighing tarns changes nothing:
+            // the basin is its routing, made once.
+            if self.tier.tarns.is_some() {
+                let routing = self.routing(ground, region);
+                if routing.tarn_free {
+                    return routing;
+                }
+            }
+            Arc::new(self.compute_basin(ground, region, true))
+        })
     }
 
     /// Routing and flow without a tarn's changed water level, cells or clamps. In the
@@ -776,6 +796,13 @@ impl Drainage {
     fn lake(&self, reader: &mut Reader, pit: IVec2, tarns: bool) -> Arc<Lake> {
         let cache = if tarns { &self.lakes } else { &self.ordinary_lakes };
         cache.get(pit, || {
+            // A pit the tarn rule passes over is the same either way: flooded once.
+            if tarns {
+                let ordinary = self.lake(reader, pit, false);
+                if !ordinary.tarn_roll {
+                    return ordinary;
+                }
+            }
             let mut lake = self.flood(reader, pit, tarns);
             lake.cells = match lake.kind {
                 Kind::Lake if lake.tarn => lake.cells,
@@ -880,7 +907,7 @@ impl Drainage {
         }
         let spill = level;
         cells.sort_unstable_by_key(|c| (c.x, c.y));
-        let mut lake = Lake { pit, kind: Kind::Closed, spill, level: 0, bottom, cells, path: Vec::new(), clamp: Vec::new(), spring: false, tarn: false };
+        let mut lake = Lake { pit, kind: Kind::Closed, spill, level: 0, bottom, cells, path: Vec::new(), clamp: Vec::new(), spring: false, tarn: false, tarn_roll: false };
         let way_out = |outlet: IVec2| {
             // Parents form a tree rooted at the pit, so this ends there; the bound is a
             // second guard that keeps any mistake from growing without limit.
@@ -929,15 +956,11 @@ impl Drainage {
             return lake;
         }
         // High in the hills, now and then a small pit holds a tarn rather than being breached.
-        if tarns && !big
+        // The cheap roll first: most pits are passed over without weighing their climate.
+        lake.tarn_roll = !big && tier.tarns.as_ref().is_some_and(|rule| bottom >= rule.floor && depth >= rule.depth && unit(4) < rule.chance);
+        if tarns && lake.tarn_roll
             && let Some(rule) = &tier.tarns
-            && bottom >= rule.floor
-            && depth >= rule.depth
-            && {
-                // The cheap roll first: most pits are passed over without weighing their climate.
-                let u = unit(4);
-                u < rule.chance && u < rule.chance * ground.tarns(pit)
-            }
+            && unit(4) < rule.chance * ground.tarns(pit)
             && let Some(cells) = ground.tarn_cells(pit, ((spill - 1.0) * 8.0).floor() as i32, rule.size)
         {
             lake.kind = Kind::Lake;
@@ -1084,6 +1107,7 @@ impl Drainage {
                 }
             }
         }
+        let tarn_free = !lakes.iter().any(|lake| lake.tarn_roll);
         // Where two lakes' ways out cross, the bigger lake's wins.
         lakes.sort_by(|a, b| a.spill.total_cmp(&b.spill).then((a.pit.x, a.pit.y).cmp(&(b.pit.x, b.pit.y))));
 
@@ -1256,6 +1280,7 @@ impl Drainage {
             lakes,
             flow: Arc::new(Flow { entries, exits }),
             totals: Shared::default(),
+            tarn_free,
         }
     }
 }
@@ -1282,6 +1307,18 @@ mod tests {
         next[1] = 4;
         break_loops(&mut next, &mut tunnel, &writer, 3, |_| 4);
         assert_eq!((next[0], next[1]), (0, END));
+    }
+
+    #[test]
+    fn total_order_matches_total_cmp() {
+        // NaNs of both signs and subnormals too, where total_cmp's order is its own.
+        let subnormal = f32::from_bits(1);
+        let values = [-f32::NAN, f32::NEG_INFINITY, -1e9, -64.5, -1.0, -f32::MIN_POSITIVE, -1e-40, -subnormal, -0.0, 0.0, subnormal, 1e-40, f32::MIN_POSITIVE, 0.5, 63.0, 63.000004, 1e9, f32::INFINITY, f32::NAN];
+        for a in values {
+            for b in values {
+                assert_eq!(total_order(a).cmp(&total_order(b)), a.total_cmp(&b), "{a} against {b}");
+            }
+        }
     }
 
     #[test]

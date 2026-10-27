@@ -157,7 +157,8 @@ placed it, and a multiblock counts towards `built:` quests once per standing str
 
 Fuels: the last entry in `fuels` naming an item says how long it burns, else the last tag
 taking it, so a tag never shortens an item's own entry and a later package can change any of
-them.
+them. Every survival item a fuel entry takes is tagged `fuel` (refused at load otherwise), so
+a store keeping `tag:fuel` takes whatever a fire burns.
 
 Fuel heat. Each fuel has a `heat` (1 when unsaid; 0 is refused): logs and planks 1, firewood
 and charred wood 2, coal, charcoal and coke 3. A machine or multiblock with a `heat` takes
@@ -181,7 +182,10 @@ Raw logs are poor fuel. The way up:
    what it chars, what it will make and the minutes left. A first click to dig a lit clamp
    only warns what opening it now costs; a second soon after digs. Whoever lit it is told
    when it is done, wherever they are (`ServerMessage::Fired`, the interface's `fired`
-   sound), as whoever fired a kiln is when it goes cold.
+   sound), as whoever fired a kiln is when it goes cold; one off the server then hears it
+   as they come on again (the newest five, one fewer than their screen shows at once,
+   `NEWS_LINES`, so a line stays free; saved in the world's `news_waiting`). Done out of loaded land it is told
+   then; found opened once loaded after all, the lighter is told what waits there instead.
 3. **Charcoal heat** gates the Crucible Kiln, and so the Farm age's end.
 
 It is the one way to make charcoal (balance call, Oct 20): the earth clamp station, which

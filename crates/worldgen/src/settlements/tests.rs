@@ -930,6 +930,23 @@ fn plans_keep_to_their_squares_and_rules() {
     assert!(chapels > 0 && shrines > 0, "{chapels} chapels and {shrines} shrines to look in");
 }
 
+/// A village's log bench is the shaped piece a player makes at home, two set end to end
+/// along the lane, not two stripped logs standing: what a village builds is what a home
+/// can have.
+#[test]
+fn a_village_log_bench_is_the_piece_a_player_makes() {
+    use super::def::PropKind;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let bench = world_content.settlements.props.iter().find(|p| p.kind.label() == "log_bench").expect("villages build log benches");
+    let PropKind::Blocks(_, blocks) = &bench.kind else { panic!("the log bench is a package's prop of blocks") };
+    let placed: Vec<(IVec3, &str)> = blocks.iter().map(|(at, name)| (*at, name.as_str())).collect();
+    assert_eq!(placed, [(IVec3::new(0, 1, 0), "base:oak_log_bench"), (IVec3::new(1, 1, 0), "base:oak_log_bench")]);
+    let piece = content.blocks.expect("base:oak_log_bench");
+    assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the bench a village builds");
+}
+
 /// The settlements of a few squares, held fixed: a change to planning that moves a single
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
@@ -1620,7 +1637,8 @@ fn a_settlement_stands_near_spawn() {
     // 0x5eed: the world a new game makes unless told otherwise.
     let seeds: Vec<u64> = (0..20).chain([42, 99, 0x5eed]).collect();
     // Seeds no other test reads: their worlds are let go with each, not held for the run.
-    const ONLY_HERE: [u64; 4] = [10, 15, 17, 18];
+    // (18 is the snowy villages test's too.)
+    const ONLY_HERE: [u64; 3] = [10, 15, 17];
     // Each world on its own core, its outcome kept in seed order.
     let outcomes: Vec<(u64, Option<Result<(), String>>)> = seeds.par_iter().map(|&seed| {
         let world = if ONLY_HERE.contains(&seed) { std::sync::Arc::new(base_world(seed)) } else { shared_world(seed) };
@@ -1689,7 +1707,11 @@ fn people_numbers_that_would_not_play_are_refused() {
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 13] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 17] = [
+        ("a talk as long as the wait to talk again", |p| p.react.chat_for = p.react.chat_every),
+        ("a talk from farther than a greeting", |p| p.react.chat = p.react.greet + 1.0),
+        ("a talk for no time", |p| p.react.chat_for = 0.0),
+        ("no wait between telling a stranger in a home to leave", |p| p.react.intruder_every = 0.0),
         ("newcomer in a fifth of a day", |p| p.newcomer = 0.2),
         ("a greeting from below nothing", |p| p.react.greet = -1.0),
         ("a greeting held as long as the wait to greet again", |p| p.react.greet_for = p.react.greet_every),
@@ -1830,7 +1852,9 @@ fn snowy_villages_keep_their_built_stone() {
     // worlds; the others are the search it falls back to when content moves the snow.
     const SNOWY: [u64; 2] = [18, 1];
     'seeds: for seed in SNOWY.into_iter().chain((1u64..=60).filter(|seed| !SNOWY.contains(seed))) {
-        let world = Overworld::with_content(seed, registry.clone(), &content);
+        // The base content's world (`content` is the base's): the known seeds' as the other
+        // tests read it, the fallback's let go with each seed, not held for the run.
+        let world = if SNOWY.contains(&seed) { shared_world(seed) } else { std::sync::Arc::new(base_world(seed)) };
         let spawn = world.spawn_point();
         for s in world.settlements_near(IVec2::new(spawn.x, spawn.z), 4000) {
             // Snowy where snow lies on the ground about its middle.
@@ -3128,13 +3152,12 @@ fn homes_are_furnished_for_their_people() {
     use super::canvas::Put;
     use rustc_hash::FxHashMap;
     let registry = base_registry();
-    let content = crate::content::WorldContent::base(&registry).unwrap();
     let solid = |b: Option<&BlockId>| b.is_some_and(|&b| registry.info(b).solid);
     let tagged = |b: Option<&BlockId>, tag: &str| b.is_some_and(|&b| registry.def(b).has_tag(tag));
     let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut tops, mut surfaces, mut stairs, mut bare) = (0, 0, 0, 0, 0, 0, 0, 0, Vec::new());
     let mut shown = 0;
     for seed in [42u64, 1, 7] {
-        let world = Overworld::with_content(seed, registry.clone(), &content);
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
             let Some(plan) = slot.0.as_ref() else { continue };

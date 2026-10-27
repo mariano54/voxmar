@@ -52,7 +52,7 @@ and honey in `blocks.ron`, which generation reads alone), the server's apiary in
 
 ## Quests (farm)
 
-- **Humming in the Meadow** (farming, after A Field of Gold): Farming 12, craft a skep, carry
+- **Humming in the Meadow** (farming, after Herb Garden, Food Enough and The Potter): Farming 12, craft a skep, carry
   a skep of bees.
 - **A Bee Garden** (home, after it): the bee garden step and three honey; names the Kitchen
   Garden and Herb Garden to do while the skep fills.

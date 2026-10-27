@@ -358,6 +358,10 @@ impl MultiblockRegistry {
                         if core_takes.binary_search(&stage).is_err() {
                             return Err(bad(format!("its core's key does not take `{name}`, a stage of its burn, so it would not stand lit")));
                         }
+                        // What knows it burning by a tag (its sound, fire) knows each stage.
+                        if let Some(tag) = blocks.def(burning).tags.iter().find(|&tag| !blocks.def(stage).has_tag(tag)) {
+                            return Err(bad(format!("its stage `{name}` lacks `{tag}`, which `{}` has while it smoulders", s.burning)));
+                        }
                         stages.push((*from, stage));
                     }
                     Some(Smoulder { hours: s.hours, wood, done, early, spoiled, burning, spent, stages })
@@ -459,6 +463,7 @@ mod tests {
             def("coal", &[]),
             def("torch", &["fire"]),
             def("embers", &["multiblock_core"]),
+            def("loud_flue", &["multiblock_core", "clamp_burning"]),
         ])
         .unwrap();
         let load = |lit_by: &str, smoulder: &str, core_key: &str| {
@@ -498,6 +503,8 @@ mod tests {
             let bad = good.replace("spent: \"air\")", &format!("spent: \"air\", stages: {stages})"));
             assert!(load("Some(\"fire\")", &bad, "kindling|flue|embers").is_err(), "{stages} loaded");
         }
+        let loud = good.replace("\"flue\"", "\"loud_flue\"").replace("spent: \"air\")", "spent: \"air\", stages: [(0.0, \"kindling\")])");
+        assert!(load("Some(\"fire\")", &loud, "kindling|loud_flue|embers").is_err_and(|e| e.0.contains("lacks `clamp_burning`")), "a stage without a tag of `burning`");
         for (lit_by, smoulder, core_key) in [
             ("None", good, "kindling|flue"),
             ("Some(\"nothing_has_it\")", good, "kindling|flue"),

@@ -152,8 +152,10 @@ pub struct Live {
     /// while its way is open.
     pub detour: f32,
     /// The short way round it is following (`path::find`), cell by cell; the goal cell it
-    /// was found for, and when it last looked.
+    /// was found for, and when it last looked; and the cell of it it last reached, or
+    /// set out from.
     pub way: Vec<IVec3>,
+    pub way_from: Option<IVec3>,
     pub way_to: Option<IVec3>,
     pub way_at: u64,
     /// Out of its depth (a land animal), the dry cell it makes for, and the tick it last
@@ -377,13 +379,13 @@ impl Neighbours {
 }
 
 impl Creatures {
-    /// Whether `player` was last told of creature `id`: it is in their sight.
     /// For tests: player `player` is shown creature `id`, as a sent view does.
     #[cfg(test)]
     pub(crate) fn show(&mut self, player: PlayerId, id: u32) {
         self.seen.entry(player).or_default().insert(id);
     }
 
+    /// Whether `player` was last told of creature `id`: it is in their sight.
     pub(crate) fn sees(&self, player: PlayerId, id: u32) -> bool {
         self.seen.get(&player).is_some_and(|seen| seen.contains(&id))
     }
@@ -1179,7 +1181,7 @@ impl Server {
         // kept animal, even defending itself, stays in its railed pen.
         let climbs = species.def.boss || creature.owner.is_none() && creature.mind.doing.is_some_and(|i| matches!(species.modules[i].0.name(), "hunt" | "defend"));
         // The way it follows after this tick, and the goal cell and tick of a fresh search.
-        let (mut way, mut searched) = (Vec::new(), None);
+        let (mut way, mut way_from, mut searched) = (Vec::new(), None, None);
         // What it wanted before steering: a creature boxed in steers to a standstill but still
         // wants to go, so its stuck clock runs and it gives the goal up.
         let wanted = drive.wish;
@@ -1187,6 +1189,7 @@ impl Server {
             Some(goal) if !held && drive.wish != Vec3::ZERO && motion::walks(movement, water, drive) => {
                 let to = goal.floor().as_ivec3();
                 let mut cells = creature.way.clone();
+                let mut from = creature.way_from;
                 // A way followed to its end is done with: meeting the wall again, it looks again.
                 let stale = cells.is_empty() || creature.way_to.is_none_or(|known| known.as_vec3().distance(to.as_vec3()) > 2.0);
                 // Going round, pressing or boxed in for half a second, or on a way whose
@@ -1205,6 +1208,7 @@ impl Server {
                     tick_cost_tests::SEARCHES.with(|n| n.set((n.get().0 + 1, n.get().1 + found.is_none() as u64)));
                     searched = Some((found.is_some().then_some(to), self.tick));
                     cells = found.unwrap_or_default();
+                    from = Some(walker.corner(body.position + Vec3::Y * 0.01));
                 }
                 // At a cell (beside it, at its level), or already nearer the one after: on to
                 // the next, so it never turns back for a cell it brushed past.
@@ -1235,7 +1239,7 @@ impl Server {
                     if !(level && (off(cell) < 0.1 || past || ((off(cell) < 0.6 || cells.get(1).is_some_and(|after| off(after) < 1.0)) && on()))) {
                         break;
                     }
-                    cells.remove(0);
+                    from = Some(cells.remove(0));
                 }
                 let wish = cells.first().map_or(drive.wish, |cell| {
                     let to = (walker.middle(*cell) - body.position).with_y(0.0);
@@ -1254,14 +1258,19 @@ impl Server {
                         there.translate(to - axis);
                         goes_straight(there, axis, |p| motion::Surroundings::solid(&ground, p))
                     };
-                    if level && (0.5..1.5).contains(&ahead) && aside.length() > LINE_UP && !straight(cell) && lined_up() {
+                    // No gap is lined up for on a diagonal step of its way, so it sweeps
+                    // no boxes there.
+                    let diagonal = from.is_some_and(|from| from.x != cell.x && from.z != cell.z);
+                    if level && !diagonal && (0.5..1.5).contains(&ahead) && aside.length() > LINE_UP && !straight(cell) && lined_up() {
                         (to - axis).normalize_or_zero()
                     } else {
                         to.normalize_or_zero()
                     }
                 });
-                let (heading, side) = motion::steer(&body, &Ground::climbing(self, climbs), movement, water, wish, creature.detour, drive.speed, dt);
-                way = cells;
+                // On its way, it edges on holding its facing where its turned head would meet
+                // something (`open_way_edging`): into a gap beside a fence's corner.
+                let (heading, side) = motion::steer_edging(&body, &ground, movement, water, wish, creature.detour, drive.speed, dt, !cells.is_empty());
+                (way, way_from) = (cells, from);
                 (Drive { wish: heading, ..drive }, side)
             }
             _ => (drive, 0.0),
@@ -1289,7 +1298,7 @@ impl Server {
             (creature.shore, creature.shore_at) = (None, None);
         }
         creature.detour = detour;
-        creature.way = way;
+        (creature.way, creature.way_from) = (way, way_from);
         if let Some((to, at)) = searched {
             (creature.way_to, creature.way_at) = (to, at);
             // No way there at all (a player shut in a box, or behind a fence with no gap):
@@ -1676,7 +1685,7 @@ impl Server {
         let Some(creature) = self.creatures.live.remove(&id) else { return };
         self.creatures.gone.push(CreatureGone { id, died: true });
         // One of a settlement's people: noted dead now, so no save misses it.
-        self.villager_died(id);
+        self.villager_died(id, creature.mind.attacker().map(|player| (player, creature.body.position)));
         self.wandering_died(id);
         self.lair_boss_died(id);
         let species = self.content.creatures.get(creature.species);
@@ -1737,7 +1746,7 @@ impl Server {
         }
         if self.creatures.live.remove(&id).is_some() {
             self.creatures.gone.push(CreatureGone { id, died: true });
-            self.villager_died(id);
+            self.villager_died(id, None);
             self.wandering_died(id);
             self.lair_boss_died(id);
         }
@@ -1846,6 +1855,7 @@ impl Server {
             stuck: 0.0,
             detour: 0.0,
             way: Vec::new(),
+            way_from: None,
             way_to: None,
             shore: None,
             shore_at: None,
@@ -3589,6 +3599,38 @@ mod way_tests {
                 let id = put(&mut server, name, c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5), Vec3::X);
                 assert!(comes(&mut server, id, to, 20).is_some(), "{name} never followed the food in the {scene} scene: at {:.2}", server.creatures.live[&id].body.position - c.as_vec3());
             }
+        }
+    }
+
+    /// A deer, a reindeer or a boar led with food held up follows the player through an
+    /// open gate set beside a fence's corner (a fence run out from the gate's post, along
+    /// the side it comes from) within 20 s. Before: coming down along that fence, its long
+    /// head met it at the turn into the gate, it took no way open and went round and round
+    /// in the corner.
+    #[test]
+    fn deer_and_boar_led_with_food_come_through_a_gate_beside_a_fence_corner() {
+        for name in ["base:reindeer", "base:wild_boar", "base:red_deer"] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            let (fence, across) = (server.content.blocks.expect("base:oak_fence_east"), server.content.blocks.expect("base:oak_fence"));
+            for z in -14..=14 {
+                server.world.set_block(c + IVec3::new(1, 0, z), fence);
+            }
+            server.world.set_block(c + IVec3::new(1, 0, -1), server.content.blocks.expect("base:oak_fence_gate_open_east"));
+            for x in -14..=0 {
+                server.world.set_block(c + IVec3::new(x, 0, -2), across);
+            }
+            let to = c.as_vec3() + Vec3::new(5.5, 0.0, -0.5);
+            let player = join(&mut server, to);
+            let species = server.content.creatures.get(server.content.creatures.find(name).expect(name));
+            let food = species.favourite[0];
+            let held = server.players.get_mut(&player).unwrap();
+            held.inventory.add(food, 1);
+            held.selected = (0..36).find(|&slot| held.inventory.get(slot).is_some_and(|s| s.item == food)).expect("the food is held");
+            let id = put(&mut server, name, c.as_vec3() + Vec3::new(-3.5, 0.0, 2.5), Vec3::X);
+            let came = comes(&mut server, id, to, 20);
+            let at = server.creatures.live[&id].body.position - c.as_vec3();
+            assert!(came.is_some(), "{name} never came through the gate: at {at:.2}");
         }
     }
 

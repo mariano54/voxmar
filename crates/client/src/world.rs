@@ -159,6 +159,9 @@ pub struct ClientWorld {
     /// Blocks smouldering, about to catch fire, as the server last said
     /// (`ServerMessage::Smoulders`): they smoke and crackle until they catch or are saved.
     pub smoulders: FxHashSet<IVec3>,
+    /// What stands on the blocks that show what they hold, a spot apiece, as the server
+    /// last said (`ServerMessage::Shown`): a mantel shelf's things (`drops::shelf_things`).
+    pub shown: FxHashMap<IVec3, Vec<Option<BlockId>>>,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -198,6 +201,7 @@ impl ClientWorld {
             stats: WorldStats::default(),
             fires: FxHashSet::default(),
             smoulders: FxHashSet::default(),
+            shown: FxHashMap::default(),
         }
     }
 
@@ -282,7 +286,15 @@ impl ClientWorld {
         }
     }
 
+    /// What the server says stands on the shelves in `column` now (`ServerMessage::Shown`),
+    /// in place of what it said of it before.
+    pub fn show_in(&mut self, column: ColumnPos, at: Vec<(IVec3, Vec<Option<BlockId>>)>) {
+        self.shown.retain(|&pos, _| ColumnPos::of_block(pos) != column);
+        self.shown.extend(at);
+    }
+
     pub fn remove_column(&mut self, pos: ColumnPos) {
+        self.shown.retain(|&at, _| ColumnPos::of_block(at) != pos);
         self.voxels.remove(pos);
         self.dirty.remove(&pos);
         self.edited.remove(&pos);

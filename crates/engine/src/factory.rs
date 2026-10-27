@@ -30,7 +30,7 @@
 //! machine takes goes to a chest. Bins never feed bins, and a run moves as many items a
 //! second as its slowest chute.
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::block::BlockId;
@@ -97,6 +97,19 @@ pub struct MachineState {
     /// Whether its standing structure was counted for quests already (a multiblock's core).
     #[serde(default)]
     pub counted: bool,
+    /// The slots a home grew it to as a store (`Machine::grown_bin`), 0 for none: it keeps
+    /// them, and only they, past its own.
+    #[serde(default)]
+    pub grown: usize,
+}
+
+impl MachineState {
+    /// How many stacks it has room for as a bin of `machine`: its own slots, or, a store,
+    /// what a home grew it to, up to a store screen's (a package that made it no store
+    /// leaves it only its own).
+    pub fn bin_room(&self, machine: &crate::machine::Machine) -> usize {
+        if machine.is_store() { machine.bin_slots().max(self.grown.min(crate::inventory::STORE_SLOTS)) } else { machine.bin_slots() }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -151,6 +164,9 @@ pub struct Factory {
     /// keeping: the creatures' side reads it and takes it back when the animal rests.
     walked: FxHashMap<u32, f32>,
     dirty: bool,
+    /// Where a bin may have changed since [`Factory::take_bins_changed`] last said: what it
+    /// holds went in or out, or the machine came or went.
+    bins_changed: FxHashSet<IVec3>,
 }
 
 /// A network as a machine on it sees it, for its players.
@@ -200,13 +216,15 @@ impl Factory {
         let (inputs, outputs) = machine.slots();
         state.inputs.resize(inputs, None);
         state.outputs.resize(outputs, None);
-        state.bin.resize(machine.bin_slots(), None);
+        // A store a home grew (`Machine::grown_bin`) keeps its size.
+        state.bin.resize(state.bin_room(machine), None);
         let chute = match machine.role {
             Role::Chute { rate } => Some(rate),
             _ => None,
         };
         self.nodes.insert(pos, Node { block, ports: machine.ports(), chute, state });
         self.dirty = true;
+        self.bins_changed.insert(pos);
         true
     }
 
@@ -214,6 +232,7 @@ impl Factory {
     pub fn remove(&mut self, pos: IVec3) -> Option<(BlockId, MachineState)> {
         let node = self.nodes.remove(&pos)?;
         self.dirty = true;
+        self.bins_changed.insert(pos);
         Some((node.block, node.state))
     }
 
@@ -221,8 +240,18 @@ impl Factory {
         self.nodes.get(&pos).map(|n| (n.block, &n.state))
     }
 
+    /// What the machine at `pos` holds, to change: its bin counts as changed.
     pub fn state_mut(&mut self, pos: IVec3) -> Option<&mut MachineState> {
-        self.nodes.get_mut(&pos).map(|n| &mut n.state)
+        let node = self.nodes.get_mut(&pos)?;
+        self.bins_changed.insert(pos);
+        Some(&mut node.state)
+    }
+
+    /// Where a bin may have changed since this was last asked (what it holds went in or
+    /// out, or the machine came or went), for whoever shows what bins hold. More than
+    /// changed may be named, never less.
+    pub fn take_bins_changed(&mut self) -> FxHashSet<IVec3> {
+        std::mem::take(&mut self.bins_changed)
     }
 
     pub fn len(&self) -> usize {
@@ -281,6 +310,7 @@ impl Factory {
             left = fill_within(&mut node.state.inputs, stack.item, stack.wear, left, room, |other| machines.same_input(machine, stack.item, other));
         }
         if left > 0 && !node.state.bin.is_empty() && machine.bin_takes(stack.item) {
+            self.bins_changed.insert(pos);
             let left = fill(&mut node.state.bin, stack.item, stack.wear, left);
             return (left > 0).then_some(ItemStack { count: left, ..stack });
         }
@@ -326,6 +356,9 @@ impl Factory {
     /// could not carry: those stay in the slot they came from.
     pub fn take_outputs_into(&mut self, pos: IVec3, mut take: impl FnMut(ItemStack) -> u8) {
         let Some(node) = self.nodes.get_mut(&pos) else { return };
+        if node.state.bin.iter().any(Option::is_some) {
+            self.bins_changed.insert(pos);
+        }
         let state = &mut node.state;
         // Inputs come out only of a machine with nothing to do: a full one keeps them for
         // when its outputs are taken.
@@ -528,6 +561,9 @@ impl Factory {
                     }
                     let gone = count - left;
                     if gone > 0 {
+                        if hopper {
+                            self.bins_changed.insert(from);
+                        }
                         let state = &mut self.nodes.get_mut(&from).expect("ends are machines").state;
                         let slot = if hopper { &mut state.bin[slot] } else { &mut state.outputs[slot] };
                         *slot = (stack.count > gone).then_some(ItemStack { count: stack.count - gone, ..stack });
@@ -976,7 +1012,7 @@ mod tests {
             "ore", "dust", "log", "wheel", "shaft", "mill", "boiler", "pipe", "engine", "dynamo", "lv_cable", "mv_cable", "crusher",
             "battery", "mv_battery", "transformer", "furnace", "ingot", "washer", "chute", "conveyor", "hopper", "chest", "kiln",
         ];
-        let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
+        let blocks = BlockRegistry::new(names.iter().map(|n| BlockDef { name: format!("t:{n}"), tags: if *n == "log" { vec!["log".into(), "fuel".into()] } else { vec![] }, ..Default::default() }).collect()).unwrap();
         let machines = MachineRegistry::read(
             "t",
             r#"(machines: [
@@ -1289,6 +1325,27 @@ mod tests {
         assert_eq!(made(&t, &factory, 2, "ingot"), 0);
         // A chest's stacks come out like a machine's outputs.
         assert_eq!(factory.take_outputs(IVec3::new(4, 0, 0)), vec![ItemStack::new(t.id("ingot"), 2)]);
+    }
+
+    /// Every bin whose things went in or out is named as changed, and only until it is
+    /// asked: a chest come, filled or emptied by hand, a hopper a run empties into a furnace.
+    #[test]
+    fn bins_that_change_are_named_once() {
+        let t = test();
+        let mut factory = Factory::default();
+        build(&t, &mut factory, &["hopper", "chute", "furnace"]);
+        let (hopper, chest) = (IVec3::new(0, 0, 0), IVec3::new(8, 0, 0));
+        assert!(factory.insert(chest, t.id("chest"), &t.machines));
+        assert!(factory.take_bins_changed().contains(&chest), "a machine come is a change");
+        assert!(factory.take_bins_changed().is_empty(), "named once");
+        feed(&t, &mut factory, 8, "dust", 4);
+        assert_eq!(factory.take_bins_changed().into_iter().collect::<Vec<_>>(), [chest], "filled");
+        factory.take_outputs(chest);
+        assert_eq!(factory.take_bins_changed().into_iter().collect::<Vec<_>>(), [chest], "emptied");
+        feed(&t, &mut factory, 0, "dust", 4);
+        factory.take_bins_changed();
+        run(&t, &mut factory, 3.0);
+        assert!(factory.take_bins_changed().contains(&hopper), "the run took from the hopper");
     }
 
     #[test]
