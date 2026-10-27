@@ -55,6 +55,11 @@
         (block: "{name}_cupboard", role: Bin(slots: 9)),
         (block: "{name}_blanket_chest", role: Bin(slots: 9)),
         (block: "{name}_dresser", role: Bin(slots: 9)),
+        // A wall shelf and a sill show what is put on them (blocks' `shows`). A family
+        // name fits a template's block only as its own family: `{name}_shelf` is each wood's
+        // plain shelf, not its mantel, pot or pantry shelf.
+        (block: "{name}_shelf", role: Bin(slots: 4)),
+        (block: "{name}_sill", role: Bin(slots: 2)),
         (block: "{name}_mantel_shelf", role: Bin(slots: 3)),
         (block: "{name}_plate_rack", role: Bin(slots: 4)),
         (block: "{name}_bedside_table", role: Bin(slots: 2)),

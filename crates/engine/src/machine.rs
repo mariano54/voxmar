@@ -581,9 +581,16 @@ impl MachineRegistry {
             // A family is one machine for each block it names.
             let defs = file.machines.into_iter().map(|def| {
                 let Some((prefix, suffix)) = def.block.split_once("{name}") else { return Ok(vec![def]) };
+                // A block made from a template fits only as its own family: an oak mantel
+                // shelf is oak's, not `oak_mantel`'s shelf.
+                let fits = |id| {
+                    let block = blocks.def(id);
+                    let own = |fill: &str| block.family.as_deref().is_none_or(|family| family.rsplit(':').next() == Some(fill));
+                    block.name.strip_prefix(prefix).and_then(|rest| rest.strip_suffix(suffix)).is_some_and(|fill| !fill.is_empty() && own(fill))
+                };
                 let family: Vec<MachineDef> = blocks
                     .ids()
-                    .filter(|&id| blocks.def(id).name.strip_prefix(prefix).and_then(|rest| rest.strip_suffix(suffix)).is_some_and(|fill| !fill.is_empty()))
+                    .filter(|&id| fits(id))
                     .map(|id| MachineDef { block: blocks.def(id).name.clone(), role: def.role.clone(), heat: def.heat })
                     .collect();
                 if family.is_empty() {

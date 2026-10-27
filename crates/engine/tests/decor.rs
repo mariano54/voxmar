@@ -249,6 +249,24 @@ fn a_jug_keeps_flowers_standing_in_it() {
     }
 }
 
+/// The plain wall shelf and the sill under a window keep what is put on them, anything,
+/// and show it: two things on each of the shelf's lower boards, two on the sill's board in
+/// front of the window over it.
+#[test]
+fn a_shelf_and_a_sill_show_what_is_put_on_them() {
+    let content = content();
+    let blocks = &content.blocks;
+    for (name, shown) in [("base:oak_shelf", 4), ("base:birch_shelf_east", 4), ("base:oak_sill", 2), ("base:dark_oak_sill_west", 2)] {
+        let id = blocks.expect(name);
+        assert_eq!(blocks.def(id).shows.len(), shown, "{name} shows {shown}");
+        assert!(content.machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() == shown && m.holds.is_none()), "{name} keeps what it shows, anything");
+        assert!(blocks.def(id).has_tag("storage"), "{name} is a home's storage");
+    }
+    // An oak mantel shelf is oak's mantel shelf, not `oak_mantel`'s shelf.
+    let mantel = blocks.expect("base:oak_mantel_shelf");
+    assert!(content.machines.get(mantel).is_some_and(|m| m.bin_slots() == 3), "a mantel shelf taken for a plain shelf");
+}
+
 /// The sack of grain a village's farmers and millers keep is one a player can weave and
 /// fill at home: a store of grain alone, home storage, given back whole where a player set
 /// it and nothing where a village did (`furnishing`).
