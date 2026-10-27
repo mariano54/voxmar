@@ -1737,10 +1737,11 @@ fn people_numbers_that_would_not_play_are_refused() {
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 16] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 17] = [
         ("a talk as long as the wait to talk again", |p| p.react.chat_for = p.react.chat_every),
         ("a talk from farther than a greeting", |p| p.react.chat = p.react.greet + 1.0),
         ("a talk for no time", |p| p.react.chat_for = 0.0),
+        ("no wait between telling a stranger in a home to leave", |p| p.react.intruder_every = 0.0),
         ("newcomer in a fifth of a day", |p| p.newcomer = 0.2),
         ("a greeting from below nothing", |p| p.react.greet = -1.0),
         ("a greeting held as long as the wait to greet again", |p| p.react.greet_for = p.react.greet_every),
@@ -3181,13 +3182,12 @@ fn homes_are_furnished_for_their_people() {
     use super::canvas::Put;
     use rustc_hash::FxHashMap;
     let registry = base_registry();
-    let content = crate::content::WorldContent::base(&registry).unwrap();
     let solid = |b: Option<&BlockId>| b.is_some_and(|&b| registry.info(b).solid);
     let tagged = |b: Option<&BlockId>, tag: &str| b.is_some_and(|&b| registry.def(b).has_tag(tag));
     let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut tops, mut surfaces, mut stairs, mut bare) = (0, 0, 0, 0, 0, 0, 0, 0, Vec::new());
     let mut shown = 0;
     for seed in [42u64, 1, 7] {
-        let world = Overworld::with_content(seed, registry.clone(), &content);
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
             let Some(plan) = slot.0.as_ref() else { continue };

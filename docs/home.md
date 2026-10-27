@@ -373,10 +373,13 @@ motifs step can be where it first came on ("home: evening in"), then sets noon.
 Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
 through, you stay so for two minutes under cover (three if drenched), colder and, drenched,
 slower to heal, unless you dry off within three blocks of a fire or a hearth (or warmed on a
-cold day). So coming in from the rain, you dry by your own hearth. It is data: an effect
-that `lingers` can name what `ends` it early (core effects.ron's `ends: Some(Any([Warmed,
-Near("fire", 3), Near("hearth", 3)]))`), and loading refuses `ends` on one that does not
-linger. Tests: the engine's `wet_through_you_dry_off_by_a_fire_and_not_before`, the
+cold day), or hang your things up within two blocks of a peg rail indoors. So coming in from
+the rain, you dry by your own hearth or at the rail by the door: the peg rail, decor until
+then, does something. It is data: an effect that `lingers` can name what `ends` it early
+(core effects.ron's `ends: Some(Any([Warmed, Near("fire", 3), Near("hearth", 3),
+Near("pegs", 2)]))`), and loading refuses `ends` on one that does not linger. Tests: the
+engine's `wet_through_you_dry_off_by_a_fire_and_not_before` and
+`wet_things_hung_on_a_peg_rail_dry_you_off`, the
 server's `health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it`; the gate's
 Weather step dries the player by a campfire after its storm ("weather: dries by a fire").
 

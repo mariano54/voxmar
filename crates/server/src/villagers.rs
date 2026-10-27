@@ -200,6 +200,9 @@ struct Person {
     chat: Option<(u32, u64)>,
     /// They stop to talk with a neighbour again no sooner than this tick.
     chat_after: u64,
+    /// Each player found in their home at night, by `player_key`, is told to leave again
+    /// no sooner than this tick.
+    shooed: BTreeMap<String, u64>,
 }
 
 /// What came of looking for a way.
@@ -723,6 +726,7 @@ impl Server {
             }
             return false;
         }
+        self.shoo(id, town, i, react);
         let person = &self.villagers.towns[&town].people[i];
         // One struck, running from whoever struck them, greets no one.
         let afraid = person.afraid_until > tick || self.creatures.live.get(&id).is_some_and(|c| c.mind.attacker().is_some());
@@ -770,6 +774,51 @@ impl Server {
             self.bark(id, Bark::Greet);
         }
         true
+    }
+
+    /// Person `i` (creature `id`), at night (by the sky) bound for bed or in it, tells any
+    /// player they see within their sight standing in their home to leave, with a cry: each
+    /// again no sooner than `people.react.intruder_every`. By day a visitor is let be.
+    fn shoo(&mut self, id: u32, town: u64, i: usize, react: &ReactDef) {
+        let tick = self.tick;
+        let t = &self.villagers.towns[&town];
+        // Night by the sky, not by bedtime: routines keep some abed past sunrise.
+        if !self.night() || t.people[i].trip.as_ref().is_none_or(|trip| trip.place != Place::Sleep) {
+            return;
+        }
+        let Some(me) = self.creatures.live.get(&id) else { return };
+        let senses = &self.content.creatures.get(me.species).def.senses;
+        let (body, field, sight) = (me.body, senses.field, senses.sight);
+        let home = &t.info.buildings[t.info.people[i].home];
+        // In the house: on its floor (feet one above it, as every spot inside stands), within
+        // its room, not on the roof or flying over it.
+        let inside = |p: &crate::player::Player| {
+            let feet = p.position.floor().as_ivec3();
+            feet.y == home.floor + 1 && home.room.contains(&feet.xz())
+        };
+        let shooed = &t.people[i].shooed;
+        let found: Vec<(u32, String)> = self
+            .players
+            .values()
+            .filter(|p| p.joined && inside(p) && p.eye().distance(body.position) <= sight && self.in_view(&body, field, p.eye()))
+            .map(|p| (p.id, crate::player_key(&p.name)))
+            .filter(|(_, key)| shooed.get(key).is_none_or(|&after| tick >= after))
+            .collect();
+        if found.is_empty() {
+            return;
+        }
+        let name = self.speaker_name(id);
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        person.shooed.retain(|_, after| *after > tick);
+        for (player, key) in found {
+            person.shooed.insert(key, tick + ticks(react.intruder_every));
+            // Said as a wanderer says things (`wander.said`).
+            if let (Some(p), Some(who)) = (self.players.get(&player), name.clone()) {
+                let words = voxmar_engine::lang::Words::key("wander.said").with("who", who).with("text", voxmar_engine::lang::Words::key("villager.leave"));
+                p.connection.send(voxmar_protocol::ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Chat, text: words });
+            }
+        }
+        self.bark(id, Bark::Alarm);
     }
 
     /// Person `i` (creature `id`, at `at`), `free` (not afraid, abed nor a guard) and
@@ -1476,6 +1525,7 @@ mod tests {
             server.creatures.live.get_mut(&ids[1]).unwrap().body.position = at;
             server.tick += ticks(react.chat_every) + 1;
             assert!(!server.talk(ids[0], 1, 0, at, &never, true), "talked with a chat of 0");
+            assert!(server.talk(ids[0], 1, 0, at, &react, true), "side by side with the real settings, no talk");
         }
     }
 
@@ -1630,6 +1680,110 @@ mod tests {
         server.follow_day(id, 1, 0, &live);
         assert!(server.villagers.towns[&1].people[0].afraid_until > server.tick, "one on the way to bed was not frightened");
         assert_eq!(server.place_now(1, 0, seed).0, Place::Sleep, "frightened from going to bed");
+    }
+
+    /// Lines of `key` the player's client has been sent since last asked.
+    fn told(client: &voxmar_protocol::ClientConnection, key: &str) -> usize {
+        let mut n = 0;
+        while let Ok(Some(message)) = client.try_recv() {
+            // Said in the speech line (`wander.said`), its text the key.
+            if let voxmar_protocol::ServerMessage::Chat { text, .. } = message
+                && format!("{text:?}").contains(&format!("{key:?}"))
+            {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// A player found in a home at night by one of its people who sees them is told to
+    /// leave, with a cry, once in `intruder_every`; by day, or outside the house, no one
+    /// minds them.
+    #[test]
+    fn a_stranger_in_a_home_at_night_is_told_to_leave() {
+        let mut server = fixture("base:villager", 1);
+        let seed = mix(server.villagers.towns[&1].info.people[0].seed, 0);
+        let night = (0..40).map(|step| TICKS_PER_DAY as f64 * step as f64 / 40.0).find(|&day| {
+            server.day = day;
+            server.night() && server.place_now(1, 0, seed).0 == Place::Sleep
+        });
+        server.day = night.expect("never abed at night");
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let live = server.live();
+        let react = server.overworld.settlement_people().react.clone();
+        server.tick = 1_000;
+        let (client, connection) = voxmar_protocol::local_pair();
+        // At the door, outside the house (its room is 6..=10 each way).
+        let mut player = crate::player::Player::new(1, connection, Vec3::new(8.5, 200.0, 14.5), 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        player.name = "Tëster".into();
+        server.players.insert(1, player);
+        server.creatures.live.get_mut(&id).unwrap().body.position = Vec3::new(7.5, 200.0, 7.5);
+        server.follow_day(id, 1, 0, &live);
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(told(&client, "villager.leave"), 0, "told to leave from outside the house");
+        // Over the house (on its roof, or flying over), at night: not inside it.
+        server.players.get_mut(&1).unwrap().position = Vec3::new(9.5, 205.0, 9.5);
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(told(&client, "villager.leave"), 0, "told to leave from above the house");
+        // Inside, at night.
+        server.players.get_mut(&1).unwrap().position = Vec3::new(9.5, 200.0, 9.5);
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(told(&client, "villager.leave"), 1, "not told to leave a home at night");
+        server.tick += 1;
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(told(&client, "villager.leave"), 0, "told again straight away");
+        server.tick += ticks(react.intruder_every);
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(told(&client, "villager.leave"), 1, "not told again after intruder_every");
+        // Behind a partition, past the wait: not seen, not told.
+        let stone = server.content.blocks.expect("base:stone");
+        let wall: Vec<IVec3> = (6..=10).flat_map(|z| (200..203).map(move |y| IVec3::new(8, y, z))).collect();
+        wall.iter().for_each(|&cell| server.set_block(cell, stone));
+        server.tick += ticks(react.intruder_every);
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(told(&client, "villager.leave"), 0, "told by one who could not see them");
+        wall.iter().for_each(|&cell| server.set_block(cell, BlockId::AIR));
+        // In a far wing of the house, farther than they see: not told.
+        let sight = server.content.creatures.get(server.creatures.live[&id].species).def.senses.sight;
+        let far = server.creatures.live[&id].body.position + Vec3::new(0.0, 0.0, sight + 1.0);
+        server.villagers.towns.get_mut(&1).unwrap().info.buildings[0].room.push(far.floor().as_ivec3().xz());
+        server.players.get_mut(&1).unwrap().position = far;
+        server.tick += ticks(react.intruder_every);
+        server.follow_day(id, 1, 0, &live);
+        assert_eq!(told(&client, "villager.leave"), 0, "told from farther than they see");
+        server.players.get_mut(&1).unwrap().position = Vec3::new(9.5, 200.0, 9.5);
+        // Abed still after sunrise (routines keep some in bed into the morning): day, and a
+        // visitor is let be.
+        let dawn = (0..400).map(|step| TICKS_PER_DAY as f64 * step as f64 / 400.0).find(|&day| {
+            server.day = day;
+            !server.night() && server.place_now(1, 0, seed).0 == Place::Sleep
+        });
+        if let Some(dawn) = dawn {
+            server.day = dawn;
+            server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
+            server.creatures.live.get_mut(&id).unwrap().body.position = Vec3::new(7.5, 200.0, 7.5);
+            for _ in 0..2 {
+                server.tick += ticks(react.intruder_every);
+                server.follow_day(id, 1, 0, &live);
+            }
+            assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().map(|t| t.place), Some(Place::Sleep), "not abed at dawn");
+            assert_eq!(told(&client, "villager.leave"), 0, "told to leave at dawn, by day");
+        }
+        // By day a visitor in the house is let be.
+        out_in_the_open(&mut server);
+        server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
+        server.players.get_mut(&1).unwrap().position = Vec3::new(9.5, 200.0, 9.5);
+        server.creatures.live.get_mut(&id).unwrap().body.position = Vec3::new(7.5, 200.0, 7.5);
+        for _ in 0..2 {
+            server.tick += ticks(react.intruder_every);
+            server.follow_day(id, 1, 0, &live);
+        }
+        assert_eq!(told(&client, "villager.leave"), 0, "told to leave by day");
     }
 
     /// A monster near but out of sight (under the floor, as in a cave below the square)
