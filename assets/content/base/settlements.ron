@@ -85,7 +85,8 @@
 //   sunset, 1 the next sunrise), each drawing one place a day among those the settlement
 //   has (Sleep, Home, Yard, Work, Square, Well, Inn, Shrine, Neighbour, Gate, Patrol,
 //   Wander), leaning on the levers. Each person's day runs early or late by up to
-//   `jitter`; they move to another spot of a place after `linger` seconds; a newcomer
+//   `jitter`; they move to another spot of a place after `linger` seconds, and `sit` of
+//   their stays about the house are at the table, each on a seat of their own; a newcomer
 //   takes the place of someone who died after `newcomer` days (at least a quarter; the
 //   world's save keeps who died), and a settlement takes `newcomers_per_day` at most.
 //   `shrine`: the work or kind of building Shrine sends people to. `live`: how the server
@@ -108,6 +109,9 @@
 //   again no sooner than `intruder_every`. One who likes a food (their kind's
 //   `diet.favourite`: children) and sees a player within `treat` holding it comes to stand
 //   by them while it is held; given one, they want another no sooner than `treat_every`.
+//   One whose home or work a building is who sees a player within `scold` break a
+//   furnishing the world set there cries out that it was theirs, to each player again no
+//   sooner than `scold_every`.
 (
     grid: (spacing: 1024, chance: 0.45, margin: 160),
     // site: where a settlement stands (design wiki, settlements, draft 60).
@@ -503,11 +507,11 @@
         (name: "Washtub", weight: 0.5, lean: {"crowding": 0.3, "craft": 0.2}),
         (name: "Sacks", weight: 0.8, lean: {"wealth": 0.3, "trade": 0.8}),
         (name: "ChickenCoop", weight: 0.6, lean: {"green": 0.6, "crowding": -0.6}),
-        (name: "Signpost", weight: 0.4, lean: {"order": 0.6, "trade": 0.5, "outlook": 0.5}),
         // On the bank of the water near.
         (name: "Boat", weight: 1.0, lean: {"outlook": 0.5}, water: true),
         (name: "Nets", weight: 1.0, water: true, lean: {"wealth": -0.3, "craft": 0.3}),
         // Props of their own: blocks from the spot, y 1 on the ground.
+        (name: "signpost", weight: 0.4, lean: {"order": 0.6, "trade": 0.5, "outlook": 0.5}, blocks: [((0, 1, 0), "oak_fingerpost"), ((0, 2, 0), "oak_fingerpost_top")]),
         (name: "log_bench", weight: 0.8, lean: {"order": 0.4, "festivity": 0.4}, blocks: [((0, 1, 0), "oak_log_bench"), ((1, 1, 0), "oak_log_bench")]),
         (name: "stone_cairn", weight: 0.4, lean: {"age": 1.0, "order": -0.4, "lore": 0.7, "piety": 0.3}, blocks: [((0, 1, 0), "cobblestone"), ((0, 2, 0), "mossy_cobblestone"), ((0, 3, 0), "cobblestone")]),
         (name: "drying_rack", weight: 0.5, lean: {"wealth": -0.4, "green": 0.3, "craft": 0.4}, blocks: [((0, 1, 0), "spruce_log"), ((0, 2, 0), "spruce_log"), ((2, 1, 0), "spruce_log"), ((2, 2, 0), "spruce_log"), ((1, 2, 0), "spruce_planks")]),
@@ -799,6 +803,8 @@
     people: (
         jitter: 0.03,
         linger: (12.0, 50.0),
+        // Two stays in five about the house are sat at the table.
+        sit: 0.4,
         newcomer: 5.0,
         newcomers_per_day: 1.0,
         shrine: "shrine",
@@ -823,6 +829,9 @@
             // Bread or a roast carrot held out within 8: the children come; given one, they
             // want another five minutes on.
             treat: 8.0, treat_every: 300.0,
+            // A village's barrel or bed broken in sight of whose it is, within 12: they speak
+            // up, to each player once a minute.
+            scold: 12.0, scold_every: 60.0,
         ),
         jobs: [
             (at: "bakery", species: "baker", count: (1, 2), routine: "worker", lean: {"crowding": 0.5}),

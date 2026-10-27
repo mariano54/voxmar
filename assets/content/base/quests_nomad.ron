@@ -151,6 +151,14 @@
             rewards: [Xp("engineering", 21.0)],
         ),
         (
+            name: "moths_to_the_flame", age: "nomad", branch: "hunter", title: "Moths to the Flame",
+            side: true,
+            why: "On dry nights, moth netters sweep the open with their nets. Walk up with a torch in hand and the moths come to it: the netters share a coin and show you a little of keeping still for game.",
+            tasks: [[Dealt("moth_netters", "net", 1)]],
+            after: ["torchlight"],
+            rewards: [Xp("hunter", 30.0)],
+        ),
+        (
             name: "stone_and_clay", age: "nomad", branch: "main", title: "Stone and Clay",
             side: true,
             why: "Gather for the hearth before you build it: twenty-eight cobblestone (four loose stones knock together into two) and four clay from the bottom of a pond, dug with a shovel (a digging stick, one stick over another, will do). Hold them all at once.",
@@ -173,6 +181,22 @@
             tasks: [[Craft("hearthstone", 1), Craft("chimney", 2), Home]],
             after: ["torchlight"],
             rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 1)],
+        ),
+        (
+            name: "the_sleepwalker", age: "nomad", branch: "home", title: "The Sleepwalker",
+            side: true,
+            why: "Some nights a neighbour walks in their sleep, in a nightshirt, near folk's homes. Wake them gently (walk up and talk): they give a coin for the kindness and go home to bed.",
+            tasks: [[Dealt("sleepwalker", "wake", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("construction", 30.0)],
+        ),
+        (
+            name: "a_sweeps_luck", age: "nomad", branch: "home", title: "A Sweep's Luck",
+            side: true,
+            why: "Once you have a home, a chimney sweep and a lad come round the homes near it by day. Shake the sweep's hand for luck: a coin found, a lighter step, or word of a wonder near.",
+            tasks: [[Dealt("chimney_sweep", "luck", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("construction", 30.0)],
         ),
         (
             name: "an_evening_in", age: "nomad", branch: "home", title: "An Evening In",
@@ -371,6 +395,14 @@
             rewards: [Xp("hunter", 80.0)],
         ),
         (
+            name: "a_bone_for_the_dog", age: "nomad", branch: "hunter", title: "A Bone for the Dog",
+            side: true,
+            why: "By day, folk walk out with their dog. Hold out a bone (cattle drop them, and so do the dead that walk at night) and the dog takes it gladly; its owner thanks you with twine.",
+            tasks: [[Dealt("stroll_with_dog", "treat", 1)]],
+            after: ["small_game"],
+            rewards: [Xp("hunter", 30.0)],
+        ),
+        (
             name: "hide_and_seek", age: "nomad", branch: "hunter", title: "Hide and Seek",
             why: "Hide makes armour, pouches and bedding once it has hung a minute on a drying rack. Rabbits on grassland drop raw hide, and so do deer and boar in the woods; a knife in your hand makes it drop more often. Gather four raw hides, and keep two bones as well: field mice in the grass drop them, and a bone makes a club, a needle, a handle.",
             tasks: [[Have("raw_hide", 4), Have("bone", 2)]],
@@ -428,6 +460,14 @@
             tasks: [[Craft("stone_sword", 1)], [Craft("bone_club", 1)]],
             after: ["stone_in_hand"],
             rewards: [Xp("crafting", 40.0)],
+        ),
+        (
+            name: "the_fox_and_the_hens", age: "nomad", branch: "combat", title: "The Fox and the Hens",
+            side: true,
+            why: "Now and then a fox runs by with a hen's feathers on its whiskers, a farmer after it with a rake. Strike the fox as it passes so the farmer catches it, and talk to the farmer: they pay in eggs.",
+            tasks: [[Dealt("fox_and_farmer", "reward", 1)]],
+            after: ["something_to_swing"],
+            rewards: [Xp("attack", 30.0)],
         ),
         (
             name: "sharpening_up", age: "nomad", branch: "combat", title: "Sharpening Up",
@@ -573,6 +613,14 @@
             tasks: [[Met("any", 1)]],
             after: ["where_to_settle"],
             rewards: [Xp("crafting", 60.0), Item("bread", 2)],
+        ),
+        (
+            name: "a_pilgrims_blessing", age: "nomad", branch: "explore", title: "A Pilgrims' Blessing",
+            side: true,
+            why: "Pilgrims walk the far roads by day, well away from where the world began. Greet them and they bless you for the road: a blessing that keeps hunger off a while, and a hurt traveller is mended first.",
+            tasks: [[Dealt("pilgrims", "blessing", 1)]],
+            after: ["folk_of_the_road"],
+            rewards: [Xp("hitpoints", 30.0)],
         ),
         (
             name: "a_kind_turn", age: "nomad", branch: "explore", title: "A Kind Turn",

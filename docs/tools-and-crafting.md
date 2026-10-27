@@ -14,7 +14,9 @@ what it breaks that a lesser one of its kind cannot, one block per `tools.ron` r
 for a tier above the next lower tool's and up to its own (a rule at a tier no tool has shows
 on the first past it), nearest level first ("Breaks what a lesser one cannot: Coal Ore,
 Copper Ore, Tin Ore and 3 more" on a stone pickaxe; `ToolRegistry::opens`, found at load).
-A second tool at a tier (bronze beside copper) says nothing there. Tier 1
+A second tool at a tier (bronze beside copper) says nothing there. The first one a player makes
+says the same in chat ("Your first Stone Pickaxe: it breaks what a lesser one cannot, Coal
+Ore, Copper Ore, ..."; server `tell_first_tool`). Tier 1
 has a flint pickaxe, axe and knife and a digging stick (a shovel), but no hoe: tilling waits for a stone edge. There are no wooden tools (Oct 15:
 a plank's edge cuts nothing); an older save's come back as the flint tool, the digging
 stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`).
@@ -22,7 +24,9 @@ stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`
 A block broken while a tool carried would break it at least `faster_carried` times as fast
 (2 in `base/tools.ron`, hardness / speed + `break_wait` each way) says so in chat ("Your
 Stone Pickaxe breaks Cobblestone 3× as fast: take it in hand"), once a kind of tool each time
-the player joins (`ToolRegistry::faster_carried`, server `tell_faster_carried`).
+the player joins (`ToolRegistry::faster_carried`, server `tell_faster_carried`). The middle
+button over a block the player carries none of picks the carried tool that breaks it fastest,
+by any share, into hand (`ToolRegistry::fastest_carried`, client `interact::picked`).
 
 **Why those speeds** (Oct 14 tier audit). A block takes its hardness over the speed, and
 after each break the hand waits a quarter second before the next (`break_wait` in

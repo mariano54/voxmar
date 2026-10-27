@@ -125,6 +125,7 @@ pub(super) struct PeopleFile {
     routines: Vec<RoutineFile>,
     jitter: Option<f32>,
     linger: Option<(f32, f32)>,
+    sit: Option<f32>,
     newcomer: Option<f32>,
     newcomers_per_day: Option<f32>,
     shrine: Option<String>,
@@ -152,6 +153,8 @@ pub(super) struct ReactFile {
     intruder_every: Option<f32>,
     treat: Option<f32>,
     treat_every: Option<f32>,
+    scold: Option<f32>,
+    scold_every: Option<f32>,
 }
 
 /// `people.live` as written: each number it gives replaces the one before.
@@ -260,6 +263,9 @@ pub struct PeopleDef {
     pub jitter: f32,
     /// Seconds one stands at a spot before moving to another spot of the same place.
     pub linger: (f32, f32),
+    /// The share of stays about the house spent sitting at the table, each on a seat of
+    /// their own (`Building::seats`, in the order they live there), when there is one.
+    pub sit: f32,
     /// Days before a newcomer takes the place of someone who died.
     pub newcomer: f32,
     /// Newcomers a settlement takes in a day at most: several dead come back one by one.
@@ -281,6 +287,7 @@ impl Default for PeopleDef {
             routines: Vec::new(),
             jitter: 0.03,
             linger: (12.0, 50.0),
+            sit: 0.4,
             newcomer: 5.0,
             newcomers_per_day: 1.0,
             shrine: "shrine".into(),
@@ -325,11 +332,16 @@ pub struct ReactDef {
     /// `treat_every`. 0 comes never.
     pub treat: f32,
     pub treat_every: f32,
+    /// One whose home or work a building is who sees a player within `scold` break a
+    /// furnishing the world set there cries out and says it was theirs, to each player
+    /// again no sooner than `scold_every`. 0 minds never.
+    pub scold: f32,
+    pub scold_every: f32,
 }
 
 impl Default for ReactDef {
     fn default() -> Self {
-        Self { greet: 4.0, greet_for: 3.0, greet_every: 90.0, fear: 12.0, afraid: 30.0, rain: 0.2, shelter: Vec::new(), outdoor: Vec::new(), chat: 2.5, chat_for: 6.0, chat_every: 120.0, intruder_every: 30.0, treat: 8.0, treat_every: 300.0 }
+        Self { greet: 4.0, greet_for: 3.0, greet_every: 90.0, fear: 12.0, afraid: 30.0, rain: 0.2, shelter: Vec::new(), outdoor: Vec::new(), chat: 2.5, chat_for: 6.0, chat_every: 120.0, intruder_every: 30.0, treat: 8.0, treat_every: 300.0, scold: 12.0, scold_every: 60.0 }
     }
 }
 
@@ -475,6 +487,10 @@ impl PeopleDef {
             self.note_setter(at, package, "linger");
             self.linger = linger;
         }
+        if let Some(sit) = file.sit {
+            self.note_setter(at, package, "sit");
+            self.sit = sit;
+        }
         if let Some(newcomer) = file.newcomer {
             self.note_setter(at, package, "newcomer");
             self.newcomer = newcomer;
@@ -506,7 +522,7 @@ impl PeopleDef {
                 })*
             };
         }
-        react!(greet, greet_for, greet_every, fear, afraid, rain, shelter, outdoor, chat, chat_for, chat_every, intruder_every, treat, treat_every);
+        react!(greet, greet_for, greet_every, fear, afraid, rain, shelter, outdoor, chat, chat_for, chat_every, intruder_every, treat, treat_every, scold, scold_every);
         Ok(())
     }
 
@@ -545,8 +561,8 @@ impl PeopleDef {
                 return fail(format!("guards of `{}` need a size there is, routines and a count low to high", g.size));
             }
         }
-        if self.jobs.iter().any(|j| j.count.0 > j.count.1) || !(0.0..0.2).contains(&self.jitter) || self.linger.0 < 0.0 || self.linger.0 > self.linger.1 {
-            return fail("counts low to high, a jitter under 0.2 and linger from nothing or more, low to high".into());
+        if self.jobs.iter().any(|j| j.count.0 > j.count.1) || !(0.0..0.2).contains(&self.jitter) || self.linger.0 < 0.0 || self.linger.0 > self.linger.1 || !(0.0..=1.0).contains(&self.sit) {
+            return fail("counts low to high, a jitter under 0.2, linger from nothing or more, low to high, and a share sitting within 0 to 1".into());
         }
         if self.jobs.iter().any(|j| !(0.0..=1.0).contains(&j.chance)) || self.folk.iter().any(|f| f.weight < 0.0) || self.routines.iter().any(|r| r.slots.iter().any(|s| s.go.iter().any(|g| g.weight < 0.0))) {
             return fail("job chances within 0 to 1 and weights of nothing or more".into());
@@ -576,10 +592,10 @@ impl PeopleDef {
         let r = &self.react;
         // Sleep and Home are where rain sends people: sheltering from them would leave
         // nowhere to go.
-        if [r.greet_for, r.greet_every, r.afraid, r.chat_for, r.chat_every, r.intruder_every, r.treat_every].iter().any(|&t| !(t > 0.0))
+        if [r.greet_for, r.greet_every, r.afraid, r.chat_for, r.chat_every, r.intruder_every, r.treat_every, r.scold_every].iter().any(|&t| !(t > 0.0))
             || r.greet_for >= r.greet_every
             || r.chat_for >= r.chat_every
-            || [r.greet, r.fear, r.chat, r.treat].iter().any(|&d| !(d >= 0.0))
+            || [r.greet, r.fear, r.chat, r.treat, r.scold].iter().any(|&d| !(d >= 0.0))
             || r.chat > r.greet
             || !(0.0..=1.0).contains(&r.rain)
             || r.shelter.iter().any(|p| matches!(p, Place::Sleep | Place::Home))

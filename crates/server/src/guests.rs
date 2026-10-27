@@ -88,6 +88,42 @@ mod tests {
         server.players[&who].vitals.effects.iter().any(|a| a.effect == effect)
     }
 
+    /// Home again: the host back by their lit hearth after ten minutes out is welcomed home
+    /// for five (`homecomings`); after a short step out, nothing. The guest, with no home of
+    /// their own, is never away from one, and comes to nobody's home.
+    #[test]
+    fn coming_home_after_a_long_day_out_is_a_welcome_home() {
+        let mut server = fixture();
+        let effect = server.content.effects.id("base:home_again").expect("base's home_again");
+        let welcomed = |server: &Server, who: u32| server.players[&who].timed_effects.iter().find(|(e, _)| *e == effect).map(|&(_, left)| left);
+        let (home, out) = (Vec3::new(13.5, (FLOOR + 1) as f32, 12.5), Vec3::new(13.5 + server.survival.home_reach as f32 + 3.0, (FLOOR + 1) as f32, 12.5));
+        let outing = |server: &mut Server, seconds: f32| {
+            server.players.get_mut(&2).unwrap().position = out;
+            server.players.get_mut(&1).unwrap().position = out;
+            // Each pass counts its seconds away, up to as many passes as a second a pass.
+            for _ in 0..seconds.ceil() as usize {
+                if server.players[&2].away >= seconds {
+                    break;
+                }
+                crate::process::Survival.run(server);
+            }
+            assert!(server.players[&2].away >= seconds, "time away is not counted");
+            server.players.get_mut(&2).unwrap().position = home;
+            server.players.get_mut(&1).unwrap().position = Vec3::new(10.5, (FLOOR + 1) as f32, 12.5);
+            crate::process::Survival.run(server);
+        };
+        crate::process::Survival.run(&mut server);
+        assert_eq!(welcomed(&server, 2), None, "welcomed home without going out");
+        outing(&mut server, 60.0);
+        assert_eq!(welcomed(&server, 2), None, "a short step out is no homecoming");
+        assert_eq!(server.players[&2].away, 0.0, "the time out is not kept once home");
+        outing(&mut server, 600.0);
+        assert!(welcomed(&server, 2).is_some_and(|left| left > 290.0), "not welcomed home after a long day out");
+        assert!(server.players[&2].vitals.effects.iter().any(|a| a.effect == effect), "the welcome does not show");
+        assert_eq!(server.players[&1].away, 0.0, "a player with no home counted time away");
+        assert_eq!(welcomed(&server, 1), None, "a guest welcomed home to another's hearth");
+    }
+
     /// By a friend's hearth, the guest is Hearthside as the host is; it is not announced to
     /// them, kept as reached or felt for their quests, so their own hearth does all that.
     #[test]

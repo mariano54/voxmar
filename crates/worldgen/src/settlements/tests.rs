@@ -947,6 +947,21 @@ fn a_village_log_bench_is_the_piece_a_player_makes() {
     assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the bench a village builds");
 }
 
+/// A village's signpost is a fingerpost and its top, the fingerpost a player makes at home.
+#[test]
+fn a_village_signpost_is_the_fingerpost_a_player_makes() {
+    use super::def::PropKind;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let sign = world_content.settlements.props.iter().find(|p| p.kind.label() == "signpost").expect("villages set signposts");
+    let PropKind::Blocks(_, blocks) = &sign.kind else { panic!("the signpost is a package's prop of blocks") };
+    let placed: Vec<(IVec3, &str)> = blocks.iter().map(|(at, name)| (*at, name.as_str())).collect();
+    assert_eq!(placed, [(IVec3::new(0, 1, 0), "base:oak_fingerpost"), (IVec3::new(0, 2, 0), "base:oak_fingerpost_top")]);
+    let piece = content.blocks.expect("base:oak_fingerpost");
+    assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the fingerpost a village sets");
+}
+
 /// What a village keeps its stores and nets in (its barrel, crates, sacks and nets) is what
 /// a player makes at home: a survival piece with a recipe, given back whole where a player
 /// set it and nothing where a village did (`furnishing`).
@@ -1818,7 +1833,13 @@ fn people_numbers_that_would_not_play_are_refused() {
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 17] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 23] = [
+        ("more than every stay at home sat at the table", |p| p.sit = 1.5),
+        ("less than none sat at the table", |p| p.sit = -0.1),
+        ("no wait between telling off a player who breaks a village's things", |p| p.react.scold_every = 0.0),
+        ("telling off from below nothing", |p| p.react.scold = -1.0),
+        ("no wait between treats", |p| p.react.treat_every = 0.0),
+        ("treats seen from below nothing", |p| p.react.treat = -1.0),
         ("a talk as long as the wait to talk again", |p| p.react.chat_for = p.react.chat_every),
         ("a talk from farther than a greeting", |p| p.react.chat = p.react.greet + 1.0),
         ("a talk for no time", |p| p.react.chat_for = 0.0),

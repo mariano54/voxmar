@@ -1176,7 +1176,10 @@ mod tests {
         let mut kills = 0;
         for _ in 0..40 {
             let creature = server.spawn_creature(rabbit, Vec3::new(6.5, 100.0, 0.5), 1).expect("room");
-            server.creatures.live.get_mut(&creature).unwrap().health = 1;
+            // It has seen the archer: a shot at one unaware cannot miss (`Server::unaware_of`).
+            let target = server.creatures.live.get_mut(&creature).unwrap();
+            target.health = 1;
+            target.mind.noticed.push((1, 10.0, 5.0));
             let aim = Aim { creature, counter: false, riposte: false, weapon, held, slot: 0 };
             server.land_swing(1, aim, 1.0, true, Blow::Plain, true);
             if server.creatures.live.contains_key(&creature) {
