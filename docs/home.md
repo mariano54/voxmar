@@ -141,6 +141,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Hearth corner | a roof, the hearth, a settle (`settle`) and a woodpile (`woodpile`) | 1° warmer, heal x1.05 (test `a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner`) |
 | Lived-in hearth | a roof, the hearth, a mantel shelf (`mantel_shelf`) and a fireside bench (`fireside_bench`) | 1° warmer, learn x1.05 (test `a_mantel_shelf_and_a_fireside_bench_make_a_lived_in_hearth`) |
 | Bedchamber | a roof, a bed, a blanket chest (`blanket_chest`), a washstand (`washstand`) and a rug | 1° warmer, heal x1.1 (test `a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber`) |
+| Kitchen | a roof, the hearth, a dresser (`dresser`) and a pot crane (`pot_crane`) | 1° warmer, meals heal x1.05 (`meal_heal`; test `a_dresser_and_a_pot_crane_by_the_hearth_make_a_kitchen`) |
 | Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
@@ -402,7 +403,7 @@ sits on a stool under a block two up, by a campfire (shot `seat-fire`), and step
 Sat with a table within 2, the player is **At the Table** (`at_table`): a meal eaten there
 heals a quarter more and its good lasts a quarter longer (`meal_heal`, `meal_time`, as the
 pantry and larder rooms give; they multiply, up to core `survival.ron`'s `meal_most`, 2: with
-every meal effect on, the heal is 1.82 times and the good's length 2.27, held to 2). A supper at the kitchen table is worth sitting
+every meal effect on, the heal is 1.91 times and the good's length 2.27, held to 2). A supper at the kitchen table is worth sitting
 down for. Test: `a_meal_at_the_table_does_more`. The gate's Seat step sets a table by the
 stool ("seat: at the table").
 

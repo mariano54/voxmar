@@ -252,6 +252,31 @@ fn a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber() {
     }
 }
 
+/// The kitchen: under a roof, the hearth with a dresser (its plates on show) and a pot crane
+/// to hang the pot over the fire; any of them missing, or out under the sky, it is not one.
+/// Every wood makes both pieces, and the dresser keeps things.
+#[test]
+fn a_dresser_and_a_pot_crane_by_the_hearth_make_a_kitchen() {
+    let content = content();
+    let effects = &content.effects;
+    let room = [("hearth", 1), ("dresser", 1), ("pot_crane", 1)];
+    assert_eq!(rooms(&room), ["base:kitchen"]);
+    for missing in 0..room.len() {
+        let short: Vec<_> = room.iter().enumerate().filter(|&(i, _)| i != missing).map(|(_, &c)| c).collect();
+        assert!(!rooms(&short).contains(&"base:kitchen".to_owned()), "no {}, no kitchen", room[missing].0);
+    }
+    assert!(rooms_in(&room, &Weather::NONE, true).is_empty(), "no roof, no kitchen");
+    let kitchen = effects.get(effects.id("base:kitchen").unwrap());
+    assert_eq!((kitchen.modifiers.home_warmth, kitchen.modifiers.meal_heal), (1.0, 1.05));
+    for wood in ["birch", "oak", "dark_oak"] {
+        let dresser = content.blocks.expect(&format!("base:{wood}_dresser"));
+        assert!(content.blocks.def(dresser).has_tag("dresser") && content.recipes.iter().any(|r| r.output == dresser), "{wood} dresser");
+        assert!(content.machines.iter().any(|m| m.block == dresser && m.is_store()), "the {wood} dresser opens to keep things in");
+        let crane = content.blocks.expect(&format!("base:{wood}_pot_crane"));
+        assert!(content.blocks.def(crane).has_tag("pot_crane") && content.recipes.iter().any(|r| r.output == crane), "{wood} pot crane");
+    }
+}
+
 /// Windows count at home: two in its walls under a roof make a bright room; one does not,
 /// nor two out under the sky. Every window the content has is one (`window`).
 #[test]
