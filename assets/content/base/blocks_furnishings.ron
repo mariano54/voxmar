@@ -86,7 +86,7 @@
             (name: "{name}_pot_crane", render: Model, shape: "pot_crane", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "pot_crane", "decor", "wood"]),
             // By the fire: a rocking chair, a chair on two curved rockers with arms (a `seat`);
             // a cradle, a crib of boards on rockers with a rush bed and a pillow in it.
-            (name: "{name}_rocking_chair", render: Model, shape: "rocking_chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "rocking_chair", "decor", "wood"]),
+            (name: "{name}_rocking_chair", render: Model, shape: "rocking_chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "rocking_chair", "rocks", "decor", "wood"]),
             (name: "{name}_cradle", render: Model, shape: "cradle", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "cradle", "decor", "wood"]),
             // Lived in: a mantel shelf, a deep board on two brackets on the wall over the hearth,
             // that shows the three things put on it (`shows`, its store's three slots, a
@@ -141,12 +141,14 @@
             (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}", "shelter:draughty"]),
         ],
         // Crockery in one glaze: a plate, a bowl, a jar, a jug and a basket for tables and
-        // shelves; broken, a placed piece gives itself back.
+        // shelves; broken, a placed piece gives itself back. A jug keeps a few flowers
+        // (machines.ron), standing in its neck, a posy for the table.
         "crockery": [
             (name: "{name}_plate", render: Model, shape: "plate", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
             (name: "{name}_bowl", render: Model, shape: "bowl", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
             (name: "{name}_jar", render: Model, shape: "jar", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor", "jar"]),
-            (name: "{name}_jug", render: Model, shape: "jug", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
+            (name: "{name}_jug", render: Model, shape: "jug", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor", "jug"],
+                shows: [(0.44, 0.6, 0.5), (0.56, 0.6, 0.5), (0.5, 0.62, 0.45)]),
             (name: "{name}_basket", render: Model, shape: "basket", solid: false, sound: Grass, textures: All("basket_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor", "basket"]),
         ],
         // A hanging lantern of one metal (`{name}`: iron or copper), its drawing tinted the

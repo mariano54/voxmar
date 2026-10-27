@@ -78,9 +78,10 @@
         // drafts 100 and 102: the nomad path alone left both short of 5).
         (
             name: "charcoal", age: "farm", branch: "fuel", title: "Charcoal",
-            why: "Fuel before metal: coal or charcoal smelts copper and makes torches, and only they burn hot enough for the Crucible Kiln. Charcoal comes from a clamp. Set down a chopping block (a flint over a log, Crafting 2), then hold a log and right-click it with an axe in your pack: two firewood. Lay nine firewood three by three on the ground, wall them round and roof them over with earth, and put kindling (three sticks) on the roof's middle for a flue. Light the kindling from a torch: two hours on, nobody by it, the clamp leaves thirty-six charcoal. Rain down the open flue spoils some to ash, so roof it over. Or dig out a coal seam: a small black-flecked stone on the ground marks one below. Set down a chopping block, light a clamp and have sixteen charcoal, or mine twenty-four coal.",
+            why: "Fuel before metal: coal or charcoal smelts copper and makes torches, and only they burn hot enough for the Crucible Kiln. Charcoal comes from a clamp. Set down a chopping block (a flint over a log, Crafting 2), then hold a log and right-click it with an axe in your pack: two firewood. Lay nine firewood three by three on the ground, wall them round and roof them over with earth, and put kindling (three sticks) on the roof's middle for a flue. Light the kindling from a torch: two hours on, nobody by it, the clamp leaves thirty-six charcoal. While it chars, fire cobblestone into stone for an altar (A Place to Pray). Rain down the open flue spoils some to ash, so roof it over. Or dig out a coal seam: a small black-flecked stone on the ground marks one below. Set down a chopping block, light a clamp and have sixteen charcoal, or mine twenty-four coal.",
             tasks: [[Placed("chopping_block", 1), Lit("charcoal_clamp", 1), Have("charcoal", 16)], [Mine("coal_ore", 24)]],
             after: ["fuel_to_hand", "a_pit_kiln"],
+            meanwhile: ["a_place_to_pray"],
             rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
         ),
         (
@@ -181,9 +182,10 @@
         ),
         (
             name: "brick_by_brick", age: "farm", branch: "main", title: "Brick by Brick",
-            why: "The Crucible Kiln is built of kiln bricks: twelve tempered for the ring, seven plain for the crucible. Four fired clay make two plain bricks in the crafting grid (Crafting 5); add a straw to the four at the crafting table and they make two tempered bricks, which keep whole in the kiln's heat. Nineteen bricks are forty fired clay and six straw. Keep the pit kiln and the clamp going while you dig the next load, and shape seven plain, counting your first, and twelve tempered.",
+            why: "The Crucible Kiln is built of kiln bricks: twelve tempered for the ring, seven plain for the crucible. Four fired clay make two plain bricks in the crafting grid (Crafting 5); add a straw to the four at the crafting table and they make two tempered bricks, which keep whole in the kiln's heat. Nineteen bricks are forty fired clay and six straw. Keep the pit kiln and the clamp going while you dig the next load, and while a load fires make two seats and a table for the hearth (A Table for Two). Shape seven plain, counting your first, and twelve tempered.",
             tasks: [[Craft("kiln_bricks", 7), Craft("tempered_kiln_bricks", 12)]],
             after: ["first_bricks", "a_kiln_load", "straw_for_the_kiln"],
+            meanwhile: ["a_table_for_two"],
             // Its Engineering pays for The Crucible's level 10 until Hammer and Anvil (the kiln-age
             // PR) does: drop it when that lands, so it is never paid twice. 750 makes the level on
             // The Crucible's own chain (about 1,180 of the 1,154 xp, with the crafts it forces).
@@ -308,6 +310,14 @@
             rewards: [Xp("cooking", 150.0), Xp("farming", 100.0)],
         ),
         (
+            name: "the_scarecrows_pockets", age: "farm", branch: "farming", title: "The Scarecrow's Pockets",
+            side: true,
+            why: "By night a scarecrow walks the fields of those with a home, keeping its distance. Get near enough to talk and it empties its pockets: seed mix for your animals, saved from the crows.",
+            tasks: [[Dealt("scarecrow", "pockets", 1)]],
+            after: ["seed_mix"],
+            rewards: [Xp("farming", 40.0)],
+        ),
+        (
             name: "roots_in_the_embers", age: "farm", branch: "cooking", title: "Roots in the Embers",
             why: "A roast carrot heals better than a raw one, and roots are easy food to grow. Roast four carrots on a campfire (Cooking 2).",
             tasks: [[Cook("roast_carrot", 4)]],
@@ -351,7 +361,7 @@
         ),
         (
             name: "a_woolly_flock", age: "farm", branch: "husbandry", title: "A Woolly Flock",
-            why: "Mouflon, the wild sheep, need Hunter 5 to tame (taming, hunting and Bigger Game teach it); look on mountains and heath. Hold wheat, its favourite, approach calmly and right-click. A kept sheep grows its wool back: shear it with your shears. Have your shears made before you go.",
+            why: "Mouflon, the wild sheep, need Hunter 5 to tame (taming, hunting and Bigger Game teach it); look on mountains and heath. Hold wheat, its favourite, approach calmly and right-click. A kept sheep grows its wool back: shear it with your shears. Make the shears before you go: two cobblestones crossed.",
             tasks: [[Tame("mouflon", 1), Craft("shears", 1)]],
             after: ["fresh_eggs", "bigger_game"],
             rewards: [Xp("hunter", 200.0), Xp("farming", 100.0)],
@@ -410,7 +420,7 @@
         ),
         (
             name: "a_line_of_snares", age: "farm", branch: "hunter", title: "A Line of Snares",
-            why: "While the big game is followed, a hunter of this age keeps a line of snares on the runs. Set four snares where rabbits and hares wander, go about your day, and come back for what they hold: three catches.",
+            why: "While the big game is followed, a hunter of this age keeps a line of snares on the runs. A snare is two twine over two sticks (Hunter 1); twine is three wheat or three straw. Set four snares where rabbits and hares wander, go about your day, and come back for what they hold: three catches.",
             tasks: [[Placed("snare", 4), Trapped("any", 3)]],
             after: ["the_farm_age"],
             rewards: [Xp("hunter", 90.0)],
@@ -726,6 +736,14 @@
             tasks: [[Craft("stone_altar", 1)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("magic", 120.0)],
+        ),
+        (
+            name: "paying_respects", age: "farm", branch: "prayer", title: "Paying Respects",
+            side: true,
+            why: "Now and then a funeral walks slowly across open land, bearing its dead. Hold out a flower and lay it with them: honouring the dead is Magic too, not only prayer at an altar. Find the procession by day and pay your respects.",
+            tasks: [[Dealt("funeral", "respects", 1)]],
+            after: ["a_place_to_pray"],
+            rewards: [Xp("magic", 30.0)],
         ),
         (
             name: "bones_for_the_altar", age: "farm", branch: "prayer", title: "Bones for the Altar",

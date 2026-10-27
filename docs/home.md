@@ -49,7 +49,7 @@ footstools, cushions and window seats; tables include desks and counters; storag
 keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
 shelves, plate racks, spice racks, candle boxes, bread bins, kindling boxes, bedside
 tables, stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves
-too), crate stacks, barrel racks, barrels, crates, jars, baskets and grain sacks, and a
+too), crate stacks, barrel racks, barrels, crates, jars, jugs, baskets and grain sacks, and a
 village's barrels, crates and sacks (every store a player opens counts but the feed
 trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
@@ -417,6 +417,13 @@ Sat with a footstool within 1, the player has their **Feet Up** (`feet_up`): the
 quarter faster (`heal` x1.25), and it stacks with Fireside. A footstool is a seat too, so sat
 on the footstool itself is none (`Not(SeatedOn("footstool"))`): it goes before a chair. Test:
 `a_footstool_before_a_seat_puts_your_feet_up`.
+
+Sat in a rocking chair the view rocks, gently forward and back from when the player sat
+down: a seat tagged `rocks` tips the camera by `rock` (engine `vitals.rs`: 2° each way and a
+dip of 0.04 blocks at either end, a rock every 3.2 s). Only the camera moves; where the eye
+looks from and aims stays still. The Screen shake setting off keeps the view still here too.
+Loading refuses `rocks` on a block that is no seat. Tests: `a_rocking_seat_rocks_the_view_gently`
+(engine), `a_rocking_chair_rocks` (every wood's chair).
 
 ## Numbers and tuning
 

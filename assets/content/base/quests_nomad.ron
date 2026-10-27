@@ -252,7 +252,7 @@
         (
             name: "from_the_shelves", age: "nomad", branch: "home", title: "From the Shelves",
             capstone: true,
-            why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Put planks in a store and lay three recipes from it.",
+            why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Right-click a store to open it beside your pack, put planks in, and lay three recipes from it.",
             tasks: [[Laid("any", 3)]],
             after: ["pantry_shelves", "a_bench_to_work_at"],
             rewards: [Xp("crafting", 40.0), Xp("construction", 20.0)],
@@ -297,7 +297,7 @@
         (
             name: "a_basket_of_mushrooms", age: "nomad", branch: "cooking", title: "A Basket of Mushrooms",
             side: true,
-            why: "Mushroom pickers comb the woods and wet ground after rain. Ask and they point you to where mushrooms grow; bring them four and they trade a loaf of bread for the basket.",
+            why: "Mushroom pickers comb the woods and wet ground while it rains. Ask and they point you to where mushrooms grow; bring them four and they trade a loaf of bread for the basket.",
             tasks: [[Dealt("mushroom_pickers", "basket", 1)]],
             after: ["wild_harvest"],
             rewards: [Xp("cooking", 40.0)],
@@ -471,6 +471,14 @@
             tasks: [[Level("defence", 4), Level("hitpoints", 12)]],
             after: ["raise_your_guard", "a_stones_throw"],
             rewards: [Xp("defence", 60.0), Xp("hitpoints", 40.0)],
+        ),
+        (
+            name: "join_the_dance", age: "nomad", branch: "combat", title: "Join the Dance",
+            side: true,
+            why: "By night, folk dance in a ring on open grass. Walk up and join a round: a night of dancing builds the wind a long fight wants, and trains Hitpoints.",
+            tasks: [[Dealt("dance_circle", "round", 1)]],
+            after: ["hard_to_put_down"],
+            rewards: [Xp("hitpoints", 40.0)],
         ),
         // Mining: stone, the coal seam and the first mine.
         (
