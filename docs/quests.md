@@ -245,8 +245,9 @@ early_quests still holds that a quest names only quests open beside it.
 ### Each path a chain (Oct 14)
 
 Ten starts still fanned out a few steps in: one column held 21 quests. Now each path runs
-as a chain, with a fork only where a quest's text sends the player two ways (A Kiln Load
-names Earthenware and Fired Whole; Herb Garden names Carrot Patch and A Kitchen Garden;
+as a chain, with a fork only where a quest's text sends the player two ways (The Potter
+opens A Kiln Load and Earthenware, which A Kiln Load's text sends the player to between
+loads, and A Kiln Load leads to Fired Whole; Herb Garden names Carrot Patch and A Kitchen Garden;
 Fresh Eggs names A Woolly Flock). Examples: the bees run Humming in the Meadow, A Bee
 Garden, then Smoke That Clings beside Sweet Relief and The Beekeeper Calls; the home runs A Table for
 Two, Shelves and Cupboards, A Proper Bed, Candlelight, Snug for Winter, then the door and
@@ -411,7 +412,7 @@ only crafted.
 
 | Path | Quests to the kiln | Ways round |
 |---|---|---|
-| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | |
+| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
 | Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone); side quests Opened Too Soon (four part-burnt wood from a clamp opened early, after A Second Clamp) and, after A Table for Two on the Home path, A Woodpile (a woodpile set down by the hearth, half a Hearth corner) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
 | Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp; side quests A Lamp of Clay (two oil lamps made and set down) and A Pot on the Chimney (chimney pots made, one set down), both after Earthenware | |
 | Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln; side quests A Keen Edge (a copper tool mended at the grindstone, after Copper Kit) and A Bronze Edge (a bronze pickaxe, after First Bronze and A Keen Edge) | |

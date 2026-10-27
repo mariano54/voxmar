@@ -488,6 +488,8 @@
     "item.flame.tended": "集落の中では手入れされ、消えることはない",
     "item.mend": "{station}で{item}を使って直せる",
     "tool.nearly_worn": "{item}がもうすぐ壊れる。壊れる前に、{how}。",
+    "tool.broke": "{item}が壊れた。",
+    "tool.broke_spare": "{item}が壊れた。{spare}に持ち替えた。",
     "item.slot.charm": "お守り",
     "item.slot.empty": "ここに装備する：Shift＋クリックか、置く",
     "item.weight.light": "軽装",

@@ -1725,13 +1725,14 @@ mod tests {
     /// only from a creature every player meets: not one that comes only with a wandering
     /// party or in a lair, nor a boss, unless one of those quests has the player kill it (a
     /// raider's hide is no sure way). It prints the route it found for each quest, and fails
-    /// naming each quest with no such route and what walls each of its routes. On the lines
-    /// of ages 1 and 2 (each capstone, the lit Homestead Hearth and the lit Crucible Kiln, and
-    /// what they come after) every route must be taught, not only one; a route there may wait
+    /// naming each quest with no such route and what walls each of its routes. In the books
+    /// of ages 1 and 2 (every quest of theirs, side quests too, and what they come after)
+    /// every route must be taught, not only one; a route there may wait
     /// on a later age's station (one only that age's recipes make, not one its own age makes
     /// that a later block shares a tag with) only while another route of its quest is taught
     /// in its own age, and those routes are named. Goals that set down, stock, spread, eat or
-    /// offer an item ask for it as `Have` and `Placed` do, and a store stocked is set down. The main-line
+    /// offer an item ask for it as `Have` and `Placed` do, a store stocked is set down, and so
+    /// is an altar offered at. A full hive comes of keeping bees. The main-line
     /// walk puts down any station a recipe needs and walks only the main line, so a side path
     /// asking for fired clay before the kiln got through (A Stove and a Quern's workshop
     /// half, once 451 made its pieces take kiln output).
@@ -1741,7 +1742,7 @@ mod tests {
         let quests: Vec<_> = content.quests.iter().cloned().collect();
         let StationWalls { walled, half_taught, later_age, clamp_raised } = station_walls(&content, &quests);
         assert!(walled.is_empty(), "these quests have no route whose stations the quests before them have the player make: {walled:#?}");
-        assert!(half_taught.is_empty(), "on the lines of ages 1 and 2, these routes ask for stations no quest before has the player make: {half_taught:#?}");
+        assert!(half_taught.is_empty(), "in the books of ages 1 and 2, these routes ask for stations no quest before has the player make: {half_taught:#?}");
         // The routes waiting on a later age's station, each with another route taught in its
         // own: baked bread wants flour, and the quern grinding it is a Farm recipe.
         assert_eq!(later_age, ["base:daily_bread route 2", "base:a_varied_table route 2"], "the routes left to a later age");
@@ -1768,7 +1769,7 @@ mod tests {
     }
 
     /// What the station check finds: quests with no taught route (`walled`), routes untaught
-    /// on the lines of ages 1 and 2 (`half_taught`), those left to a later age (`later_age`),
+    /// in the books of ages 1 and 2 (`half_taught`), those left to a later age (`later_age`),
     /// and whether a quest raised a smouldering structure (`clamp_raised`).
     struct StationWalls {
         walled: Vec<String>,
@@ -1783,6 +1784,7 @@ mod tests {
         use voxmar_engine::quest::Goal;
         use voxmar_engine::recipe_book::{Method, counts};
         let quest_named = |name: &str| quests.iter().find(|q| q.name == name);
+        let altar = String::from("tag:altar");
         let blocks = &content.blocks;
         // The book as the server has it: with what the world lays, found and broken loose.
         let book = recipe_book_of(content, &WorldContent::load(content).expect("checked by load_content"));
@@ -1799,16 +1801,16 @@ mod tests {
         };
         let mut walled = Vec::new();
         let mut clamp_raised = false;
-        // The lines of ages 1 and 2: each capstone, the lit Homestead Hearth and the lit
-        // Crucible Kiln, and every quest they come after. On them every route is taught, not
-        // only one (a coal seam may be far, so charcoal's clamp must be taught too).
-        let mut age_lines: Vec<&str> = Vec::new();
-        let mut next: Vec<&str> = quests.iter().filter(|q| q.capstone && ["nomad", "farm"].iter().any(|age| q.age.ends_with(age))).map(|q| q.name.as_str()).collect();
+        // The books of ages 1 and 2: every quest of theirs, side quests too (where an untaught
+        // ask hides longest), and every quest they come after. On them every route is taught,
+        // not only one (a coal seam may be far, so charcoal's clamp must be taught too).
+        let mut age_books: Vec<&str> = Vec::new();
+        let mut next: Vec<&str> = quests.iter().filter(|q| ["nomad", "farm"].iter().any(|age| q.age.ends_with(age))).map(|q| q.name.as_str()).collect();
         next.extend(["base:homestead_hearth", "base:crucible_kiln"]);
         while let Some(name) = next.pop() {
-            let q = quest_named(name).expect("a capstone and what it comes after");
-            if !age_lines.contains(&q.name.as_str()) {
-                age_lines.push(q.name.as_str());
+            let q = quest_named(name).expect("a quest of ages 1 and 2, or one they come after");
+            if !age_books.contains(&q.name.as_str()) {
+                age_books.push(q.name.as_str());
                 next.extend(q.after.iter().filter(|a| !a.contains('|')).map(String::as_str));
             }
         }
@@ -1897,9 +1899,11 @@ mod tests {
                             .flat_map(|goal| match goal {
                                 Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::CookAt(item, _, _) | Goal::CraftNear(item, _, _) | Goal::Placed(item, _) | Goal::Have(item, _) => vec![(goal, goal.clone(), item)],
                                 // What is set down to water a field, spread on a crop, eaten or offered
-                                // is got as anything held; what is stocked too, in a store set down.
+                                // is got as anything held; what is stocked too, in a store set down,
+                                // and what is offered, at an altar set down.
                                 Goal::Watering(item, n) => vec![(goal, Goal::Placed(item.clone(), *n), item)],
-                                Goal::Fertilised(item, n) | Goal::Ate(item, n) | Goal::Offered(item, n) => vec![(goal, Goal::Have(item.clone(), *n), item)],
+                                Goal::Fertilised(item, n) | Goal::Ate(item, n) => vec![(goal, Goal::Have(item.clone(), *n), item)],
+                                Goal::Offered(item, n) => vec![(goal, Goal::Have(item.clone(), *n), item), (goal, Goal::Placed(altar.clone(), 1), &altar)],
                                 Goal::Stocked(item, store, n) => vec![(goal, Goal::Have(item.clone(), *n), item), (goal, Goal::Placed(store.clone(), 1), store)],
                                 _ => Vec::new(),
                             })
@@ -1914,7 +1918,7 @@ mod tests {
                     .collect()
             };
             let routes = walls(&worked);
-            if age_lines.contains(&quest.name.as_str()) && routes.iter().any(|w| !w.is_empty()) {
+            if age_books.contains(&quest.name.as_str()) && routes.iter().any(|w| !w.is_empty()) {
                 // Skipped only where a later age's station is all it waits on and another
                 // route of the quest is taught in its own age.
                 let in_own = walls(&worked_own);
@@ -1981,7 +1985,8 @@ mod tests {
             Method::Process { machines, inputs, .. } => machines.iter().any(|&m| got(m, on)) && inputs.iter().all(|&(item, _)| got(item, on)),
             Method::Break { block, .. } => book.laid(blocks, *block) || got(*block, on),
             Method::Trap { trap, .. } => got(*trap, on),
-            Method::Bees { block, .. } => book.laid(blocks, *block) || got(*block, on),
+            // A full hive is a kept one left to fill: its bees are what it comes of.
+            Method::Bees { block, .. } => book.laid(blocks, *block) || got(*block, on) || content.bees.hive.as_ref().is_some_and(|hive| hive.full == *block && got(blocks.item_of(hive.busy), on)),
             // What is left when a thing burns out comes of having the thing; what it is lit
             // again into, of it and an item of the tag lighting it uses up.
             Method::Burn { from, fuel, .. } => got(*from, on) && fuel.as_deref().is_none_or(|tag| blocks.tagged(tag).any(|item| got(item, on))),

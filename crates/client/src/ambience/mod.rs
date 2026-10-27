@@ -271,6 +271,8 @@ struct Ambient {
     logged: String,
     /// The home ladder's effects, lowest first, for the `home` axis.
     home: Vec<voxmar_engine::effect::EffectId>,
+    /// The effects heard held, for their `effect:` axes.
+    held: Vec<Option<voxmar_engine::effect::EffectId>>,
     /// Fires seen to go out, for the groups that hear them cool.
     gone_out: GoneOut,
 }
@@ -279,20 +281,24 @@ struct Ambient {
 /// since seen to stop burning went out, kept as long as some group hears it cooling.
 #[derive(Default)]
 struct GoneOut {
+    /// `ClientWorld::fires_told` when last looked at.
+    told: u32,
     burning: rustc_hash::FxHashSet<IVec3>,
     at: rustc_hash::FxHashMap<IVec3, f32>,
 }
 
 impl GoneOut {
-    /// Notes the fires burning `now` (seconds); those burning before and not now went out
-    /// now, and one lit again is burning. Forgets those out over `keep` seconds.
-    fn note(&mut self, now: f32, burning: &rustc_hash::FxHashSet<IVec3>, keep: f32) {
-        if *burning != self.burning {
+    /// Notes the fires burning `now` (seconds), as told for the `told`th time; those burning
+    /// before and not now went out now, and one lit again is burning. Looks only when told
+    /// anew. Forgets those out over `keep` seconds.
+    fn note(&mut self, now: f32, burning: &rustc_hash::FxHashSet<IVec3>, told: u32, keep: f32) {
+        if told != self.told && *burning != self.burning {
             for &core in self.burning.difference(burning) {
                 self.at.insert(core, now);
             }
             self.burning.clone_from(burning);
         }
+        self.told = told;
         self.at.retain(|core, out| now - *out <= keep && !burning.contains(core));
     }
 
@@ -402,8 +408,10 @@ impl Ambient {
     fn new(ambience: Ambience, roof_patters: Vec<Option<u8>>, kinds: Arc<Kinds>, content: Content, clips_rx: Receiver<Synthesized>) -> Self {
         let axes = ambience.axes();
         let home = ambience.home_ladder(&content.effects);
+        let held = ambience.held_effects(&content.effects);
         Self {
             home,
+            held,
             mixer: Mixer::new(&ambience, 0x616d_6269),
             roof_patters,
             roof: RoofLook::default(),
@@ -563,7 +571,7 @@ fn survey(
 
     // Fires going out are timed as they go, while dead too, not from the next survey.
     if player.joined {
-        ambient.gone_out.note(time.elapsed_secs(), &world.fires, ambient.ambience.cools_longest());
+        ambient.gone_out.note(time.elapsed_secs(), &world.fires, world.fires_told, ambient.ambience.cools_longest());
     }
     ambient.since_survey += dt;
     // None is taken of where a dead player lay: the next is of where they come back.
@@ -818,6 +826,7 @@ fn listen(
     env.set(Fixed::SettlementEdge, ambient.place.as_ref().map_or(NO_SETTLEMENT, |place| place.edge));
     env.set(Fixed::SettlementPeople, ambient.place.as_ref().map_or(0.0, |place| place.people));
     env.set(Fixed::Home, defs::home_step(&ambient.home, &player.vitals.effects));
+    defs::set_held(env, &ambient.ambience, &ambient.held, &player.vitals.effects);
     surroundings.settlement = ambient.place.as_ref().and_then(|place| Some((place.id?, place.edge)));
     surroundings.surveyed = ambient.place_survey;
     let shown = &weather.current;
