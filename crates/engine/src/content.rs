@@ -562,9 +562,15 @@ impl Content {
                 }
             }
         }
-        // What keeps spare lights for a home keeps them in its store.
-        if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag(crate::flame::SPARE_LIGHTS) && !machines.get(id).is_some_and(|m| m.is_store())) {
-            return Err(RegistryError(format!("blocks: `{}` keeps spare lights (`{}`) but is no store (machines.ron)", blocks.def(id).name, crate::flame::SPARE_LIGHTS)));
+        // What keeps spare lights, or lights them again, for a home keeps them in its store;
+        // and what lights a torch again is something.
+        for tag in [crate::flame::SPARE_LIGHTS, crate::flame::RELIGHTS_LIGHTS] {
+            if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag(tag) && !machines.get(id).is_some_and(|m| m.is_store())) {
+                return Err(RegistryError(format!("blocks: `{}` keeps lights for a home (`{tag}`) but is no store (machines.ron)", blocks.def(id).name)));
+            }
+        }
+        if blocks.ids().any(|id| blocks.def(id).has_tag(crate::flame::RELIGHTS_LIGHTS)) && !blocks.ids().any(|id| blocks.def(id).has_tag(crate::flame::KINDLING)) {
+            return Err(RegistryError(format!("blocks: a store lights lights again (`{}`) but nothing is `{}`", crate::flame::RELIGHTS_LIGHTS, crate::flame::KINDLING)));
         }
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
@@ -696,9 +702,9 @@ impl Content {
         }
         // How a worn tool is mended, by a tag and where, has words in every language: its
         // tooltip says it, and so does the line when it is nearly worn out; and a break, with
-        // or without a spare brought up, says so.
+        // or without a spare brought up, says so, as does a faster tool carried.
         let mend_words: Vec<String> = tools.mend_by_tags().iter().map(|t| format!("item.mend.tag.{t}")).chain(tools.mend_tags().iter().map(|t| format!("item.mend.near.{t}"))).collect();
-        for key in mend_words.into_iter().chain(["item.mend", "tool.nearly_worn", "tool.broke", "tool.broke_spare"].map(str::to_owned)) {
+        for key in mend_words.into_iter().chain(["item.mend", "tool.nearly_worn", "tool.broke", "tool.broke_spare", "tool.faster_carried"].map(str::to_owned)) {
             if let Some(lang) = languages.iter().find(|lang| !lang.defines(&key)) {
                 return Err(RegistryError(format!("lang/{}.ron: tools are mended, and `{key}` has no words", lang.code())));
             }

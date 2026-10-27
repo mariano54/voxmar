@@ -290,6 +290,12 @@ impl Town {
                 && at.x >= b.min.x && at.x <= b.max.x && at.z >= b.min.y && at.z <= b.max.y
         })
     }
+
+    /// Whether `cell` stands up on a building, over its ground floor: on its walls, its
+    /// roof or a counter, where no way up or down may go.
+    fn up_on_a_building(&self, cell: IVec3) -> bool {
+        self.info.buildings.iter().any(|b| cell.y > b.floor + 1 && cell.x >= b.min.x && cell.x <= b.max.x && cell.z >= b.min.y && cell.z <= b.max.y)
+    }
 }
 
 /// Days since the world began, from the server's clock.
@@ -1373,18 +1379,19 @@ impl Server {
         Some(cells[(mix(seed, 0xab0) % cells.len() as u64) as usize])
     }
 
-    /// A cell a body can stand in within `r` blocks of `at`, by `seed`.
+    /// A cell a body can stand in within `r` blocks of `at`, by `seed`: on the ground, never
+    /// up on a building.
     fn near_spot(&self, town: &Town, at: IVec3, r: i32, seed: u64) -> Option<IVec3> {
         for attempt in 0..12u64 {
             let h = mix(seed, 0x5907 + attempt);
             let dx = (h % (2 * r as u64 + 1)) as i32 - r;
             let dz = ((h >> 20) % (2 * r as u64 + 1)) as i32 - r;
             let column = at + IVec3::new(dx, 0, dz);
-            if town.outdoor_column(column) && let Some(c) = self.standing_near(column, 4) {
+            if town.outdoor_column(column) && let Some(c) = self.standing_near(column, 4).filter(|&c| !town.up_on_a_building(c)) {
                 return Some(c);
             }
         }
-        town.outdoor_column(at).then(|| self.standing_near(at, 6)).flatten()
+        town.outdoor_column(at).then(|| self.standing_near(at, 6)).flatten().filter(|&c| !town.up_on_a_building(c))
     }
 
     /// The cell nearest `at`'s height in its column, within `reach` up or down, where a
@@ -2820,6 +2827,32 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn yard_spots_are_never_up_on_a_building() {
+        let mut server = fixture("base:farmer", 1);
+        // A hut's log wall beside the door, three high: its top is somewhere to stand, but
+        // up there no way down was ever found.
+        let wall = server.content.blocks.expect("base:stone");
+        for x in 6..=10 {
+            for z in 10..=12 {
+                for y in 200..=202 {
+                    server.set_block(IVec3::new(x, y, z), wall);
+                }
+            }
+        }
+        let b = &mut server.villagers.towns.get_mut(&1).unwrap().info.buildings[0];
+        b.kind = BuildingKind::Trader;
+        b.min = IVec2::new(6, 10);
+        b.max = IVec2::new(10, 12);
+        let town = &server.villagers.towns[&1];
+        let door = IVec3::new(8, 200, 13);
+        assert_eq!(server.standing_near(IVec3::new(8, 200, 11), 4).unwrap().y, 203, "the wall's top must be standable to expose the bug");
+        let spots: Vec<IVec3> = (0..200).filter_map(|seed| server.near_spot(town, door, 3, seed)).collect();
+        assert!(spots.len() > 150, "few yard spots: {}", spots.len());
+        assert!(spots.iter().all(|c| c.y == 200), "a yard spot up on the hut: {:?}", spots.iter().find(|c| c.y != 200));
+        assert!(server.near_spot(town, IVec3::new(8, 200, 11), 0, 1).is_none(), "the fallback stood up on the hut");
     }
 
     #[test]
