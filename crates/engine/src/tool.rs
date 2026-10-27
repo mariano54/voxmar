@@ -509,9 +509,21 @@ impl ToolRegistry {
         if self.faster_carried == 0.0 {
             return None;
         }
+        self.fastest_carried(held, block, hardness, carried).filter(|&(_, times)| times >= self.faster_carried)
+    }
+
+    /// Of `carried`, the tool good enough for `block` that breaks it fastest, if any is
+    /// faster at all than `held`, with how many times (the first of equals).
+    pub fn fastest_carried(&self, held: Option<BlockId>, block: BlockId, hardness: f32, carried: impl Iterator<Item = BlockId>) -> Option<(BlockId, f32)> {
         let now = self.break_seconds(held, block, hardness);
-        let best = carried.filter(|&item| Some(item) != held && self.tool(Some(item)).kind.is_some() && self.good_enough(Some(item), block)).map(|item| (item, now / self.break_seconds(Some(item), block, hardness))).max_by(|a, b| a.1.total_cmp(&b.1))?;
-        (best.1 >= self.faster_carried).then_some(best)
+        let mut best: Option<(BlockId, f32)> = None;
+        for item in carried.filter(|&item| Some(item) != held && self.tool(Some(item)).kind.is_some() && self.good_enough(Some(item), block)) {
+            let times = now / self.break_seconds(Some(item), block, hardness);
+            if times > 1.0 && best.is_none_or(|(_, b)| times > b) {
+                best = Some((item, times));
+            }
+        }
+        best
     }
 
     /// The slot of `slots` (other than `hand`) holding the spare to bring up for `broken`, a
@@ -1279,6 +1291,9 @@ mod tests {
         // Under the share, nothing: a stone pickaxe over the flint one in hand.
         assert!(tools.break_seconds(Some(id("flint_pickaxe")), stone, hardness) / tools.break_seconds(Some(id("stone_pickaxe")), stone, hardness) < DEFAULT_FASTER_CARRIED);
         assert_eq!(tools.faster_carried(Some(id("flint_pickaxe")), stone, hardness, pack.into_iter()), None);
+        // Yet it is the fastest carried, which the middle button picks by any share.
+        assert_eq!(tools.fastest_carried(Some(id("flint_pickaxe")), stone, hardness, pack.into_iter()).map(|(b, _)| b), Some(id("stone_pickaxe")));
+        assert_eq!(tools.fastest_carried(Some(id("stone_pickaxe")), stone, hardness, pack.into_iter()), None, "none faster than in hand");
         assert_eq!(tools.faster_carried(Some(id("stone_pickaxe")), stone, hardness, pack.into_iter()), None);
         assert_eq!(tools.faster_carried(None, stone, hardness, [id("oak_log")].into_iter()), None);
 
