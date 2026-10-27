@@ -410,6 +410,7 @@ impl Server {
                 (Effect::Fertilise, ActionTarget::Block { block, .. }) => self.fertilise(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
+                (Effect::Trade, ActionTarget::Creature(id)) => self.trade(agent, id),
                 (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent, held: None }, block);

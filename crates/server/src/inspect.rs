@@ -110,6 +110,11 @@ impl Server {
                 lines.push(Words::key("inspect.more_at").with("level", Words::text(next)));
             }
         }
+        // One keeping a market stall, at it: today's trade.
+        if let Some(trade) = self.trade_today(id) {
+            let item = |&(item, count): &(voxmar_engine::block::BlockId, u8)| Words::key("inspect.trade_item").with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(item).name.clone()));
+            lines.push(Words::key("inspect.trade").with("wants", item(&trade.wants)).with("gives", Words::List(trade.gives.iter().map(item).collect())));
+        }
         if let Some(p) = self.players.get(&player) {
             p.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::Lines(lines) });
         }
