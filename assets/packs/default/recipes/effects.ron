@@ -623,6 +623,20 @@
             ".kwwdwwwk.",
             ".kkkkkkkk.",
         ])]),
+        // A kitchen: a dresser with plates on show, and a pot crane's arm over the fire, its pot
+        // hung on the hook.
+        "ui/effect/kitchen": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'w': "#a06a3a", 'd': "#6a4222", 'p': "#f0ece0", 'b': "#4a64b0", 'f': "#e07020"}, rows: [
+            "dddd......",
+            "dpbd.wwww.",
+            "dbpd....w.",
+            "dpbd....w.",
+            "dddd...kkk",
+            "dwwd...kkk",
+            "dwwd......",
+            "dwwd..f.f.",
+            "dwwd.fffff",
+            "dddd.kkkkk",
+        ])]),
         // A bedchamber: a bed with its pillow and blanket, a chest at its foot, a jug on a stand.
         "ui/effect/bedchamber": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'w': "#a06a3a", 'p': "#f0ece0", 'b': "#4a64b0", 'j': "#d08850"}, rows: [
             "........j.",
