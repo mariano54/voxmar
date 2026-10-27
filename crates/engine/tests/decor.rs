@@ -12,8 +12,9 @@ fn content() -> Content {
 }
 
 /// The decor blocks the templates made with a baked colour, not the facings they are
-/// placed in, nor the state one swaps into and comes back as (a curtain drawn back), and not
-/// the singles and the metal lanterns (see [`the_singles_load_and_can_be_made`]).
+/// placed in, nor the state one swaps into and comes back as (a curtain drawn back), nor the
+/// part set with another (a fingerpost's top, its `upper`), and not the singles and the metal
+/// lanterns (see [`the_singles_load_and_can_be_made`]).
 fn made(content: &Content) -> Vec<BlockId> {
     content
         .blocks
@@ -21,7 +22,8 @@ fn made(content: &Content) -> Vec<BlockId> {
         .filter(|&id| {
             let def = content.blocks.def(id);
             let state = def.swaps.is_some() && def.drops == def.swaps;
-            def.has_tag("decor") && def.family.is_some() && def.form_of().is_none() && !state && !def.has_tag("metal") && matches!(def.tint, BlockTint::Fixed(..))
+            let part = content.blocks.ids().any(|other| content.blocks.def(other).upper.as_deref() == Some(def.name.as_str()));
+            def.has_tag("decor") && def.family.is_some() && def.form_of().is_none() && !state && !part && !def.has_tag("metal") && matches!(def.tint, BlockTint::Fixed(..))
         })
         .collect()
 }
@@ -286,6 +288,9 @@ fn a_fingerpost_is_made_at_home_as_the_villages_set_it() {
     let top = blocks.expect("base:oak_fingerpost_top");
     assert_eq!(blocks.def(sign).upper.as_deref(), Some("base:oak_fingerpost_top"), "a fingerpost is set with its top");
     assert_eq!(blocks.info(top).drops, blocks.expect("core:air"), "a fingerpost's top comes back as well as the fingerpost");
+    let top_def = blocks.def(top);
+    assert!(top_def.has_tag("decor") && top_def.solid && !top_def.has_tag("furnishing"), "a fingerpost's top is decor, as its post, that drops nothing");
+    assert!(!top_def.has_tag("yard") && !top_def.tags.iter().any(|tag| tag.starts_with("shelter:")), "a fingerpost's top dresses no dooryard a second time and keeps no shelter tag");
     let post = blocks.expect("base:oak_post");
     let recipe = content.recipes.iter().find(|r| r.output == sign).expect("a fingerpost is made");
     assert!(recipe.cells().iter().flatten().any(|&cell| cell == post), "made on a post");

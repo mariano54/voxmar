@@ -33,10 +33,11 @@
         // colour (the family line below). Broken, a placed piece gives itself back. Seats
         // are not solid: a player sits in one, feet on the floor, so a chair under a roof
         // two blocks up is sat on as one in the open is.
-        // A fingerpost's top, set and broken with it: no furnishing, as it drops nothing of
-        // its own (the fingerpost gives itself back, or nothing where a village set it).
+        // A fingerpost's top, set and broken with it: decor as its post is, but no furnishing,
+        // as it drops nothing of its own (the fingerpost gives itself back, or nothing where
+        // a village set it), and not `yard`, so a fingerpost dresses a dooryard once.
         "fingerpost_top": [
-            (name: "{name}_fingerpost_top", render: Model, shape: "fingerpost_top", facing: true, support: Below, drops: "core:air", sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["fingerpost", "wood", "yard"]),
+            (name: "{name}_fingerpost_top", render: Model, shape: "fingerpost_top", facing: true, support: Below, drops: "core:air", sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["fingerpost", "decor", "wood"]),
         ],
         "furniture": [
             (name: "{name}_stool", render: Model, shape: "stool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
