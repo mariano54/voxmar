@@ -485,6 +485,16 @@ already that day, they say why. A content test keeps
 every want taught by a nomad or farm quest and every gift out of any quest's Have or
 Offered goals.
 
+Children like some food (`diet.favourite` on their species in creatures_villagers.ron, bread
+and a roast carrot, both taught in the first two ages): one out on their day who has noticed
+and sees a player within `people.react.treat` holding it (and within their sight) walks up to
+stand a step and a half from them, turned to them, with a contented hum, and keeps by them
+while it is held and they stay within half as far again. Given one (`base:treat`, right-click
+holding it) they take it, say thanks and go back to their day, wanting another no sooner than
+`treat_every`; offered what they do not like, or within that wait, they take nothing and say
+why. A child coming to food is not counted as a lured creature. The content test that keeps
+stall wants taught also keeps every villager's favourite taught by a nomad or farm quest.
+
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter
 roles remain follow-ups. Single-valued people data and same-named routines follow the

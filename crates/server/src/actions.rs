@@ -411,6 +411,7 @@ impl Server {
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
                 (Effect::Trade, ActionTarget::Creature(id)) => self.trade(agent, id),
+                (Effect::Treat, ActionTarget::Creature(id)) => self.treat(agent, id),
                 (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent, held: None }, block);
@@ -505,7 +506,13 @@ impl Server {
                     self.set_blocks(&changes);
                     self.placed.extend(placed);
                 }
-                (Effect::WearHeld, ActionTarget::Block { block, .. }) => self.wear_on_block(agent, block, def.effects.contains(&Effect::Till), tool),
+                (Effect::WearHeld, ActionTarget::Block { block, .. }) => {
+                    let tilling = def.effects.contains(&Effect::Till);
+                    if !tilling {
+                        self.tell_faster_carried(agent, block, tool.1);
+                    }
+                    self.wear_on_block(agent, block, tilling, tool);
+                }
                 (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {

@@ -150,6 +150,8 @@ pub(super) struct ReactFile {
     chat_for: Option<f32>,
     chat_every: Option<f32>,
     intruder_every: Option<f32>,
+    treat: Option<f32>,
+    treat_every: Option<f32>,
 }
 
 /// `people.live` as written: each number it gives replaces the one before.
@@ -317,11 +319,17 @@ pub struct ReactDef {
     /// A player one of them sees in their home at night (they are bound for bed or in it)
     /// is told to leave, with a cry, each again no sooner than `intruder_every`.
     pub intruder_every: f32,
+    /// One out on their day who likes a food (their kind's `diet.favourite`: children)
+    /// and sees a player within `treat` holding it out comes to stand by them while it is
+    /// held; given one (`base:treat`), they take it and want another no sooner than
+    /// `treat_every`. 0 comes never.
+    pub treat: f32,
+    pub treat_every: f32,
 }
 
 impl Default for ReactDef {
     fn default() -> Self {
-        Self { greet: 4.0, greet_for: 3.0, greet_every: 90.0, fear: 12.0, afraid: 30.0, rain: 0.2, shelter: Vec::new(), outdoor: Vec::new(), chat: 2.5, chat_for: 6.0, chat_every: 120.0, intruder_every: 30.0 }
+        Self { greet: 4.0, greet_for: 3.0, greet_every: 90.0, fear: 12.0, afraid: 30.0, rain: 0.2, shelter: Vec::new(), outdoor: Vec::new(), chat: 2.5, chat_for: 6.0, chat_every: 120.0, intruder_every: 30.0, treat: 8.0, treat_every: 300.0 }
     }
 }
 
@@ -498,7 +506,7 @@ impl PeopleDef {
                 })*
             };
         }
-        react!(greet, greet_for, greet_every, fear, afraid, rain, shelter, outdoor, chat, chat_for, chat_every, intruder_every);
+        react!(greet, greet_for, greet_every, fear, afraid, rain, shelter, outdoor, chat, chat_for, chat_every, intruder_every, treat, treat_every);
         Ok(())
     }
 
@@ -568,10 +576,10 @@ impl PeopleDef {
         let r = &self.react;
         // Sleep and Home are where rain sends people: sheltering from them would leave
         // nowhere to go.
-        if [r.greet_for, r.greet_every, r.afraid, r.chat_for, r.chat_every, r.intruder_every].iter().any(|&t| !(t > 0.0))
+        if [r.greet_for, r.greet_every, r.afraid, r.chat_for, r.chat_every, r.intruder_every, r.treat_every].iter().any(|&t| !(t > 0.0))
             || r.greet_for >= r.greet_every
             || r.chat_for >= r.chat_every
-            || [r.greet, r.fear, r.chat].iter().any(|&d| !(d >= 0.0))
+            || [r.greet, r.fear, r.chat, r.treat].iter().any(|&d| !(d >= 0.0))
             || r.chat > r.greet
             || !(0.0..=1.0).contains(&r.rain)
             || r.shelter.iter().any(|p| matches!(p, Place::Sleep | Place::Home))

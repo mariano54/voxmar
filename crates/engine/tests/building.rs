@@ -138,7 +138,7 @@ fn a_dry_stone_wall_turns_its_corner_in_its_own_courses() {
     }
     assert!(wrong.is_empty(), "{corner} is not {wall}'s west part and its turned run's north part at {} points, first {:?}", wrong.len(), wrong.first());
     let cobbles = blocks.expect("base:cobblestone");
-    for name in [wall, corner] {
+    for name in [wall, corner, "base:dry_stone_stile"] {
         let id = blocks.expect(name);
         let def = blocks.def(id);
         let shelter: Vec<_> = def.tags.iter().filter(|t| t.starts_with("shelter:")).collect();
