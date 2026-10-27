@@ -173,6 +173,8 @@
     "effect.base.door_shut.description": "The door shut on the night: you heal a tenth faster here, and are 1° warmer.",
     "effect.base.evening_in": "Evening in",
     "effect.base.evening_in.description": "Home by the fire after dark: you heal a fifth faster here, and are 2° warmer.",
+    "effect.base.home_again": "Home again",
+    "effect.base.home_again.description": "Back by your own hearth after a long day out: for a while you heal a fifth faster, and are 2° warmer.",
     "effect.base.kitchen_garden": "Kitchen garden",
     "effect.base.kitchen_garden.description": "Greens growing by the door: meals heal a tenth more here.",
     "effect.base.banked_fire": "Banked fire",
