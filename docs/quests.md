@@ -605,6 +605,22 @@ fire). `every_early_dealt_line_is_open_to_the_player_it_sends` holds that a line
 has no `Below` gate (a player past it would never hear it) and its `Skill` gates are surely had
 when the quest opens, or asked beside it by a `Level` goal.
 
+Coin had no lesson (Oct 27): wanderers buy goods and sell services for gold, and no quest said
+so. Two Farm side quests on the callers path do: **Coin at the Roadside** (after Neighbourly:
+sell once to a tanner, woodcarver, potter, shearers or ore assayer, each by their `buy` line)
+and **Coin Well Spent** (pay a travelling smith to whet a blade, or a truffle hunter to point
+to a truffle). The Dealt-line check also holds that what a named line takes is something the
+land and recipes give.
+
+More wanderers with no quest got one (Oct 27), each by its trading line: **Seed for Seed**
+(Farm, after A Field of Gold: the seed swappers' rye for wheat seed, `swap` from Farming 3 or
+`swap_more` from Farming 7, whichever the player's level reaches), **A Basket of Mushrooms**
+(Nomad, after Wild Harvest: four mushrooms for a loaf), **Fangs for the Watch** (Farm, after
+Bigger Game: a guard patrol's gold coin for a fang) and **Wassail** (Farm, after A Kitchen
+Garden: a loaf for the wassailers' toast that grows the crops). The Dealt-line check now asks
+one way of a quest to have every skill gate met (a player past one line's turn takes the
+next), and checks a tag a line wants against what can be come by.
+
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).
 

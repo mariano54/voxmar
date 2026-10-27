@@ -222,6 +222,9 @@
         // wall does.
         (name: "dry_stone_wall", render: Model, shape: "dry_stone_wall", facing: true, sound: Stone, material: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), tags: ["railing", "stone_wall", "stone", "building", "yard", "shelter:draughty"]),
         (name: "dry_stone_wall_corner", render: Model, shape: "dry_stone_wall_corner", facing: true, sound: Stone, material: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), tags: ["railing", "stone_wall", "stone", "building", "yard", "shelter:draughty"]),
+        // A stile, to step over the wall without a gate to leave open: penned animals stay
+        // in (a railing stands two high to them), a player walks over.
+        (name: "dry_stone_stile", render: Model, shape: "dry_stone_stile", facing: true, sound: Stone, material: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), tags: ["railing", "stone_wall", "stile", "stone", "building", "yard", "shelter:draughty"]),
         (name: "stone_flue", render: Model, shape: "chimney_stack", sound: Stone, material: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), tags: ["chimney_piece", "stone", "building", "shelter:sound"]),
         (name: "chimney_hood", render: Model, shape: "chimney_hood", sound: Stone, textures: All("stone_bricks"), hardness: 2.0, color: (120, 120, 120), tags: ["chimney_piece", "stone", "bricks", "building", "shelter:sound"]),
         (name: "chimney_pot", render: Model, shape: "chimney_pot", sound: Stone, textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["chimney_piece", "terracotta", "building", "shelter:fine"]),

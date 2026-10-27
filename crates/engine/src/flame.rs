@@ -17,12 +17,28 @@
 //! - `tended`: set down inside a settlement (near its height), its people tend it and it
 //!   never burns out there.
 //!
+//! - `spare_lights`: on a store (a candle box), what it keeps is set out at home in place of
+//!   the same light burning out there, one taken from it each time.
+//! - `relights_lights`: on a store (a kindling box), one of what it keeps lights again at
+//!   home what burns out there to something lit again: what its `relight_with:` asks (fat
+//!   for a lamp), else something tagged `kindling` (a bundle of kindling).
+//!
 //! What burns out and is lit again is lit into itself: a torch's stub relights to a torch.
 //! What burns out to something never lit again is used up (a candle to its end).
 //!
 //! Picked up while it burns, a light keeps what it has burnt as its item's wear, counted in
 //! seconds of the world's clock ([`WEAR_PER_DAY`] a game day), and set down again it burns
 //! on from there: nothing is relit by carrying it.
+
+/// The tag of a store whose lights are set out at home where one of them burns out.
+pub const SPARE_LIGHTS: &str = "spare_lights";
+
+/// The tag of a store at home whose things light again what burns out there (a kindling
+/// box): what a light's `relight_with:` asks, else [`KINDLING`].
+pub const RELIGHTS_LIGHTS: &str = "relights_lights";
+
+/// The tag of what catches from the hearth to light a torch again (a bundle of kindling).
+pub const KINDLING: &str = "kindling";
 
 /// A placed light's burn kept as its item's wear: seconds of the world's clock, 1200 a game
 /// day (24 000 ticks at 20 a second).
