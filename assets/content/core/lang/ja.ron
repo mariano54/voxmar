@@ -488,6 +488,7 @@
     "item.flame.tended": "集落の中では手入れされ、消えることはない",
     "item.mend": "{station}で{item}を使って直せる",
     "tool.nearly_worn": "{item}がもうすぐ壊れる。壊れる前に、{how}。",
+    "tool.broke_make": "{item}が壊れた。もう一つ作るには{items}が要る。",
     "tool.first_opens": "初めての{tool}：格下の道具では壊せない{list}を壊せる。",
     "tool.faster_carried": "{tool}なら{block}を{times}倍の速さで壊せる。持ち替えよう。",
     "tool.broke": "{item}が壊れた。",

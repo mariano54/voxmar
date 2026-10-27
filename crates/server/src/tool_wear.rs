@@ -74,13 +74,19 @@ impl Server {
             player.connection.send(ServerMessage::ToolWore { item, broke: worn == Worn::Broke });
         }
         // Broken, it says so in words as its warning did, and what is in hand now if a spare
-        // came up.
+        // came up; with none, what another takes (the first recipe making it), so the next
+        // step is in the same line.
         if worn == Worn::Broke {
             use voxmar_engine::lang::Words;
             let named = |item| Words::Block(blocks.def(item).name.clone());
-            let text = match brought_up {
-                Some(spare) => Words::key("tool.broke_spare").with("item", named(item)).with("spare", named(spare)),
-                None => Words::key("tool.broke").with("item", named(item)),
+            let makes = self.content.recipes.iter().find(|r| r.output == item).map(|r| r.short(&Default::default()));
+            let text = match (brought_up, makes) {
+                (Some(spare), _) => Words::key("tool.broke_spare").with("item", named(item)).with("spare", named(spare)),
+                (None, Some(takes)) if !takes.is_empty() => {
+                    let items = takes.into_iter().map(|(i, n)| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", named(i))).collect();
+                    Words::key("tool.broke_make").with("item", named(item)).with("items", Words::List(items))
+                }
+                (None, _) => Words::key("tool.broke").with("item", named(item)),
             };
             player.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text });
         }
@@ -368,7 +374,7 @@ mod tests {
     }
 
     /// A tool that breaks says so in words, as its warning did: with a spare brought up,
-    /// what is in hand now; with none, that it broke.
+    /// what is in hand now; with none, what another takes.
     #[test]
     fn a_tool_that_breaks_says_so_and_what_is_in_hand() {
         use voxmar_engine::lang::Words;
@@ -398,7 +404,9 @@ mod tests {
             if spare {
                 assert_eq!((key.as_str(), arg("spare")), ("tool.broke_spare", Some(Words::Block("base:stone_axe".into()))));
             } else {
-                assert_eq!(key, "tool.broke");
+                // With none, what another takes, from its recipe.
+                let stack = |n: u32, item: &str| Words::key("multiblock.fuel_stack").with("count", n.to_string()).with("item", Words::Block(item.into()));
+                assert_eq!((key.as_str(), arg("items")), ("tool.broke_make", Some(Words::List(vec![stack(2, "base:flint"), stack(1, "base:stick")]))));
             }
         }
     }
