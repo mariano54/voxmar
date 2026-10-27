@@ -253,6 +253,16 @@ afresh after the look, so prey that looks and then runs still raises the alarm t
   0.63 of an unhurt one's ground in its sprint, the data saying 0.67; 1.00 without the
   limp).
 
+## Young
+
+A kind that guards its young (`guards: (near, young)` in its data, checked at load: for an
+animal that fights back, `near` 2 to 12 blocks, `young` a chance above 0 up to 0.6) comes now
+and then, by `young`, as a mother with her young: the first of the group grown, the rest young,
+never young alone. A grown, wild one goes for a player who comes within `near` blocks of a
+young one of its kind about, though further from her, or who strikes one, with no warning; a
+player who gives the young room is let be, and gets her usual warning if they come near her
+instead. A kept one guards nothing. A wild boar guards within 6 blocks, a brown bear within 8.
+
 ## Roaming
 
 Every creature has a home (where it appeared; a den, nest or pen later) and a leash

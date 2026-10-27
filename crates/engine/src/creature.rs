@@ -325,6 +325,27 @@ impl Scavenge {
     }
 }
 
+/// How a mother guards her young (docs/creature-ai.md, "Young"): a wild group of its
+/// kind comes with young by `young` (the chance, 0 to 0.6), and a grown one of it goes for
+/// a player who comes within `near` blocks (2 to 12) of a young one of its kind, or strikes
+/// one, with no warning. A player who gives the young room is let be.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Guards {
+    pub near: f32,
+    pub young: f32,
+}
+
+impl Guards {
+    /// Room enough to be seen coming and kept to, and young now and then, not in every herd.
+    pub fn check(&self) -> Result<(), String> {
+        if !(2.0..=12.0).contains(&self.near) || !(0.0..=0.6).contains(&self.young) || self.young == 0.0 {
+            return Err(format!("`guards` needs near 2 to 12 blocks and young a chance above 0 up to 0.6, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
 /// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
 /// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
@@ -792,6 +813,10 @@ pub struct CreatureDef {
     /// hunter's meat. Unset, it lets dropped food lie.
     #[serde(default)]
     pub scavenge: Option<Scavenge>,
+    /// It guards its young (`Guards`): a sow goes for a player who comes near her
+    /// piglets. Unset, its young are nothing to it.
+    #[serde(default)]
+    pub guards: Option<Guards>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -1331,6 +1356,14 @@ impl CreatureRegistry {
                     return Err(error("is a boss or supernatural, and steals no one's food (`scavenge`)".into()));
                 }
                 scavenge.check().map_err(error)?;
+            }
+            if let Some(guards) = def.guards {
+                let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
+                let fights = def.attack.is_some() && behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Defend | Behaviour::Hunt { .. }));
+                if !fights || def.boss || def.supernatural || def.kind != Kind::Animal {
+                    return Err(error("guards its young (`guards`), which is for an animal that fights back: not a boss or a supernatural kind".into()));
+                }
+                guards.check().map_err(error)?;
             }
             if let Some(flush) = def.flush {
                 if def.boss || def.supernatural || def.attack.is_some() {

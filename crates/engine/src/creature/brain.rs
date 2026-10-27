@@ -112,6 +112,9 @@ pub struct Seen {
     /// Standing in a lit fire's ward at night (`Situation::ward`), where those afraid of
     /// fire go for no one unprovoked. Set only for kinds that keep out of wards.
     pub warded: bool,
+    /// Within its `guards.near` of a young one of its kind (`creature::Guards`). Set only
+    /// for a grown, wild one of a kind that guards its young.
+    pub by_young: bool,
 }
 
 /// A lit fire's ward at night (`BlockDef::ward`, `MultiblockDef::ward`): `radius` blocks
@@ -586,6 +589,10 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     for p in at.players {
         let d = p.position.distance(at.position);
         let smelt = p.tempting && d < def.senses.hearing;
+        // Too near its young (`creature::Guards`): it goes for them, with no warning.
+        if p.by_young && !p.friend && !p.creative {
+            mind.provoked(p.id);
+        }
         if p.friend || d <= def.senses.close || p.in_view && d < sight || smelt || mind.recalls(Memory::HurtBy(p.id)) {
             match mind.noticed.iter_mut().find(|n| n.0 == p.id) {
                 Some(n) => n.1 = def.senses.keep,
@@ -705,7 +712,7 @@ pub(super) mod tests {
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
-        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true, fire: false, warded: false }
+        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true, fire: false, warded: false, by_young: false }
     }
 
     fn doing<'a>(creature: &'a Creature, mind: &Mind) -> &'a str {
@@ -1079,6 +1086,43 @@ pub(super) mod tests {
         let mut mind = Mind::new(&badger.def.temperament, 3);
         let _ = think(&badger, &mut mind, &Situation { kept: true, ..situation(&at) });
         assert_ne!(doing(&badger, &mind), "warn");
+    }
+
+    /// A mother that guards her young (`creature::Guards`) goes for a player too near one,
+    /// with no warning, though it warns anyone else first; a friend, or one who gives the
+    /// young room, it lets be. Its `guards` is checked at load.
+    #[test]
+    fn a_mother_goes_for_one_too_near_her_young() {
+        let sow = species(&format!(
+            "(creatures: [(name: \"sow\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (radius: 5.0, near: 1.5, seconds: 1.0), guards: (near: 6.0, young: 0.3), behaviours: [(do: Defend)])])"
+        ));
+        // Giving her young room, a player at four blocks gets her warning, as ever.
+        let mut mind = Mind::new(&sow.def.temperament, 2);
+        let _ = think(&sow, &mut mind, &situation(&[player(Vec3::new(4.0, 0.0, 0.0))]));
+        assert_eq!((doing(&sow, &mind), mind.attacker()), ("warn", None), "one giving her young room");
+        // Too near them, at eight blocks from her, she goes for them at once.
+        let mut mind = Mind::new(&sow.def.temperament, 2);
+        let _ = think(&sow, &mut mind, &situation(&[Seen { by_young: true, ..player(Vec3::new(8.0, 0.0, 0.0)) }]));
+        assert_eq!((doing(&sow, &mind), mind.attacker()), ("defend", Some(1)), "one too near her young");
+        // Her keeper's friend, or one in creative, she lets be.
+        for seen in [Seen { by_young: true, friend: true, ..player(Vec3::new(8.0, 0.0, 0.0)) }, Seen { by_young: true, creative: true, ..player(Vec3::new(8.0, 0.0, 0.0)) }] {
+            let mut mind = Mind::new(&sow.def.temperament, 2);
+            let _ = think(&sow, &mut mind, &situation(&[seen]));
+            assert_eq!(mind.attacker(), None, "{seen:?}");
+        }
+
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        let fighter = "attack: (damage: (1, 2)), behaviours: [(do: Defend)]";
+        assert_eq!(build(&format!("{fighter}, guards: (near: 6.0, young: 0.3)")), Ok(()));
+        for bad in ["(near: 1.0, young: 0.3)", "(near: 13.0, young: 0.3)", "(near: 6.0, young: 0.0)", "(near: 6.0, young: 0.7)"] {
+            assert!(build(&format!("{fighter}, guards: {bad}")).is_err_and(|e| e.contains("`guards` needs")), "{bad}");
+        }
+        for bad in ["behaviours: [(do: Flee(radius: 4.0))]", "attack: (damage: (1, 2)), behaviours: [(do: Defend)], boss: true", "attack: (damage: (1, 2)), behaviours: [(do: Defend)], kind: Monster"] {
+            assert!(build(&format!("{bad}, guards: (near: 6.0, young: 0.3)")).is_err_and(|e| e.contains("guards its young")), "{bad}");
+        }
     }
 
     /// What `warn` may say is checked at load: an attack to follow it, no boss, a radius

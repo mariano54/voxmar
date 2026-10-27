@@ -41,6 +41,10 @@
 //   food it `takes` (items or `tag:`s) lying within `reach` blocks (4 to 24), while no
 //   player is within `shy` blocks (2 to 12, under its reach) of it or the food; it snatches
 //   one piece, makes off home and eats it, dropping it if killed first. Wild ones only.
+// - `guards` is how a mother guards her young (docs/creature-ai.md, "Young"): a wild group
+//   comes with young by the chance `young` (above 0, up to 0.6), and a grown one goes for a
+//   player within `near` blocks (2 to 12) of a young one of its kind, or who strikes one,
+//   with no warning. For an animal that fights back.
 // - `loot` is what it drops: always (chance 1) or by chance, more with the right tool
 //   (`tools`: the tags of what the killer holds) and, for rarer finds, with level.
 (
@@ -350,6 +354,7 @@
             group: (size: (1, 4)),
             temperament: (aggression: 0.0, fear: 0.65, nervousness: 0.45, curiosity: 0.45, sociability: 0.6, territory: 0.1, energy: 0.6),
             leash: 28.0,
+            guards: (near: 6.0, young: 0.3),
             diet: (eats: ["brown_mushroom", "red_mushroom", "short_grass"], favourite: ["apple", "carrot"]),
             behaviours: [
                 (do: Wander(radius: 12.0)), (do: LookAround), (do: Graze), (do: Flee(radius: 4.0), weight: 1.2), (do: Defend, weight: 1.2),
@@ -468,6 +473,7 @@
             temperament: (aggression: 0.25, fear: 0.1, nervousness: 0.4, curiosity: 0.5, sociability: 0.1, territory: 0.8, energy: 0.3),
             senses: (sight: 16.0, hearing: 24.0, field: 100.0, react: 0.8),
             leash: 48.0,
+            guards: (near: 8.0, young: 0.35),
             diet: (eats: ["sweet_berry_bush", "brown_mushroom"], favourite: ["apple"]),
             behaviours: [
                 (do: Wander(radius: 20.0)), (do: LookAround, weight: 1.2), (do: Graze), (do: Defend, weight: 1.5),
