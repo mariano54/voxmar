@@ -817,7 +817,7 @@ impl Server {
     /// Once a second: a wild creature within `LURED_WITHIN` blocks of a player holding its
     /// favourite food was drawn there by it, and the player's `lured` tally counts it, once
     /// for each creature.
-    fn note_lured(&mut self) {
+    pub(crate) fn note_lured(&mut self) {
         if !self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             return;
         }
@@ -827,6 +827,10 @@ impl Server {
                 continue;
             }
             let species = self.content.creatures.get(creature.species);
+            // A settlement's child coming to food held out is no creature lured.
+            if species.def.kind == voxmar_engine::creature::Kind::Villager {
+                continue;
+            }
             let at = creature.body.position;
             let drawn = |p: &&crate::player::Player| p.joined && p.health.alive() && p.position.distance(at) < LURED_WITHIN && p.held().is_some_and(|item| species.favourite.contains(&item));
             if let Some(player) = self.players.values().find(drawn) {
