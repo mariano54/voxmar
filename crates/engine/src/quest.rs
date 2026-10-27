@@ -622,7 +622,7 @@ impl QuestRegistry {
         }
         // What a quest's text gives to do while it waits is there to do then: not done
         // before it (one it waits on), open while it is (each `after` has a choice it waits
-        // on or another of the same list), and named in its words.
+        // on), and named in its words.
         for quest in quests.iter().filter(|q| !q.meanwhile.is_empty()) {
             let before = waited_on(&quests, quest);
             for name in &quest.meanwhile {
@@ -632,7 +632,7 @@ impl QuestRegistry {
                 if other.name == quest.name || before.contains(other.name.as_str()) {
                     return Err(RegistryError(format!("quest {} gives {name} to do meanwhile, which is done before it", quest.name)));
                 }
-                if let Some(after) = other.after.iter().find(|a| !a.split('|').any(|a| a != name && (before.contains(a) || quest.meanwhile.iter().any(|m| m == a)))) {
+                if let Some(after) = other.after.iter().find(|a| !a.split('|').any(|a| before.contains(a))) {
                     return Err(RegistryError(format!("quest {} gives {name} to do meanwhile, which waits on {after}: it is not open while {} is", quest.name, quest.name)));
                 }
                 if !quest.why.split('(').skip(1).filter_map(|rest| rest.split_once(')')).any(|(inside, _)| inside.contains(other.title.as_str())) {
@@ -1699,17 +1699,17 @@ mod tests {
     }
 
     /// What a quest gives to do meanwhile opens while it is open and is named in its words:
-    /// one done before it, one waiting on it, an unknown one or one its words leave out is
-    /// refused by name.
+    /// one done before it, one waiting on it or on another of the list, an unknown one or one
+    /// its words leave out is refused by name.
     #[test]
     fn what_a_quest_gives_to_do_meanwhile_is_open_and_named() {
         let book = |quests: &str| QuestRegistry::new(vec![QuestRegistry::read("t", &format!("(quests: [{quests}])")).unwrap()]).err().map(|e| e.0);
         let quest = |name: &str, more: &str| format!(r#"(name: "{name}", age: "nomad", branch: "main", title: "{}", tasks: [[Home]], {more}),"#, name.to_uppercase());
         let wait = |why: &str, meanwhile: &str| [quest("a", r#"why: """#), quest("b", r#"why: "", after: ["a"]"#), quest("c", r#"why: "", after: ["b"]"#), quest("d", r#"why: "", after: ["c|a"]"#), quest("w", &format!(r#"why: "{why}", after: ["a"], meanwhile: [{meanwhile}]"#))].concat();
-        assert_eq!(book(&wait("Meanwhile, B (B) and then C (C).", r#""b", "c""#)), None, "b opens as w does, c after b");
+        assert_eq!(book(&wait("Meanwhile, B (B).", r#""b""#)), None, "b opens as w does");
         assert_eq!(book(&wait("Do D (D, B).", r#""d", "b""#)), None, "d by either of its choices");
         assert_eq!(book(&wait("(A)", r#""a""#)), Some("quest t:w gives t:a to do meanwhile, which is done before it".into()));
-        assert_eq!(book(&wait("(C)", r#""c""#)), Some("quest t:w gives t:c to do meanwhile, which waits on t:b: it is not open while t:w is".into()));
+        assert_eq!(book(&wait("(B) and then (C)", r#""b", "c""#)), Some("quest t:w gives t:c to do meanwhile, which waits on t:b: it is not open while t:w is".into()));
         assert_eq!(book(&wait("(B)", r#""e""#)), Some("quest t:w gives `t:e` to do meanwhile, which does not exist".into()));
         assert_eq!(book(&wait("B, then", r#""b""#)), Some("quest t:w gives t:b to do meanwhile, yet its words do not name it: put (B) in its `why`".into()));
         let after = [quest("a", r#"why: """#), quest("w", r#"why: "(B)", after: ["a"], meanwhile: ["b"]"#), quest("b", r#"why: "", after: ["w"]"#)].concat();
