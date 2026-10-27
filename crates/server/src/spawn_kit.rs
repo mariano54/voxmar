@@ -73,6 +73,11 @@ impl SpawnKit {
         Ok(kit)
     }
 
+    /// The fewest of `block` the kit lays (0 if it lays none): what every spawn is sure of.
+    pub fn least(&self, block: BlockId) -> u8 {
+        self.pieces.iter().filter(|p| p.0 == block).map(|p| p.1).sum()
+    }
+
     /// The columns the kit may lie in by `spawn`: those within its far edge (`near`), to be
     /// loaded before `plan`.
     pub fn columns(&self, spawn: Vec3) -> Vec<ColumnPos> {
