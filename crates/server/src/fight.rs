@@ -401,6 +401,12 @@ impl Server {
         }
     }
 
+    /// Whether a creature has a blow on its way (wound up, not yet landed), for tests.
+    #[cfg(test)]
+    pub(crate) fn blow_on_its_way(&self, creature: u32) -> bool {
+        self.fights.windups.iter().any(|w| w.creature == creature)
+    }
+
     /// Undoes a creature's blow on its way, if any (a boss rearing into a new phase).
     pub(crate) fn fights_forget(&mut self, creature: u32) {
         self.fights.windups.retain(|w| w.creature != creature);

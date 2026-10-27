@@ -49,8 +49,9 @@ footstools, cushions and window seats; tables include desks and counters; storag
 keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
 shelves, plate racks, spice racks, candle boxes, bread bins, kindling boxes, bedside
 tables, stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves
-too), crate stacks, barrel racks, jars, baskets and grain sacks, and a village's barrels,
-crates and sacks (every store a player opens counts but the feed trough, which is the pen's: test
+too), crate stacks, barrel racks, barrels, crates, jars, baskets and grain sacks, and a
+village's barrels, crates and sacks (every store a player opens counts but the feed
+trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
 of a chest and a barrel by a campfire, "home: storage"); crockery is plates, bowls, jars,
 jugs, baskets and a dresser's plates on show; rugs include a rush mat (4 rushes, Crafting 1,
@@ -372,7 +373,8 @@ motifs step can be where it first came on ("home: evening in"), then sets noon.
 Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
 through, you stay so for two minutes under cover (three if drenched), colder and, drenched,
 slower to heal, unless you dry off within three blocks of a fire or a hearth (or warmed on a
-cold day), or hang your things up within two blocks of a peg rail indoors. So coming in from
+cold day), or hang your things up within two blocks of a peg rail (as by a fire, once out of the
+rain or after it stops). So coming in from
 the rain, you dry by your own hearth or at the rail by the door: the peg rail, decor until
 then, does something. It is data: an effect that `lingers` can name what `ends` it early
 (core effects.ron's `ends: Some(Any([Warmed, Near("fire", 3), Near("hearth", 3),
@@ -408,6 +410,11 @@ Nook** (`reading_nook`): they learn a tenth more (`xp` x1.1) while they sit ther
 asked: a shelf and a window by a chair make the quiet corner of a lived-in house. Test:
 `a_seat_by_a_window_and_books_is_a_reading_nook`. The gate's Seat step stands a bookshelf on
 the table and a hide window on that ("seat: reading nook").
+
+Sat with a footstool within 1, the player has their **Feet Up** (`feet_up`): they heal a
+quarter faster (`heal` x1.25), and it stacks with Fireside. A footstool is a seat too, so sat
+on the footstool itself is none (`Not(SeatedOn("footstool"))`): it goes before a chair. Test:
+`a_footstool_before_a_seat_puts_your_feet_up`.
 
 ## Numbers and tuning
 
