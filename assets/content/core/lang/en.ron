@@ -480,6 +480,7 @@
     "combat.splat.blow.beat": "{damage}",
     "combat.splat.blow.flourish": "{damage}!",
     "combat.splat.blow.counter": "Counter {damage}",
+    "combat.splat.blow.unaware": "Unaware {damage}",
     "combat.splat.blow.bleed": "Bleed {damage}",
     "combat.splat.defended.hit": "-{damage}",
     "combat.splat.defended.missed": "Missed",

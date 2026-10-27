@@ -1679,11 +1679,13 @@ impl Server {
     }
 
     /// Whether creature `id` has not noticed `player` (by the one sight rule, `brain::think`)
-    /// nor been hurt by them lately: asleep, looking away, or stalked from behind. A boss
-    /// is never caught unaware.
+    /// nor been hurt by them lately: asleep, looking away, or stalked from behind. One that
+    /// has not yet thought (`Live::rolls`, just come about) has not looked about, so it is
+    /// not caught unaware either: who it has noticed is known only once it has. A boss is
+    /// never caught unaware.
     pub(crate) fn unaware_of(&self, id: u32, player: PlayerId) -> bool {
         self.creatures.live.get(&id).is_some_and(|c| {
-            !self.content.creatures.get(c.species).def.boss && !c.mind.noticed.iter().any(|n| n.0 == player) && !c.mind.recalls(brain::Memory::HurtBy(player))
+            !self.content.creatures.get(c.species).def.boss && c.rolls > 0 && !c.mind.noticed.iter().any(|n| n.0 == player) && !c.mind.recalls(brain::Memory::HurtBy(player))
         })
     }
 
@@ -6593,8 +6595,9 @@ mod fight_tests {
     /// Puts `item` in the player's hand.
     /// A blow on a creature that has not noticed the striker (`Server::unaware_of`) cannot
     /// miss: a bare fist on a bear lands every time while the bear has not seen them, and
-    /// often misses once it has. Facing away from a player out of its close, it stays
-    /// unaware; facing them, it notices them and is no longer. A boss never is.
+    /// often misses once it has. One that has not yet thought is not caught unaware. Facing
+    /// away from a player out of its close, it stays unaware; facing them, it notices them
+    /// and is no longer. A boss never is.
     #[test]
     fn a_blow_on_one_unaware_cannot_miss() {
         let mut server = crate::test_server();
@@ -6604,6 +6607,9 @@ mod fight_tests {
         let bear = put(&mut server, "base:brown_bear", c.as_vec3() + Vec3::new(-2.5, 0.0, 0.5), Vec3::NEG_X);
         let fist = server.content.combat.wielded(None, |_| 1);
         let plain = voxmar_engine::combat::Stroke::of(voxmar_engine::combat::Blow::Plain, 1.0, false, false, false, false, &server.content.combat.feel);
+        // Just come about, it has not looked about yet: not caught unaware.
+        assert!(!server.unaware_of(bear, player), "a bear that never thought was caught unaware");
+        server.creatures.live.get_mut(&bear).unwrap().rolls = 1;
         // Fifty blows each, the bear's mind set afresh before each: unaware, or having seen them.
         let blows = |server: &mut Server, seen: bool| {
             (0..50)

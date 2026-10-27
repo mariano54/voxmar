@@ -57,7 +57,8 @@ pub use voxmar_engine::weather::Weather;
 // 59: a firing finished while the player was away (ServerMessage::Fired).
 // 60: ServerMessage::Shown, what stands on the blocks that show what they hold (a shelf's
 // things), a column at a time to the players who have it.
-pub const PROTOCOL_VERSION: u32 = 60;
+// 61: a blow on a creature caught unaware (Blow::Unaware).
+pub const PROTOCOL_VERSION: u32 = 61;
 
 /// Lines of news a client shows at once (its toasts). The server keeps one fewer waiting for
 /// a player away, so all of it is seen as they come back on with a line still free for

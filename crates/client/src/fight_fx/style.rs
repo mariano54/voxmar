@@ -326,7 +326,7 @@ pub struct FightLook {
     pub shots: BTreeMap<String, ShotLook>,
 }
 
-const BLOWS: [Blow; 5] = [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed];
+const BLOWS: [Blow; 6] = [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed, Blow::Unaware];
 const STYLES: [Style; 5] = [Style::Stab, Style::Slash, Style::Crush, Style::Ranged, Style::Magic];
 
 impl FightLook {
