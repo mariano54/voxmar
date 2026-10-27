@@ -1091,6 +1091,31 @@ fn a_fire_gone_out_ticks_as_it_cools() {
     assert!(out.ago(151.0).is_empty(), "cooled and forgotten");
 }
 
+/// Supper at home: while a pot simmers indoors, the supper things knock at the dresser
+/// now and then, from the dresser; never with no pot on, nor out of doors, nor with no
+/// dresser near.
+#[test]
+fn supper_things_knock_at_the_dresser_while_the_pot_simmers() {
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let groups = ambience.block_groups(blocks);
+    let dresser = ambience.groups.iter().position(|g| g.name == "dresser").expect("a group of dressers");
+    let group_of = |name: &str| groups[blocks.id(name).unwrap_or_else(|| panic!("{name}")).0 as usize].map(|g| g as usize);
+    assert_eq!(group_of("base:oak_dresser"), Some(dresser));
+    assert_ne!(group_of("base:earthen_plate"), Some(dresser), "a plate alone is no dresser");
+    let sound = ambience.sounds.iter().position(|s| s.name == "base:home_supper").expect("supper at home");
+    assert_eq!(ambience.sounds[sound].at, super::defs::Placement::Block(dresser), "from the dresser");
+    let played = |set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "farm", &["plains", "temperate"], set), 600.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound)).count()
+    };
+    assert!(played(&[("dresser", 1.0), ("pot", 1.0), ("shelter", 1.0)]) > 0, "supper on");
+    assert_eq!(played(&[("dresser", 1.0), ("shelter", 1.0)]), 0, "no pot on");
+    assert_eq!(played(&[("dresser", 1.0), ("pot", 1.0)]), 0, "out of doors");
+    assert_eq!(played(&[("pot", 1.0), ("shelter", 1.0)]), 0, "no dresser near");
+}
+
 /// A village at work by day: the anvil ringing at the smithy, the mill wheel turning, logs
 /// split at the woodyard and pigs in the pens, each from its own building; the shrine's
 /// bell at dawn and dusk only; at night none of it. And a fire sat by now and then has a
