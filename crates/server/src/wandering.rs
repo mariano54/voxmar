@@ -699,7 +699,9 @@ impl Server {
         }
     }
 
-    fn make_young(&mut self, id: u32) {
+    /// Makes creature `id` young: small, growing up over its kind's `breeding.growth`
+    /// minutes (ten unset). Wandering parties' young and wild litters (`creature::Guards`).
+    pub(crate) fn make_young(&mut self, id: u32) {
         let tick = self.tick;
         let Some(creature) = self.creatures.live.get_mut(&id) else { return };
         let def = &self.content.creatures.get(creature.species).def;
