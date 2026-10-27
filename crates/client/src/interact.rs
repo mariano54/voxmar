@@ -134,7 +134,9 @@ fn select_slot(
 }
 
 /// The middle button picks the block looked at: it selects the hotbar slot holding it, or
-/// swaps it into the selected slot from the rest of the inventory, as in Minecraft.
+/// swaps it into the selected slot from the rest of the inventory, as in Minecraft. Carrying
+/// none of it, it picks the carried tool that breaks it fastest instead, if one is faster
+/// than what is in hand (`ToolRegistry::fastest_carried`): a pickaxe for stone, an axe for a log.
 fn pick_block(
     mouse: Res<ButtonInput<MouseButton>>,
     ui: Res<UiState>,
@@ -142,20 +144,17 @@ fn pick_block(
     world: Res<ClientWorld>,
     net: Res<Net>,
     actions: Res<Actions>,
+    launch: Res<Launch>,
     mut player: ResMut<LocalPlayer>,
 ) {
     if !ui.cursor_locked || !mouse.just_pressed(MouseButton::Middle) {
         return;
     }
     let Some(block) = target.hit.and_then(|hit| world.block(hit.block)) else { return };
-    let item = world.registry.info(block).drops;
-    let item = if item.is_air() { block } else { item };
-    let holds = |slot: usize| player.inventory.get(slot).is_some_and(|s| s.item == item);
-    if let Some(slot) = (0..HOTBAR_SLOTS).find(|&slot| holds(slot)) {
+    let Some(slot) = picked(&launch.content, &world.registry, &player, block) else { return };
+    if slot < HOTBAR_SLOTS {
         player.selected = slot;
-    } else if let Some(slot) = (HOTBAR_SLOTS..SLOTS).find(|&slot| holds(slot))
-        && let Some(transfer) = actions.named("core:transfer")
-    {
+    } else if let Some(transfer) = actions.named("core:transfer") {
         let selected = player.selected;
         let count = player.inventory.get(slot).map_or(0, |s| s.count);
         if player.inventory.move_items(slot, selected, count) {
@@ -163,6 +162,22 @@ fn pick_block(
             net.propose(transfer, target);
         }
     }
+}
+
+/// The slot the middle button picks for `block`: one holding it (its drop), the hotbar
+/// first; carrying none, the one holding the carried tool that breaks it fastest, if faster
+/// than what is in hand.
+fn picked(content: &Content, blocks: &BlockRegistry, player: &LocalPlayer, block: BlockId) -> Option<usize> {
+    let item = blocks.info(block).drops;
+    let item = if item.is_air() { block } else { item };
+    let holds = |slot: usize, item: BlockId| player.inventory.get(slot).is_some_and(|s| s.item == item);
+    let find = |item: BlockId| (0..SLOTS).find(|&slot| holds(slot, item));
+    find(item).or_else(|| {
+        let held = player.inventory.get(player.selected).map(|s| s.item);
+        let carried = (0..SLOTS).filter_map(|slot| player.inventory.get(slot)).map(|s| s.item);
+        let (tool, _) = content.tools.fastest_carried(held, block, blocks.info(block).hardness, carried)?;
+        find(tool)
+    })
 }
 
 fn find_target(world: Res<ClientWorld>, player: Res<LocalPlayer>, mut target: ResMut<Target>) {
@@ -816,6 +831,36 @@ mod tests {
 
     use super::*;
     use crate::render::terrain::Terrain;
+
+    /// The middle button on cobblestone: the slot holding cobblestone if any; else the
+    /// carried pickaxe that breaks it fastest (stone over flint, a log is no tool), the hotbar
+    /// or the pack; nothing when what is in hand is already the fastest, or nothing breaks it
+    /// faster.
+    #[test]
+    fn picking_a_block_not_carried_picks_the_fastest_tool_for_it() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let id = |n: &str| content.blocks.id(n).unwrap();
+        let cobble = id("base:cobblestone");
+        let mut player = LocalPlayer::default();
+        let put = |player: &mut LocalPlayer, slot: usize, item: &str| player.inventory.slots[slot] = Some(voxmar_engine::inventory::ItemStack::new(id(item), 1));
+        put(&mut player, 0, "base:oak_log");
+        put(&mut player, 3, "base:flint_pickaxe");
+        put(&mut player, HOTBAR_SLOTS + 2, "base:stone_pickaxe");
+        let picks = |player: &LocalPlayer| picked(&content, &content.blocks, player, cobble);
+        assert_eq!(picks(&player), Some(HOTBAR_SLOTS + 2), "the stone pickaxe, from the pack");
+        player.selected = 3;
+        assert_eq!(picks(&player), Some(HOTBAR_SLOTS + 2), "faster than the flint one in hand");
+        player.inventory.slots[HOTBAR_SLOTS + 2] = None;
+        assert_eq!(picks(&player), None, "the fastest is in hand");
+        player.selected = 0;
+        assert_eq!(picks(&player), Some(3), "the flint one, on the hotbar");
+        put(&mut player, 5, "base:cobblestone");
+        assert_eq!(picks(&player), Some(5), "the block itself first");
+        let log = id("base:oak_log");
+        player.inventory.slots[5] = None;
+        player.inventory.slots[0] = None;
+        assert_eq!(picked(&content, &content.blocks, &player, log), None, "nothing carried breaks a log faster");
+    }
 
     /// `break_and_place` alone, with the shipped content but `actions`, the player looking
     /// at the block beside their feet with the cursor locked.

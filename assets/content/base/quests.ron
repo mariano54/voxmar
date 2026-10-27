@@ -23,9 +23,10 @@
         // The Farm age: fired clay, copper and tin, and the Crucible Kiln that opens bronze.
         (
             name: "the_potter", age: "farm", branch: "main", title: "The Potter",
-            why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
+            why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2). While the clay fires, fell trees for the clamp's fuel (Fuel to Hand).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["the_farm_age", "fire_the_clay"],
+            meanwhile: ["fuel_to_hand"],
             rewards: [Xp("crafting", 305.0), Item("firewood", 4)],
         ),
         (
@@ -312,7 +313,7 @@
         (
             name: "the_scarecrows_pockets", age: "farm", branch: "farming", title: "The Scarecrow's Pockets",
             side: true,
-            why: "By night a scarecrow walks the fields of those with a home, keeping its distance. Get near enough to talk and it empties its pockets: seed mix for your animals, saved from the crows.",
+            why: "By night a scarecrow walks the fields of those with a home, keeping its distance, but it stands stock still while you watch it. Keep your eyes on it as you walk up, and once near enough to talk it empties its pockets: seed mix for your animals, saved from the crows.",
             tasks: [[Dealt("scarecrow", "pockets", 1)]],
             after: ["seed_mix"],
             rewards: [Xp("farming", 40.0)],
@@ -736,6 +737,14 @@
             tasks: [[Craft("stone_altar", 1)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("magic", 120.0)],
+        ),
+        (
+            name: "a_tale_by_night", age: "farm", branch: "prayer", title: "A Tale by Night",
+            side: true,
+            why: "After dark a storyteller sits by the road with a tale to tell. Sit and listen: the tale is of something strange not far off, and you leave it with a clear head.",
+            tasks: [[Dealt("story_teller", "tale", 1)]],
+            after: ["a_place_to_pray"],
+            rewards: [Xp("magic", 30.0)],
         ),
         (
             name: "paying_respects", age: "farm", branch: "prayer", title: "Paying Respects",
