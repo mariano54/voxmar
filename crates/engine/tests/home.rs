@@ -322,7 +322,8 @@ fn an_awning_and_yard_pieces_out_of_doors_make_a_dooryard() {
     for name in ["base:oak_bench", "base:red_bunting", "base:hay_bale", "base:dry_stone_wall"] {
         assert!(content.blocks.def(content.blocks.expect(name)).has_tag("yard"), "{name} is a yard piece");
     }
-    for name in ["base:red_awning", "base:oak_chair", "base:red_rug"] {
+    assert!(content.blocks.def(content.blocks.expect("base:oak_door_hood")).has_tag("awning"), "a door hood makes a dooryard as an awning does");
+    for name in ["base:red_awning", "base:oak_door_hood", "base:oak_chair", "base:red_rug"] {
         assert!(!content.blocks.def(content.blocks.expect(name)).has_tag("yard"), "{name} is not a yard piece");
     }
     // Indoors, `/home` says to step out.
