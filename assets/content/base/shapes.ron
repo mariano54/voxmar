@@ -988,5 +988,19 @@
             (from: (0, 4, 4), to: (16, 8, 12), cull: true),
             (from: (0, 8, 6), to: (16, 10, 10), cull: true),
         ]),
+        // A ridge's hipped end: the ridge run north to south, its north half sloping down
+        // as its sides do, where a hipped roof's end slope meets it.
+        "roof_ridge_end": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (4, 4, 4), to: (12, 8, 16), cull: true),
+            (from: (6, 8, 6), to: (10, 10, 16), cull: true),
+        ]),
+        // A hipped roof's peak over a square, where four hips meet: a ridge sloping down on
+        // every side.
+        "roof_peak": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (4, 4, 4), to: (12, 8, 12)),
+            (from: (6, 8, 6), to: (10, 10, 10)),
+        ]),
     },
 )

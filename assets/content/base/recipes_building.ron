@@ -16,6 +16,10 @@
         // a row of three makes two ridges.
         (pattern: [["tag:fibre", "tag:fibre", "tag:fibre"], ["tag:fibre", "tag:fibre", "tag:fibre"]], output: "thatch_roof", count: 4, skill: "core:construction", level: 1, xp: 3.0),
         (pattern: [["tag:fibre", "", "tag:fibre"], ["", "tag:fibre", ""]], output: "thatch_ridge", count: 2, skill: "core:construction", level: 1, xp: 2.0),
+        // A ridge over a roof's course makes two ridge ends for a hipped roof's ends; two
+        // ridges side by side two peaks, where four hips meet over a square.
+        (pattern: [["thatch_ridge"], ["thatch_roof"]], output: "thatch_ridge_end", count: 2, skill: "core:construction", level: 1, xp: 1.0),
+        (pattern: [["thatch_ridge", "thatch_ridge"]], output: "thatch_peak", count: 2, skill: "core:construction", level: 1, xp: 1.0),
         // Timber, in whichever of birch, oak and dark oak the logs are: three logs in a
         // column make posts, in a row beams.
         (pattern: [["{name}_log"], ["{name}_log"], ["{name}_log"]], output: "{name}_post", count: 6, skill: "core:construction", level: 2, xp: 3.0),
@@ -28,6 +32,8 @@
         // Roof corners, two of a roof's pieces side by side for a hip, one over the other
         // for a valley.
         (pattern: [["{name}_shingles", "{name}_shingles"]], output: "{name}_shingles_corner", count: 2, skill: "core:construction", level: 5, xp: 1.0),
+        (pattern: [["{name}_shingle_ridge"], ["{name}_shingles"]], output: "{name}_shingle_ridge_end", count: 2, skill: "core:construction", level: 5, xp: 1.0),
+        (pattern: [["{name}_shingle_ridge", "{name}_shingle_ridge"]], output: "{name}_shingle_peak", count: 2, skill: "core:construction", level: 5, xp: 1.0),
         (pattern: [["{name}_shingles"], ["{name}_shingles"]], output: "{name}_shingles_inner_corner", count: 2, skill: "core:construction", level: 5, xp: 1.0),
         (pattern: [["thatch_roof", "thatch_roof"]], output: "thatch_corner", count: 2, skill: "core:construction", level: 1, xp: 1.0),
         (pattern: [["thatch_roof"], ["thatch_roof"]], output: "thatch_inner_corner", count: 2, skill: "core:construction", level: 1, xp: 1.0),
