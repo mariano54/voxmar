@@ -5,7 +5,9 @@
 //   group is selected by block tags or materials (`falling: true`: only fluid pouring
 //   down; `lit: true`: a structure's core only while its fire burns) and is an axis of its
 //   own, 0 below the first number of its range and 1 above the second. A block counts for
-//   the first group that selects it.
+//   the first group that selects it. A group that `cools: ("kiln", 120)` selects nothing of
+//   its own: it counts a lit group's cores for that many seconds (at most 600) after their
+//   fire goes out, as the client saw it go.
 // beds: continuous layers, synthesized (`sound`) or recorded (`recording`: three segments in
 //   this package, eight seconds each, fading in and out over their first and last second
 //   and a half, as the mixer crossfades them). `volume` at full strength; `when` holds soft ranges on axes,
@@ -98,6 +100,11 @@
         // ten blocks it has faded to a murmur, and past fifteen it is gone. `lit`: a hearth
         // (a structure's core) is heard only while its fire burns.
         (name: "fire", tags: ["campfire", "hearth", "pit_kiln"], range: (3, 10), lit: true),
+        // A kiln or a hearth just gone out (the server no longer says it burns): its bricks
+        // or stones ticking as they cool, the kiln's for two minutes, a hearth's for one. They
+        // select no blocks of their own: the cores of the lit group named, cooling.
+        (name: "kiln_cooling", cools: ("kiln", 120), range: (1, 4)),
+        (name: "fire_cooling", cools: ("fire", 60), range: (1, 4)),
         // Lava and falling water sound like water to the step, so they come first.
         (name: "lava", tags: ["lava"], range: (4, 80)),
         // A pot on the boil (`simmering`): one within five blocks is full.
@@ -113,6 +120,8 @@
         (name: "rock", materials: [Stone, Gravel], range: (60, 700)),
         (name: "sand", materials: [Sand], range: (60, 600)),
         (name: "snowpack", materials: [Snow], range: (60, 600)),
+        // Ice: a frozen pond or lake, a glacier's edge.
+        (name: "ice", tags: ["ice"], range: (20, 300)),
     ],
     roofs: (
         height: 12,
@@ -437,6 +446,23 @@
             not_biome: ["desert", "frozen"],
             duck: {"shelter": 0.8, "rain": 0.9},
         ),
+        // A nightjar churring on a warm night over open ground (grass, few trees), from dusk:
+        // a long dry rattle now and then, somewhere out past the camp.
+        (
+            name: "nightjar", sound: Churr, volume: 0.3, at: Around(distance: (12, 28), height: (0, 3)), per_minute: 1.2, cooldown: 25,
+            pitch: (0.95, 1.05), reach: 20,
+            when: {"sun": (max: -0.05, fade: 0.1), "temperature": (min: 12, fade: 5), "grass": (min: 0.4, fade: 0.3), "leaves": (max: 0.2, fade: 0.2), "sky": (min: 0.6, fade: 0.3)},
+            not_biome: ["desert", "frozen", "wetland"],
+            duck: {"shelter": 0.8, "rain": 0.9, "high_wind": 0.7},
+        ),
+        // Ice on frozen water singing as the night cools: a deep thoom, then a falling
+        // whistle running away through the sheet. Now and then by day too, more after dark.
+        (
+            name: "ice_sing", sound: IceSing, volume: 0.32, at: OpenBlock("ice"), per_minute: 1.5, cooldown: 18,
+            pitch: (0.85, 1.15), reach: 40,
+            when: {"ice": (min: 0.3, fade: 0.25), "sun": (max: 0.0, fade: 0.4), "sky": (min: 0.4, fade: 0.4)},
+            duck: {"shelter": 0.7, "high_wind": 0.6},
+        ),
         // Frogs by water on warm evenings and nights, most in wetlands.
         (
             name: "frog", sound: Frog, volume: 0.38, at: Block("water"), per_minute: 3, cooldown: 5,
@@ -562,6 +588,21 @@
             name: "hearth_settle", sound: Settle, volume: 0.28, at: Block("fire"), per_minute: 1.2, cooldown: 20,
             pitch: (0.9, 1.1), reach: 6,
             when: {"fire": (min: 0.6, fade: 0.55)},
+        ),
+        // A kiln gone out: its fired bricks ticking now and then as they cool, a small tink
+        // among them; a hearth gone out, its stones the same, lower and fewer. (Only a
+        // structure's core is told burning, so a campfire, never out, has none.)
+        (
+            name: "kiln_cooling", sound: Cooling, volume: 0.26, at: Block("kiln_cooling"), per_minute: 6, cooldown: 4,
+            pitch: (0.9, 1.15), reach: 6,
+            when: {"kiln_cooling": (min: 0.3, fade: 0.25)},
+            duck: {"rain": 0.5},
+        ),
+        (
+            name: "hearth_cooling", sound: Cooling, volume: 0.2, at: Block("fire_cooling"), per_minute: 3, cooldown: 8,
+            pitch: (0.7, 0.85), reach: 5,
+            when: {"fire_cooling": (min: 0.3, fade: 0.25)},
+            duck: {"rain": 0.5},
         ),
         // A pot on the fire bubbling away while it cooks.
         (

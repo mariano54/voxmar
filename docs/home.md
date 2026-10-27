@@ -44,13 +44,13 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
-Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, footstools,
-cushions and window seats; tables include desks and counters; storage is whatever a home
+Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, log benches,
+footstools, cushions and window seats; tables include desks and counters; storage is whatever a home
 keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
 shelves, plate racks, spice racks, candle boxes, bread bins, kindling boxes, bedside
 tables, stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves
-too), crate stacks, barrel racks, jars and baskets, and a village's barrels and crates
-(every store a player opens counts but the feed trough, which is the pen's: test
+too), crate stacks, barrel racks, jars, baskets and grain sacks, and a village's barrels,
+crates and sacks (every store a player opens counts but the feed trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
 of a chest and a barrel by a campfire, "home: storage"); crockery is plates, bowls, jars,
 jugs, baskets and a dresser's plates on show; rugs include a rush mat (4 rushes, Crafting 1,
@@ -372,10 +372,13 @@ motifs step can be where it first came on ("home: evening in"), then sets noon.
 Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
 through, you stay so for two minutes under cover (three if drenched), colder and, drenched,
 slower to heal, unless you dry off within three blocks of a fire or a hearth (or warmed on a
-cold day). So coming in from the rain, you dry by your own hearth. It is data: an effect
-that `lingers` can name what `ends` it early (core effects.ron's `ends: Some(Any([Warmed,
-Near("fire", 3), Near("hearth", 3)]))`), and loading refuses `ends` on one that does not
-linger. Tests: the engine's `wet_through_you_dry_off_by_a_fire_and_not_before`, the
+cold day), or hang your things up within two blocks of a peg rail indoors. So coming in from
+the rain, you dry by your own hearth or at the rail by the door: the peg rail, decor until
+then, does something. It is data: an effect that `lingers` can name what `ends` it early
+(core effects.ron's `ends: Some(Any([Warmed, Near("fire", 3), Near("hearth", 3),
+Near("pegs", 2)]))`), and loading refuses `ends` on one that does not linger. Tests: the
+engine's `wet_through_you_dry_off_by_a_fire_and_not_before` and
+`wet_things_hung_on_a_peg_rail_dry_you_off`, the
 server's `health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it`; the gate's
 Weather step dries the player by a campfire after its storm ("weather: dries by a fire").
 
@@ -528,7 +531,11 @@ pack into the stores, so a home stays useful without sorting by hand.
   The pouches, the crafting grid and the pointer are skipped too, and so is any store
   that is full or does not take the item (`Machine::bin_takes`).
 - **Quests.** What goes in is tallied by each store's block (`stocked:`), as a move into an
-  open store is, so a quest's `Stocked` counts clay put away with H.
+  open store is, so a quest's `Stocked` counts clay put away with H. The Nomad home side
+  quest **Put It Away** (after From the Shelves) teaches the key: thirty-two planks into
+  any store with the key (`PutAway("tag:planks", 32)`, a `put_away:ITEM` tally only
+  `put_away` keeps; a move by hand counts for `Stocked` only). Test:
+  `planks_put_away_finish_put_it_away`.
 - **Which stores count.** Those in the home box (the same `home_stores` that Lay and the
   stations draw from, nearest first), and only while the player stands in their own home.
   `from_stores` belongs to stations and does not apply. A guest puts nothing into a
