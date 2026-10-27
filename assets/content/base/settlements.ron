@@ -85,7 +85,8 @@
 //   sunset, 1 the next sunrise), each drawing one place a day among those the settlement
 //   has (Sleep, Home, Yard, Work, Square, Well, Inn, Shrine, Neighbour, Gate, Patrol,
 //   Wander), leaning on the levers. Each person's day runs early or late by up to
-//   `jitter`; they move to another spot of a place after `linger` seconds; a newcomer
+//   `jitter`; they move to another spot of a place after `linger` seconds, and `sit` of
+//   their stays about the house are at the table, each on a seat of their own; a newcomer
 //   takes the place of someone who died after `newcomer` days (at least a quarter; the
 //   world's save keeps who died), and a settlement takes `newcomers_per_day` at most.
 //   `shrine`: the work or kind of building Shrine sends people to. `live`: how the server
@@ -796,6 +797,8 @@
     people: (
         jitter: 0.03,
         linger: (12.0, 50.0),
+        // Two stays in five about the house are sat at the table.
+        sit: 0.4,
         newcomer: 5.0,
         newcomers_per_day: 1.0,
         shrine: "shrine",
