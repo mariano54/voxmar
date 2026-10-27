@@ -407,7 +407,7 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
   Place to Pray). Loading refuses one done before it, one not open while it is (each
   `after` a quest it waits on), or one its `why` does not name in brackets; a client test
   checks each language's text names the translated title. A Pot on the Chimney now opens
-  with The Potter, beside Earthenware, so it is open during the first load.
+  with The Potter, beside Earthenware, so it is open during the first load. Brick by Brick's names A Table for Two, and Charcoal's A Place to Pray.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
 
@@ -620,6 +620,12 @@ Bigger Game: a guard patrol's gold coin for a fang) and **Wassail** (Farm, after
 Garden: a loaf for the wassailers' toast that grows the crops). The Dealt-line check now asks
 one way of a quest to have every skill gate met (a player past one line's turn takes the
 next), and checks a tag a line wants against what can be come by.
+
+Three more got one: **Paying Respects** (Farm, after A Place to Pray: stand with a funeral
+procession for their prayer), **Join the Dance** (Nomad, after Hard to Put Down: a round with
+a dance circle) and **The Scarecrow's Pockets** (Farm, after Seed Mix: the seed a scarecrow
+carries). The Dealt-line check now also reports, without failing, an alternative way whose
+skill gate the books never surely reach, the same way the gap check reports one.
 
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).

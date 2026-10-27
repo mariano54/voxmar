@@ -357,6 +357,31 @@ impl Sleeps {
     }
 }
 
+/// How a mother guards her young (docs/creature-ai.md, "Young"): a wild group of its
+/// kind comes with young by `young` (the chance, 0 to 0.6). A grown one that notices a
+/// player within `near` blocks (2 to 12) of a young one of its kind huffs at them for
+/// `huff` seconds (0.3 to 2), facing them, then goes for them if they are still there; one
+/// who strikes a young one it goes for at once. A player who gives the young room, or backs
+/// off at the huff, is let be.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Guards {
+    pub near: f32,
+    pub young: f32,
+    pub huff: f32,
+}
+
+impl Guards {
+    /// Room enough to be seen coming and kept to, young now and then, not in every herd,
+    /// and a huff long enough to back off in, too short to stroll on past.
+    pub fn check(&self) -> Result<(), String> {
+        if !(2.0..=12.0).contains(&self.near) || !(0.0..=0.6).contains(&self.young) || self.young == 0.0 || !(0.3..=2.0).contains(&self.huff) {
+            return Err(format!("`guards` needs near 2 to 12 blocks, young a chance above 0 up to 0.6 and huff 0.3 to 2 seconds, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
 /// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
 /// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
@@ -842,6 +867,10 @@ pub struct CreatureDef {
     /// hunter's meat. Unset, it lets dropped food lie.
     #[serde(default)]
     pub scavenge: Option<Scavenge>,
+    /// It guards its young (`Guards`): a sow goes for a player who comes near her
+    /// piglets. Unset, its young are nothing to it.
+    #[serde(default)]
+    pub guards: Option<Guards>,
     /// It sleeps out of its active hours (`Sleeps`), woken by a sprint, not a quiet step.
     /// Unset, it rests but notices players as ever.
     #[serde(default)]
@@ -1395,6 +1424,14 @@ impl CreatureRegistry {
                     return Err(error("is a boss or supernatural, and steals no one's food (`scavenge`)".into()));
                 }
                 scavenge.check().map_err(error)?;
+            }
+            if let Some(guards) = def.guards {
+                let behaviours = if def.behaviours.is_empty() { generated(&def) } else { def.behaviours.clone() };
+                let fights = def.attack.is_some() && behaviours.iter().any(|b| matches!(b.behaviour, Behaviour::Defend | Behaviour::Hunt { .. }));
+                if !fights || def.boss || def.supernatural || def.kind != Kind::Animal {
+                    return Err(error("guards its young (`guards`), which is for an animal that fights back: not a boss or a supernatural kind".into()));
+                }
+                guards.check().map_err(error)?;
             }
             if let Some(sleeps) = def.sleeps {
                 if def.habitat.active == Active::Any {

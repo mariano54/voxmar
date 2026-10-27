@@ -9112,10 +9112,18 @@ impl Fresh {
         let mut swings = 0;
         let hand = if self.have("base:stone_axe") > 0 { "base:stone_axe" } else { "" };
         self.hold(hand);
-        // In by the open end.
+        // In by the open end, and the mouth shut behind: an animal struck at the far end gets
+        // past the player (who does not block it), and with the mouth open it ran out of the
+        // lane, so a hunt for two hides ran down two dozen rabbits and past a minute in three
+        // Farm walks of twenty (Oct 27).
         if (self.at.x - lane_x).abs() > 0.5 {
             self.walk_toward(mouth, 0.05);
         }
+        let inside = Self::middle(self.rel(-9, 0, 0));
+        if self.at.z > inside.z {
+            self.walk_toward(inside, 0.05);
+        }
+        self.shut_lane(true);
         while !done(&self.c) {
             swings += 1;
             assert!(swings <= 400, "hunting took over 400 swings: at {:?}, lane {:?}, blows {} damage {:?}", self.at, lane(&self.c, self.origin), self.c.blows, self.c.damage);
@@ -9144,7 +9152,7 @@ impl Fresh {
             };
             // Up close behind it, in the lane.
             if (p.z - at.z).abs() > 1.6 {
-                self.walk_toward(Vec3::new(lane_x, at.y, p.z + 1.3), 0.1);
+                self.walk_toward(Vec3::new(lane_x, at.y, (p.z + 1.3).min(inside.z)), 0.1);
             }
             self.propose("core:attack", ActionTarget::Creature(id));
             self.swung.push(id);
@@ -9157,6 +9165,15 @@ impl Fresh {
                 }
             });
         }
+        self.shut_lane(false);
+    }
+
+    /// Shuts the lane's mouth (two blocks of stone across it, the player inside), or opens it.
+    fn shut_lane(&mut self, shut: bool) {
+        let (block, id) = if shut { ("stone", self.c.content.blocks.id("base:stone")) } else { ("air", Some(BlockId::AIR)) };
+        let mouth = self.rel(-9, 0, 1);
+        self.c.fill(self.origin, IVec3::new(-9, 0, 1), IVec3::new(-9, 1, 1), block);
+        self.c.pump_until(|c| (0..2).all(|y| c.world.block(mouth + IVec3::Y * y) == id));
     }
 
     /// Builds the plot beside a player who has just joined, and starts the clock. Coordinates
@@ -9979,24 +9996,31 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         if !quest_status(&f.c, "a_kiln_load").0 {
             let more = f.have(fired) + 12;
             f.fire_clay(&site, more);
-            // Between loads, as A Kiln Load says: Earthenware's crockery from the fired clay,
-            // the bowls after one load and the jar after the next.
-            if !quest_status(&f.c, "earthenware").0 && f.have(fired) >= 3 {
-                if f.have("base:earthen_bowl") == 0 {
+            // Between loads, as A Kiln Load says (its `meanwhile`): Earthenware's bowls, A Pot
+            // on the Chimney's pots and Earthenware's jar, one a load, and what is left once the
+            // last load is out (two loads, with clay fired before, left no room for the third).
+            let between = |f: &mut Fresh| {
+                let crockery = quest_status(&f.c, "earthenware").0;
+                if !crockery && f.have("base:earthen_bowl") == 0 && f.have(fired) >= 3 {
                     bowls(f);
-                } else if f.have("base:earthen_jar") == 0 {
+                } else if !quest_status(&f.c, "a_pot_on_the_chimney").0 && f.have(fired) >= 4 {
+                    // Two chimney pots of four fired clay at the table (Construction 3), one
+                    // set on the chimney.
+                    f.at_table(table);
+                    f.craft(&[(0, fired, 1), (2, fired, 1), (3, fired, 1), (5, fired, 1)], "base:chimney_pot", 2);
+                    f.walk_toward(Fresh::middle(f.rel(3, 0, 4)), 0.3);
+                    f.place("base:chimney_pot", f.rel(3, 2, 6));
+                    f.wait(5.0, "the server counting the chimney pot", |c| quest_status(c, "a_pot_on_the_chimney").0);
+                } else if !crockery && f.have(fired) >= 3 {
                     jar(f);
+                } else {
+                    return false;
                 }
-            } else if quest_status(&f.c, "earthenware").0 && !quest_status(&f.c, "a_pot_on_the_chimney").0 && f.have(fired) >= 4 {
-                // A Pot on the Chimney, open once the crockery is made: two chimney pots of
-                // four fired clay at the table (Construction 3), one set on the chimney.
-                f.at_table(table);
-                f.craft(&[(0, fired, 1), (2, fired, 1), (3, fired, 1), (5, fired, 1)], "base:chimney_pot", 2);
-                f.walk_toward(Fresh::middle(f.rel(3, 0, 4)), 0.3);
-                f.place("base:chimney_pot", f.rel(3, 2, 6));
-                f.wait(5.0, "the server counting the chimney pot", |c| quest_status(c, "a_pot_on_the_chimney").0);
-            }
+                true
+            };
+            between(f);
             if quest_status(&f.c, "a_kiln_load").0 {
+                while between(f) {}
                 f.mark("a_kiln_load");
             }
         } else if !quest_status(&f.c, "first_bricks").0 {
@@ -10017,10 +10041,26 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
                 bowls(f);
             }
             jar(f);
-        } else if !quest_status(&f.c, "a_table_for_two").0 {
-            // A Table for Two, open since the Farm Age, made between firings: two oak stools
-            // (Construction 1) and a table (Construction 3) at the crafting table, set by the
-            // hearth.
+        } else if f.have(straw) < 12u32.saturating_sub(done_tempered).div_ceil(2) {
+            // Straw for the Kiln: the tufts of wild wheat beyond the east pond, picked for the
+            // straw that tempers the ring's bricks (one a tuft) and the seeds a field would take,
+            // with room in the pack for them.
+            f.make_room(4);
+            for tuft in (8..=10).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, 0, z))) {
+                if f.c.world.block(tuft) != Some(BlockId::AIR) {
+                    f.walk_toward(Fresh::middle(tuft), 1.3);
+                    f.propose("core:mine", ActionTarget::Block { block: tuft, face: Face::PosY });
+                    f.wait(5.0, "picking the wild wheat", |c| c.world.block(tuft) == Some(BlockId::AIR));
+                }
+            }
+            f.collect(straw, 12u32.saturating_sub(done_tempered).div_ceil(2));
+            // Six kept at once, as the quest asks, before any is spent.
+            f.wait(5.0, "the server counting the straw kept", |c| quest_status(c, "straw_for_the_kiln").0);
+        } else if !quest_status(&f.c, "a_table_for_two").0 && done_tempered >= 6 {
+            // A Table for Two, open since the Farm Age, made between the tempered bricks' loads
+            // (Brick by Brick's `meanwhile`), halfway, where the shaping ran 40 s with nothing
+            // new (Oct 27): two oak stools (Construction 1) and a table (Construction 3) at the
+            // crafting table, set by the hearth.
             f.make_room(4);
             f.at_table(site.table);
             while f.have(stick) < 8 {
@@ -10054,21 +10094,6 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
                 }
             }
             f.propose("core:stow", ActionTarget::None);
-        } else if f.have(straw) < 12u32.saturating_sub(done_tempered).div_ceil(2) {
-            // Straw for the Kiln: the tufts of wild wheat beyond the east pond, picked for the
-            // straw that tempers the ring's bricks (one a tuft) and the seeds a field would take,
-            // with room in the pack for them.
-            f.make_room(4);
-            for tuft in (8..=10).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, 0, z))) {
-                if f.c.world.block(tuft) != Some(BlockId::AIR) {
-                    f.walk_toward(Fresh::middle(tuft), 1.3);
-                    f.propose("core:mine", ActionTarget::Block { block: tuft, face: Face::PosY });
-                    f.wait(5.0, "picking the wild wheat", |c| c.world.block(tuft) == Some(BlockId::AIR));
-                }
-            }
-            f.collect(straw, 12u32.saturating_sub(done_tempered).div_ceil(2));
-            // Six kept at once, as the quest asks, before any is spent.
-            f.wait(5.0, "the server counting the straw kept", |c| quest_status(c, "straw_for_the_kiln").0);
         } else if done_tempered >= 12 {
             f.wait(5.0, "the server counting the bricks shaped", |c| quest_status(c, "brick_by_brick").0);
             f.mark("brick_by_brick");

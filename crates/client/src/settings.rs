@@ -124,7 +124,8 @@ pub struct Settings {
     pub toggle_guard: bool,
     /// Whether a fight shows the number each blow did where it landed (hitsplats).
     pub damage_numbers: bool,
-    /// Whether a fight moves the view: a heavy blow's dip, a hurt's tip, a block's shake.
+    /// Whether a fight moves the view: a heavy blow's dip, a hurt's tip, a block's shake;
+    /// and a rocking chair rocks it.
     pub screen_shake: bool,
     /// Whether the way home shows: a hearth mark toward home at night or far from it
     /// (`hud::home`).
