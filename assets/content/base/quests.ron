@@ -307,6 +307,14 @@
             rewards: [Xp("cooking", 150.0), Xp("farming", 100.0)],
         ),
         (
+            name: "the_scarecrows_pockets", age: "farm", branch: "farming", title: "The Scarecrow's Pockets",
+            side: true,
+            why: "By night a scarecrow walks the fields of those with a home, keeping its distance. Get near enough to talk and it empties its pockets: seed mix for your animals, saved from the crows.",
+            tasks: [[Dealt("scarecrow", "pockets", 1)]],
+            after: ["seed_mix"],
+            rewards: [Xp("farming", 40.0)],
+        ),
+        (
             name: "roots_in_the_embers", age: "farm", branch: "cooking", title: "Roots in the Embers",
             why: "A roast carrot heals better than a raw one, and roots are easy food to grow. Roast four carrots on a campfire (Cooking 2).",
             tasks: [[Cook("roast_carrot", 4)]],
@@ -725,6 +733,14 @@
             tasks: [[Craft("stone_altar", 1)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("magic", 120.0)],
+        ),
+        (
+            name: "paying_respects", age: "farm", branch: "prayer", title: "Paying Respects",
+            side: true,
+            why: "Now and then a funeral walks slowly across open land, bearing its dead. Hold out a flower and lay it with them: honouring the dead is Magic too, not only prayer at an altar. Find the procession by day and pay your respects.",
+            tasks: [[Dealt("funeral", "respects", 1)]],
+            after: ["a_place_to_pray"],
+            rewards: [Xp("magic", 30.0)],
         ),
         (
             name: "bones_for_the_altar", age: "farm", branch: "prayer", title: "Bones for the Altar",
