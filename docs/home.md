@@ -49,7 +49,7 @@ footstools, cushions and window seats; tables include desks and counters; storag
 keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
 shelves, plate racks, spice racks, candle boxes, bread bins, kindling boxes, bedside
 tables, stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves
-too), crate stacks, barrel racks, barrels, crates, jars, baskets and grain sacks, and a
+too), crate stacks, barrel racks, barrels, crates, jars, jugs, baskets and grain sacks, and a
 village's barrels, crates and sacks (every store a player opens counts but the feed
 trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made

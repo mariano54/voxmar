@@ -232,6 +232,23 @@ fn a_kindling_box_keeps_fuel_to_hand() {
     }
 }
 
+/// Flowers in a jug: a jug of either glaze keeps a few flowers, nothing else, and shows
+/// them standing in its neck, so a posy picked on the way home stands on the table.
+#[test]
+fn a_jug_keeps_flowers_standing_in_it() {
+    let content = content();
+    let blocks = &content.blocks;
+    let (poppy, cornflower, stick, bread) = (blocks.expect("base:poppy"), blocks.expect("base:cornflower"), blocks.expect("base:stick"), blocks.expect("base:bread"));
+    let keeps = |id, thing| content.machines.get(id).and_then(|m| m.holds.as_ref()).is_some_and(|holds| holds.contains(&thing));
+    for name in ["base:earthen_jug", "base:ivory_jug"] {
+        let id = blocks.expect(name);
+        assert_eq!(blocks.def(id).shows.len(), 3, "{name} shows three flowers");
+        assert!(blocks.def(id).shows.iter().all(|spot| spot[1] > 0.5 && spot[1] < 12.0 / 16.0), "{name}'s flowers stand in its neck");
+        assert!(content.machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() == 3), "{name} keeps what it shows");
+        assert!(keeps(id, poppy) && keeps(id, cornflower) && !keeps(id, stick) && !keeps(id, bread), "{name} keeps flowers alone");
+    }
+}
+
 /// The sack of grain a village's farmers and millers keep is one a player can weave and
 /// fill at home: a store of grain alone, home storage, given back whole where a player set
 /// it and nothing where a village did (`furnishing`).
