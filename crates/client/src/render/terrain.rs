@@ -2360,6 +2360,24 @@ mod tests {
                     gpu.bounds.push((chunk.origin().as_vec3(), drawn));
                     gpu.chunks.insert(chunk, index);
                 }
+                *gpu.columns.entry(IVec2::new(x, z)).or_default() += 12;
+            }
+        }
+        // And the distant rings around the camera: those over the real chunks given way to.
+        for level in 0..crate::render::lod::LEVELS as u8 {
+            for z in -6..=6 {
+                for x in -6..=6 {
+                    let key = TileKey { level, x, z };
+                    let index = gpu.tiles.len() as u32;
+                    let (corner, size) = (key.origin().as_vec2(), key.size() as f32);
+                    let low = 30 + (index * 37) % 40;
+                    let quads = 200 + (index * 7919) % 900;
+                    let start = (index % 16) * 4096;
+                    let mesh = Allocation { page: index / 16, vertices: start..start + quads * 4, reserved: quads * 4, indices: start * 3 / 2..(start + quads * 4) * 3 / 2 };
+                    let min = Vec3::new(corner.x, low as f32, corner.y);
+                    let max = Vec3::new(corner.x + size, (low + 20 + (index * 13) % 90) as f32, corner.y + size);
+                    gpu.tiles.insert(key, TileRecord { slot: 5000 + index, mesh, min, max });
+                }
             }
         }
         gpu
@@ -2432,11 +2450,11 @@ mod tests {
 
     /// The hash of every view's draws over 40 frames of `culling_a_loaded_world`'s flight,
     /// as culling makes them now.
-    const CULLED: u64 = 0x78fe8194a4532109;
+    const CULLED: u64 = 0x4437ee9c14e7edc2;
 
     /// Culling stays exactly as it was: each view's draws (stream, page and indices, in
-    /// order), the copies that gather their indices, and the grass blades, over a flight
-    /// across `loaded_gpu` with the camera and four sun cascades.
+    /// order), the copies that gather their indices, the grass blades and the distant
+    /// tiles, over a flight across `loaded_gpu` with the camera and four sun cascades.
     #[test]
     fn culling_is_unchanged() {
         let mut gpu = loaded_gpu();
@@ -2460,7 +2478,11 @@ mod tests {
                 for blade in &draws.blades {
                     hash = [blade.seeds.start, blade.seeds.end, blade.blades, blade.slot].into_iter().fold(hash, |h, v| mix(h, v as u64));
                 }
+                for tile in &draws.distant {
+                    hash = [tile.page, tile.indices.start, tile.indices.end, tile.base_vertex as u32, tile.slot].into_iter().fold(hash, |h, v| mix(h, v as u64));
+                }
                 hash = mix(hash, draws.passes.iter().map(Vec::len).sum::<usize>() as u64);
+                hash = mix(hash, draws.distant.len() as u64);
             }
         }
         assert_eq!(hash, CULLED, "culling changed. If that is deliberate, set CULLED to {hash:#018x}");
@@ -2487,6 +2509,23 @@ mod tests {
             }
             assert!(held > 1000 && culled > 1000, "{held} held, {culled} culled");
         }
+        // A chunk exactly touching a plane is held, as `intersects` holds it; a hair
+        // beyond, it is not.
+        let frustum = Frustum::new(Mat4::orthographic_rh(-64.0, 64.0, -64.0, 64.0, 0.0, 1000.0), true);
+        let size = CHUNK_SIZE as f32;
+        for min in [Vec3::new(64.0, 0.0, -100.0), Vec3::new(-64.0 - size, 0.0, -100.0), Vec3::new(0.0, 64.0, -100.0), Vec3::new(0.0, -64.0 - size, -100.0)] {
+            assert!(frustum.intersects(min, min + CHUNK_SIZE as f32) && frustum.holds_chunk(min), "{min}");
+            let beyond = min + min.signum() * Vec3::new(1.0, 1.0, 0.0) * 1e-3;
+            assert!(!frustum.intersects(beyond, beyond + CHUNK_SIZE as f32) && !frustum.holds_chunk(beyond), "{beyond}");
+        }
+        // A degenerate view (a camera matrix gone NaN, or a chunk at NaN) holds nothing,
+        // the same as `intersects`.
+        let broken = Frustum::new(Mat4::from_cols_array(&[f32::NAN; 16]), false);
+        let min = Vec3::new(0.0, 64.0, 0.0);
+        assert!(!broken.intersects(min, min + CHUNK_SIZE as f32) && !broken.holds_chunk(min));
+        let nan = Vec3::splat(f32::NAN);
+        assert_eq!(frustum.holds_chunk(nan), frustum.intersects(nan, nan + CHUNK_SIZE as f32));
+        assert!(!frustum.holds_chunk(nan));
     }
 
     #[test]
