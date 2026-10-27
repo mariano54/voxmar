@@ -1467,12 +1467,28 @@ impl Server {
             creature.carrying = None;
         }
         if let Some(to) = decision.blink {
-            let height = self.content.creatures.get(species_id).def.body.size;
-            let landing = (0..6).map(|dy| (to + Vec3::Y * 3.0 - Vec3::Y * dy as f32).floor()).find(|cell| {
-                let feet = cell.as_ivec3();
-                // On footing: never on a railing's narrow top.
-                self.is_solid(feet - IVec3::Y) && !Ground::of(self).railing(feet - IVec3::Y) && !Aabb::standing(cell.as_ivec3().as_vec3() + Vec3::new(0.5, 0.0, 0.5), height.0, height.1).intersects(|p| self.is_solid(p))
-            });
+            let landing = {
+                let def = &self.content.creatures.get(species_id).def;
+                let height = def.body.size;
+                let (movement, water) = (def.movement, def.habitat.water);
+                let body = self.creatures.live[&id].body;
+                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, step: movement.step, wary: water == Water::Land, span: path::Walker::span_of(body.size.0), drop: motion::SAFE_DROP };
+                let ground = Ground::of(self);
+                let landing_at = |to: Vec3| (0..6).map(|dy| (to + Vec3::Y * 3.0 - Vec3::Y * dy as f32).floor()).find(|cell| {
+                    let feet = cell.as_ivec3();
+                    // On footing: never on a railing's narrow top.
+                    self.is_solid(feet - IVec3::Y) && !ground.railing(feet - IVec3::Y) && !Aabb::standing(cell.as_ivec3().as_vec3() + Vec3::new(0.5, 0.0, 0.5), height.0, height.1).intersects(|p| self.is_solid(p))
+                });
+                // Never through a wall or a fence: it lands only where it could have walked, by
+                // a way not much longer than the blink, so a kept one stays in its pen and a wild
+                // one blinks into no shut room. Too far that way, it tries a shorter blink.
+                let from = walker.corner(position + Vec3::Y * 0.01);
+                [1.0, 0.7, 0.45].into_iter().find_map(|k| {
+                    let cell = landing_at(position + (to - position) * k)?;
+                    let way = path::find(&ground, &walker, from, walker.corner(cell + Vec3::new(0.5, 0.01, 0.5)))?;
+                    (way.len() as f32 <= 2.0 * cell.with_y(0.0).distance(position.with_y(0.0).floor()) + 2.0).then_some(cell)
+                })
+            };
             if let Some(cell) = landing {
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
                 creature.body.position = cell + Vec3::new(0.5, 0.0, 0.5);
@@ -4795,6 +4811,53 @@ mod boss_tests {
 mod fight_tests {
     use super::cornered_tests::{join, pen, put, wall};
     use super::*;
+
+    /// A moonhare struck blinks away (5 to 8 blocks at once), but never through a fence or
+    /// a wall: penned in a ring of fence seven across, struck again and again from beside
+    /// it, it blinks about inside and never lands outside; out in the open it still blinks
+    /// its full way off. Before: a blink went straight through anything and a kept moonhare
+    /// struck in its pen was gone over the fence, and the pen's stone walls too.
+    #[test]
+    fn a_struck_moonhare_blinks_only_where_it_could_walk() {
+        for fenced in [true, false] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            if fenced {
+                let ring = (-3..=3).flat_map(|i| [IVec3::new(i, 0, -3), IVec3::new(i, 0, 3)]);
+                set(&mut server, "base:oak_fence", ring.map(|d| c + d).collect::<Vec<_>>());
+                set(&mut server, "base:oak_fence_east", (-2..=2).flat_map(|i| [IVec3::new(-3, 0, i), IVec3::new(3, 0, i)]).map(|d| c + d).collect::<Vec<_>>());
+            }
+            let middle = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+            let player = join(&mut server, middle + Vec3::new(0.0, 0.0, 4.0));
+            let hare = put(&mut server, "base:moonhare", middle + Vec3::new(0.0, 0.0, 2.0), Vec3::Z);
+            server.creatures.live.get_mut(&hare).unwrap().owner = fenced.then(|| server.players[&player].name.clone());
+            let hale = server.creatures.live[&hare].health;
+            server.tick = 1000;
+            let (mut blinks, mut furthest) = (0, 0.0f32);
+            for t in 0..30 * TICKS_PER_SECOND as u64 {
+                let was = server.creatures.live[&hare].body.position;
+                if t % (2 * TICKS_PER_SECOND as u64) == 0 {
+                    // Beside it, across the fence: the player steps up and strikes again.
+                    server.players.get_mut(&player).unwrap().position = was + (middle - was).with_y(0.0).normalize_or(Vec3::X) * -1.5;
+                    server.hurt_creature(player, hare, 0, None, voxmar_engine::combat::Blow::Plain);
+                    server.creatures.live.get_mut(&hare).unwrap().health = hale;
+                }
+                server.tick += 1;
+                server.think_and_move();
+                server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+                let at = server.creatures.live[&hare].body.position;
+                let jump = at.with_y(0.0).distance(was.with_y(0.0));
+                if jump > 2.0 {
+                    blinks += 1;
+                    furthest = furthest.max(jump);
+                }
+                let off = at - middle;
+                assert!(!fenced || off.x.abs() < 3.0 && off.z.abs() < 3.0, "the kept moonhare blinked out of its pen {t} ticks on: at {off:.2} from its middle");
+            }
+            assert!(blinks >= 3, "fenced {fenced}: the moonhare blinked only {blinks} times in 30 s");
+            assert!(fenced || furthest >= 5.0, "in the open the moonhare blinked only {furthest:.1} blocks at most");
+        }
+    }
 
     pub(super) const FIGHTERS: [&str; 6] = ["base:wolf", "base:brown_bear", "base:badger", "base:aurochs", "base:bison", "base:wild_boar"];
     /// The fighters wider than a block, which take no way through a doorway a block across.
