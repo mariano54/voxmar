@@ -57,6 +57,10 @@ pub struct WearDef {
     pub mend: f32,
     /// The tag of the block mending is done by, unless an item names its own (`mend_near:TAG`).
     pub mend_near: String,
+    /// Whether a tool broken in the hand brings up a spare of its kind from the pack (a
+    /// weapon, the same weapon); none unless a package says so.
+    #[serde(default)]
+    pub spare: bool,
 }
 
 /// [`WearDef`], resolved.
@@ -71,11 +75,12 @@ pub struct Wear {
     pub warn: f32,
     pub mend: f32,
     pub mend_near: String,
+    pub spare: bool,
 }
 
 impl Default for Wear {
     fn default() -> Self {
-        Self { suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.0, weapon_skill: None, warn: 0.1, mend: 0.5, mend_near: String::new() }
+        Self { suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.0, weapon_skill: None, warn: 0.1, mend: 0.5, mend_near: String::new(), spare: false }
     }
 }
 
@@ -258,7 +263,7 @@ impl ToolRegistry {
                 if blocks.ids().all(|id| !blocks.def(id).has_tag(&def.mend_near)) {
                     return Err(RegistryError(format!("tools.ron: nothing has the tag `{}` wear's mending is done by", def.mend_near)));
                 }
-                Wear { suited: def.suited, unsuited: def.unsuited, hit: def.hit, till: def.till, save_per_level: def.save_per_level, weapon_skill: Some(skill_named(&def.weapon_skill)?), warn: def.warn, mend: def.mend, mend_near: def.mend_near }
+                Wear { suited: def.suited, unsuited: def.unsuited, hit: def.hit, till: def.till, save_per_level: def.save_per_level, weapon_skill: Some(skill_named(&def.weapon_skill)?), warn: def.warn, mend: def.mend, mend_near: def.mend_near, spare: def.spare }
             }
         };
         let savers = kinds.iter().map(|k| k.skill.as_deref().map(skill_named).transpose()).collect::<Result<Vec<_>, _>>()?;

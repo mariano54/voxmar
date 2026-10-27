@@ -581,3 +581,30 @@ fn a_rug_and_a_hanging_under_a_roof_are_soft_furnishings() {
     let hanging = content.blocks.expect("base:red_wall_hanging");
     assert!(content.recipes.iter().any(|r| r.output == hanging), "no recipe makes a wall hanging");
 }
+
+/// Come in wet, hang your things on the peg rail by the door: within two blocks of one you
+/// dry off as by a fire (`Near("pegs", 2)` ends Soaked and Drenched), so the rail by the door
+/// does something. Out in the rain, it does not.
+#[test]
+fn wet_things_hung_on_a_peg_rail_dry_you_off() {
+    let content = content();
+    let effects = &content.effects;
+    let pegs = [("pegs".to_owned(), 2)];
+    assert!(effects.near_asks().contains(&pegs[0]), "the pegs are asked for");
+    let rail = content.blocks.expect("base:oak_peg_rail");
+    assert!(content.blocks.def(rail).has_tag("pegs"), "a peg rail has pegs");
+    for precipitation in [0.5, 0.9] {
+        let rain = Weather { precipitation, ..Weather::NONE };
+        let out = Situation { felt: 15.0, warmed: false, outdoors: true, weather: &rain, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[], worn: &[], seated: false, night: false };
+        let mut timed = Vec::new();
+        effects.linger(&out, &mut timed);
+        let wet = timed.len();
+        assert!(wet > 0, "wet through in rain {precipitation}");
+        effects.linger(&Situation { near: &pegs, ..out }, &mut timed);
+        assert_eq!(timed.len(), wet, "out in the rain {precipitation}, the pegs do not dry you");
+        effects.linger(&Situation { outdoors: false, ..out }, &mut timed);
+        assert_eq!(timed.len(), wet, "indoors, still wet");
+        effects.linger(&Situation { outdoors: false, near: &pegs, ..out }, &mut timed);
+        assert!(timed.is_empty(), "indoors by the peg rail, dry, after rain {precipitation}");
+    }
+}
