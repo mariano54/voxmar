@@ -93,7 +93,8 @@ Recipes (`base/recipes.ron`, engine/src/craft.rs) are shaped (up to three rows o
 or shapeless (up to nine ingredients). A shape may sit anywhere in the grid and is also
 made mirrored left to right (an axe's head on either side), so the load refuses a recipe
 whose mirror image is another recipe's pattern that makes something else. Where a shape and
-a shapeless recipe take the same things, the shape wins, whichever file loaded first: a
+a shapeless recipe take the same things, the shape wins among recipes made in the same place, whichever file
+loaded first: a
 sling's hide between two twine is no coin purse (`every_recipe_can_be_crafted_as_written`).
 The inventory's grid is two by two; a **crafting
 table** (four planks) gives three by three: right click one and the inventory opens with
