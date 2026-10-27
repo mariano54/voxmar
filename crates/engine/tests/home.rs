@@ -201,31 +201,6 @@ fn a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner() {
     }
 }
 
-/// The bedchamber: under a roof, the bed with a blanket chest, a washstand and a rug; any
-/// of them missing, or out under the sky, it is not one. Every wood makes both pieces, and
-/// the chest is storage.
-#[test]
-fn a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber() {
-    let content = content();
-    let effects = &content.effects;
-    let room = [("bed", 1), ("blanket_chest", 1), ("washstand", 1), ("rug", 1)];
-    assert_eq!(rooms(&room), ["base:bedchamber"]);
-    for missing in 0..room.len() {
-        let short: Vec<_> = room.iter().enumerate().filter(|&(i, _)| i != missing).map(|(_, &c)| c).collect();
-        assert!(!rooms(&short).contains(&"base:bedchamber".to_owned()), "no {}, no bedchamber", room[missing].0);
-    }
-    assert!(rooms_in(&room, &Weather::NONE, true).is_empty(), "no roof, no bedchamber");
-    let chamber = effects.get(effects.id("base:bedchamber").unwrap());
-    assert_eq!((chamber.modifiers.home_warmth, chamber.modifiers.heal), (1.0, 1.1));
-    for wood in ["birch", "oak", "dark_oak"] {
-        let chest = content.blocks.expect(&format!("base:{wood}_blanket_chest"));
-        assert!(content.blocks.def(chest).has_tag("storage") && content.recipes.iter().any(|r| r.output == chest), "{wood} blanket chest");
-        assert!(content.machines.iter().any(|m| m.block == chest && m.is_store()), "the {wood} blanket chest opens to keep things in");
-        let stand = content.blocks.expect(&format!("base:{wood}_washstand"));
-        assert!(content.blocks.def(stand).has_tag("washstand") && content.recipes.iter().any(|r| r.output == stand), "{wood} washstand");
-    }
-}
-
 /// The lived-in hearth: under a roof, the hearth with a mantel shelf over it and a fireside
 /// bench before it; any of them missing, or out under the sky, it is not one. Every wood
 /// makes both pieces, the shelf keeps things and the bench is sat on.
@@ -249,6 +224,31 @@ fn a_mantel_shelf_and_a_fireside_bench_make_a_lived_in_hearth() {
         assert!(content.machines.iter().any(|m| m.block == shelf && m.is_store()), "the {wood} mantel shelf keeps things");
         let bench = content.blocks.def(content.blocks.expect(&format!("base:{wood}_fireside_bench")));
         assert!(bench.has_tag("fireside_bench") && bench.has_tag("seat"), "{wood} fireside bench");
+    }
+}
+
+/// The bedchamber: under a roof, the bed with a blanket chest, a washstand and a rug; any
+/// of them missing, or out under the sky, it is not one. Every wood makes both pieces, and
+/// the chest is storage.
+#[test]
+fn a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber() {
+    let content = content();
+    let effects = &content.effects;
+    let room = [("bed", 1), ("blanket_chest", 1), ("washstand", 1), ("rug", 1)];
+    assert_eq!(rooms(&room), ["base:bedchamber"]);
+    for missing in 0..room.len() {
+        let short: Vec<_> = room.iter().enumerate().filter(|&(i, _)| i != missing).map(|(_, &c)| c).collect();
+        assert!(!rooms(&short).contains(&"base:bedchamber".to_owned()), "no {}, no bedchamber", room[missing].0);
+    }
+    assert!(rooms_in(&room, &Weather::NONE, true).is_empty(), "no roof, no bedchamber");
+    let chamber = effects.get(effects.id("base:bedchamber").unwrap());
+    assert_eq!((chamber.modifiers.home_warmth, chamber.modifiers.heal), (1.0, 1.1));
+    for wood in ["birch", "oak", "dark_oak"] {
+        let chest = content.blocks.expect(&format!("base:{wood}_blanket_chest"));
+        assert!(content.blocks.def(chest).has_tag("storage") && content.recipes.iter().any(|r| r.output == chest), "{wood} blanket chest");
+        assert!(content.machines.iter().any(|m| m.block == chest && m.is_store()), "the {wood} blanket chest opens to keep things in");
+        let stand = content.blocks.expect(&format!("base:{wood}_washstand"));
+        assert!(content.blocks.def(stand).has_tag("washstand") && content.recipes.iter().any(|r| r.output == stand), "{wood} washstand");
     }
 }
 
