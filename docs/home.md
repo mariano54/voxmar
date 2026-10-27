@@ -44,13 +44,14 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
-Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, footstools,
-cushions and window seats; tables include desks and counters; storage is whatever a home
+Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, log benches,
+footstools, cushions and window seats; tables include desks and counters; storage is whatever a home
 keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
 shelves, plate racks, spice racks, candle boxes, bread bins, kindling boxes, bedside
 tables, stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves
-too), crate stacks, barrel racks, jars and baskets, and a village's barrels and crates
-(every store a player opens counts but the feed trough, which is the pen's: test
+too), crate stacks, barrel racks, barrels, crates, jars, baskets and grain sacks, and a
+village's barrels, crates and sacks (every store a player opens counts but the feed
+trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
 of a chest and a barrel by a campfire, "home: storage"); crockery is plates, bowls, jars,
 jugs, baskets and a dresser's plates on show; rugs include a rush mat (4 rushes, Crafting 1,
@@ -88,9 +89,11 @@ cheap and cosy but catches, shingles do not), as are timber posts and beams and 
 cobble slabs and stairs; a lattice window is draughty. Natural rock and the ores in it are
 sound, so a home cut into a hillside can be Cosy after the mining it took; earth, gravel, sand
 and any other solid block with no tag count as draughty, until daub coats them. Every solid
-block tagged `building` or `roof`, full or shaped, that is not furniture carries exactly one
-shelter tag, and no block more than one, checked when content loads (server `rules.rs`
-`check_shelters`), so a new one cannot slip in unjudged.
+block tagged `building` or `roof`, full or shaped, and every solid shaped piece, that is not
+furniture carries exactly one shelter tag, and no block more than one, checked when content
+loads (server `rules.rs` `check_shelters`), so a new one cannot slip in unjudged: a cooking
+pot is a `station` and the feed trough `farm`, furniture a room looks past
+(`a_pot_or_a_trough_in_a_room_leaves_its_walls_as_they_were`).
 
 How it is judged (`Server::room_walls`, beside the home survey): from where home stands, a
 scan goes out over the open cells within the home's reach (survival.ron's `home_reach`,
@@ -136,7 +139,9 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Bright room | a roof, 2 windows (`window`: hide window, glass, lattice window, open shuttered window) | heal x1.05, learn x1.05 |
 | Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging or a curtain) | 1° warmer |
 | Hearth corner | a roof, the hearth, a settle (`settle`) and a woodpile (`woodpile`) | 1° warmer, heal x1.05 (test `a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner`) |
+| Lived-in hearth | a roof, the hearth, a mantel shelf (`mantel_shelf`) and a fireside bench (`fireside_bench`) | 1° warmer, learn x1.05 (test `a_mantel_shelf_and_a_fireside_bench_make_a_lived_in_hearth`) |
 | Bedchamber | a roof, a bed, a blanket chest (`blanket_chest`), a washstand (`washstand`) and a rug | 1° warmer, heal x1.1 (test `a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber`) |
+| Kitchen | a roof, the hearth, a dresser (`dresser`) and a pot crane (`pot_crane`) | 1° warmer, meals heal x1.05 (`meal_heal`; test `a_dresser_and_a_pot_crane_by_the_hearth_make_a_kitchen`) |
 | Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
@@ -370,10 +375,14 @@ motifs step can be where it first came on ("home: evening in"), then sets noon.
 Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
 through, you stay so for two minutes under cover (three if drenched), colder and, drenched,
 slower to heal, unless you dry off within three blocks of a fire or a hearth (or warmed on a
-cold day). So coming in from the rain, you dry by your own hearth. It is data: an effect
-that `lingers` can name what `ends` it early (core effects.ron's `ends: Some(Any([Warmed,
-Near("fire", 3), Near("hearth", 3)]))`), and loading refuses `ends` on one that does not
-linger. Tests: the engine's `wet_through_you_dry_off_by_a_fire_and_not_before`, the
+cold day), or hang your things up within two blocks of a peg rail (as by a fire, once out of the
+rain or after it stops). So coming in from
+the rain, you dry by your own hearth or at the rail by the door: the peg rail, decor until
+then, does something. It is data: an effect that `lingers` can name what `ends` it early
+(core effects.ron's `ends: Some(Any([Warmed, Near("fire", 3), Near("hearth", 3),
+Near("pegs", 2)]))`), and loading refuses `ends` on one that does not linger. Tests: the
+engine's `wet_through_you_dry_off_by_a_fire_and_not_before` and
+`wet_things_hung_on_a_peg_rail_dry_you_off`, the
 server's `health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it`; the gate's
 Weather step dries the player by a campfire after its storm ("weather: dries by a fire").
 
@@ -394,7 +403,7 @@ sits on a stool under a block two up, by a campfire (shot `seat-fire`), and step
 Sat with a table within 2, the player is **At the Table** (`at_table`): a meal eaten there
 heals a quarter more and its good lasts a quarter longer (`meal_heal`, `meal_time`, as the
 pantry and larder rooms give; they multiply, up to core `survival.ron`'s `meal_most`, 2: with
-every meal effect on, the heal is 1.82 times and the good's length 2.27, held to 2). A supper at the kitchen table is worth sitting
+every meal effect on, the heal is 1.91 times and the good's length 2.27, held to 2). A supper at the kitchen table is worth sitting
 down for. Test: `a_meal_at_the_table_does_more`. The gate's Seat step sets a table by the
 stool ("seat: at the table").
 
@@ -403,6 +412,11 @@ Nook** (`reading_nook`): they learn a tenth more (`xp` x1.1) while they sit ther
 asked: a shelf and a window by a chair make the quiet corner of a lived-in house. Test:
 `a_seat_by_a_window_and_books_is_a_reading_nook`. The gate's Seat step stands a bookshelf on
 the table and a hide window on that ("seat: reading nook").
+
+Sat with a footstool within 1, the player has their **Feet Up** (`feet_up`): they heal a
+quarter faster (`heal` x1.25), and it stacks with Fireside. A footstool is a seat too, so sat
+on the footstool itself is none (`Not(SeatedOn("footstool"))`): it goes before a chair. Test:
+`a_footstool_before_a_seat_puts_your_feet_up`.
 
 ## Numbers and tuning
 
@@ -526,7 +540,11 @@ pack into the stores, so a home stays useful without sorting by hand.
   The pouches, the crafting grid and the pointer are skipped too, and so is any store
   that is full or does not take the item (`Machine::bin_takes`).
 - **Quests.** What goes in is tallied by each store's block (`stocked:`), as a move into an
-  open store is, so a quest's `Stocked` counts clay put away with H.
+  open store is, so a quest's `Stocked` counts clay put away with H. The Nomad home side
+  quest **Put It Away** (after From the Shelves) teaches the key: thirty-two planks into
+  any store with the key (`PutAway("tag:planks", 32)`, a `put_away:ITEM` tally only
+  `put_away` keeps; a move by hand counts for `Stocked` only). Test:
+  `planks_put_away_finish_put_it_away`.
 - **Which stores count.** Those in the home box (the same `home_stores` that Lay and the
   stations draw from, nearest first), and only while the player stands in their own home.
   `from_stores` belongs to stations and does not apply. A guest puts nothing into a
@@ -738,6 +756,13 @@ torch a game day, a candle three, an oil lamp five on a fill of fat. A home's li
   lost and how many lights it wants (`flame.home_short`). The steps a home meets are kept on
   the player (`home_steps` in their save); one who was away is told on return, once the land
   round their home has loaded (`flame.home_short_away`).
+- **Spares in the candle box.** A store tagged `spare_lights` (base's candle box) keeps
+  candles for the home: when a light burns out in a home and a spare-lights store of that
+  home (its owner's, or a village's) holds the same light, one is taken out and set in its
+  place, in its facing, burning afresh, so the home is short of nothing and nobody is told.
+  The box shows its candles going down. Loading refuses `spare_lights` on a block that is no
+  store. Test: `a_candle_box_at_home_keeps_its_candles_lit` (a barrel's candles are only
+  kept; the box emptied, the candle burns out).
 - **Picked up burning** a light keeps what it has burnt as its item's wear (`WEAR_PER_DAY`,
   1200 a game day), shown as a wear bar and in its tooltip, and set down again burns on from
   there: carrying a light never refreshes it. A lamp picked up lit keeps its fat.

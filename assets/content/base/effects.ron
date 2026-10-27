@@ -47,6 +47,10 @@
         // lived-in home (no home needed: a shelf and a window by a seat make the nook).
         (name: "reading_nook", kind: Buff, title: "Reading Nook", description: "Sat by a window with books to hand: you learn a tenth more.",
             when: Some(All([Seated, Near("books", 2), Near("window", 3)])), modifiers: (xp: 1.1)),
+        // Sat with a footstool before the seat: feet up after a day on them. On the footstool
+        // itself is no feet up (it is a seat too, and would be near itself).
+        (name: "feet_up", kind: Buff, title: "Feet Up", description: "Sat with your feet on a footstool: you heal a quarter faster.",
+            when: Some(All([Seated, Not(SeatedOn("footstool")), Near("footstool", 1)])), modifiers: (heal: 1.25)),
         // Taking from bees without smoke (bees.ron).
         (name: "stung", kind: Debuff, title: "Stung", description: "Bee stings: slower to heal for a while. Smoke them calm first.",
             modifiers: (heal: 0.75)),
@@ -147,11 +151,24 @@
         (name: "hearth_corner", kind: Buff, title: "Hearth corner", description: "A settle by the hearth and wood stacked to hand: 1° warmer here, and you heal a twentieth faster.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("settle", 1), HomeHas("woodpile", 1)])),
             replaces: [], modifiers: (home_warmth: 1.0, heal: 1.05)),
+        // A lived-in hearth, the Farm age's: the hearth under the home's roof with a mantel
+        // shelf over it, things set out on it (`mantel_shelf`), and a fireside bench before
+        // it (`fireside_bench`), the evening's seat.
+        (name: "lived_in_hearth", kind: Buff, title: "Lived-in hearth", description: "A mantel shelf over the hearth and a fireside bench before it: 1° warmer here, and you learn a twentieth more.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("mantel_shelf", 1), HomeHas("fireside_bench", 1)])),
+            replaces: [], modifiers: (home_warmth: 1.0, xp: 1.05)),
         // A bedchamber, the Farm age's first: a room to sleep in under the home's roof, the
         // bed with a blanket chest (`blanket_chest`), a washstand (`washstand`) and a rug.
         (name: "bedchamber", kind: Buff, title: "Bedchamber", description: "A bed, a blanket chest at its foot, a washstand and a rug under one roof: 1° warmer here, and you heal a tenth faster.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("bed", 1), HomeHas("blanket_chest", 1), HomeHas("washstand", 1), HomeHas("rug", 1)])),
             replaces: [], modifiers: (home_warmth: 1.0, heal: 1.1)),
+        // A kitchen, the Farm age's: the kitchen wall by the hearth under the home's roof, a
+        // dresser with its plates on show (`dresser`) and a pot crane to swing the pot over
+        // the fire (`pot_crane`). Meals here do a little more; all the meal effects together
+        // stay under survival's meal_most.
+        (name: "kitchen", kind: Buff, title: "Kitchen", description: "A dresser and a pot crane by the hearth: 1° warmer here, and meals heal a twentieth more.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("dresser", 1), HomeHas("pot_crane", 1)])),
+            replaces: [], modifiers: (home_warmth: 1.0, meal_heal: 1.05)),
         // A bee garden, the Farm age's: a skep with bees in it among flowers at home
         // (bees.ron). Its bees make the crops about it grow a quarter faster, which the
         // apiary does; the home itself heals a tenth faster and is sweeter to come back to.
@@ -159,10 +176,10 @@
             when: Some(All([AtHome, HomeHas("hive", 1), HomeHas("flower", 3)])),
             replaces: [], modifiers: (heal: 1.1)),
         // A dooryard, the Farm age's: an awning over the door and two things set out under the
-        // sky about it (`yard`: a bench, bunting, a hay bale), counted only where they stand
-        // in the open (`outdoors` below). Out in the yard, not under the roof, the home is a
-        // place to sit a while.
-        (name: "dooryard", kind: Buff, title: "Dooryard", description: "An awning at your door, a bench, bunting or bales out in the open about it: in the yard you heal a twentieth faster.", announce: true,
+        // sky about it (`yard`: a bench, bunting, a hay bale, a dry-stone wall), counted only
+        // where they stand in the open (`outdoors` below). Out in the yard, not under the
+        // roof, the home is a place to sit a while.
+        (name: "dooryard", kind: Buff, title: "Dooryard", description: "An awning at your door, a bench, bunting, bales or a dry-stone wall out in the open about it: in the yard you heal a twentieth faster.", announce: true,
             when: Some(All([AtHome, Not(Indoors), HomeHas("awning", 1), HomeHas("yard", 2)])),
             replaces: [], modifiers: (heal: 1.05)),
         // Reactions: a home answers what is around it. A roof and a fire in a storm, animals

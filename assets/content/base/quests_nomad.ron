@@ -36,8 +36,8 @@
         ),
         (
             name: "a_sharp_edge", age: "nomad", branch: "start", title: "A Sharp Edge",
-            why: "A knife is the hunter's tool: it makes a kill drop hide more often, cuts plants cleanly, and cuts twine from tall grass. A flint knife is a flint over a stick, a stone knife a stone head over a stick; both fit the inventory grid.",
-            tasks: [[Craft("stone_knife", 1)], [Craft("flint_knife", 1)]],
+            why: "A knife is the hunter's tool: it makes a kill drop hide more often, cuts plants cleanly, and cuts twine from tall grass. A flint knife is a flint over a stick, a stone knife a stone head over a stick; both fit the inventory grid. Stone heads are ground from hard rock at a grindstone you set down.",
+            tasks: [[Placed("grindstone", 1), Craft("stone_knife", 1)], [Craft("flint_knife", 1)]],
             after: ["an_axe_to_it"],
             rewards: [Xp("engineering", 30.0)],
         ),
@@ -64,6 +64,14 @@
             after: ["crafting_table"],
             side: true,
             rewards: [Xp("engineering", 20.0), Item("bread", 1)],
+        ),
+        (
+            name: "a_mended_edge", age: "nomad", branch: "start", title: "A Mended Edge",
+            why: "Every tool wears as you work it: a flint one lasts fifty uses, a stone one three times that, and worn out it breaks. Mend it first at a chopping block: put the worn tool in the grid within reach of the block with one piece of what it is made of (a flint for a flint tool or a flint spear, a stone head for a stone tool, a stick for a digging stick). A tool made of a single such piece, such as a flint knife or a stone shovel, comes back whole; any other comes back half new. A stone head is ground from hard rock at a grindstone (sand beside cobblestone over two sticks in the 2×2 grid), so to mend a stone tool, set a grindstone down too. Mend a flint or stone tool, a flint spear or a digging stick by your chopping block.",
+            tasks: [[Mended("tag:mend:flint", 1)], [Placed("grindstone", 1), Mended("tag:mend:stone_head", 1)], [Mended("tag:mend:stick", 1)]],
+            after: ["a_chopping_block"],
+            side: true,
+            rewards: [Xp("engineering", 30.0)],
         ),
         (
             name: "a_coin_purse", age: "nomad", branch: "start", title: "A Coin Purse",
@@ -191,10 +199,17 @@
             rewards: [Xp("construction", 40.0), Item("torch", 4)],
         ),
         (
-            name: "a_lit_corner", age: "nomad", branch: "home", title: "A Lit Corner",
-            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and a night's sleep in it wakes you well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); candles are twine over two hides (Crafting 3).",
-            tasks: [[Built("home_bedside", 1)]],
+            name: "by_rushlight", age: "nomad", branch: "home", title: "By Rushlight",
+            why: "A torch smokes and candles want hides, but a rushlight is cheap and safe by thatch. Rushes grow at the water's edge, along rivers and in marshes and bogs: break two. A plank, a stick and two rushes make two rushlights (Crafting 2). Set one down by your bed: it burns for a day, and a rush lights it again.",
+            tasks: [[Pick("rush", 2), Craft("tag:rushlight", 2), Placed("tag:rushlight", 1)]],
             after: ["make_camp"],
+            rewards: [Xp("crafting", 30.0), Xp("construction", 10.0)],
+        ),
+        (
+            name: "a_lit_corner", age: "nomad", branch: "home", title: "A Lit Corner",
+            why: "A seat and two lights beside your bed make a corner worth coming home to: 2° warmer there, and a night's sleep in it wakes you well rested, roof or no roof. A stool is two planks and two sticks (Construction 1); rushlights are a plank, a stick and two rushes (Crafting 2), and candles twine over two hides (Crafting 3).",
+            tasks: [[Built("home_bedside", 1)]],
+            after: ["by_rushlight"],
             rewards: [Xp("construction", 40.0), Xp("crafting", 20.0)],
         ),
         (
@@ -211,6 +226,14 @@
             after: ["twine_and_thong", "hung_to_dry"],
             side: true,
             rewards: [Xp("crafting", 40.0)],
+        ),
+        (
+            name: "the_knappers_trade", age: "nomad", branch: "mining", title: "The Knappers' Trade",
+            side: true,
+            why: "Flint knappers sit on rocky ground working stone. For one hide they give three or four flint, enough for tools and fire. Bring a hide and trade with them; they camp on rocky and open ground.",
+            tasks: [[Dealt("flint_knappers", "trade", 1)]],
+            after: ["stone_in_hand", "pockets"],
+            rewards: [Xp("crafting", 30.0), Xp("mining", 20.0)],
         ),
         (
             name: "company_at_camp", age: "nomad", branch: "home", title: "Company at Camp",
@@ -233,6 +256,14 @@
             tasks: [[Laid("any", 3)]],
             after: ["pantry_shelves", "a_bench_to_work_at"],
             rewards: [Xp("crafting", 40.0), Xp("construction", 20.0)],
+        ),
+        (
+            name: "put_it_away", age: "nomad", branch: "home", title: "Put It Away",
+            why: "Back from a day out with a full pack, there is no need to sort it by hand. At home, press H (the Put away key in the settings): every stack in your pack whose kind a store in your home already holds goes into that store, nearest first, and your hotbar stays as it is. Keep a few planks in a crate stack, carry more home and put thirty-two away.",
+            tasks: [[PutAway("tag:planks", 32)]],
+            after: ["from_the_shelves"],
+            side: true,
+            rewards: [Xp("crafting", 30.0), Item("oak_crate_stack", 1)],
         ),
         // Food: cooking, grain and the first fields.
         (
@@ -273,8 +304,8 @@
         ),
         (
             name: "break_ground", age: "nomad", branch: "cooking", title: "Break Ground",
-            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. A hoe needs a stone edge: two stone heads, ground from hard rock at a grindstone, over two sticks at the crafting table. Right-click soil with it to till.",
-            tasks: [[Craft("stone_hoe", 1)], [Craft("copper_hoe", 1)]],
+            why: "A hoe tills grass or dirt into farmland, where seeds can be sown. A hoe needs a stone edge: two stone heads, ground from hard rock at a grindstone you set down, over two sticks at the crafting table. Right-click soil with it to till.",
+            tasks: [[Placed("grindstone", 1), Craft("stone_hoe", 1)], [Craft("copper_hoe", 1)]],
             after: ["daily_bread", "crafting_table"],
             rewards: [Xp("engineering", 40.0), Item("wheat_seeds", 4)],
         ),
@@ -303,8 +334,8 @@
         (
             name: "a_varied_table", age: "nomad", branch: "cooking", title: "A Varied Table",
             capstone: true,
-            why: "One food grows dull and heals little. Cook six meat at a fire, cook four fish, and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
-            tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)], [Cook("tag:meat", 6), Cook("tag:fish", 4), Cook("bread", 3)]],
+            why: "One food grows dull and heals little. Beside the meat you cook at the fire, cook four fish and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
+            tasks: [[Cook("tag:fish", 4), Craft("bread", 3)], [Cook("tag:fish", 4), Cook("bread", 3)]],
             after: ["a_fish_supper", "daily_bread", "trail_rations", "wild_harvest", "break_ground"],
             rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
         ),
@@ -367,6 +398,14 @@
             rewards: [Xp("cooking", 60.0), Xp("fishing", 40.0)],
         ),
         (
+            name: "four_for_twine", age: "nomad", branch: "hunter", title: "Four for Twine",
+            side: true,
+            why: "Fisher folk walk the rivers and wet ground with rods over their shoulders. Hand one four fish and they give three twine for them, line for a rod or a snare. Find them by water and make the swap.",
+            tasks: [[Dealt("fisher_folk", "swap", 1)]],
+            after: ["a_fish_supper"],
+            rewards: [Xp("fishing", 40.0), Xp("hunter", 20.0)],
+        ),
+        (
             name: "old_tusk", age: "nomad", branch: "hunter", title: "Old Tusk",
             capstone: true,
             why: "A great boar roams the woods and the sagebrush steppe by day, alone among the boar: Old Tusk. He grazes until struck, then fights to the end, and his charge crushes. A flint spear (a flint and two sticks, Crafting 2) braces: with no shield in your off hand, right-click to raise it as he crouches, and he runs onto its point and stands dazed. A tree or a wall at your back does the same. Make a spear, then bring him down.",
@@ -398,8 +437,8 @@
         ),
         (
             name: "a_stones_throw", age: "nomad", branch: "combat", title: "A Stone's Throw",
-            why: "A sling hits from twelve blocks away, where a blade must be close: birds, runners, or something you would rather not stand next to. Lay a hide between two twine in a row at the crafting table. Hold it and click a creature in clear sight: each shot throws one cobblestone from your pack, hit or miss, so carry a stack. It hits softer than a stone sword (2 at most), and every hit trains Ranged. A sling stone that hits is left lying where the creature stood about one time in four; one that misses, or hits for nothing, is gone. Walk over and pick up what lies there before you throw again, and a stack of cobblestone lasts. Bring down five creatures and reach Ranged 4.",
-            tasks: [[Craft("sling", 1), Kill("any", 5), Level("ranged", 4)]],
+            why: "A sling hits from twelve blocks away, where a blade must be close: birds, runners, or something you would rather not stand next to. Lay a hide between two twine in a row at the crafting table. Hold it and click a creature in clear sight: each shot throws one cobblestone from your pack, hit or miss, so carry a stack. It hits softer than a stone sword (2 at most), and every hit trains Ranged. A sling stone that hits is left lying where the creature stood about one time in four; one that misses, or hits for nothing, is gone. Walk over and pick up what lies there before you throw again, and a stack of cobblestone lasts. Reach Ranged 4.",
+            tasks: [[Craft("sling", 1), Level("ranged", 4)]],
             after: ["twine_and_thong", "something_hostile", "hung_to_dry"],
             rewards: [Xp("ranged", 100.0), Xp("crafting", 30.0)],
         ),

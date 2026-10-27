@@ -31,11 +31,12 @@
 
         // Bad weather, out in it. Wet through, it stays on you under a roof for a few minutes,
         // or until you dry off within three blocks of a fire or a hearth (or warmed on a cold
-        // day): coming in from the rain, you dry by your own hearth.
-        (name: "soaked", kind: Debuff, title: "Soaked", description: "Rain runs down your back: you feel 4° colder until you dry off by a fire.",
-            when: Some(Rain(0.3)), lingers: 120.0, ends: Some(Any([Warmed, Near("fire", 3), Near("hearth", 3)])), modifiers: (warmth: -4.0)),
-        (name: "drenched", kind: Debuff, title: "Drenched", description: "A downpour: 7° colder, slower to heal and to walk, until you dry off by a fire.",
-            when: Some(Rain(0.7)), lingers: 180.0, ends: Some(Any([Warmed, Near("fire", 3), Near("hearth", 3)])), replaces: ["soaked"], modifiers: (warmth: -7.0, heal: 0.75, speed: 0.95)),
+        // day), or hang your things within two of a peg rail (`pegs`): coming in from the
+        // rain, you dry by your own hearth or the rail by the door.
+        (name: "soaked", kind: Debuff, title: "Soaked", description: "Rain runs down your back: you feel 4° colder until you dry off by a fire or at a peg rail.",
+            when: Some(Rain(0.3)), lingers: 120.0, ends: Some(Any([Warmed, Near("fire", 3), Near("hearth", 3), Near("pegs", 2)])), modifiers: (warmth: -4.0)),
+        (name: "drenched", kind: Debuff, title: "Drenched", description: "A downpour: 7° colder, slower to heal and to walk, until you dry off by a fire or at a peg rail.",
+            when: Some(Rain(0.7)), lingers: 180.0, ends: Some(Any([Warmed, Near("fire", 3), Near("hearth", 3), Near("pegs", 2)])), replaces: ["soaked"], modifiers: (warmth: -7.0, heal: 0.75, speed: 0.95)),
         (name: "snowblown", kind: Debuff, title: "Snowblown", description: "Snow underfoot and in your face: 3° colder and slower going.",
             when: Some(Snow(0.35)), modifiers: (warmth: -3.0, speed: 0.9)),
         (name: "pelted", kind: Debuff, title: "Pelted by hail", description: "Hail stings: lose a point of health now and then. Get under a roof.",

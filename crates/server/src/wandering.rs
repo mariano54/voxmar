@@ -741,7 +741,7 @@ impl Server {
             let Some(anchor) = anchor else { return false };
             let survey = survey.get_or_init(|| self.survey_around(anchor, Some(player)));
             let calm = voxmar_engine::weather::Weather::NONE;
-            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[], worn: &[], seated: false, night: self.night() };
+            let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors: self.open_sky(anchor + IVec3::Y * 2), weather: &calm, biome: "", biome_tags: &[], home: Some(survey), done: &p.quests_done, held: &[], near: &[], worn: &[], seated: false, seat: &[], night: self.night() };
             self.content.effects.get(step).when.as_ref().is_some_and(|when| when.holds(&situation))
         };
         let mut choices: Vec<(usize, f32)> = Vec::new();
@@ -1158,7 +1158,7 @@ impl Server {
     }
 
     /// The name a creature is spoken of by.
-    fn speaker_name(&self, id: u32) -> Option<Words> {
+    pub(crate) fn speaker_name(&self, id: u32) -> Option<Words> {
         let species = self.creatures.live.get(&id)?.species;
         let def = &self.content.creatures.get(species).def;
         Some(Words::Own(def_key("creature", &def.name), def.title.clone()))
@@ -2398,9 +2398,12 @@ impl Server {
         if let (Some(who), Some(p)) = (who, self.players.get(&player)) {
             p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", words) });
         }
-        // A dealing with the kind, for quests (`Met`).
+        // A dealing with the kind, for quests (`Met`), and with that line (`Dealt`).
         if dealt {
             self.tally(player, "met", &event.def.name, 1);
+            if let Some((_, line)) = line {
+                self.tally(player, "dealt", &format!("{}/{}", event.def.name, line.name), 1);
+            }
         }
         self.hand_out(player, id, &gives);
         if gives.contains(&ResolvedReward::Free)

@@ -75,6 +75,10 @@ pub enum Goal {
     /// share of a hunt, a captive's or a guided one's thanks, a lure followed to its end. A
     /// greeting alone is no dealing.
     Met(String, u32),
+    /// Had this many dealings with one line of a wandering kind, by the line's name in
+    /// wandering.ron (`Dealt("herb_gatherer", "roots", 1)`): as `Met` counts, but that line
+    /// only, for a lesson one line alone teaches. Load-checked: the kind has that line.
+    Dealt(String, String, u32),
     /// Turned a prayer (or `any`) on this many times.
     Prayed(String, u32),
     /// Offered this many of an item (or `any`, or a `tag:TAG`) at an altar.
@@ -92,6 +96,9 @@ pub enum Goal {
     /// Laid a recipe for this item (or `any`, or a `tag:TAG`) into the crafting grid this
     /// many times with the recipe viewer's Lay, taking from a store in the home.
     Laid(String, u32),
+    /// Put this many of an item (or `any`, or a `tag:TAG`) away into a home's stores with the
+    /// Put away key (`base:put_away`); a move into an open store by hand is `Stocked`'s.
+    PutAway(String, u32),
     /// Mended this many worn tools or weapons (one, `any`, or a `tag:TAG`) at the crafting
     /// grid, by the block each is mended at.
     Mended(String, u32),
@@ -101,7 +108,8 @@ pub enum Goal {
     /// Set down this many of a block (an item, `any` or a `tag:TAG`) from the hand.
     Placed(String, u32),
     /// Has this many of an item (or `any`, or a `tag:TAG`) put into stores of one kind (a
-    /// store block) and left there: what is taken back out again counts against it.
+    /// store block, or a `tag:TAG` some store has) and left there: what is taken back out
+    /// again counts against it.
     Stocked(String, String, u32),
     /// Made this many of an item (or a `tag:TAG`) by a recipe made near a block with this
     /// tag (`near` in recipes.ron), such as planks split on a chopping block.
@@ -132,6 +140,7 @@ impl Goal {
             | Goal::Offered(item, _)
             | Goal::Ate(item, _)
             | Goal::Laid(item, _)
+            | Goal::PutAway(item, _)
             | Goal::Mended(item, _)
             | Goal::Watering(item, _)
             | Goal::Fertilised(item, _) => Some(item),
@@ -370,6 +379,7 @@ impl Progress<'_> {
             Goal::Thriving(n, percent) => ((self.thriving)(*percent), *n),
             Goal::Met(kind, n) if kind == "Kinds" => (self.tallies.iter().filter(|&(key, &times)| times > 0 && key.starts_with("met:")).count() as u32, *n),
             Goal::Met(kind, n) => (tally("met", kind), *n),
+            Goal::Dealt(kind, line, n) => (tally("dealt", &format!("{kind}/{line}")), *n),
             Goal::Prayed(prayer, n) => (tally("prayed", prayer), *n),
             Goal::Offered(item, n) => (tally("offered", item), *n),
             Goal::Opened(chest, n) => (tally("opened", chest), *n),
@@ -377,9 +387,20 @@ impl Progress<'_> {
             Goal::Ate(food, n) => (tally("ate", food), *n),
             Goal::Felt(effect) => (tally("felt", effect).min(1), 1),
             Goal::Laid(item, n) => (tally("laid", item), *n),
+            Goal::PutAway(item, n) => (tally("put_away", item), *n),
             Goal::Mended(item, n) => (tally("mended", item), *n),
             Goal::Watering(block, n) => (tally("watering", block), *n),
             Goal::Placed(block, n) => (tally("placed", block), *n),
+            // A store tag sums every store kind with it (`stocked:STORE:ITEM`, a store's
+            // full name being one `package:name`).
+            Goal::Stocked(item, store, n) if store.starts_with("tag:") => {
+                let kept = self.tallies.iter().filter_map(|(key, &n)| {
+                    let rest = key.strip_prefix("stocked:")?;
+                    let split = rest.match_indices(':').nth(1)?.0;
+                    (matches(store, &rest[..split]) && matches(item, &rest[split + 1..])).then_some(n)
+                });
+                (kept.sum::<u32>(), *n)
+            }
             Goal::Stocked(item, store, n) => (tally(&format!("stocked:{store}"), item), *n),
             Goal::CraftNear(item, near, n) => (tally(&format!("crafted_near:{near}"), item), *n),
             Goal::Trapped(creature, n) => (tally("trapped", creature), *n),
@@ -630,7 +651,7 @@ impl QuestRegistry {
     /// quest that never finishes or a reward that never comes. Journal pages are checked as
     /// the file is read.
     pub fn resolve(&mut self, named: &Named) -> Result<(), RegistryError> {
-        let Named { blocks, skills, creatures, fishing, multiblocks, steps, events, prayers, effects, near, stores, trapped, harvests } = *named;
+        let Named { blocks, skills, creatures, fishing, multiblocks, steps, events, lines, prayers, effects, near, stores, trapped, harvests } = *named;
         let block_ids: Vec<BlockId> = blocks.ids().collect();
         let fish_ids: Vec<BlockId> = fishing.iter().map(|c| c.item).collect();
         let names = |ids: &[BlockId]| ids.iter().map(|&id| blocks.def(id).name.as_str()).collect::<Vec<_>>();
@@ -664,7 +685,8 @@ impl QuestRegistry {
         let effect_names: Vec<&str> = effects.iter().map(String::as_str).collect();
         let effect = Kind { what: "effect", names: &effect_names, any: false, tagged: &[] };
         let store_names: Vec<&str> = stores.iter().map(String::as_str).collect();
-        let store = Kind { what: "store", names: &store_names, any: false, tagged: &[] };
+        let store_ids: Vec<BlockId> = store_names.iter().filter_map(|name| blocks.id(name)).collect();
+        let store = Kind { what: "store", names: &store_names, any: false, tagged: &store_ids };
         let trapped_names: Vec<&str> = trapped.iter().map(String::as_str).collect();
         let trappable = Kind { what: "creature a trap catches", names: &trapped_names, ..creature };
         for quest in &mut self.quests {
@@ -713,13 +735,19 @@ impl QuestRegistry {
                     Goal::Visit(_) | Goal::Discover(..) | Goal::Home => {}
                     Goal::Met(name, _) if name == "Kinds" => {}
                     Goal::Met(name, _) => find(name, &event)?,
+                    Goal::Dealt(name, line, _) => {
+                        find(name, &event)?;
+                        if !lines.contains(&format!("{name}/{line}")) {
+                            return Err(refuse(&format!("line of {name}"), line));
+                        }
+                    }
                     Goal::Prayed(name, _) => find(name, &prayer)?,
                     Goal::Offered(name, _) => find(name, &made)?,
                     Goal::Opened(name, _) => find(name, &rock)?,
                     Goal::Fertilised(name, _) => find(name, &made)?,
                     Goal::Ate(name, _) => find(name, &made)?,
                     Goal::Felt(name) => find(name, &effect)?,
-                    Goal::Laid(name, _) => find(name, &made)?,
+                    Goal::Laid(name, _) | Goal::PutAway(name, _) => find(name, &made)?,
                     Goal::Mended(name, _) => find(name, &made)?,
                     Goal::Watering(name, _) | Goal::Placed(name, _) => find(name, &made)?,
                     Goal::Stocked(name, kept, _) => {
@@ -991,6 +1019,8 @@ pub struct Named<'a> {
     pub steps: &'a [String],
     /// The wandering kinds' full names, which `Met` names.
     pub events: &'a [String],
+    /// Each wandering kind's lines, `kind/line` by full kind name, which `Dealt` names.
+    pub lines: &'a [String],
     /// The prayers' full names, which `Prayed` names.
     pub prayers: &'a [String],
     /// The effects' full names, which `Felt` names.
@@ -1278,12 +1308,14 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1), ("placed:base:hide_window", 2), ("stocked:base:feed_trough:base:wheat", 8), ("crafted_near:chopping_block:base:oak_planks", 6), ("trapped:base:rabbit", 1), ("mended:base:bone", 2)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1), ("placed:base:hide_window", 2), ("stocked:base:feed_trough:base:wheat", 8), ("stocked:base:oak_crate_stack:base:oak_planks", 20), ("stocked:base:barrel:base:oak_planks", 12), ("put_away:base:oak_planks", 20), ("crafted_near:chopping_block:base:oak_planks", 6), ("trapped:base:rabbit", 1), ("mended:base:bone", 2), ("dealt:base:pedlar/swap", 1)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
         let carried = |_: &str| 0u32;
-        let has_tag = |name: &str, tag: &str| (name == "base:bone" && tag == "offering") || (name == "base:honey" && tag == "sweet");
+        let has_tag = |name: &str, tag: &str| {
+            (name == "base:bone" && tag == "offering") || (name == "base:honey" && tag == "sweet") || (matches!(name, "base:oak_crate_stack" | "base:barrel") && tag == "storage") || (name == "base:oak_planks" && tag == "planks")
+        };
         let drops = |_: &str| None;
         let progress = Progress { journal: &journal, tallies: &tallies, level: &level, carried: &carried, has_tag: &has_tag, drops: &drops, thriving: &|_| 0, home: false };
         let goal = |goal: Goal| progress.goal(&goal);
@@ -1291,6 +1323,9 @@ mod tests {
         assert_eq!(goal(Goal::Met("pedlar".into(), 3)), (2, 3), "a short name is the kind's own");
         assert_eq!(goal(Goal::Met("any".into(), 4)), (3, 4));
         assert_eq!(goal(Goal::Met("Kinds".into(), 3)), (2, 3), "a kind never dealt with is no kind");
+        assert_eq!(goal(Goal::Dealt("base:pedlar".into(), "swap".into(), 1)), (1, 1), "that line only");
+        assert_eq!(goal(Goal::Dealt("pedlar".into(), "swap".into(), 1)), (1, 1), "a short name is the kind's own");
+        assert_eq!(goal(Goal::Dealt("base:pedlar".into(), "haggle".into(), 1)), (0, 1), "another line of the kind is not this one");
         assert_eq!(goal(Goal::Prayed("base:bark_skin".into(), 1)), (3, 1));
         assert_eq!(goal(Goal::Prayed("base:ember_arm".into(), 1)), (0, 1));
         assert_eq!(goal(Goal::Offered("base:bone".into(), 3)), (4, 3), "only what was offered, not what was made");
@@ -1307,6 +1342,10 @@ mod tests {
         assert_eq!(goal(Goal::Placed("base:hide_window".into(), 2)), (2, 2), "blocks set down");
         assert_eq!(goal(Goal::Stocked("base:wheat".into(), "base:feed_trough".into(), 8)), (8, 8), "wheat put in a store");
         assert_eq!(goal(Goal::Stocked("base:bone".into(), "base:feed_trough".into(), 1)), (0, 1), "only the item asked for");
+        assert_eq!(goal(Goal::Stocked("tag:planks".into(), "tag:storage".into(), 32)), (32, 32), "into any store with the tag, the crate stack and the barrel together");
+        assert_eq!(goal(Goal::Stocked("any".into(), "tag:storage".into(), 40)), (32, 40), "the feed trough is no store of the tag");
+        assert_eq!(goal(Goal::Stocked("base:oak_planks".into(), "base:barrel".into(), 12)), (12, 12), "one store kind still counts alone");
+        assert_eq!(goal(Goal::PutAway("tag:planks".into(), 32)), (20, 32), "only what was put away, not all that was stocked");
         assert_eq!(goal(Goal::CraftNear("base:oak_planks".into(), "chopping_block".into(), 6)), (6, 6));
         assert_eq!(goal(Goal::CraftNear("base:oak_planks".into(), "oven".into(), 1)), (0, 1), "made near another block");
         assert_eq!(goal(Goal::Trapped("any".into(), 1)), (1, 1), "a catch taken from a trap");
@@ -1434,7 +1473,7 @@ mod tests {
         let multiblocks = MultiblockRegistry::new(vec![MultiblockRegistry::read("base", kiln).unwrap()], &blocks).unwrap();
         let source = format!("(quests: [{quest}])");
         let mut quests = QuestRegistry::new(vec![QuestRegistry::read(namespace, &source).unwrap()])?;
-        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[], events: &["base:pedlar".to_owned()], prayers: &["base:bark_skin".to_owned()], effects: &["base:smoky".to_owned()], near: &["chopping_block".to_owned()], stores: &["base:brick".to_owned()], trapped: &["base:rabbit".to_owned()], harvests: &[] })?;
+        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[], events: &["base:pedlar".to_owned()], lines: &["base:pedlar/swap".to_owned()], prayers: &["base:bark_skin".to_owned()], effects: &["base:smoky".to_owned()], near: &["chopping_block".to_owned()], stores: &["base:brick".to_owned()], trapped: &["base:rabbit".to_owned()], harvests: &[] })?;
         Ok(quests)
     }
 
@@ -1545,6 +1584,9 @@ mod tests {
         assert_eq!(refused(r#"Mine("tag:ores", 1)"#, ""), Some("quest base:dig names the tag `ores`, which no package has".to_owned()));
         assert_eq!(refused(r#"Built("kil", 1)"#, ""), Some("quest base:dig names the multiblock or ladder step `kil`, which no package has".to_owned()));
         assert_eq!(refused(r#"Met("pedler", 1)"#, ""), Some("quest base:dig names the wandering kind `pedler`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Dealt("pedler", "swap", 1)"#, ""), Some("quest base:dig names the wandering kind `pedler`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Dealt("pedlar", "swop", 1)"#, ""), Some("quest base:dig names the line of base:pedlar `swop`, which no package has".to_owned()));
+        assert!(refused(r#"Dealt("pedlar", "swap", 1)"#, "").is_none());
         assert_eq!(refused(r#"Prayed("bark_skn", 1)"#, ""), Some("quest base:dig names the prayer `bark_skn`, which no package has".to_owned()));
         assert_eq!(refused(r#"Offered("bon", 1)"#, ""), Some("quest base:dig names the item `bon`, which no package has".to_owned()));
         assert_eq!(refused(r#"Opened("nomad_chest", 1)"#, ""), Some("quest base:dig names the block `nomad_chest`, which no package has".to_owned()));
@@ -1552,6 +1594,9 @@ mod tests {
         // The store, the tag made near and the creature trapped are each one there is.
         assert!(refused(r#"Stocked("oak_log", "brick", 1)"#, "").is_none());
         assert_eq!(refused(r#"Stocked("oak_log", "torch", 1)"#, ""), Some("quest base:dig names the store `torch`, which no package has".to_owned()), "a torch holds nothing");
+        assert!(refused(r#"Stocked("oak_log", "tag:multiblock_core", 1)"#, "").is_none(), "a tag some store has");
+        assert_eq!(refused(r#"PutAway("bon", 1)"#, ""), Some("quest base:dig names the item `bon`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Stocked("oak_log", "tag:ore", 1)"#, ""), Some("quest base:dig names the tag `ore`, which no package has".to_owned()), "copper ore has the tag but holds nothing");
         assert!(refused(r#"CraftNear("tag:log", "chopping_block", 1)"#, "").is_none());
         assert_eq!(refused(r#"CraftNear("tag:log", "choping_block", 1)"#, ""), Some("quest base:dig names the tag no recipe is made near `choping_block`, which no package has".to_owned()));
         assert!(refused(r#"Trapped("rabbit", 1)"#, "").is_none() && refused(r#"Trapped("any", 1)"#, "").is_none());

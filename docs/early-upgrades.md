@@ -58,7 +58,7 @@ leading to a step:
 | A Full Stone Kit | Nomad | carry a stone pickaxe, axe, shovel, hoe and knife |
 | Stockpile | Nomad | carry 32 logs and 64 cobblestone |
 | Copper Kit | Farm | craft a copper axe, shovel, hoe and knife |
-| An Ore Run | Farm | mine 24 copper, 9 tin and 12 coal |
+| An Ore Run | Farm | mine 24 copper and 9 tin |
 | A Stove and a Quern | Farm | craft a cottage stove and a workshop piece |
 | Books and Banners | Farm | craft a bookshelf and a banner |
 | Make Camp, Snug for Winter, A Homely Home, A Cosy Home, Heart of the Home | Nomad, Farm | reach each home step (any higher step counts too) |

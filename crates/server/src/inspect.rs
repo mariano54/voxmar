@@ -110,6 +110,15 @@ impl Server {
                 lines.push(Words::key("inspect.more_at").with("level", Words::text(next)));
             }
         }
+        // One keeping a market stall, at it: today's trade, or that the player has had
+        // theirs today.
+        let traded = self.traded_today(player);
+        if let Some(trade) = self.trade_today(id).filter(|_| !traded) {
+            let item = |&(item, count): &(voxmar_engine::block::BlockId, u8)| Words::key("inspect.trade_item").with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(item).name.clone()));
+            lines.push(Words::key("inspect.trade").with("wants", item(&trade.wants)).with("gives", Words::List(trade.gives.iter().map(item).collect())));
+        } else if traded && self.trade_today(id).is_some() {
+            lines.push(Words::key("inspect.traded"));
+        }
         if let Some(p) = self.players.get(&player) {
             p.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: Words::Lines(lines) });
         }

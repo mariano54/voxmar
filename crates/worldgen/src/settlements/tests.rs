@@ -930,6 +930,53 @@ fn plans_keep_to_their_squares_and_rules() {
     assert!(chapels > 0 && shrines > 0, "{chapels} chapels and {shrines} shrines to look in");
 }
 
+/// A village's log bench is the shaped piece a player makes at home, two set end to end
+/// along the lane, not two stripped logs standing: what a village builds is what a home
+/// can have.
+#[test]
+fn a_village_log_bench_is_the_piece_a_player_makes() {
+    use super::def::PropKind;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let bench = world_content.settlements.props.iter().find(|p| p.kind.label() == "log_bench").expect("villages build log benches");
+    let PropKind::Blocks(_, blocks) = &bench.kind else { panic!("the log bench is a package's prop of blocks") };
+    let placed: Vec<(IVec3, &str)> = blocks.iter().map(|(at, name)| (*at, name.as_str())).collect();
+    assert_eq!(placed, [(IVec3::new(0, 1, 0), "base:oak_log_bench"), (IVec3::new(1, 1, 0), "base:oak_log_bench")]);
+    let piece = content.blocks.expect("base:oak_log_bench");
+    assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the bench a village builds");
+}
+
+/// What a village keeps its stores and nets in (its barrel, crates, sacks and nets) is what
+/// a player makes at home: a survival piece with a recipe, given back whole where a player
+/// set it and nothing where a village did (`furnishing`).
+#[test]
+fn a_villages_stores_are_pieces_a_player_makes() {
+    use crate::content::Select;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let (f, blocks) = (&world_content.settlements.furnishings, &content.blocks);
+    let mut stores: Vec<BlockId> = f.barrel.iter().map(|name| blocks.expect(name)).collect();
+    for select in f.crates.iter().chain(&f.sacks).chain(&f.nets) {
+        match select {
+            Select::Name(name, _) => stores.push(blocks.expect(name)),
+            Select::Tag(tag, _) => stores.extend(blocks.tagged(tag)),
+        }
+    }
+    let names: Vec<&str> = stores.iter().map(|&id| blocks.def(id).name.as_str()).collect();
+    for want in ["base:barrel", "base:crate", "base:sack", "base:fishing_net"] {
+        assert!(names.contains(&want), "a village keeps no {want}: {names:?}");
+    }
+    for id in stores {
+        let (def, info) = (blocks.def(id), blocks.info(id));
+        assert!(!def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "{} is a village's only", def.name);
+        assert!(def.has_tag("furnishing"), "{} would give itself away where a village set it", def.name);
+        assert_eq!((info.drops, info.drop_count), (id, 1), "{} does not come back whole", def.name);
+        assert!(content.recipes.iter().any(|r| r.output == id), "a player cannot make {}", def.name);
+    }
+}
+
 /// The settlements of a few squares, held fixed: a change to planning that moves a single
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]
@@ -1531,6 +1578,107 @@ fn room_columns_exclude_exterior_walls_and_courtyards() {
     assert!(spec.room(&Frame { origin: IVec3::ZERO, facing: Facing::North }).is_empty());
 }
 
+/// Where one walking in from everywhere round the edge of the ground at `min`..`max` can
+/// stand: a step up at a time with room overhead to climb, or down with room to fall past.
+fn walked_from_edge(model: &Model, min: IVec2, max: IVec2, solid: impl Fn(BlockId) -> bool) -> rustc_hash::FxHashSet<IVec3> {
+    let stands = |p: IVec3| solid(model.block(p - IVec3::Y)) && !solid(model.block(p)) && !solid(model.block(p + IVec3::Y));
+    let mut seen: rustc_hash::FxHashSet<IVec3> = Default::default();
+    let mut queue: Vec<IVec3> = (min.x..=max.x).flat_map(|x| [IVec3::new(x, 1, min.y), IVec3::new(x, 1, max.y)]).filter(|&p| stands(p)).collect();
+    seen.extend(queue.iter().copied());
+    while let Some(p) = queue.pop() {
+        for step in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z] {
+            for rise in [1, 0, -1, -2, -3] {
+                let q = p + step + IVec3::Y * rise;
+                if q.x < min.x || q.x > max.x || q.z < min.y || q.z > max.y || seen.contains(&q) || !stands(q) {
+                    continue;
+                }
+                let clear = if rise > 0 { !solid(model.block(p + IVec3::Y * 2)) } else { (rise + 1..=0).all(|r| !solid(model.block(p + step + IVec3::Y * (r + 1)))) };
+                if clear {
+                    seen.insert(q);
+                    queue.push(q);
+                }
+            }
+        }
+    }
+    seen
+}
+
+/// Through the door, every cell of the ground floor's room one could stand in, a wing's
+/// behind the house too, can be walked to: no table, stair or hearth set across the way
+/// in. Every boxy house and inn, at its least and greatest size, of one storey and its
+/// most, with a chimney and without, with each wing it may have, over a few seeds (where
+/// a table goes).
+/// Before: 1894 of the 7200 had room shut off, nearly all a wing: an inn's table set
+/// before the wing's opening, its stair beside it, shut the wing off, and its folk set out
+/// for it stood on the table, under the lintel, for good; a bakery's oven or a store's
+/// bins along the back wall, or a stair's top step, did the same.
+#[test]
+fn every_room_cell_of_the_ground_floor_can_be_walked_to() {
+    use super::canvas::{Facing, Frame};
+    use super::def::{Extra, Form, Roof};
+    use super::house::{self, Kind, Mats, Spec};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let registry = content.blocks.clone();
+    let def = &world_content.settlements;
+    let fixed = super::fixed(&registry, def).unwrap();
+    let id = |n: &str| registry.id(&format!("base:{n}")).unwrap();
+    let palette = |n: &str| super::canvas::Palette(vec![(id(n), 1.0)]);
+    let mats = Mats {
+        foundation: palette("cobblestone"), floor: id("spruce_planks"), wall: id("polished_calcite"), frame: id("dark_oak_log"),
+        roof: id("dark_oak_planks"), trim: id("spruce_planks"), window: Some(id("old_glass")), weathered: palette("mossy_cobblestone"),
+        hedge: palette("oak_leaves"), log: id("oak_log"), chimney: id("cobblestone"), crops: Vec::new(), fruit: palette("apple_leaves_2"), roof_pieces: Vec::new(), pieced: 0.0, jetty: None,
+    };
+    let solid = |b: BlockId| registry.def(b).solid;
+    let (mut checked, mut shut) = (0, Vec::new());
+    for h in def.houses.iter().filter(|h| h.form == Form::Box) {
+        for (w, d) in [(h.width.0, h.depth.0), (h.width.1, h.depth.1)] {
+            let (w, d) = (w as i32, d as i32);
+            for storeys in [1, h.storeys.1 as i32] {
+                for kind in [Kind::House, Kind::Inn] {
+                    for chimney in [false, true] {
+                        // Each wing the plan draws (`plan`: 3 or 4 wide, 3 to 5 deep, narrower than
+                        // the house), and none where it may draw none.
+                        let wings = [None, Some((3, 3)), Some((4, 3)), Some((3, 5)), Some((4, 5))];
+                        for wing in wings.into_iter().filter(|w2| w2.map_or(h.wing < 1.0, |(ww, _)| ww < w - 1)) {
+                            for seed in 0..6 {
+                                let mut spec = Spec {
+                                    kind, w, d, wall: h.walls.1 as i32, storeys, roof: Roof::Gable, pitch: 1, ridge_x: w > d,
+                                    extras: if chimney { vec![Extra::Chimney] } else { Vec::new() }, door: w / 2, shed: 0, wing, stilts: 0,
+                                    regular: true, window_chance: 0.5, form: h.form, inside: h.inside.clone(), centre: None, seed, row: None, byre: 0,
+                                };
+                                house::make_room_for_stairs(&mut spec);
+                                let (low, high) = spec.envelope();
+                                let frame = Frame::fit(low, high, Facing::South, IVec2::ZERO, 0);
+                                let mut canvas = super::canvas::Canvas::default();
+                                house::draw(&spec, &frame, &mats, &fixed, &mut canvas);
+                                let extent = Frame::extent(low, high, Facing::South);
+                                let (min, max) = (IVec2::splat(-3), extent + 2);
+                                let model = Model::new(canvas, &registry, min, max);
+                                let seen = walked_from_edge(&model, min, max, solid);
+                                let stands = |p: IVec3| solid(model.block(p - IVec3::Y)) && !solid(model.block(p)) && !solid(model.block(p + IVec3::Y));
+                                let room = spec.room(&frame);
+                                let Some(ground) = (0..8).find(|&y| room.iter().any(|c| seen.contains(&IVec3::new(c.x, y, c.y)))) else {
+                                    shut.push(format!("{} {w} by {d} ({kind:?}, {storeys} storeys, chimney {chimney}, wing {wing:?}, seed {seed}): no way in", h.name));
+                                    continue;
+                                };
+                                let unreached: Vec<IVec2> = room.iter().copied().filter(|c| { let p = IVec3::new(c.x, ground, c.y); stands(p) && !seen.contains(&p) }).collect();
+                                if !unreached.is_empty() {
+                                    shut.push(format!("{} {w} by {d} ({kind:?}, {storeys} storeys, chimney {chimney}, wing {wing:?}, seed {seed}): {unreached:?} shut off", h.name));
+                                }
+                                checked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(shut.is_empty(), "{} of {checked} ground floors have room shut off:\n{}", shut.len(), shut.join("\n"));
+    assert!(checked > 100, "only {checked} ground floors checked");
+}
+
 /// From the lane, through the door and up the stairs, every storey of every house of more
 /// than one can be walked to, at its least and greatest size, with a chimney and without,
 /// and as an inn: a step up at a time, with room overhead.
@@ -1572,27 +1720,7 @@ fn every_storey_can_be_walked_to() {
                 let extent = Frame::extent(low, high, Facing::South);
                 let (min, max) = (IVec2::splat(-3), extent + 2);
                 let model = Model::new(canvas, &registry, min, max);
-                let stands = |p: IVec3| solid(model.block(p - IVec3::Y)) && !solid(model.block(p)) && !solid(model.block(p + IVec3::Y));
-                // Walk from everywhere round the edge of the ground.
-                let mut seen: rustc_hash::FxHashSet<IVec3> = Default::default();
-                let mut queue: Vec<IVec3> = (min.x..=max.x).flat_map(|x| [IVec3::new(x, 1, min.y), IVec3::new(x, 1, max.y)]).filter(|&p| stands(p)).collect();
-                seen.extend(queue.iter().copied());
-                while let Some(p) = queue.pop() {
-                    for step in [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z] {
-                        for rise in [1, 0, -1, -2, -3] {
-                            let q = p + step + IVec3::Y * rise;
-                            if q.x < min.x || q.x > max.x || q.z < min.y || q.z > max.y || seen.contains(&q) || !stands(q) {
-                                continue;
-                            }
-                            // Up a step needs room overhead to climb; down, room to fall past.
-                            let clear = if rise > 0 { !solid(model.block(p + IVec3::Y * 2)) } else { (rise + 1..=0).all(|r| !solid(model.block(p + step + IVec3::Y * (r + 1)))) };
-                            if clear {
-                                seen.insert(q);
-                                queue.push(q);
-                            }
-                        }
-                    }
-                }
+                let seen = walked_from_edge(&model, min, max, solid);
                 // The ground floor is where one stands just inside the door.
                 let interior: Vec<(i32, i32)> = (1..w - 1).flat_map(|x| (1..d - 1).map(move |z| (x, z))).collect();
                 let ground = (0..8).find(|&y| interior.iter().any(|&(x, z)| seen.contains(&frame.at(x, y, z))));
@@ -1690,10 +1818,11 @@ fn people_numbers_that_would_not_play_are_refused() {
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 16] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 17] = [
         ("a talk as long as the wait to talk again", |p| p.react.chat_for = p.react.chat_every),
         ("a talk from farther than a greeting", |p| p.react.chat = p.react.greet + 1.0),
         ("a talk for no time", |p| p.react.chat_for = 0.0),
+        ("no wait between telling a stranger in a home to leave", |p| p.react.intruder_every = 0.0),
         ("newcomer in a fifth of a day", |p| p.newcomer = 0.2),
         ("a greeting from below nothing", |p| p.react.greet = -1.0),
         ("a greeting held as long as the wait to greet again", |p| p.react.greet_for = p.react.greet_every),
@@ -3134,13 +3263,12 @@ fn homes_are_furnished_for_their_people() {
     use super::canvas::Put;
     use rustc_hash::FxHashMap;
     let registry = base_registry();
-    let content = crate::content::WorldContent::base(&registry).unwrap();
     let solid = |b: Option<&BlockId>| b.is_some_and(|&b| registry.info(b).solid);
     let tagged = |b: Option<&BlockId>, tag: &str| b.is_some_and(|&b| registry.def(b).has_tag(tag));
     let (mut homes, mut wanted, mut beds, mut tables, mut seats, mut tops, mut surfaces, mut stairs, mut bare) = (0, 0, 0, 0, 0, 0, 0, 0, Vec::new());
     let mut shown = 0;
     for seed in [42u64, 1, 7] {
-        let world = Overworld::with_content(seed, registry.clone(), &content);
+        let world = shared_world(seed);
         let spawn = world.spawn_point();
         for slot in world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500) {
             let Some(plan) = slot.0.as_ref() else { continue };

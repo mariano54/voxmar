@@ -1156,12 +1156,13 @@ fn a_village_hay_bale_gives_nothing_but_a_players_breaks_into_nine_straw_across_
     furnishing_drops_across_restarts("hay-bale", "hay_bale", "straw", 9);
 }
 
-/// Every village prop (settlements.ron's furnishings) that a player's own copy breaks into
-/// something gives nothing where the world set it: each is set as a village sets it and
-/// broken, and nothing of what it drops comes to hand or lies loose.
+/// Every village prop (settlements.ron's furnishings, and the furnishings its `blocks` props
+/// are made of) that a player's own copy breaks into something gives nothing where the
+/// world set it: each is set as a village sets it and broken, and nothing of what it drops
+/// comes to hand or lies loose.
 #[test]
 fn village_props_set_by_the_world_give_nothing() {
-    use voxmar_worldgen::{Select, WorldContent};
+    use voxmar_worldgen::{Select, SettlementPropKind, WorldContent};
     let mut client = Client::join();
     let world = WorldContent::load(&client.content).expect("world content");
     let f = &world.settlements.furnishings;
@@ -1175,6 +1176,12 @@ fn village_props_set_by_the_world_give_nothing() {
             }
         }
     }
+    // The furnishings a package's own props are made of (the log bench) too.
+    for prop in &world.settlements.props {
+        if let SettlementPropKind::Blocks(_, cells) = &prop.kind {
+            props.extend(cells.iter().map(|(_, name)| blocks.expect(name)).filter(|&id| blocks.def(id).has_tag("furnishing")));
+        }
+    }
     props.sort();
     props.dedup();
     let giving: Vec<(String, BlockId)> = props
@@ -1183,6 +1190,7 @@ fn village_props_set_by_the_world_give_nothing() {
         .map(|id| (blocks.def(id).name.trim_start_matches("base:").to_owned(), blocks.info(id).drops))
         .collect();
     assert!(giving.iter().any(|(name, _)| name == "hay_bale"), "no village prop gives anything: {giving:?}");
+    assert!(giving.iter().any(|(name, _)| name == "oak_log_bench"), "the log bench is not among the props: {giving:?}");
     let spot = client.position.floor().as_ivec3() + IVec3::new(1, 0, 1);
     for line in ["/clear", "/fill ~1 ~-1 ~1 ~1 ~-1 ~1 stone", "/fill ~1 ~ ~1 ~1 ~1 ~1 air"] {
         client.ok(line);
@@ -4143,15 +4151,17 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     // This checks whom the alarm calls the guards to, not a novice's fist: one that lands
     // a third of its blows, at part strength when the clock bunches them under load, now
     // and then hurt no one in all of its ten seconds. A practised fist lands nearly every
-    // blow and kills no grown villager in one (its max hit 8 against their 12; a sword
+    // blow and kills no grown villager in one (at most 10 against their 12; a sword
     // did).
     client.ok("/skill attack 60");
     let guards = |c: &Client| -> Vec<voxmar_protocol::CreatureView> { villagers(c).into_iter().filter(|v| species_name(c, v) == "base:guard").collect() };
     // The closest pair, with a stable tie-break: hash-map order used to pick a distant
     // worker whose guard had no way through the intervening buildings.
-    // Grown folk only: one the practised fist (max hit 8) cannot kill in one blow, so it is
-    // seen hurt.
-    let pick = |c: &Client| villagers(c).into_iter().filter(|v| species_name(c, v) != "base:guard" && c.content.creatures.get(v.species).def.health > 8)
+    // Grown folk only: one the practised fist cannot kill in one blow, so it is seen hurt.
+    // Its max hit at Attack 60 is 8 (1, and one for every eight levels above the first),
+    // and a flourish (the one bonus for a player who neither blocks nor falls: 20%) raises a
+    // blow to at most 10.
+    let pick = |c: &Client| villagers(c).into_iter().filter(|v| species_name(c, v) != "base:guard" && c.content.creatures.get(v.species).def.health > 10)
         .flat_map(|v| guards(c).into_iter().map(move |g| { let d = g.position.distance(v.position); (v.clone(), g, d) }))
         .filter(|(_, _, d)| *d < 30.0)
         .min_by(|a, b| a.2.total_cmp(&b.2).then(a.0.id.cmp(&b.0.id)).then(a.1.id.cmp(&b.1.id)));
@@ -8344,16 +8354,17 @@ impl Pacing {
         out
     }
 
-    /// The longest wait with nothing new, from the start to `to`: its seconds, the second it
-    /// began, and the new thing that ended it (none, if the run did).
-    fn longest_gap(&self, to: f32) -> (f32, f32, Option<&str>) {
-        let mut times: Vec<(f32, Option<&str>)> = self.new.iter().map(|(at, _, name)| (*at, Some(name.as_str()))).collect();
-        times.push((to, None));
-        let mut from = 0.0;
-        let mut longest = (0.0, 0.0, None);
+    /// The longest wait with nothing new between `since` and `to`, counted from `since` for
+    /// one that began before it: its seconds, the second it began, and the new thing that
+    /// ended it (none, if `to` did).
+    fn longest_gap(&self, since: f32, to: f32) -> (f32, f32, Option<&str>) {
+        let times = self.new.iter().map(|(at, _, name)| (*at, Some(name.as_str()))).take_while(|&(at, _)| at < to).chain([(to, None)]);
+        let mut from = 0.0f32;
+        let mut longest = (0.0, since, None);
         for (at, name) in times {
-            if at - from > longest.0 {
-                longest = (at - from, from, name);
+            let start = from.max(since);
+            if at > since && at - start > longest.0 {
+                longest = (at - start, start, name);
             }
             from = from.max(at);
         }
@@ -9032,10 +9043,10 @@ impl Fresh {
         for (i, &ground) in grounds.iter().enumerate() {
             let last = i + 1 == grounds.len();
             let cell = ground + IVec3::Y;
-            // Open as the place action finds it: air, or a plant or snow a block replaces
+            // Open as the place action finds it: air, or a plant a block replaces
             // (not water), on solid ground.
             let open = |c: &Client| {
-                c.world.block(cell).is_some_and(|b| b == BlockId::AIR || (c.content.blocks.info(b).replaceable && c.content.blocks.info(b).fluid.is_none()))
+                c.world.block(cell).is_some_and(|b| c.content.blocks.info(b).gives_room())
                     && c.world.block(ground).is_some_and(|b| c.content.blocks.def(b).solid)
             };
             if !last && (!open(&self.c) || Self::creature_on(&self.c, cell)) {
@@ -9108,7 +9119,17 @@ impl Fresh {
         while !done(&self.c) {
             swings += 1;
             assert!(swings <= 400, "hunting took over 400 swings: at {:?}, lane {:?}, blows {} damage {:?}", self.at, lane(&self.c, self.origin), self.c.blows, self.c.damage);
-            let (at, wanted) = (self.at, self.c.content.creatures.find(prefer(&self.c)));
+            let (at, kind) = (self.at, prefer(&self.c));
+            let wanted = self.c.content.creatures.find(kind);
+            // None of the kind wanted left in the lane (one fled out of its mouth): one more
+            // is brought in rather than the others run down for what they cannot give.
+            if !kind.is_empty() && wanted.is_some() && !lane(&self.c, self.origin).iter().any(|x| Some(x.2) == wanted) {
+                self.stock(kind, -10);
+                self.restocks += 1;
+                let origin = self.origin;
+                self.wait(5.0, &format!("a {kind} in the lane"), |c| lane(c, origin).iter().any(|x| Some(x.2) == wanted));
+                continue;
+            }
             let Some((id, p, _)) = lane(&self.c, self.origin).into_iter().min_by(|a, b| {
                 let key = |x: &(u32, Vec3, voxmar_engine::creature::CreatureId)| (Some(x.2) != wanted, (x.1.z - at.z).abs());
                 key(a).0.cmp(&key(b).0).then(key(a).1.total_cmp(&key(b).1))
@@ -9777,7 +9798,12 @@ impl Fresh {
                 self.wait(5.0, &format!("throwing away {item}"), |c| c.inventory.get(slot).is_none_or(|x| x.item != id));
             }
         }
-        assert!(empty(&self.c) >= free, "only {} slots empty after throwing away the spare", empty(&self.c));
+        assert!(
+            empty(&self.c) >= free,
+            "only {} slots empty after throwing away the spare, the pack holding {:?}",
+            empty(&self.c),
+            (0..slots).filter_map(|s| self.c.inventory.get(s)).map(|x| format!("{} {}", x.count, self.c.content.blocks.def(x.item).name)).collect::<Vec<_>>()
+        );
         self.c.tp(back);
         self.at = back;
     }
@@ -9933,6 +9959,18 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // rest shaped between firings (Crafting 5): seven plain, as the book counts them (A Kiln
     // Load's four were given, not shaped), then twelve tempered, two from four fired clay
     // and a straw at the table. What is left when it is spent waits for the charcoal.
+    // Earthenware, open since The Potter: two bowls and a jar of fired clay in the grid
+    // (Crafting 2 and 3), at the table: between loads the player may be off digging clay.
+    let table = site.table;
+    let bowls = |f: &mut Fresh| {
+        f.at_table(table);
+        f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
+    };
+    let jar = |f: &mut Fresh| {
+        f.at_table(table);
+        f.craft(&[(1, fired, 1), (3, fired, 1), (4, fired, 1)], "base:earthen_jar", 1);
+        f.wait(5.0, "the server counting the crockery", |c| quest_status(c, "earthenware").0);
+    };
     let brick_work = |f: &mut Fresh| {
         // Counted in the pack, where the bricks wait for the ring and the crucible, less A
         // Kiln Load's four given: the server counts the crafts toward Brick by Brick once a
@@ -9941,6 +9979,15 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         if !quest_status(&f.c, "a_kiln_load").0 {
             let more = f.have(fired) + 12;
             f.fire_clay(&site, more);
+            // Between loads, as A Kiln Load says: Earthenware's crockery from the fired clay,
+            // the bowls after one load and the jar after the next.
+            if !quest_status(&f.c, "earthenware").0 && f.have(fired) >= 3 {
+                if f.have("base:earthen_bowl") == 0 {
+                    bowls(f);
+                } else if f.have("base:earthen_jar") == 0 {
+                    jar(f);
+                }
+            }
             if quest_status(&f.c, "a_kiln_load").0 {
                 f.mark("a_kiln_load");
             }
@@ -9952,15 +9999,16 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
             f.wait(5.0, "the server counting the bricks and the fired clay kept", |c| quest_status(c, "first_bricks").0);
             f.mark("first_bricks");
         } else if !quest_status(&f.c, "earthenware").0 {
-            // Earthenware, open since A Kiln Load: two bowls and a jar of fired clay in the
-            // grid (Crafting 2 and 3), fired for as the bricks are.
+            // Earthenware, if no load left fired clay to spare for it: fired for as the
+            // bricks are.
             if f.have(fired) < 6 {
                 let more = f.have(fired) + 12;
                 f.fire_clay(&site, more);
             }
-            f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
-            f.craft(&[(1, fired, 1), (3, fired, 1), (4, fired, 1)], "base:earthen_jar", 1);
-            f.wait(5.0, "the server counting the crockery", |c| quest_status(c, "earthenware").0);
+            if f.have("base:earthen_bowl") == 0 {
+                bowls(f);
+            }
+            jar(f);
         } else if !quest_status(&f.c, "a_table_for_two").0 {
             // A Table for Two, open since the Farm Age, made between firings: two oak stools
             // (Construction 1) and a table (Construction 3) at the crafting table, set by the
@@ -10185,6 +10233,13 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     eprintln!("{}", timeline(&f));
     eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
     check_pacing(&mut f);
+    // From the lit hearth on, the Farm line never goes longer with nothing new than one
+    // action may go on: the kiln work between loads is work a player has not done before.
+    let (hearth, end) = (f.marks.iter().find(|m| m.name == "hearth_lit").expect("the hearth lit").at, f.secs());
+    let pacing = f.pacing.borrow();
+    let (gap, from, ended) = pacing.longest_gap(hearth, end);
+    eprintln!("from the lit hearth: the longest wait with nothing new {gap:.1} s from {from:.1} s, ended by {}", ended.unwrap_or("the end of the run"));
+    assert!(gap <= PACING_WAIT, "{gap:.1} s with nothing new from {from:.1} s on the Farm line (the hearth lit at {hearth:.1} s), ended by {}", ended.unwrap_or("the end of the run"));
 }
 
 /// Something new comes every three minutes of the line, several things, and no one action
@@ -10215,6 +10270,11 @@ const PACING_NEW: usize = 5;
 /// clay at the pit kiln, 29 to 40 s in 32 runs, Oct 20).
 const PACING_STRETCH: f32 = 60.0;
 
+/// The longest the Nomad line from the first campfire to the lit hearth, and the Farm line
+/// from the lit hearth on, may go with nothing new, in server seconds: no longer than one
+/// action may go on (`PACING_STRETCH`).
+const PACING_WAIT: f32 = PACING_STRETCH;
+
 /// The pacing check's report: what was new in each window of the run, by kind, and the
 /// longest stretch of one action over and over.
 fn pacing_report(pacing: &Pacing, end: f32) -> String {
@@ -10235,7 +10295,7 @@ fn pacing_report(pacing: &Pacing, end: f32) -> String {
             all.join("; ")
         );
     }
-    let (gap, from, ended) = pacing.longest_gap(end);
+    let (gap, from, ended) = pacing.longest_gap(0.0, end);
     out += &format!("  longest wait with nothing new: {gap:.1} s from {from:.1} s, ended by {}\n", ended.unwrap_or("the end of the run"));
     let (what, secs, times) = &pacing.longest;
     out += &format!("  longest single-action stretch: {what}, {times} times over {secs:.1} s\n");
@@ -10324,8 +10384,17 @@ fn finish(mut f: Fresh) {
         f.mined, f.c.deaths, f.restocks, settle.0, settle.1, f.secs()
     );
     eprintln!("{report}");
-    // The Nomad line paced as the Farm's is, by the same floors.
+    // The Nomad line paced as the Farm's is, by the same floors, and from the first campfire
+    // to the lit hearth never longer with nothing new than one action may go on.
     check_pacing(&mut f);
+    let at = |name: &str| f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached")).at;
+    let (fire, hearth) = (at("first_night"), at("hearth_lit"));
+    {
+        let pacing = f.pacing.borrow();
+        let (gap, from, ended) = pacing.longest_gap(fire, hearth);
+        eprintln!("from the first campfire to the lit hearth: the longest wait with nothing new {gap:.1} s from {from:.1} s, ended by {}", ended.unwrap_or("the lit hearth"));
+        assert!(gap <= PACING_WAIT, "{gap:.1} s with nothing new from {from:.1} s on the Nomad line (the first campfire at {fire:.1} s, the hearth lit at {hearth:.1} s), ended by {}", ended.unwrap_or("the lit hearth"));
+    }
     for &(name, budget) in FRESH_BUDGETS {
         let m = f.marks.iter().find(|m| m.name == name).unwrap_or_else(|| panic!("{name} was never reached"));
         assert!(m.at <= budget, "{name} took {:.1} server seconds, over its budget of {budget}", m.at);

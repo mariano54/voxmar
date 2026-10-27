@@ -500,6 +500,20 @@ mod tests {
     }
 
     #[test]
+    fn a_line_dealt_with_counts_for_that_line_only() {
+        let mut server = fixture();
+        let fishers = party(&mut server, "fisher_folk");
+        hold(&mut server, "base:raw_cod", 3);
+        assert!(server.meet(1, fishers));
+        assert_eq!(tally(&server, "dealt:base:fisher_folk/swap"), 0, "three fish buy nothing");
+        hold(&mut server, "base:raw_cod", 4);
+        assert!(server.meet(1, fishers));
+        assert_eq!(tally(&server, "dealt:base:fisher_folk/swap"), 1, "four fish for twine is the swap");
+        assert_eq!(tally(&server, "met:base:fisher_folk"), 1, "and a dealing with the kind");
+        assert_eq!(tally(&server, "dealt:base:fisher_folk/rod_tip"), 0, "not another line");
+    }
+
+    #[test]
     fn dealing_with_travellers_finishes_the_road_quests() {
         let mut server = fixture();
         for quest in ["base:look_it_up", "base:timber", "base:stone_in_hand", "base:where_to_settle"] {
@@ -519,6 +533,30 @@ mod tests {
         assert!(!done(&server, "base:many_travellers"), "two kinds of five, and no home yet");
         let progress = server.quest_check(1).1.into_iter().find(|s| s.name == "base:many_travellers").unwrap();
         assert_eq!(progress.tasks[0][0], (2, 5), "kinds dealt with, out of five");
+    }
+
+    /// Rushes cut, rushlights made and one set down finish By Rushlight, the light A Lit
+    /// Corner asks for before candles: two rushes from the water's edge, a rushlight made
+    /// and standing.
+    #[test]
+    fn rushes_cut_and_a_rushlight_set_down_finish_by_rushlight() {
+        use voxmar_engine::action::ActionTarget;
+        use voxmar_engine::coords::Face;
+        let mut server = fixture();
+        server.players.get_mut(&1).unwrap().quests_done.push("base:make_camp".into());
+        let rush = server.content.blocks.expect("base:rush");
+        server.discover_broken(1, rush);
+        server.tally(1, "crafted", "base:oak_rushlight", 2);
+        server.update_quests(1);
+        assert!(!done(&server, "base:by_rushlight"), "one rush cut of two, nothing set down");
+        server.discover_broken(1, rush);
+        hold(&mut server, "base:oak_rushlight", 2);
+        let place = server.content.actions.expect("core:place");
+        server.propose(1, place, ActionTarget::Block { block: IVec3::new(127, 199, 130), face: Face::PosY }, std::time::Instant::now());
+        assert_eq!(tally(&server, "placed:base:oak_rushlight"), 1, "the rushlight set down counts");
+        server.update_quests(1);
+        assert!(done(&server, "base:by_rushlight"), "two rushes cut, rushlights made and one standing");
+        assert!(server.content.quests.get("base:a_lit_corner").is_some_and(|q| q.after.iter().any(|a| a == "base:by_rushlight")), "A Lit Corner comes after it");
     }
 
     /// What is eaten counts by food (`Ate`), and an effect counts once it has been felt at

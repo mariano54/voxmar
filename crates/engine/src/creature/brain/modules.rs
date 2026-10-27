@@ -45,7 +45,7 @@ pub fn module(behaviour: Behaviour) -> Arc<dyn Module> {
 /// Every creature has these, whatever its data says: going home when it strays, going to
 /// a mate when both are ready to breed, and warning players off if its kind does (`warn`).
 pub fn always() -> Vec<Arc<dyn Module>> {
-    vec![Arc::new(ReturnHome), Arc::new(Court), Arc::new(Roam), Arc::new(Warn), Arc::new(Fire), Arc::new(Hide)]
+    vec![Arc::new(ReturnHome), Arc::new(Court), Arc::new(Roam), Arc::new(Warn), Arc::new(Fire), Arc::new(Hide), Arc::new(Scavenge)]
 }
 
 /// Now and then a curious, lively individual sets off alone across its range, so groups
@@ -283,9 +283,11 @@ struct Flee {
 
 impl Flee {
     fn threat(&self, ctx: &Ctx) -> Option<Seen> {
-        let radius = self.radius * (0.5 + ctx.mind.personality.fear());
+        let radius = flees_at(ctx, self.radius);
+        // One who hurt it while it is still afraid, or come within its distance again: not a
+        // bystander nearer than them, once its fright has faded.
         ctx.attacker()
-            .filter(|_| ctx.mind.fear > 0.0)
+            .filter(|p| ctx.mind.fear > 0.0 || ctx.distance(p.position) < radius)
             .or_else(|| ctx.nearest().filter(|p| !p.tempting && ctx.distance(p.position) < sitting(ctx, p).map_or(radius, |f| f.hold)))
             .copied()
     }
@@ -338,12 +340,13 @@ impl Module for Flee {
         }
         let side = Vec3::new(-away.z, 0.0, away.x) * if style == Style::Hopper { 0.7 * mind.zig } else { 0.0 };
         if let Some(p) = target {
-            mind.remember(Memory::ScaredBy(p.id), 10.0);
+            mind.remember(Memory::ScaredBy(p.id), super::SCARED_REMEMBERED);
         }
         // A bird takes wing and goes well clear before it settles again.
         let far = if flier(ctx) { 22.0 } else { 8.0 };
         // One that sat tight bursts away, its first seconds faster than it can run.
-        let burst = flush(ctx).filter(|f| mind.since < f.seconds).map_or(1.0, |f| f.burst);
+        // Not one that was hurt: it flees as any prey does.
+        let burst = flush(ctx).filter(|f| ctx.attacker().is_none() && mind.since < f.seconds).map_or(1.0, |f| f.burst);
         Decision { goal: Some(at.position + (away + side).normalize() * far), speed: run(ctx) * burst * winded(ctx, mind), pose: Pose::Alert, alarm: fresh, ..Default::default() }
     }
 }
@@ -354,16 +357,24 @@ fn flush(ctx: &Ctx) -> Option<crate::creature::Flush> {
     ctx.creature.def.flush.filter(|_| !ctx.at.kept && ctx.at.errand.is_none())
 }
 
-/// How it sits tight from `p` (`creature::Flush`): not once they flushed it, while it
-/// recalls being scared by them, so a flushed bird runs well clear and does not settle
-/// again at the edge of its `hold`.
-fn sitting(ctx: &Ctx, p: &Seen) -> Option<crate::creature::Flush> {
-    flush(ctx).filter(|_| !ctx.mind.recalls(Memory::ScaredBy(p.id)))
+/// How near a player comes before it flees, its `Flee` radius by how fearful it is.
+fn flees_at(ctx: &Ctx, radius: f32) -> f32 {
+    radius * (0.5 + ctx.mind.personality.fear())
 }
 
-/// A game bird sits tight (`creature::Flush`): a player it has noticed, beyond its `hold`,
-/// it lets be, crouched still in the grass, facing nowhere in particular so as not to be
-/// seen looking. Not once it is hurt or its kin are alarmed: then it runs (`Flee`).
+/// How it sits tight from `p` (`creature::Flush`): not once they flushed it, while it
+/// recalls being scared by them, so a flushed bird runs well clear and does not settle
+/// again at the edge of its `hold`; nor from one who hurt it, while it recalls that, so a
+/// wounded bird flees them at its kind's distance.
+fn sitting(ctx: &Ctx, p: &Seen) -> Option<crate::creature::Flush> {
+    flush(ctx).filter(|_| !ctx.mind.recalls(Memory::ScaredBy(p.id)) && !ctx.mind.recalls(Memory::HurtBy(p.id)))
+}
+
+/// A game bird sits tight (`creature::Flush`): a player it has noticed, beyond its `hold`
+/// and within the distance it would otherwise flee at (`flees_at`), it lets be, crouched
+/// still in the grass, facing nowhere in particular so as not to be seen looking; one
+/// further off, it lives its day. Not once it is hurt or its kin are alarmed: then it
+/// runs (`Flee`).
 #[derive(Debug)]
 struct Hide;
 
@@ -380,13 +391,74 @@ impl Module for Hide {
         if flush(ctx).is_none() || ctx.mind.fear >= 0.3 || ctx.attacker().is_some() {
             return None;
         }
-        let p = ctx.nearest().filter(|p| !p.tempting && sitting(ctx, p).is_some_and(|f| ctx.distance(p.position) >= f.hold))?;
+        // Its widest flight, as `Warn` takes the widest hunt.
+        let wary = ctx
+            .creature
+            .behaviours
+            .iter()
+            .filter_map(|b| match b.behaviour {
+                Behaviour::Flee { radius } => Some(flees_at(ctx, radius)),
+                _ => None,
+            })
+            .reduce(f32::max)?;
+        let p = ctx.nearest().filter(|p| !p.tempting && sitting(ctx, p).is_some_and(|f| (f.hold..wary).contains(&ctx.distance(p.position))))?;
         Want::at(2.0, *p)
     }
 
     fn act(&self, _: &Ctx, mind: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
         mind.goal = None;
         Decision { pose: Pose::Crouched, ..Default::default() }
+    }
+}
+
+/// Blocks from food on the ground that it snatches a piece from (`creature::Scavenge`).
+const SNATCH: f32 = 1.3;
+/// Blocks from home that it eats what it carried off.
+const HOME_WITH_IT: f32 = 2.0;
+
+/// A scavenger (`creature::Scavenge`) slinks in, crouched, to food left lying on the ground
+/// while no player it has noticed is within its `shy` of it or of the food, snatches a
+/// piece and makes off home with it at a run, and eats it there. Not once it is hurt or
+/// afraid, nor kept or on an errand: those let food lie.
+#[derive(Debug)]
+struct Scavenge;
+
+impl Module for Scavenge {
+    fn name(&self) -> &'static str {
+        "scavenge"
+    }
+
+    fn band(&self) -> Band {
+        Band::Drive
+    }
+
+    fn want(&self, ctx: &Ctx) -> Option<Want> {
+        let scavenge = ctx.creature.def.scavenge.as_ref()?;
+        if ctx.at.kept || ctx.at.errand.is_some() || ctx.attacker().is_some() || ctx.mind.fear >= 0.3 {
+            return None;
+        }
+        if ctx.at.carrying {
+            return Want::new(1.5);
+        }
+        let scrap = ctx.at.scrap.filter(|&s| flat(s, ctx.at.position) <= scavenge.reach)?;
+        let watched = ctx.at.players.iter().any(|p| !p.friend && (ctx.distance(p.position) < scavenge.shy || flat(p.position, scrap) < scavenge.shy));
+        if watched {
+            return None;
+        }
+        Want::new(1.2 * (0.6 + 0.6 * ctx.mind.personality.curiosity))
+    }
+
+    fn act(&self, ctx: &Ctx, mind: &mut Mind, _: Option<Seen>, _: bool) -> Decision {
+        let at = ctx.at;
+        if at.carrying {
+            mind.goal = Some(at.home);
+            let home = flat(at.home, at.position) < HOME_WITH_IT;
+            return Decision { goal: Some(at.home).filter(|_| !home), speed: run(ctx), swallow: home, ..Default::default() };
+        }
+        let Some(scrap) = at.scrap else { return Decision::default() };
+        mind.goal = Some(scrap);
+        let close = flat(scrap, at.position) < SNATCH;
+        Decision { goal: Some(scrap).filter(|_| !close), speed: walk(ctx), face: Some(scrap), take: Some(scrap).filter(|_| close), pose: Pose::Crouched, ..Default::default() }
     }
 }
 

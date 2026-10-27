@@ -114,6 +114,13 @@
             (from: (1, 0, 4), to: (3, 7, 12), textures: All("furniture_grain")),
             (from: (13, 0, 4), to: (15, 7, 12), textures: All("furniture_grain")),
         ]),
+        // A log bench along the cell from west to east: a split log, its flat face up, on a
+        // stump at either end.
+        "log_bench": (boxes: [
+            (from: (0, 5, 4), to: (16, 9, 12), textures: Sides(top: "furniture_wood", bottom: "furniture_grain", side: "furniture_grain")),
+            (from: (2, 0, 5), to: (5, 5, 11)),
+            (from: (11, 0, 5), to: (14, 5, 11)),
+        ]),
         // Foot end north, head end south: a frame, a mattress and a pillow, a board at each end.
         "bed": (boxes: [
             (from: (1, 0, 2), to: (15, 5, 14)),
@@ -956,10 +963,44 @@
             (from: (2.5, 6, 7.5), to: (13.5, 7.5, 8.5)),
             (from: (2.5, 9.5, 7.5), to: (13.5, 11, 8.5)),
         ]),
+        // A dry-stone wall across the middle of its cell, running east to west: courses of
+        // cobbles narrowing to a cap, a block high (a railing).
+        "dry_stone_wall": (boxes: [
+            (from: (0, 0, 3), to: (16, 6, 13), cull: true),
+            (from: (0, 6, 3.5), to: (16, 12, 12.5), cull: true),
+            (from: (0, 12, 4), to: (16, 16, 12), cull: true),
+        ]),
+        // A dry-stone wall's corner: its courses out to the west and the north, crossing in
+        // the middle.
+        "dry_stone_wall_corner": (boxes: [
+            (from: (0, 0, 3), to: (13, 6, 13), cull: true),
+            (from: (0, 6, 3.5), to: (13, 12, 12.5), cull: true),
+            (from: (0, 12, 4), to: (13, 16, 12), cull: true),
+            (from: (3, 0, 0), to: (13, 6, 13), cull: true),
+            (from: (3.5, 6, 0), to: (12.5, 12, 13), cull: true),
+            (from: (4, 12, 0), to: (12, 16, 13), cull: true),
+        ], hull: [
+            (from: (0, 0, 3), to: (13, 16, 13)),
+            (from: (3, 0, 0), to: (13, 16, 3)),
+        ]),
         "roof_ridge": (boxes: [
             (from: (0, 0, 0), to: (16, 4, 16), cull: true),
             (from: (0, 4, 4), to: (16, 8, 12), cull: true),
             (from: (0, 8, 6), to: (16, 10, 10), cull: true),
+        ]),
+        // A ridge's hipped end: the ridge run north to south, its north half sloping down
+        // as its sides do, where a hipped roof's end slope meets it.
+        "roof_ridge_end": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (4, 4, 4), to: (12, 8, 16), cull: true),
+            (from: (6, 8, 6), to: (10, 10, 16), cull: true),
+        ]),
+        // A hipped roof's peak over a square, where four hips meet: a ridge sloping down on
+        // every side.
+        "roof_peak": (boxes: [
+            (from: (0, 0, 0), to: (16, 4, 16), cull: true),
+            (from: (4, 4, 4), to: (12, 8, 12)),
+            (from: (6, 8, 6), to: (10, 10, 10)),
         ]),
     },
 )

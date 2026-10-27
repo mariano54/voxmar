@@ -466,10 +466,24 @@ a yard, a neighbour's door) or working an `outdoor` work (field, orchard, pen, w
 go home instead; guards keep their rounds. Two neighbours out and about (no guards, no
 one afraid or greeting a player) within `chat` blocks who see each other stop and talk:
 both stand turned to each other for `chat_for` seconds with a contented hum, then go on
-with their day, and stop to talk again only after `chat_every`. Reaching their bed for
-the night, they sigh content once a night. A guard sent after a player who struck a
-villager (or killed one, in one blow or many) knows who they are after, whatever stands
-between them.
+with their day, and stop to talk again only after `chat_every`. At night (by the sky,
+bound for bed or in it) one who sees a player, within their sight, standing on the floor
+of their home tells them to leave, with a cry, and tells that player again only after
+`intruder_every`; by day, or from the roof, no one minds. Reaching
+their bed for the night, they sigh content once a night. A guard sent after a player who
+struck a villager (or killed one, in one blow or many) knows who they are after, whatever
+stands between them.
+
+One keeping a market stall trades there, and only there (`trades` on their species in
+creatures_villagers.ron, checked at load): while at work within a block of their stall,
+they want one thing a day (by the day and who they are) that the first two ages teach a
+player to make, and give bread for it. Looking at them closely says today's want, or, once
+the player has traded that day, that they have. Holding it, a player trades once a day at
+all the stalls together, the day saved with the player (no reload, rejoin or town let go
+trades again); away from the stall, with the wrong thing or too few in hand, or traded
+already that day, they say why. A content test keeps
+every want taught by a nomad or farm quest and every gift out of any quest's Have or
+Offered goals.
 
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter

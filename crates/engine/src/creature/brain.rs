@@ -47,6 +47,11 @@ pub const HOMEWARD: f32 = 20.0;
 pub const KEEP_OFF: f32 = 0.5;
 /// Seconds a creature remembers the player who hurt it (`Memory::HurtBy`).
 pub const HURT_REMEMBERED: f32 = 45.0;
+/// Seconds it recalls a player who frightened it (`Memory::ScaredBy`).
+pub const SCARED_REMEMBERED: f32 = 10.0;
+/// Below this liveliness (out of its active hours) a creature that sleeps
+/// (`creature::Sleeps`) is asleep, as it shows resting below it (`modules::resting_pose`).
+const SLEEPY: f32 = 0.4;
 const ANGER_FADE: f32 = 1.0 / 45.0;
 /// Within a band, modules within this share of the best score are all in the draw, and
 /// the running one keeps going while it is.
@@ -112,6 +117,9 @@ pub struct Seen {
     /// Standing in a lit fire's ward at night (`Situation::ward`), where those afraid of
     /// fire go for no one unprovoked. Set only for kinds that keep out of wards.
     pub warded: bool,
+    /// Going faster than a walk (a sprint), which wakes a sleeper further off
+    /// (`creature::Sleeps::wakes`).
+    pub loud: bool,
 }
 
 /// A lit fire's ward at night (`BlockDef::ward`, `MultiblockDef::ward`): `radius` blocks
@@ -173,6 +181,11 @@ pub struct Situation<'a> {
     /// The lit fire's ward it stands in, at night, for kinds that keep out of wards
     /// (`creature::Fire::ward`).
     pub ward: Option<Ward>,
+    /// The nearest food it steals lying on the ground, for kinds that scavenge
+    /// (`creature::Scavenge`).
+    pub scrap: Option<Vec3>,
+    /// It carries a stolen piece of food off home (`creature::Scavenge`).
+    pub carrying: bool,
     /// Seconds since the last decision.
     pub dt: f32,
     /// The seed for this decision's random choices.
@@ -478,6 +491,10 @@ pub struct Decision {
     pub blink: Option<Vec3>,
     /// A leap toward a point (pounce).
     pub leap: Option<Vec3>,
+    /// It snatches a piece of the food lying here (`creature::Scavenge`).
+    pub take: Option<Vec3>,
+    /// It eats what it carries (`creature::Scavenge`), home with it.
+    pub swallow: bool,
     /// It raises the alarm for kin nearby.
     pub alarm: bool,
     pub pose: Pose,
@@ -574,9 +591,34 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         (*left, *since) = (*left - dt, *since + dt);
     }
     mind.noticed.retain(|n| n.1 > 0.0);
+    // Asleep out of its hours (`creature::Sleeps`), with no one in mind, nothing afraid or
+    // angry, wild and about no errand: eyes shut, it notices only a quiet step within its
+    // `quiet`, its food held within its `wakes`, and a sprint within its `wakes`, which wakes
+    // it with a start.
+    let asleep = def.sleeps.filter(|_| lively < SLEEPY && mind.noticed.is_empty() && mind.fear < 0.3 && mind.anger <= 0.0 && !at.kept && at.errand.is_none());
     for p in at.players {
         let d = p.position.distance(at.position);
         let smelt = p.tempting && d < def.senses.hearing;
+        if let Some(sleeps) = asleep {
+            let hurt = mind.recalls(Memory::HurtBy(p.id));
+            let startled = p.loud && d < sleeps.wakes && !p.friend && !hurt;
+            // Its food held near wakes it calmly, as a quiet step does: a lure works on a sleeper.
+            let fed = p.tempting && d < sleeps.wakes;
+            if !(p.friend || hurt || d <= sleeps.quiet || startled || fed) {
+                continue;
+            }
+            mind.noticed.push((p.id, def.senses.keep, 0.0));
+            // Woken with a start: a fighter comes up provoked, with no warning; the rest bolt.
+            if startled && d > sleeps.quiet {
+                if creature.fights() {
+                    mind.provoked(p.id);
+                } else {
+                    mind.startled(p.position);
+                    mind.remember(Memory::ScaredBy(p.id), SCARED_REMEMBERED);
+                }
+            }
+            continue;
+        }
         if p.friend || d <= def.senses.close || p.in_view && d < sight || smelt || mind.recalls(Memory::HurtBy(p.id)) {
             match mind.noticed.iter_mut().find(|n| n.0 == p.id) {
                 Some(n) => n.1 = def.senses.keep,
@@ -589,6 +631,13 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     let all = at.players.iter().all(known);
     let noticed: Vec<Seen> = if all { Vec::new() } else { at.players.iter().filter(|p| known(p)).copied().collect() };
     let at = &Situation { players: if all { at.players } else { &noticed }, ..*at };
+    // Still asleep, no one woke it: it sleeps on.
+    if asleep.is_some() && mind.noticed.is_empty() {
+        mind.doing = None;
+        lapse_warning(mind, dt);
+        rest(mind, dt);
+        return Decision { pose: Pose::Resting, ..Default::default() };
+    }
     let ctx = Ctx { creature, mind, at, lively, sight };
 
     let wants: Vec<(usize, Band, Want)> = creature
@@ -639,6 +688,8 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     }
     mind.looking = taking.is_some();
     if let Some(p) = taking {
+        // Standing to look, it gets its wind back, whatever it then does.
+        rest(mind, dt);
         return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
     }
     // Not running, it gets its wind back (`Tires`).
@@ -690,11 +741,11 @@ pub(super) mod tests {
     pub(super) const BODY: &str = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
 
     pub(super) fn situation<'a>(players: &'a [Seen]) -> Situation<'a> {
-        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, scale: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, ward: None, dt: 0.2, seed: 7 }
+        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, scale: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, ward: None, scrap: None, carrying: false, dt: 0.2, seed: 7 }
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
-        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true, fire: false, warded: false }
+        Seen { id: 1, position: at, tempting: false, combat_level: 3, creative: false, tolerated: false, friend: false, open: true, in_view: true, fire: false, warded: false, loud: false }
     }
 
     fn doing<'a>(creature: &'a Creature, mind: &Mind) -> &'a str {
@@ -786,6 +837,21 @@ pub(super) mod tests {
         let decision = think(&wolf, &mut mind, &situation(&close));
         assert_eq!((decision.pose, doing(&wolf, &mind)), (Pose::Alert, "hunt"), "a look at the one beside it");
         assert!(mind.warning.is_some_and(|w| (w.lapse - 0.2).abs() < 1e-4), "the look held the warning: {:?}", mind.warning);
+    }
+
+    /// A double take is a stand, not a run: prey winded from a sprint gets its wind back
+    /// while it looks, though it is fleeing it looks before.
+    #[test]
+    fn a_double_take_gets_its_wind_back() {
+        let deer = species(&format!(
+            "(creatures: [(name: \"deer\", health: 4, {BODY}, senses: (react: 0.4), temperament: (fear: 0.9), behaviours: [(do: Wander(radius: 6.0)), (do: Flee(radius: 10.0))])])"
+        ));
+        let near = [player(Vec3::new(5.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        (mind.sprinted, mind.winded) = (1.0, 1.0);
+        let decision = think(&deer, &mut mind, &situation(&near));
+        assert!(decision.goal.is_none() && decision.face == Some(near[0].position), "no look first: {decision:?}");
+        assert!(mind.sprinted < 1.0 && mind.winded < 1.0, "the look gave no wind back: {} {}", mind.sprinted, mind.winded);
     }
 
     /// Prey with a double take looks, then flees, and its first decision to flee still
@@ -1055,6 +1121,31 @@ pub(super) mod tests {
         assert_ne!(doing(&badger, &mind), "warn");
     }
 
+    /// A stallholder's trades are checked at load: items that exist, 1 to a stack of each,
+    /// and something given for what is wanted.
+    #[test]
+    fn trades_that_would_not_play_are_refused() {
+        let blocks = || {
+            BlockRegistry::new(["test:kindling", "test:bread"].map(|name| crate::block::BlockDef { name: name.into(), ..Default::default() }).to_vec()).unwrap()
+        };
+        let build = |trades: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, trades: [{trades}])])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &blocks(), &SkillRegistry::default()).map(|r| r.get(CreatureId(0)).trades.clone()).map_err(|e| e.to_string())
+        };
+        let good = build("(wants: (\"test:kindling\", 4), gives: [(\"test:bread\", 2)])").expect("a good trade refused");
+        let ids = blocks();
+        assert_eq!(good, [crate::creature::Trade { wants: (ids.id("test:kindling").unwrap(), 4), gives: vec![(ids.id("test:bread").unwrap(), 2)] }]);
+        for (what, trades) in [
+            ("no such item wanted", "(wants: (\"test:nothing\", 4), gives: [(\"test:bread\", 2)])"),
+            ("no such item given", "(wants: (\"test:kindling\", 4), gives: [(\"test:nothing\", 2)])"),
+            ("none wanted", "(wants: (\"test:kindling\", 0), gives: [(\"test:bread\", 2)])"),
+            ("more than a stack given", "(wants: (\"test:kindling\", 4), gives: [(\"test:bread\", 65)])"),
+            ("nothing given", "(wants: (\"test:kindling\", 4), gives: [])"),
+        ] {
+            assert!(build(trades).is_err_and(|e| e.contains("trade") || e.contains("wants")), "{what} let through");
+        }
+    }
+
     /// What `warn` may say is checked at load: an attack to follow it, no boss, a radius
     /// only for one that does not hunt, and each number in its range.
     #[test]
@@ -1236,8 +1327,9 @@ pub(super) mod tests {
 
     /// A game bird that sits tight (`creature::Flush`) crouches still while a noticed
     /// player is beyond its `hold`, then bursts away when they come within it: its first
-    /// `seconds` at `burst` times its run, then at its run. Kept, it flees at its kind's
-    /// distance as ever. Bad numbers, or a flush on a kind that attacks, are refused.
+    /// `seconds` at `burst` times its run, then at its run. Hurt, it does not burst; beyond
+    /// its kind's flee distance it does not sit tight; kept, it flees at its kind's distance
+    /// as ever. Bad numbers, or a flush on a kind that attacks, are refused.
     #[test]
     fn a_game_bird_sits_tight_then_bursts_away() {
         let bird = species(&format!(
@@ -1262,6 +1354,33 @@ pub(super) mod tests {
         assert_eq!(ran, [200, 200, 200, 100, 100, 100], "{ran:?}");
         let _ = think(&bird, &mut mind, &situation(&far));
         assert_eq!(doing(&bird, &mind), "flee", "flushed, it runs clear and does not settle again at six blocks");
+        // Hurt, it flees as any prey does: no burst.
+        let mut hurt = Mind::new(&bird.def.temperament, 2);
+        hurt.hurt(&bird, Some(1), 0.9);
+        let ran: Vec<u32> = (0..3).map(|_| (think(&bird, &mut hurt, &situation(&near)).speed / full * 100.0).round() as u32).collect();
+        assert_eq!((doing(&bird, &hurt), ran), ("flee", vec![100; 3]), "a hurt bird does not burst");
+        // Its fright faded and its flight forgotten, it still recalls who hurt it, and flees
+        // them at its kind's distance rather than wait for them at its hold.
+        (hurt.fear, hurt.since) = (0.0, 0.0);
+        hurt.memories.retain(|(m, _)| !matches!(m, Memory::ScaredBy(_)));
+        let _ = think(&bird, &mut hurt, &situation(&far));
+        assert_eq!(doing(&bird, &hurt), "flee", "wounded, at six blocks from the one who hurt it");
+        // Nor does a bystander nearer than the hunter, beyond its hold, hide the hunter from it.
+        let _ = think(&bird, &mut hurt, &situation(&[Seen { id: 2, ..player(Vec3::new(4.0, 0.0, 0.0)) }, far[0]]));
+        assert_eq!(doing(&bird, &hurt), "flee", "a bystander at four blocks, the hunter at six");
+        // It hides out to its widest flight.
+        let wide = species(&format!(
+            "(creatures: [(name: \"quail\", health: 2, {BODY}, movement: (walk: 1.0, run: 5.0), flush: (hold: 2.5, burst: 2.0, seconds: 0.6), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 4.0)), (do: Flee(radius: 10.0))])])"
+        ));
+        let mut calm = Mind::new(&wide.def.temperament, 2);
+        let widest = 10.0 * (0.5 + calm.personality.fear());
+        let _ = think(&wide, &mut calm, &situation(&[player(Vec3::new(widest - 1.0, 0.0, 0.0))]));
+        assert_eq!(doing(&wide, &calm), "hide", "{:.1} blocks off, inside its widest flight", widest - 1.0);
+        // Beyond the distance it would flee at, it lives its day rather than sit tight.
+        let mut calm = Mind::new(&bird.def.temperament, 2);
+        let flees_at = 10.0 * (0.5 + calm.personality.fear());
+        let _ = think(&bird, &mut calm, &situation(&[player(Vec3::new(flees_at + 1.0, 0.0, 0.0))]));
+        assert_ne!(doing(&bird, &calm), "hide", "{:.1} blocks off, outside its flee distance", flees_at + 1.0);
         let mut kept = Mind::new(&bird.def.temperament, 2);
         let _ = think(&bird, &mut kept, &Situation { kept: true, ..situation(&far) });
         assert_eq!(doing(&bird, &kept), "flee", "a kept bird sits tight for no one");
@@ -1275,6 +1394,124 @@ pub(super) mod tests {
             assert!(build(bad).is_err_and(|e| e.contains("`flush` needs")), "{bad}");
         }
         assert!(build("flush: (hold: 3.0, burst: 1.8, seconds: 1.0), attack: (damage: (1, 3))").is_err_and(|e| e.contains("for prey")));
+    }
+
+    /// A scavenger (`creature::Scavenge`) slinks in, crouched, to food lying on the ground
+    /// while no player is within its `shy` of it or the food, snatches a piece when close,
+    /// and makes off home with it, eating it there. Watched, kept or hurt it lets it lie.
+    /// Bad numbers, and takes that are no item, are refused.
+    #[test]
+    fn a_fox_steals_meat_left_lying() {
+        let meat_blocks = || BlockRegistry::new(vec![crate::block::BlockDef { name: "test:venison".into(), tags: vec!["meat".into()], ..Default::default() }]).unwrap();
+        let defs = CreatureRegistry::read("test", &format!(
+            "(creatures: [(name: \"fox\", health: 6, {BODY}, movement: (walk: 1.5, run: 6.0), scavenge: (takes: [\"tag:meat\"], reach: 16.0, shy: 6.0), temperament: (fear: 0.3, curiosity: 0.8), behaviours: [(do: Wander(radius: 8.0))])])"
+        ))
+        .unwrap()
+        .defs;
+        let fox = CreatureRegistry::new(defs, Default::default(), &meat_blocks(), &SkillRegistry::default()).unwrap().get(CreatureId(0)).clone();
+        let scrap = Vec3::new(10.0, 0.0, 0.0);
+        fn at(players: &[Seen]) -> Situation<'_> {
+            Situation { scrap: Some(Vec3::new(10.0, 0.0, 0.0)), ..situation(players) }
+        }
+        let mut mind = Mind::new(&fox.def.temperament, 2);
+        let decision = think(&fox, &mut mind, &at(&[]));
+        assert_eq!((doing(&fox, &mind), decision.goal, decision.pose, decision.take), ("scavenge", Some(scrap), Pose::Crouched, None));
+        // A player by the meat, or by the fox, and it keeps off.
+        for by in [Vec3::new(13.0, 0.0, 0.0), Vec3::new(-3.0, 0.0, 0.0)] {
+            let mut wary = Mind::new(&fox.def.temperament, 2);
+            let _ = think(&fox, &mut wary, &at(&[player(by)]));
+            assert_ne!(doing(&fox, &wary), "scavenge", "a player at {by}");
+        }
+        // One further off, it comes all the same.
+        let mut bold = Mind::new(&fox.def.temperament, 2);
+        let _ = think(&fox, &mut bold, &at(&[player(Vec3::new(-8.0, 0.0, 0.0))]));
+        assert_eq!(doing(&fox, &bold), "scavenge");
+        // Up to it, it snatches a piece; carrying it, it runs home and eats it there.
+        let decision = think(&fox, &mut mind, &Situation { position: scrap - Vec3::X, ..at(&[]) });
+        assert_eq!((decision.take, decision.goal), (Some(scrap), None));
+        let away = Vec3::new(9.0, 0.0, 0.0);
+        let decision = think(&fox, &mut mind, &Situation { position: away, carrying: true, ..situation(&[]) });
+        assert_eq!((doing(&fox, &mind), decision.goal, decision.speed > 5.0, decision.swallow), ("scavenge", Some(Vec3::ZERO), true, false));
+        let decision = think(&fox, &mut mind, &Situation { position: Vec3::new(1.0, 0.0, 0.0), carrying: true, ..situation(&[]) });
+        assert!(decision.swallow, "home, it eats it");
+        let mut kept = Mind::new(&fox.def.temperament, 2);
+        let _ = think(&fox, &mut kept, &Situation { kept: true, ..at(&[]) });
+        assert_ne!(doing(&fox, &kept), "scavenge", "a kept fox lets food lie");
+        let mut hurt = Mind::new(&fox.def.temperament, 2);
+        hurt.hurt(&fox, Some(1), 0.9);
+        let _ = think(&fox, &mut hurt, &at(&[player(Vec3::new(-12.0, 0.0, 0.0))]));
+        assert_ne!(doing(&fox, &hurt), "scavenge", "hurt, it thinks of nothing but its hide");
+
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &meat_blocks(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("scavenge: (takes: [\"tag:meat\"], reach: 16.0, shy: 6.0)"), Ok(()));
+        for bad in ["(takes: [], reach: 16.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 30.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 16.0, shy: 1.0)", "(takes: [\"tag:meat\"], reach: 6.0, shy: 8.0)", "(takes: [\"tag:meat\"], reach: 16.0, shy: 6.0, give_up: 2.0)", "(takes: [\"tag:meat\"], reach: 16.0, shy: 6.0, give_up: 600.0)"] {
+            assert!(build(&format!("scavenge: {bad}")).is_err_and(|e| e.contains("`scavenge` needs")), "{bad}");
+        }
+        assert!(build("scavenge: (takes: [\"tag:nothing\"], reach: 16.0, shy: 6.0)").is_err_and(|e| e.contains("nothing it `takes`")));
+        assert!(build("scavenge: (takes: [\"stone\"], reach: 16.0, shy: 6.0)").is_err_and(|e| e.contains("does not exist")));
+    }
+
+    /// A creature that sleeps (`creature::Sleeps`) sleeps out the hours it is not about:
+    /// eyes shut, it notices a player walking up only within its `quiet`, and then as ever
+    /// (its double take, then whatever it does), so a careful hunter gets close. One going
+    /// faster than a walk within its `wakes` wakes it with a start: a fighter comes up
+    /// provoked, with no warning, and prey bolts. Its food held within its `wakes` wakes it
+    /// calmly. In its own hours it is awake as ever.
+    #[test]
+    fn a_sleeper_wakes_to_a_sprint_not_a_quiet_step() {
+        let bear = species(&format!(
+            "(creatures: [(name: \"bear\", health: 10, {BODY}, attack: (damage: (1, 2)), habitat: (active: Night), sleeps: (quiet: 3.0, wakes: 12.0), temperament: (fear: 0.2), behaviours: [(do: Wander(radius: 6.0)), (do: Defend)])])"
+        ));
+        fn noon(players: &[Seen]) -> Situation<'_> {
+            Situation { daylight: 1.0, ..situation(players) }
+        }
+        let quiet = |at: f32| player(Vec3::new(at, 0.0, 0.0));
+        let loud = |at: f32| Seen { loud: true, ..quiet(at) };
+        // Asleep at noon: a quiet step at six blocks, in plain view, goes unnoticed.
+        let mut mind = Mind::new(&bear.def.temperament, 2);
+        for _ in 0..5 {
+            let decision = think(&bear, &mut mind, &noon(&[quiet(6.0)]));
+            assert_eq!((decision.pose, decision.goal, mind.noticed.len()), (Pose::Resting, None, 0), "asleep, a quiet step at six blocks");
+        }
+        // At two, within its quiet, it wakes as it would to anyone close: no grudge.
+        let _ = think(&bear, &mut mind, &noon(&[quiet(2.0)]));
+        assert_eq!((mind.noticed.len(), mind.anger, mind.attacker()), (1, 0.0, None), "woken quietly");
+        // A sprint at ten blocks wakes it with a start, and it comes up fighting.
+        let mut startled = Mind::new(&bear.def.temperament, 2);
+        let _ = think(&bear, &mut startled, &noon(&[loud(10.0)]));
+        assert_eq!((startled.anger, startled.attacker()), (1.0, Some(1)), "woken by a sprint");
+        // Beyond its wakes, a sprint is nothing to it.
+        let mut far = Mind::new(&bear.def.temperament, 2);
+        let _ = think(&bear, &mut far, &noon(&[loud(14.0)]));
+        assert_eq!(far.noticed.len(), 0, "a sprint at fourteen blocks");
+        // Its food held at ten blocks, a quiet step, wakes it calmly: a lure works on a sleeper.
+        let mut lured = Mind::new(&bear.def.temperament, 2);
+        let _ = think(&bear, &mut lured, &noon(&[Seen { tempting: true, ..quiet(10.0) }]));
+        assert_eq!((lured.noticed.len(), lured.anger, lured.attacker()), (1, 0.0, None), "woken by its food held near");
+        // At night, its own hours, it sees a quiet step at six as ever.
+        let mut awake = Mind::new(&bear.def.temperament, 2);
+        let _ = think(&bear, &mut awake, &Situation { daylight: 0.0, ..situation(&[quiet(6.0)]) });
+        assert_eq!(awake.noticed.len(), 1, "awake at night");
+        // Prey woken with a start bolts.
+        let deer = species(&format!(
+            "(creatures: [(name: \"deer\", health: 6, {BODY}, habitat: (active: Night), sleeps: (quiet: 3.0, wakes: 12.0), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 4.0))])])"
+        ));
+        let mut bolting = Mind::new(&deer.def.temperament, 2);
+        let _ = think(&deer, &mut bolting, &noon(&[loud(10.0)]));
+        assert_eq!(doing(&deer, &bolting), "flee", "prey woken by a sprint");
+
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("sleeps: (quiet: 3.0, wakes: 12.0)"), Ok(()));
+        for bad in ["(quiet: 0.5, wakes: 12.0)", "(quiet: 8.0, wakes: 12.0)", "(quiet: 3.0, wakes: 30.0)", "(quiet: 3.0, wakes: 2.5)"] {
+            assert!(build(&format!("sleeps: {bad}")).is_err_and(|e| e.contains("`sleeps` needs")), "{bad}");
+        }
+        assert!(build("sleeps: (quiet: 3.0, wakes: 12.0), habitat: (active: Any)").is_err_and(|e| e.contains("never sleeps")));
     }
 
     #[test]

@@ -537,6 +537,10 @@ impl Content {
         if let Some(tag) = effects.near_asks().iter().map(|(tag, _)| tag).chain(effects.held_tags()).find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
             return Err(RegistryError(format!("effects.ron: an effect asks for a block or held item tagged `{tag}`, which no block carries")));
         }
+        // And those of the seat sat on: a seat must carry each.
+        if let Some(tag) = effects.seat_tags().iter().find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag) && blocks.def(id).has_tag(crate::action::SEAT_TAG))) {
+            return Err(RegistryError(format!("effects.ron: an effect asks for a seat tagged `{tag}`, which no seat carries")));
+        }
         // Every kept animal needs water, met by a block tagged `drink` near its home.
         crate::creature::condition::check_drink(&blocks, !creatures.is_empty())?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;
@@ -557,6 +561,10 @@ impl Content {
                     return Err(crate::block::RegistryError(format!("multiblock {}: fuel {} burns cooler than the heat {} it asks", structure.name, blocks.def(fuel).name, structure.heat)));
                 }
             }
+        }
+        // What keeps spare lights for a home keeps them in its store.
+        if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag(crate::flame::SPARE_LIGHTS) && !machines.get(id).is_some_and(|m| m.is_store())) {
+            return Err(RegistryError(format!("blocks: `{}` keeps spare lights (`{}`) but is no store (machines.ron)", blocks.def(id).name, crate::flame::SPARE_LIGHTS)));
         }
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
@@ -610,7 +618,7 @@ impl Content {
             })
             .collect();
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
-        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), near: &recipes.iter().filter_map(|r| r.near.clone()).collect::<Vec<_>>(), stores: &machines.iter().filter(|m| m.is_store()).map(|m| blocks.def(m.block).name.clone()).collect::<Vec<_>>(), trapped: &traps.traps.iter().flat_map(|t| &t.catches).map(|&c| creatures.get(c).def.name.clone()).collect::<Vec<_>>(), harvests: &harvests })?;
+        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), lines: &wandering.iter().flat_map(|(_, e)| e.meetings.iter().flat_map(|m| m.lines.iter()).map(|l| format!("{}/{}", e.def.name, l.name))).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), near: &recipes.iter().filter_map(|r| r.near.clone()).collect::<Vec<_>>(), stores: &machines.iter().filter(|m| m.is_store()).map(|m| blocks.def(m.block).name.clone()).collect::<Vec<_>>(), trapped: &traps.traps.iter().flat_map(|t| &t.catches).map(|&c| creatures.get(c).def.name.clone()).collect::<Vec<_>>(), harvests: &harvests })?;
         // A recipe of a later age needs that age's rite, or it could never be made.
         if let Some(recipe) = recipes.iter().find(|r| r.age.as_ref().is_some_and(|age| quests.rite(age).is_none())) {
             let age = recipe.age.as_deref().unwrap_or_default();
@@ -687,9 +695,10 @@ impl Content {
             }
         }
         // How a worn tool is mended, by a tag and where, has words in every language: its
-        // tooltip says it, and so does the line when it is nearly worn out.
+        // tooltip says it, and so does the line when it is nearly worn out; and a break, with
+        // or without a spare brought up, says so.
         let mend_words: Vec<String> = tools.mend_by_tags().iter().map(|t| format!("item.mend.tag.{t}")).chain(tools.mend_tags().iter().map(|t| format!("item.mend.near.{t}"))).collect();
-        for key in mend_words.into_iter().chain(["item.mend".to_owned(), "tool.nearly_worn".to_owned()]) {
+        for key in mend_words.into_iter().chain(["item.mend", "tool.nearly_worn", "tool.broke", "tool.broke_spare"].map(str::to_owned)) {
             if let Some(lang) = languages.iter().find(|lang| !lang.defines(&key)) {
                 return Err(RegistryError(format!("lang/{}.ron: tools are mended, and `{key}` has no words", lang.code())));
             }
@@ -1449,7 +1458,7 @@ mod tests {
                         Goal::Visit(_) | Goal::LookUp(_) => {}
                         // A rite asks for quests done, on whatever paths: nothing made.
                         Goal::QuestsDone(..) | Goal::Capstones(..) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Mended(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Dealt(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::PutAway(..) | Goal::Mended(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {

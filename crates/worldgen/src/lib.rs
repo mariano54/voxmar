@@ -981,6 +981,7 @@ pub struct SettlementInfo {
 }
 
 pub use settlements::CultureInfo;
+pub use settlements::def::PropKind as SettlementPropKind;
 
 /// Samples sites over an area, computing the regional climate once per lattice point.
 pub struct Sampler<'a> {
@@ -1316,9 +1317,10 @@ pub(crate) fn full_content() -> &'static (voxmar_engine::content::Content, World
 }
 
 /// The seeds more than one test reads on every package's content (`shared_full_world`):
-/// the water tests (`generated_water`), and the village thatch and jettied storeys tests.
+/// the water tests (`generated_water`), the village thatch, jettied storeys, row house and
+/// byre tests, and Wenworth's (0x5eed's walled town) flames.
 #[cfg(test)]
-const HELD_FULL_SEEDS: [u64; 5] = [1, 2, 3, 7, 42];
+const HELD_FULL_SEEDS: [u64; 7] = [1, 2, 3, 7, 11, 42, 0x5eed];
 
 /// The world of `seed` on every package's content (`full_content`), for tests that only read
 /// what it generates. A seed of `HELD_FULL_SEEDS` is held for the rest of the run: what a

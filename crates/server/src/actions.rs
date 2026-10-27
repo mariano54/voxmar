@@ -410,6 +410,7 @@ impl Server {
                 (Effect::Fertilise, ActionTarget::Block { block, .. }) => self.fertilise(agent, block),
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
+                (Effect::Trade, ActionTarget::Creature(id)) => self.trade(agent, id),
                 (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent, held: None }, block);
@@ -593,7 +594,7 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], worn: &[], seated: false, night: self.night() };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], worn: &[], seated: false, seat: &[], night: self.night() };
         // A proper bed rests better than a bag on the ground (effects.ron's `bed` tags).
         let bed_tags = self.block(bed).map(|b| self.content.blocks.def(b).tags.clone()).unwrap_or_default();
         let given = effects.given_by_sleep(&situation, &bed_tags);
@@ -934,6 +935,58 @@ mod tests {
             .count();
         assert_eq!(sticks, 0, "placed leaves gave a stick");
         assert!(!server.placed.contains(&pos), "the mark goes with the break");
+    }
+
+    /// A fishing net a player hung under a plank comes back whole when the plank it hangs
+    /// from is broken: it goes with its support and, as the player's, is given back; a
+    /// village's net (not marked as placed) gives nothing.
+    #[test]
+    fn a_hung_net_comes_back_when_what_it_hangs_from_is_broken() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let (planks, net) = (server.content.blocks.expect("base:oak_planks"), server.content.blocks.expect("base:fishing_net"));
+        let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 3, 0);
+        let broken = |server: &mut crate::Server, players: bool| {
+            server.set_block(pos, planks);
+            server.set_block(pos - IVec3::Y, net);
+            server.placed.remove(&(pos - IVec3::Y));
+            if players && server.marks_placed(net, net) {
+                server.placed.insert(pos - IVec3::Y);
+            }
+            server.items.take_all().for_each(drop);
+            server.break_loot(1, pos, None);
+            server.items.take_all().filter(|d| d.stack.item == net).map(|d| u32::from(d.stack.count)).sum::<u32>()
+        };
+        assert_eq!(broken(&mut server, true), 1, "a player's net came not back with its support");
+        assert_eq!(broken(&mut server, false), 0, "a village's net gave itself");
+    }
+
+    /// A log bench a player set down comes back when broken; a village's (not marked as
+    /// placed) gives nothing.
+    #[test]
+    fn a_players_log_bench_comes_back_and_a_villages_gives_nothing() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let bench = server.content.blocks.expect("base:oak_log_bench");
+        let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 2, 0);
+        let broken = |server: &mut crate::Server, players: bool| {
+            server.set_block(pos, bench);
+            server.placed.remove(&pos);
+            if players && server.marks_placed(bench, bench) {
+                server.placed.insert(pos);
+            }
+            server.items.take_all().for_each(drop);
+            server.break_loot(1, pos, None);
+            server.items.take_all().filter(|d| d.stack.item == bench).map(|d| u32::from(d.stack.count)).sum::<u32>()
+        };
+        assert_eq!(broken(&mut server, true), 1, "a player's log bench came not back");
+        assert_eq!(broken(&mut server, false), 0, "a village's log bench gave itself");
     }
 
     /// A coal sample a player sets down where the world laid one, over its seam, and mines

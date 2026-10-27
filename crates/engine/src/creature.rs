@@ -301,6 +301,62 @@ impl Flush {
     }
 }
 
+/// How a creature scavenges (docs/creature-ai.md, "Scavenging"): it slinks in to food
+/// left lying on the ground within `reach` blocks, by item name or `tag:` (`takes`), and
+/// makes off home with one piece, which it eats there; killed first, it drops it. Stuck
+/// short of food (a fence, a wall between), it leaves it be for `give_up` seconds. It
+/// comes only while no player is within `shy` blocks of it or the food, so a hunter who
+/// leaves the kill lying, turns their back and walks off may lose a share of it. Wild
+/// only: a kept one or one on an errand lets food lie.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Scavenge {
+    pub takes: Vec<String>,
+    pub reach: f32,
+    pub shy: f32,
+    /// Seconds it leaves be food it got stuck short of (a fence, a wall between), as a
+    /// chase with no way is given up.
+    #[serde(default = "scrap_give_up")]
+    pub give_up: f32,
+}
+
+fn scrap_give_up() -> f32 {
+    30.0
+}
+
+impl Scavenge {
+    /// Near enough to be watched coming, and shy of a player close enough to stop it.
+    pub fn check(&self) -> Result<(), String> {
+        if self.takes.is_empty() || !(4.0..=24.0).contains(&self.reach) || !(2.0..=12.0).contains(&self.shy) || self.shy >= self.reach || !(5.0..=120.0).contains(&self.give_up) {
+            return Err(format!("`scavenge` needs something it takes, reach 4 to 24 blocks, shy 2 to 12 blocks, less than its reach, and give_up 5 to 120 seconds, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
+/// How a creature sleeps (docs/creature-ai.md, "Sleeping"): out of its active hours,
+/// with no one in mind, it sleeps, eyes shut. A player walking up it notices only within
+/// `quiet` blocks, and then as it would anyone close, so a careful hunter gets near; one
+/// going faster than a walk within `wakes` blocks wakes it with a start, and a fighter
+/// comes up provoked, with no warning, while prey bolts. Kept, or on an errand, it does
+/// not sleep so.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sleeps {
+    pub quiet: f32,
+    pub wakes: f32,
+}
+
+impl Sleeps {
+    /// Close enough that a quiet step is a skill, and a sprint heard well beyond it.
+    pub fn check(&self) -> Result<(), String> {
+        if !(1.0..=6.0).contains(&self.quiet) || !(4.0..=24.0).contains(&self.wakes) || self.wakes <= self.quiet {
+            return Err(format!("`sleeps` needs quiet 1 to 6 blocks and wakes 4 to 24 blocks, beyond its quiet, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
 /// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
 /// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
@@ -512,6 +568,24 @@ pub struct Barking {
     pub content: f32,
     pub every: f32,
 }
+
+/// One of a stallholder's trades, as written: `wants` (an item, how many) for `gives`.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TradeDef {
+    pub wants: (String, u8),
+    pub gives: Vec<(String, u8)>,
+}
+
+/// A trade with its items found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Trade {
+    pub wants: (crate::block::BlockId, u8),
+    pub gives: Vec<(crate::block::BlockId, u8)>,
+}
+
+/// The most of an item a trade asks for or gives at once: a stack.
+pub const MOST_TRADED: u8 = 64;
 
 /// The farthest, in blocks, a bark carries.
 pub const MOST_BARK_RANGE: f32 = 64.0;
@@ -764,6 +838,14 @@ pub struct CreatureDef {
     /// startles them. Unset, it flees at its kind's distance.
     #[serde(default)]
     pub flush: Option<Flush>,
+    /// It steals food left lying on the ground (`Scavenge`): a fox makes off with a
+    /// hunter's meat. Unset, it lets dropped food lie.
+    #[serde(default)]
+    pub scavenge: Option<Scavenge>,
+    /// It sleeps out of its active hours (`Sleeps`), woken by a sprint, not a quiet step.
+    /// Unset, it rests but notices players as ever.
+    #[serde(default)]
+    pub sleeps: Option<Sleeps>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -796,6 +878,10 @@ pub struct CreatureDef {
     /// How far its barks carry and how often it makes one to the same player.
     #[serde(default)]
     pub barking: Barking,
+    /// What one of a settlement's people keeping a market stall trades there, one a day
+    /// (`Server::trade`): it wants a few of something a player can make, and gives for it.
+    #[serde(default)]
+    pub trades: Vec<TradeDef>,
     /// How far from home it roams before turning back, in blocks.
     #[serde(default = "leash")]
     pub leash: f32,
@@ -1172,6 +1258,10 @@ pub struct Creature {
     pub breed_food: Vec<crate::block::BlockId>,
     /// Each product's item.
     pub products: Vec<crate::block::BlockId>,
+    /// What it steals from the ground (`Scavenge::takes`), as items.
+    pub scraps: Vec<crate::block::BlockId>,
+    /// What it trades at a stall, its items found (`CreatureDef::trades`).
+    pub trades: Vec<Trade>,
 }
 
 impl Creature {
@@ -1238,6 +1328,10 @@ impl CreatureRegistry {
                 def.diet.eats.iter_mut().chain(&mut def.diet.favourite).for_each(qualify);
                 def.loot.iter_mut().for_each(|loot| qualify(&mut loot.item));
                 def.products.iter_mut().for_each(|p| qualify(&mut p.item));
+                for trade in &mut def.trades {
+                    qualify(&mut trade.wants.0);
+                    trade.gives.iter_mut().for_each(|(item, _)| qualify(item));
+                }
                 if let Some(taming) = &mut def.taming {
                     taming.food.iter_mut().for_each(qualify);
                 }
@@ -1296,6 +1390,18 @@ impl CreatureRegistry {
             if let Some(tires) = def.tires {
                 tires.check().map_err(error)?;
             }
+            if let Some(scavenge) = &def.scavenge {
+                if def.boss || def.supernatural {
+                    return Err(error("is a boss or supernatural, and steals no one's food (`scavenge`)".into()));
+                }
+                scavenge.check().map_err(error)?;
+            }
+            if let Some(sleeps) = def.sleeps {
+                if def.habitat.active == Active::Any {
+                    return Err(error("sleeps (`sleeps`), but is about at all hours (`active: Any`), so it never sleeps".into()));
+                }
+                sleeps.check().map_err(error)?;
+            }
             if let Some(flush) = def.flush {
                 if def.boss || def.supernatural || def.attack.is_some() {
                     return Err(error("sits tight and bursts away (`flush`), which is for prey: not a boss, a supernatural kind or one that attacks".into()));
@@ -1339,6 +1445,13 @@ impl CreatureRegistry {
                 Ok(found)
             };
             let (eats, favourite) = (foods(&def.diet.eats)?, foods(&def.diet.favourite)?);
+            let scraps = match &def.scavenge {
+                Some(scavenge) => foods(&scavenge.takes)?,
+                None => Vec::new(),
+            };
+            if def.scavenge.is_some() && scraps.is_empty() {
+                return Err(error("scavenges (`scavenge`), but nothing it `takes` is an item".into()));
+            }
             let or_favourite = |names: Option<&Vec<String>>| -> Result<Vec<_>, RegistryError> {
                 match names.filter(|n| !n.is_empty()) {
                     Some(names) => foods(names),
@@ -1361,6 +1474,23 @@ impl CreatureRegistry {
                         return Err(error(format!("`{}` nests, but is taken with a tool: only what it lays by itself goes to the stores", p.item)));
                     }
                     blocks.id(&p.item).ok_or_else(|| error(format!("gives `{}`, which does not exist", p.item)))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            // A trade asks for and gives 1 to a stack of items that exist, and gives something.
+            let trades = def
+                .trades
+                .iter()
+                .map(|t| {
+                    let item = |(name, count): &(String, u8)| -> Result<_, RegistryError> {
+                        if !(1..=MOST_TRADED).contains(count) {
+                            return Err(error(format!("trades {count} of `{name}`: 1 to {MOST_TRADED} at once")));
+                        }
+                        Ok((blocks.id(name).ok_or_else(|| error(format!("trades `{name}`, which does not exist")))?, *count))
+                    };
+                    if t.gives.is_empty() {
+                        return Err(error(format!("wants `{}` for nothing", t.wants.0)));
+                    }
+                    Ok(Trade { wants: item(&t.wants)?, gives: t.gives.iter().map(item).collect::<Result<_, _>>()? })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let xp_skill = match &def.xp.skill {
@@ -1393,7 +1523,7 @@ impl CreatureRegistry {
             if registry.by_name.insert(def.name.clone(), id).is_some() {
                 return Err(error("defined twice".into()));
             }
-            registry.creatures.push(Creature { def, behaviours, modules, parts, reach, head, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products });
+            registry.creatures.push(Creature { def, behaviours, modules, parts, reach, head, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products, scraps, trades });
         }
         Ok(registry)
     }

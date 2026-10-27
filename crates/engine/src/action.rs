@@ -255,6 +255,9 @@ pub enum Effect {
     Tend,
     /// Look closely at the target creature: what the actor learns grows with Farming.
     Inspect,
+    /// Trade with the target, one of a settlement's people at their market stall: what the
+    /// actor holds for what they give (`Server::trade`).
+    Trade,
     /// Let the target creature, one the actor keeps, go wild again (asked twice).
     Release,
     /// Restore the actor's health and return it to spawn.
@@ -655,7 +658,7 @@ impl ActionDef {
                 let Some(crop) = ctx.actor_seed().and_then(|b| ctx.crops().planted_by(b)) else { return Ok(false) };
                 let ground = ctx.block(block).map(|b| ctx.blocks().def(b));
                 let fits = ground.is_some_and(|def| ctx.crops().get(crop).def.ground.iter().any(|tag| def.has_tag(tag)));
-                let room = ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || (ctx.info(b).replaceable && ctx.info(b).fluid.is_none()));
+                let room = ctx.block(block + IVec3::Y).is_some_and(|b| ctx.info(b).gives_room());
                 face == Face::PosY && fits && room
             }
             Requirement::HoldingFood => ctx.actor_held().is_some_and(|b| ctx.info(b).food > 0),
@@ -729,7 +732,7 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 let tilled = ctx.block(block).map(|b| ctx.blocks().def(b));
                 let soil = tilled.is_some_and(|def| def.has_tag("soil") && !def.has_tag("tilled"));
-                soil && ctx.block(block + IVec3::Y).is_some_and(|b| b.is_air() || (ctx.info(b).replaceable && ctx.info(b).fluid.is_none()))
+                soil && ctx.block(block + IVec3::Y).is_some_and(|b| ctx.info(b).gives_room())
             }
             Requirement::Fishable => {
                 let (block, _) = block_target()?;

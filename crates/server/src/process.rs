@@ -191,6 +191,8 @@ impl Survival {
             vitals::still_seated(server.players[&id].position, seat)
                 && server.block(seat).is_some_and(|b| server.content.blocks.def(b).has_tag(voxmar_engine::action::SEAT_TAG))
         });
+        // And what effects ask of the seat sat on (`SeatedOn`).
+        let seat: Vec<String> = seated.and_then(|at| server.block(at)).map_or_else(Vec::new, |b| effects.seat_by(server.content.blocks.def(b)));
 
         let anchor = server.at_home(id);
         let player = server.players.get_mut(&id).unwrap();
@@ -216,7 +218,7 @@ impl Survival {
         // Warmth from what was eaten and the weather counts before the bands of warmth
         // are judged: soaked through, a mild day feels chilly.
         let biome = server.overworld.biome_at(feet.x, feet.z);
-        let mut situation = Situation { felt: vitals::felt_air(cold_air, heat), warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), night };
+        let mut situation = Situation { felt: vitals::felt_air(cold_air, heat), warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), seat: &seat, night };
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
         let first = effects.active(&situation, &player.timed_effects);
@@ -805,6 +807,32 @@ mod tests {
         assert!(gapped.share(Shelter::Draughty) < walls.share(Shelter::Draughty), "a station plugged a wall: {gapped:?}");
     }
 
+    /// A cooking pot, simmering or not, and a feed trough stood in a room are furniture the
+    /// survey looks past, not walls: none of their faces count, so the room is walled (and
+    /// warmed) as it was without them.
+    #[test]
+    fn a_pot_or_a_trough_in_a_room_leaves_its_walls_as_they_were() {
+        let mut server = crate::test_server();
+        let at = voxmar_engine::coords::ColumnPos::of_block(server.spawn.floor().as_ivec3()).origin() + IVec3::new(8, server.spawn.y as i32 + 10, 8);
+        let block = |server: &Server, name: &str| server.content.blocks.expect(name);
+        let (stone, planks, bricks) = (block(&server, "base:stone"), block(&server, "base:oak_planks"), block(&server, "base:stone_bricks"));
+        for x in -3..=3 {
+            for z in -3..=3 {
+                server.set_block(at + IVec3::new(x, 0, z), stone);
+                server.set_block(at + IVec3::new(x, 4, z), planks);
+                for y in 1..=3 {
+                    let edge = x.abs() == 3 || z.abs() == 3;
+                    server.set_block(at + IVec3::new(x, y, z), if edge { bricks } else { voxmar_engine::block::BlockId::AIR });
+                }
+            }
+        }
+        let plain = server.room_walls(at + IVec3::Y);
+        for name in ["base:cooking_pot", "base:cooking_pot_simmering", "base:cooking_pot_ready", "base:feed_trough"] {
+            server.set_block(at + IVec3::new(1, 1, 1), block(&server, name));
+            assert_eq!(server.room_walls(at + IVec3::Y), plain, "a {name} in the room walled it");
+        }
+    }
+
     /// The load check on shelter tags: a solid `building` block with no shelter tag, or one
     /// with two, is refused by name; furniture (a furniture tag, no shelter tag) is let
     /// through, as is every shelter-tagged block.
@@ -823,6 +851,17 @@ mod tests {
         let unjudged = parse(r#"(blocks: [(name: "wall", textures: All("stone"), tags: ["building"])])"#);
         let why = rules.check_shelters(&unjudged).unwrap_err();
         assert!(why.contains("test:wall"), "{why}");
+        // A solid shaped piece is judged as a wall is, building or not, unless it is furniture.
+        let shaped = |source: &str| {
+            use voxmar_engine::shape::{ShapeFile, ShapeLimits, Shapes};
+            let file = ShapeFile::read("test", r#"(shapes: {"pot": (boxes: [(from: (2, 0, 2), to: (14, 10, 14))])})"#).unwrap();
+            let shapes = Shapes::gather(vec![("test".into(), file)], ShapeLimits { boxes: 4, quads: 128 }).unwrap();
+            voxmar_engine::block::BlockRegistry::with_shapes(voxmar_engine::block::BlockRegistry::parse("test", source).unwrap(), &shapes).unwrap()
+        };
+        let pot = shaped(r#"(blocks: [(name: "pot", render: Model, shape: "pot", textures: All("stone"))])"#);
+        assert!(rules.check_shelters(&pot).unwrap_err().contains("test:pot"), "an unjudged solid piece passed");
+        let station = shaped(r#"(blocks: [(name: "pot", render: Model, shape: "pot", textures: All("stone"), tags: ["station"])])"#);
+        assert_eq!(rules.check_shelters(&station), Ok(()), "a piece that is furniture is let through");
         let twice = parse(r#"(blocks: [(name: "wall", textures: All("stone"), tags: ["roof", "shelter:sound", "shelter:fine"])])"#);
         assert!(rules.check_shelters(&twice).unwrap_err().contains("test:wall"));
         // A misspelt shelter tag, and a draught through anything but a draughty wall.

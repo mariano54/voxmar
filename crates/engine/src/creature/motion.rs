@@ -321,6 +321,16 @@ pub fn chase_with_hop(movement: &Movement, way: f32, speed: f32, dt: f32) -> f32
 /// goes at: a step its head meets is up only for a hop that carries it there at that pace;
 /// `dt` is how long a `step` is, which the hop is judged by.
 pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, heading: Vec3, pace: f32, dt: f32) -> bool {
+    open_way_edging(body, world, movement, water, heading, pace, dt, false)
+}
+
+/// As `open_way`; `edging`, its head may also be clear there still facing the way it faces,
+/// going on that way: `step` holds its facing where its turned head would meet something.
+/// So a creature following its way (`path::find`) edges into a gap with a fence across the
+/// corner before it, its head held off the fence, where turned toward the gap its head
+/// would meet it. Only on a way: going straight at a wall, it does not edge along it.
+#[allow(clippy::too_many_arguments)]
+pub fn open_way_edging(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, heading: Vec3, pace: f32, dt: f32, edging: bool) -> bool {
     let probe = body.size.0 * 0.5 + 0.3;
     let boxes = |p: IVec3| world.boxes(p);
     let goes = |lift: f32| {
@@ -350,9 +360,13 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
     // where it gets most of the way at its level but its head meets a step (`head_step`),
     // not round it. A high head at a wall two high, or under a lintel, finds no way there.
     let ahead = |to: Vec3| Body { position: to, yaw: yaw_of(heading), ..*body };
+    // Its head clear there facing the way it goes, or, edging, going on the way it faces
+    // and still facing that way.
+    let onward = edging && heading.dot(body.forward()) >= -1e-4;
+    let clear = |to: Vec3| !ahead(to).head_blocked(world) || onward && !Body { position: to, ..*body }.head_blocked(world);
     let level = goes(0.0);
     let up = movement.jump > 0.0 && level.is_none_or(|to| ahead(to).head_step(world, heading, pace, hop_speed(movement, dt), movement.step));
-    let Some(to) = level.filter(|&to| !ahead(to).head_blocked(world)).or_else(|| if up { goes(1.05).filter(|&to| !ahead(to).head_blocked(world)) } else { None }) else {
+    let Some(to) = level.filter(|&to| clear(to)).or_else(|| if up { goes(1.05).filter(|&to| !ahead(to).head_blocked(world)) } else { None }) else {
         return false;
     };
     // What it would come down on along its way, from here to as far ahead as it carries
@@ -502,6 +516,13 @@ pub fn open_way(body: &Body, world: &impl Surroundings, movement: &Movement, wat
 /// how anything walking gets round a wall, a corner or a tree rather than pressing into it.
 /// `pace` is the speed it goes at (`open_way`).
 pub fn steer(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, wish: Vec3, side: f32, pace: f32, dt: f32) -> (Vec3, f32) {
+    steer_edging(body, world, movement, water, wish, side, pace, dt, false)
+}
+
+/// As `steer`, judging each way it might take as `open_way_edging` does.
+#[allow(clippy::too_many_arguments)]
+pub fn steer_edging(body: &Body, world: &impl Surroundings, movement: &Movement, water: Water, wish: Vec3, side: f32, pace: f32, dt: f32, edging: bool) -> (Vec3, f32) {
+    let open_way = |body: &Body, world, movement, water, heading, pace, dt| open_way_edging(body, world, movement, water, heading, pace, dt, edging);
     if wish == Vec3::ZERO || open_way(body, world, movement, water, wish, pace, dt) {
         return (wish, 0.0);
     }
@@ -828,6 +849,36 @@ mod tests {
         }
         assert!(body.position.x + body.reach <= 3.0 + 1e-3, "the head went into the wall at {}", body.position.x + body.reach);
         assert!(body.against_wall);
+    }
+
+    /// A gate beside a fence's corner: a fence along x = 1 but for a gap at z = -1, and a
+    /// fence run out west from it along z = -2, both two high.
+    struct CornerGate;
+
+    impl Surroundings for CornerGate {
+        fn solid(&self, cell: IVec3) -> bool {
+            cell.y < 0 || (0..2).contains(&cell.y) && (cell.x == 1 && cell.z != -1 || cell.x <= 0 && cell.z == -2)
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+    }
+
+    /// Facing the gap in the corner, a long head going on south toward the cell before it
+    /// finds its way open only edging (`open_way_edging`): turned south its head would meet
+    /// the fence across the corner, but `step` holds its facing there and it edges on.
+    #[test]
+    fn a_long_head_edges_into_a_gap_beside_a_fence_corner_only_edging() {
+        let mut body = Body::new(Vec3::new(0.5, 0.0, 0.55), yaw_of(Vec3::X), (0.84, 1.4));
+        body.reach = 0.9;
+        let movement = Movement { jump: 0.0, ..Movement::default() };
+        let open = |edging: bool| open_way_edging(&body, &CornerGate, &movement, Water::Land, -Vec3::Z, 2.0, 0.05, edging);
+        assert!(!open(false), "its head turned south is not in the fence");
+        assert!(open(true), "edging, facing the gap, it found no way on");
+        assert_eq!(open(false), open_way(&body, &CornerGate, &movement, Water::Land, -Vec3::Z, 2.0, 0.05));
+        // Facing away from where it goes, it does not edge: `step` would turn it.
+        let back = Body { yaw: yaw_of(Vec3::Z), ..body };
+        assert!(!open_way_edging(&back, &CornerGate, &movement, Water::Land, -Vec3::Z, 2.0, 0.05, true));
     }
 
     /// A wall `high` blocks tall from x = 3 on, over flat ground.

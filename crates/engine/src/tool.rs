@@ -53,10 +53,18 @@ pub struct WearDef {
     pub weapon_skill: String,
     /// The share of its uses left at which a tool warns it is nearly worn out.
     pub warn: f32,
+    /// The fewest uses left a tool warns at, whatever its share (a first tool of few uses
+    /// warns with enough left to take it back and mend it); 0 for none.
+    #[serde(default)]
+    pub warn_uses: u16,
     /// The share of its uses mending gives back.
     pub mend: f32,
     /// The tag of the block mending is done by, unless an item names its own (`mend_near:TAG`).
     pub mend_near: String,
+    /// Whether a tool broken in the hand brings up a spare of its kind from the pack (a
+    /// weapon, the same weapon); none unless a package says so.
+    #[serde(default)]
+    pub spare: bool,
 }
 
 /// [`WearDef`], resolved.
@@ -69,13 +77,23 @@ pub struct Wear {
     pub save_per_level: f32,
     pub weapon_skill: Option<SkillId>,
     pub warn: f32,
+    pub warn_uses: u16,
     pub mend: f32,
     pub mend_near: String,
+    pub spare: bool,
+}
+
+impl Wear {
+    /// The uses left at which a tool of `uses` warns: `warn` of them, or `warn_uses` if
+    /// more, short of the whole.
+    pub fn warn_at(&self, uses: u16) -> u16 {
+        ((uses as f32 * self.warn).ceil() as u16).max(self.warn_uses).min(uses.saturating_sub(1))
+    }
 }
 
 impl Default for Wear {
     fn default() -> Self {
-        Self { suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.0, weapon_skill: None, warn: 0.1, mend: 0.5, mend_near: String::new() }
+        Self { suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.0, weapon_skill: None, warn: 0.1, warn_uses: 0, mend: 0.5, mend_near: String::new(), spare: false }
     }
 }
 
@@ -84,7 +102,7 @@ impl Default for Wear {
 pub enum Worn {
     /// Worn a little, or not at all.
     Fine,
-    /// Worn down past the share where it warns (`Wear::warn`), this use.
+    /// Worn down past the uses left where it warns (`Wear::warn_at`), this use.
     Warned,
     /// Worn out: it broke.
     Broke,
@@ -93,7 +111,7 @@ pub enum Worn {
 /// Wears `stack` by `by` uses of the `uses` it has in all (0: it never wears), saying
 /// whether this use took it past the warning or broke it. A broken stack is left as it was;
 /// what it becomes is the caller's (`ToolRegistry::head`).
-pub fn wear_down(stack: &mut crate::inventory::ItemStack, by: u16, uses: u16, warn: f32) -> Worn {
+pub fn wear_down(stack: &mut crate::inventory::ItemStack, by: u16, uses: u16, warn_at: u16) -> Worn {
     if uses == 0 || by == 0 {
         return Worn::Fine;
     }
@@ -101,7 +119,6 @@ pub fn wear_down(stack: &mut crate::inventory::ItemStack, by: u16, uses: u16, wa
     let before = left(stack.wear);
     stack.wear = stack.wear.saturating_add(by).min(uses);
     let after = left(stack.wear);
-    let warn_at = (uses as f32 * warn).ceil() as u16;
     if after == 0 {
         Worn::Broke
     } else if before > warn_at && after <= warn_at {
@@ -159,6 +176,11 @@ pub struct ToolFile {
     pub blocks: Vec<RuleDef>,
     #[serde(default)]
     pub wear: Option<WearDef>,
+    /// Seconds the hand waits after each block it breaks before it starts on the next
+    /// (Minecraft's five ticks); the last package to give one decides, `DEFAULT_BREAK_WAIT`
+    /// if none does.
+    #[serde(default)]
+    pub break_wait: Option<f32>,
 }
 
 /// What breaking a block takes and teaches.
@@ -207,6 +229,8 @@ pub struct ToolRegistry {
     /// Each block id: the kinds made for it.
     suited: Vec<Vec<usize>>,
     wear: Wear,
+    /// Seconds the hand waits after a break (`ToolFile::break_wait`).
+    break_wait: f32,
     /// Each kind's skill that saves its wear.
     savers: Vec<Option<SkillId>>,
     /// Each item: what is left of it when it breaks, what mends it, and the tag of the
@@ -225,7 +249,53 @@ pub struct ToolRegistry {
     mend_by_tag: Vec<Option<String>>,
     /// Each item that burns: what it leaves once burnt out (`burns_to:ITEM`), if anything.
     burnt: Vec<Option<BlockId>>,
+    /// Each tool: what it breaks that a lesser one of its kind cannot (`ToolRegistry::opens`).
+    opens: Vec<Vec<BlockId>>,
 }
+
+/// Each item's [`ToolRegistry::opens`], found once at load: for a tool, one block for each
+/// rule asking for its kind at a tier above the next lower tier any tool of its kind has and
+/// up to its own (so a rule at a tier no tool has shows on the first tool past it), taking
+/// the plainest block (shortest name, then fewest tags: plain ore stands for its deepslate
+/// form and its sample), in
+/// the order of the level each asks. Nothing for the lowest tier of a kind, which opens
+/// nothing a lesser one kept shut, nor for a tool another of its kind and tier ranks below
+/// (slower, or as fast and listed first: a bronze pickaxe opens nothing copper did not).
+fn opened(blocks: &BlockRegistry, rules: &[Rule], tools: &[Tool], covered: &[Option<usize>]) -> Vec<Vec<BlockId>> {
+    let mut plainest: Vec<Option<BlockId>> = vec![None; rules.len()];
+    for (b, rule) in covered.iter().enumerate() {
+        if let Some(i) = *rule {
+            let id = BlockId(b as u16);
+            let plain = |b: BlockId| (blocks.def(b).name.len(), blocks.def(b).tags.len());
+            if plainest[i].is_none_or(|f| plain(id) < plain(f)) {
+                plainest[i] = Some(id);
+            }
+        }
+    }
+    tools
+        .iter()
+        .enumerate()
+        .map(|(i, tool)| {
+            let Some(kind) = tool.kind else { return Vec::new() };
+            let same = || tools.iter().enumerate().filter(|(_, t)| t.kind == Some(kind));
+            let Some(lower) = same().map(|(_, t)| t.tier).filter(|&t| t < tool.tier).max() else { return Vec::new() };
+            if same().any(|(j, t)| t.tier == tool.tier && (t.speed < tool.speed || (t.speed == tool.speed && j < i))) {
+                return Vec::new();
+            }
+            let mut shown: Vec<(u8, usize, BlockId)> = rules
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.tool == Some(kind) && r.tier > lower && r.tier <= tool.tier)
+                .filter_map(|(r, rule)| plainest[r].map(|b| (rule.level, r, b)))
+                .collect();
+            shown.sort();
+            shown.into_iter().map(|(_, _, b)| b).collect()
+        })
+        .collect()
+}
+
+/// Seconds the hand waits after a break where no package says (Minecraft's five ticks).
+pub const DEFAULT_BREAK_WAIT: f32 = 0.25;
 
 /// The tag of a tool that never wears (a pail, a fishing rod): every other tool says
 /// `uses:N`.
@@ -242,11 +312,16 @@ impl ToolRegistry {
     }
 
     pub fn new(files: Vec<ToolFile>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
-        let (mut kinds, mut defs, mut wear_def) = (Vec::new(), Vec::new(), None);
+        let (mut kinds, mut defs, mut wear_def, mut break_wait) = (Vec::new(), Vec::new(), None, None);
         for file in files {
             kinds.extend(file.kinds);
             defs.extend(file.blocks);
             wear_def = file.wear.or(wear_def);
+            break_wait = file.break_wait.or(break_wait);
+        }
+        let break_wait = break_wait.unwrap_or(DEFAULT_BREAK_WAIT);
+        if !(0.0..=2.0).contains(&break_wait) {
+            return Err(RegistryError(format!("tools.ron: `break_wait` {break_wait} is not from 0 to 2 seconds")));
         }
         let skill_named = |name: &str| skills.id(name).ok_or_else(|| RegistryError(format!("tools.ron: no skill `{name}`")));
         let wear = match wear_def {
@@ -258,7 +333,7 @@ impl ToolRegistry {
                 if blocks.ids().all(|id| !blocks.def(id).has_tag(&def.mend_near)) {
                     return Err(RegistryError(format!("tools.ron: nothing has the tag `{}` wear's mending is done by", def.mend_near)));
                 }
-                Wear { suited: def.suited, unsuited: def.unsuited, hit: def.hit, till: def.till, save_per_level: def.save_per_level, weapon_skill: Some(skill_named(&def.weapon_skill)?), warn: def.warn, mend: def.mend, mend_near: def.mend_near }
+                Wear { suited: def.suited, unsuited: def.unsuited, hit: def.hit, till: def.till, save_per_level: def.save_per_level, weapon_skill: Some(skill_named(&def.weapon_skill)?), warn: def.warn, warn_uses: def.warn_uses, mend: def.mend, mend_near: def.mend_near, spare: def.spare }
             }
         };
         let savers = kinds.iter().map(|k| k.skill.as_deref().map(skill_named).transpose()).collect::<Result<Vec<_>, _>>()?;
@@ -391,12 +466,33 @@ impl ToolRegistry {
             covered.push(rules.iter().position(|rule| rule.tags.iter().all(has)));
             suited.push(kinds.iter().enumerate().filter(|(_, k)| k.mines.iter().any(has)).map(|(i, _)| i).collect());
         }
-        Ok(Self { kinds, rules, tools, covered, suited, wear, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag, burnt })
+        let opens = opened(blocks, &rules, &tools, &covered);
+        Ok(Self { kinds, rules, tools, covered, suited, wear, break_wait, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag, burnt, opens })
     }
 
     /// How tools and weapons wear.
     pub fn wear(&self) -> &Wear {
         &self.wear
+    }
+
+    /// Seconds the hand waits after each block it breaks before it starts on the next.
+    pub fn break_wait(&self) -> f32 {
+        self.break_wait
+    }
+
+    /// The slot of `slots` (other than `hand`) holding the spare to bring up for `broken`, a
+    /// tool that broke there: its like first, else a tool of its kind, the one with most uses
+    /// left; a weapon's spare is only its like, whatever kind it is tagged with.
+    pub fn spare(&self, blocks: &BlockRegistry, broken: BlockId, slots: &[Option<crate::inventory::ItemStack>], hand: usize) -> Option<usize> {
+        let kind = self.tool(Some(broken)).kind.filter(|_| !blocks.def(broken).has_tag("weapon"));
+        let fits = |s: &crate::inventory::ItemStack| s.item == broken || kind.is_some() && self.tool(Some(s.item)).kind == kind;
+        slots
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| s.map(|s| (i, s)))
+            .filter(|&(i, s)| i != hand && fits(&s) && self.uses(s.item) > 0)
+            .max_by_key(|&(i, s)| (s.item == broken, self.uses(s.item).saturating_sub(s.wear), std::cmp::Reverse(i)))
+            .map(|(i, _)| i)
     }
 
     /// Seconds `item` burns while held; 0 if it never burns.
@@ -665,6 +761,12 @@ impl ToolRegistry {
         }
         best.map(|(_, id)| id)
     }
+
+    /// What `item` breaks that a lesser tool of its kind cannot, nearest level first (see
+    /// [`opened`]); none for what is no tool.
+    pub fn opens(&self, item: BlockId) -> &[BlockId] {
+        self.opens.get(item.0 as usize).map_or(&[], Vec::as_slice)
+    }
 }
 
 #[cfg(test)]
@@ -682,6 +784,7 @@ mod tests {
             block("flint_pickaxe", &["pickaxe", "tool", "tier:1", "speed:2", "uses:50", "mend:log"]),
             block("stone_pickaxe", &["pickaxe", "tool", "tier:2", "speed:4", "yield:0.05", "uses:100", "mend:stone"]),
             block("stone_axe", &["axe", "tool", "tier:2", "speed:4", "uses:100", "mend:stone"]),
+            block("war_axe", &["weapon", "axe", "tool", "tier:2", "speed:4", "uses:100", "mend:stone"]),
         ])
         .unwrap();
         let mut skills = SkillRegistry::default();
@@ -709,6 +812,22 @@ mod tests {
         assert_eq!(tools.yield_bonus(Some(id("stone_pickaxe")), id("iron_ore")), 0.05);
     }
 
+    /// A spare for a tool broken in the hand: its like first, else its kind's with most uses
+    /// left; for a weapon, only its like, though it is tagged a tool of a kind.
+    #[test]
+    fn a_spare_is_its_like_or_its_kind_and_a_weapons_only_its_like() {
+        use crate::inventory::ItemStack;
+        let (blocks, _, tools) = setup();
+        let id = |n: &str| blocks.expect(&format!("t:{n}"));
+        let worn = |n: &str, wear: u16| Some(ItemStack { wear, ..ItemStack::new(id(n), 1) });
+        let slots = [None, worn("stone_axe", 90), worn("war_axe", 0), worn("stone_axe", 10), worn("flint_pickaxe", 0)];
+        assert_eq!(tools.spare(&blocks, id("stone_axe"), &slots, 0), Some(3), "its like with most uses left");
+        assert_eq!(tools.spare(&blocks, id("flint_pickaxe"), &slots, 4), None, "not the one in the hand itself");
+        assert_eq!(tools.spare(&blocks, id("war_axe"), &[None, worn("stone_axe", 0)], 0), None, "a weapon's spare is only its like");
+        assert_eq!(tools.spare(&blocks, id("war_axe"), &slots, 0), Some(2));
+        assert_eq!(tools.spare(&blocks, id("stone_pickaxe"), &slots, 0), Some(4), "a tool of its kind");
+    }
+
     #[test]
     fn rules_ask_for_tools_and_levels() {
         let (blocks, skills, tools) = setup();
@@ -728,15 +847,18 @@ mod tests {
     #[test]
     fn wear_warns_once_then_breaks() {
         let mut stack = crate::inventory::ItemStack::new(BlockId(1), 1);
-        assert_eq!(wear_down(&mut stack, 5, 20, 0.1), Worn::Fine);
-        assert_eq!(wear_down(&mut stack, 12, 20, 0.1), Worn::Fine, "3 left of 20, still over a tenth");
+        assert_eq!(wear_down(&mut stack, 5, 20, 2), Worn::Fine);
+        assert_eq!(wear_down(&mut stack, 12, 20, 2), Worn::Fine, "3 left of 20, still over the 2 it warns at");
         assert_eq!(stack.wear, 17);
-        assert_eq!(wear_down(&mut stack, 1, 20, 0.1), Worn::Warned, "2 left: a tenth of 20");
-        assert_eq!(wear_down(&mut stack, 1, 20, 0.1), Worn::Fine, "warned already");
-        assert_eq!(wear_down(&mut stack, 5, 20, 0.1), Worn::Broke);
+        assert_eq!(wear_down(&mut stack, 1, 20, 2), Worn::Warned, "2 left: where it warns");
+        assert_eq!(wear_down(&mut stack, 1, 20, 2), Worn::Fine, "warned already");
+        assert_eq!(wear_down(&mut stack, 5, 20, 2), Worn::Broke);
         assert_eq!(stack.wear, 20, "never past its uses");
         let mut stone = crate::inventory::ItemStack::new(BlockId(1), 64);
-        assert_eq!(wear_down(&mut stone, 3, 0, 0.1), Worn::Fine);
+        assert_eq!(wear_down(&mut stone, 3, 0, 0), Worn::Fine);
+        // At a tenth left, or `warn_uses` if more, never the whole.
+        let wear = Wear { warn_uses: 10, ..Wear::default() };
+        assert_eq!([50, 600, 5].map(|uses| wear.warn_at(uses)), [10, 60, 4]);
         assert_eq!(stone.wear, 0);
     }
 
@@ -1068,26 +1190,62 @@ mod tests {
     }
 
     /// Each tier of each kind is felt (Oct 14 tier audit, docs/tools-and-crafting.md): on
-    /// the blocks tools are for (a log, cobblestone, an ore), a block with the next tier
-    /// takes at most 1/1.35 of the time with the one before, counting the quarter second the
-    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to flint, flint to
-    /// stone, stone to copper, copper to iron.
+    /// the blocks tools are for (a log, cobblestone, an ore, soil), a block with the next
+    /// tier takes at most 1/1.35 of the time with the one before, counting the wait after
+    /// each break (`tools.ron`'s `break_wait`). Bare hands to flint (a digging stick for a
+    /// shovel), flint to stone, stone to copper, copper to iron, for the axe, the pickaxe and
+    /// the shovel. Soil breaks so fast that past a stone shovel the wait is most of a break:
+    /// those steps alone are pinned as not felt, still faster, and near the floor (no tool
+    /// could make the copper one felt, an instant one barely 1.4x), so a step newly unfelt fails.
     #[test]
     fn every_tool_tier_is_felt() {
-        const BREAK_WAIT: f32 = 0.25;
+        const FELT: f32 = 1.35;
+        const UNFELT: [(&str, usize); 6] = [("dirt", 2), ("dirt", 3), ("sand", 2), ("sand", 3), ("gravel", 2), ("gravel", 3)];
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
         let content = crate::content::Content::load(&assets).unwrap();
         let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
-        for (kind, blocks) in [("axe", ["oak_log"].as_slice()), ("pickaxe", ["cobblestone", "coal_ore"].as_slice())] {
-            for block in blocks {
+        let wait = content.tools.break_wait();
+        let tiers = |kind: &str| ["flint", "stone", "copper", "iron"].map(|tier| format!("{tier}_{kind}"));
+        let mut shovels = tiers("shovel");
+        shovels[0] = "digging_stick".into();
+        let mut unfelt = Vec::new();
+        for (kind, held, blocks) in [("axe", tiers("axe"), ["oak_log"].as_slice()), ("pickaxe", tiers("pickaxe"), ["cobblestone", "coal_ore"].as_slice()), ("shovel", shovels, ["dirt", "sand", "gravel"].as_slice())] {
+            for &block in blocks {
                 let hardness = content.blocks.info(id(block)).hardness;
-                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["flint", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
-                let seconds: Vec<f32> = held.iter().map(|&item| hardness / content.tools.speed(item, id(block)) + BREAK_WAIT).collect();
-                for (step, pair) in seconds.windows(2).enumerate() {
-                    assert!(pair[0] / pair[1] >= 1.35, "{block}: tier {step} to {} with a {kind} is only {:.2}x ({seconds:?})", step + 1, pair[0] / pair[1]);
+                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(held.iter().map(|item| Some(id(item)))).collect();
+                let times: Vec<f32> = held.iter().map(|&item| hardness / content.tools.speed(item, id(block)) + wait).collect();
+                for (step, pair) in times.windows(2).enumerate() {
+                    if pair[0] / pair[1] >= FELT {
+                        continue;
+                    }
+                    assert!(UNFELT.contains(&(block, step)), "{block}: tier {step} to {} with a {kind} is only {:.2}x ({times:?}, waiting {wait} s)", step + 1, pair[0] / pair[1]);
+                    assert!(pair[1] < pair[0] && pair[0] / wait < 1.5, "{block}: tier {step} to {} with a {kind} is slower, or not near the {wait} s floor ({times:?})", step + 1);
+                    unfelt.push((block, step));
                 }
             }
         }
+        assert_eq!(unfelt, UNFELT, "the steps soil leaves no room to feel");
+    }
+
+    /// A better pickaxe names what it opens up, plain ore standing for its deepslate form and
+    /// its sample, nearest level first; the first of a kind opens nothing a lesser one kept
+    /// shut, and a tier no rule asks for opens nothing.
+    #[test]
+    fn a_better_tool_names_what_it_opens() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        let opens = |tool: &str| content.tools.opens(id(tool)).iter().map(|&b| content.blocks.def(b).name.trim_start_matches("base:").to_owned()).collect::<Vec<_>>();
+        assert_eq!(opens("flint_pickaxe"), Vec::<String>::new());
+        assert_eq!(opens("flint_axe"), Vec::<String>::new());
+        assert_eq!(opens("stone_pickaxe")[..3], ["coal_ore", "copper_ore", "tin_ore"]);
+        assert!(opens("stone_pickaxe").contains(&"iron_ore".to_owned()));
+        assert_eq!(opens("copper_pickaxe"), ["cobalt_ore", "silver_ore", "gold_ore"]);
+        assert_eq!(opens("stone_axe"), Vec::<String>::new());
+        // Bronze is copper's tier and faster: it opens nothing copper did not.
+        assert_eq!(opens("bronze_pickaxe"), Vec::<String>::new());
+        assert_eq!(opens("iron_pickaxe"), ["ruby_ore", "sapphire_ore", "lodestone", "emerald_ore", "graphite_ore", "diamond_ore", "aetherite_ore", "bauxite"]);
+        assert_eq!(opens("oak_log"), Vec::<String>::new());
     }
 
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower

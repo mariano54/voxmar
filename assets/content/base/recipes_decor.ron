@@ -15,6 +15,9 @@
         (pattern: [["stick", "stick", "stick"], ["stick", "hide", "stick"], ["stick", "stick", "stick"]], output: "hide_window", count: 2, skill: "core:construction", level: 3, xp: 5.0),
         (pattern: [["{name}_planks", "{name}_planks"], ["stick", "stick"]], output: "{name}_stool", skill: "core:construction", level: 1, xp: 2.0),
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_bench", skill: "core:construction", level: 2, xp: 3.0),
+        // Two stripped logs, one split for the seat and one cut into stumps, for two log
+        // benches: the village's, for a home.
+        (ingredients: ["stripped_{name}_log", "stripped_{name}_log"], output: "{name}_log_bench", count: 2, skill: "core:construction", level: 1, xp: 2.0),
         (pattern: [["stick", "", ""], ["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_chair", skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"], ["stick", "", "stick"]], output: "{name}_table", skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_planks", "stick", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_crate_stack", skill: "core:construction", level: 2, xp: 3.0),
@@ -134,6 +137,15 @@
         (pattern: [["tag:planks", "", "tag:planks"], ["tag:planks", "tag:planks", "tag:planks"]], output: "feed_trough", skill: "core:construction", level: 4, xp: 8.0),
         // Two herbs tied up with twine, to hang and dry: a home's herb nook.
         (pattern: [["twine", "twine"], ["tag:herb", "tag:herb"]], output: "hanging_herbs", count: 2, skill: "core:crafting", level: 4, xp: 3.0),
+        // Six twine woven into a sack for grain, as a village's millers keep: two across and
+        // three down, where thatch lays its fibre three across.
+        (pattern: [["twine", "twine"], ["twine", "twine"], ["twine", "twine"]], output: "sack", skill: "core:crafting", level: 2, xp: 2.0),
+        // A barrel: staves round an open middle, a twine hoop at top and bottom (Construction 4).
+        (pattern: [["tag:planks", "twine", "tag:planks"], ["tag:planks", "", "tag:planks"], ["tag:planks", "twine", "tag:planks"]], output: "barrel", skill: "core:construction", level: 4, xp: 6.0),
+        // A crate: boards round an open middle, sticks bracing the corners (Construction 2).
+        (pattern: [["stick", "tag:planks", "stick"], ["tag:planks", "", "tag:planks"], ["stick", "tag:planks", "stick"]], output: "crate", skill: "core:construction", level: 2, xp: 4.0),
+        // Four twine knotted into a net on a stick to hang it from: the fisher's, for a home.
+        (ingredients: ["twine", "twine", "twine", "twine", "stick"], output: "fishing_net", skill: "core:crafting", level: 3, xp: 3.0),
         (pattern: [["copper_ingot"], ["torch"], ["copper_ingot"]], output: "copper_hanging_lantern", skill: "core:engineering", level: 5, xp: 12.0),
         (pattern: [["iron_ingot"], ["torch"], ["iron_ingot"]], output: "iron_hanging_lantern", skill: "core:engineering", level: 15, xp: 24.0),
         (pattern: [["", "{name}", ""], ["{name}", "torch", "{name}"], ["", "{name}", ""]], output: "{name}_lantern", skill: "core:construction", level: 9, xp: 6.0),
