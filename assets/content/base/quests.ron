@@ -791,6 +791,22 @@
             rewards: [Xp("construction", 100.0), Xp("cooking", 60.0)],
         ),
         (
+            name: "coin_at_the_roadside", age: "farm", branch: "callers", title: "Coin at the Roadside",
+            side: true,
+            why: "Folk on the road buy what you have to spare. A tanner pays two gold coins for four hides; a woodcarver one for eight logs; a potter two for four fired clay; shearers one for six wool; an ore assayer one for four copper ore. Sell to any of them once, and keep the coin for the road.",
+            tasks: [[Dealt("tanner", "buy", 1)], [Dealt("woodcarver", "buy", 1)], [Dealt("potter", "buy", 1)], [Dealt("shearers", "buy", 1)], [Dealt("ore_assayer", "buy", 1)]],
+            after: ["neighbourly"],
+            rewards: [Xp("crafting", 60.0)],
+        ),
+        (
+            name: "coin_well_spent", age: "farm", branch: "callers", title: "Coin Well Spent",
+            side: true,
+            why: "A coin buys what no grid makes. A travelling smith whets your blade for one, keen for twenty minutes; a truffle hunter points you to a truffle for one. Hold a gold coin and pay either.",
+            tasks: [[Dealt("travelling_smith", "whet", 1)], [Dealt("truffle_hunter", "truffle", 1)]],
+            after: ["coin_at_the_roadside"],
+            rewards: [Xp("crafting", 40.0), Item("bread", 2)],
+        ),
+        (
             name: "a_herb_nook", age: "farm", branch: "rooms", title: "A Herb Nook",
             why: "Tie two herbs with twine and they hang to dry (Crafting 4); a drying rack hung with meat counts as a bunch. Two bunches and a jar, basket or crate at home make a herb nook: there you farm and brew as if a level higher, so a kitchen garden at the door takes seed a level early, and a meal's good lasts a tenth longer.",
             tasks: [[Built("home_herb_nook", 1)]],
