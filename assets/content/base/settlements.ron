@@ -192,7 +192,10 @@
     //     runs (a ring round them all but fields, pens, orchards, woodyards and shrines),
     //     how high a palisade of logs and a stone wall stand, the wealth past which it is
     //     stone, and towers at the corners and every `towers.0` blocks, `towers.1` higher.
-    //     A gate stands where each lane passes, with a lintel where the wall is over three.
+    //     A gate stands where each lane passes, with a lintel where the wall is over three;
+    //     through a stone wall, `arches` arch it (the first whose `walls` holds the wall's
+    //     stone, or that names none): an arch between the posts of a gate a block wide, a
+    //     wide arch's halves springing from the posts of a wider one.
     //   fire: no flame of a settlement's own (`flames`, by tag) reaches what catches
     //     (`catch`): out a face at a time through open cells, `reach` steps, as fire
     //     catches in a home (fire.ron's reach is 1 to 4; this keeps the most). A roof of
@@ -233,7 +236,10 @@
         },
         houses: (inn: (2, 8, 9), grand: 8, trader: ((5, 7), (5, 8)), pitch: (8, 0.45), regular: 0.45, middle_door: 0.6, windows: (0.6, 0.8, 0.95), plinth: 0.35, moss: 0.22),
         dressing: (every: (9.0, 14.0), lamp: (0.5, 0.4), yards: (0.5, 1.0, 2), per_lane: 6, banks: (1, 3), clearance: (0.4, 0.6)),
-        walls: (margin: 4, height: (3, 4), stone: 0.5, towers: (24, 2)),
+        walls: (margin: 4, height: (3, 4), stone: 0.5, towers: (24, 2), arches: [
+            (walls: ["stone_bricks", "polished_andesite"], arch: "stone_brick_arch", wide: "stone_brick_wide_arch", wide_half: "stone_brick_wide_arch_half"),
+            (arch: "cobblestone_arch", wide: "cobblestone_wide_arch", wide_half: "cobblestone_wide_arch_half"),
+        ]),
         fire: (flames: ["fire"], catch: ["thatch", "wattle"], reach: 4, instead: Some((slope: "dark_oak_shingles", ridge: "dark_oak_shingle_ridge"))),
     ),
     // furnishings: blocks every settlement uses whatever its style. A package may name
