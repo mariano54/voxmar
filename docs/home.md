@@ -12,7 +12,7 @@ engine's `effect.rs`):
 
 | Condition | Holds when |
 | --- | --- |
-| `AtHome` | the player stands within `home_reach` blocks of the home (and `home_up`/`home_down`) |
+| `AtHome` | the player stands within `home_reach` blocks of the home (and `home_up`/`home_down`), or of another online player's lit hearth as a guest |
 | `Indoors` | something solid is overhead |
 | `HomeHas(tag, n)` | at home, with at least n blocks carrying the tag around it |
 
@@ -44,13 +44,13 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
-Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, footstools,
-cushions and window seats; tables include desks and counters; storage is whatever a home
+Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, log benches,
+footstools, cushions and window seats; tables include desks and counters; storage is whatever a home
 keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
-shelves, plate racks, spice racks, candle boxes, bread bins, bedside tables, stair
-cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves too), crate
-stacks, barrel racks, jars and baskets, and a village's barrels and crates (every store a player opens
-counts but the feed trough, which is the pen's: test
+shelves, plate racks, spice racks, candle boxes, bread bins, kindling boxes, bedside
+tables, stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves
+too), crate stacks, barrel racks, jars, baskets and grain sacks, and a village's barrels,
+crates and sacks (every store a player opens counts but the feed trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
 of a chest and a barrel by a campfire, "home: storage"); crockery is plates, bowls, jars,
 jugs, baskets and a dresser's plates on show; rugs include a rush mat (4 rushes, Crafting 1,
@@ -88,9 +88,11 @@ cheap and cosy but catches, shingles do not), as are timber posts and beams and 
 cobble slabs and stairs; a lattice window is draughty. Natural rock and the ores in it are
 sound, so a home cut into a hillside can be Cosy after the mining it took; earth, gravel, sand
 and any other solid block with no tag count as draughty, until daub coats them. Every solid
-block tagged `building` or `roof`, full or shaped, that is not furniture carries exactly one
-shelter tag, and no block more than one, checked when content loads (server `rules.rs`
-`check_shelters`), so a new one cannot slip in unjudged.
+block tagged `building` or `roof`, full or shaped, and every solid shaped piece, that is not
+furniture carries exactly one shelter tag, and no block more than one, checked when content
+loads (server `rules.rs` `check_shelters`), so a new one cannot slip in unjudged: a cooking
+pot is a `station` and the feed trough `farm`, furniture a room looks past
+(`a_pot_or_a_trough_in_a_room_leaves_its_walls_as_they_were`).
 
 How it is judged (`Server::room_walls`, beside the home survey): from where home stands, a
 scan goes out over the open cells within the home's reach (survival.ron's `home_reach`,
@@ -148,8 +150,8 @@ bunches); two bunches and a jar, basket or crate make it. Its farming level coun
 is felt, sowing the kitchen garden at the door (a crop a level early) and harvesting it, and
 its alchemy level at the bench.
 Soft furnishings keep the draught off: a rug underfoot and cloth hung on a wall or at a window
-(`drape`: a wall hanging, two cloths over two sticks, Crafting 4, any dye, or a curtain) under the home's roof, 1°
-warmer; two rugs are not enough
+(`drape`: a wall hanging, two cloths over two sticks, Crafting 4, any dye, or a curtain)
+under the home's roof, 1° warmer; two rugs are not enough
 (`a_rug_and_a_hanging_under_a_roof_are_soft_furnishings`, the server's
 `a_rug_and_a_hanging_make_soft_furnishings`, the gate's walls step: "home: soft furnishings").
 The dooryard is the Farm age's too, the home's outside (home audit 2, item 10: outdoor decor
@@ -236,6 +238,22 @@ as if you stood in it: "Camp reached. Next, Hearthside: it needs hearth 0/1." Wh
 lacks is read off its own condition (`Condition::lacks`), so a mod's steps are covered with no
 extra work; a block tag shows by `home.tag.<tag>` in the language files, else as the tag.
 It is a console command, so it needs no protocol change.
+
+## A guest at a friend's hearth
+
+A player away from their own home who stands within reach of another online player's lit
+hearth (never a bed) is that home's guest (guests.rs `guest_survey`): `AtHome` holds for them
+and `HomeHas` counts the host's home and kept animals, so they are Hearthside, Snug or Cosy
+as it is. Their own quest perks (`Done(..)`) still need their own quests. A guest's steps
+are never announced to them nor counted as felt for their quests (so their own hearth
+announces them later), and a host's stores are not theirs to draw on (`home_stores` keeps to
+what the guest placed). If two hosts' reaches overlap, the lower-numbered one's home counts.
+A guest who sleeps in a bed there, their own hearth burning elsewhere, rests as the home
+gives (Well rested by a friend's Bedside or in a Snug home at night, Deep rest in a Cosy
+one). Tests (guests.rs): `a_guest_by_a_friends_hearth_is_hearthside_unannounced`,
+`a_guest_loses_the_comfort_away_from_it_or_with_the_host_gone`,
+`a_guest_sleeps_as_well_as_the_home_they_are_a_guest_in`. No gate step: the gate runs one
+player.
 
 ## The way home
 
@@ -354,10 +372,13 @@ motifs step can be where it first came on ("home: evening in"), then sets noon.
 Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
 through, you stay so for two minutes under cover (three if drenched), colder and, drenched,
 slower to heal, unless you dry off within three blocks of a fire or a hearth (or warmed on a
-cold day). So coming in from the rain, you dry by your own hearth. It is data: an effect
-that `lingers` can name what `ends` it early (core effects.ron's `ends: Some(Any([Warmed,
-Near("fire", 3), Near("hearth", 3)]))`), and loading refuses `ends` on one that does not
-linger. Tests: the engine's `wet_through_you_dry_off_by_a_fire_and_not_before`, the
+cold day), or hang your things up within two blocks of a peg rail indoors. So coming in from
+the rain, you dry by your own hearth or at the rail by the door: the peg rail, decor until
+then, does something. It is data: an effect that `lingers` can name what `ends` it early
+(core effects.ron's `ends: Some(Any([Warmed, Near("fire", 3), Near("hearth", 3),
+Near("pegs", 2)]))`), and loading refuses `ends` on one that does not linger. Tests: the
+engine's `wet_through_you_dry_off_by_a_fire_and_not_before` and
+`wet_things_hung_on_a_peg_rail_dry_you_off`, the
 server's `health_is_twice_hitpoints_and_a_downpour_drenches_those_out_in_it`; the gate's
 Weather step dries the player by a campfire after its storm ("weather: dries by a fire").
 
@@ -381,6 +402,12 @@ pantry and larder rooms give; they multiply, up to core `survival.ron`'s `meal_m
 every meal effect on, the heal is 1.82 times and the good's length 2.27, held to 2). A supper at the kitchen table is worth sitting
 down for. Test: `a_meal_at_the_table_does_more`. The gate's Seat step sets a table by the
 stool ("seat: at the table").
+
+Sat with books (a bookshelf) within 2 and a window within 3, the player is in a **Reading
+Nook** (`reading_nook`): they learn a tenth more (`xp` x1.1) while they sit there. No home is
+asked: a shelf and a window by a chair make the quiet corner of a lived-in house. Test:
+`a_seat_by_a_window_and_books_is_a_reading_nook`. The gate's Seat step stands a bookshelf on
+the table and a hide window on that ("seat: reading nook").
 
 ## Numbers and tuning
 
@@ -487,6 +514,42 @@ pass) with `Server::stores_around`; the keeper must be in the world (logged out,
 gate's Nest step keeps a junglefowl at the Home step's bag, opens a barrel, makes an egg
 due, and checks the egg in the barrel and the chat line (shot `home-nest`, check
 "home: nest").
+
+**Putting things away (Oct 14).** The twelfth pass is the counterpart: one key empties the
+pack into the stores, so a home stays useful without sorting by hand.
+
+- **The key is H** ("home"), the `base:put_away` action, bound in the settings as the
+  "Put away key". It works when walking about and with the inventory open, and does
+  nothing while the chat is open. Every other free letter was a weaker mnemonic, and F, M
+  and the prayer keys X V B N G are taken.
+- **What moves.** Every stack in the pack's 27 main slots whose item already has a stack in
+  one of the home's stores goes there. It fills that item's stacks in the stores first,
+  then empty slots in a store that already holds the item, nearest store first. A store
+  with no stack of the item is never started on, so the barrel of planks stays the
+  barrel of planks. Whatever does not fit stays in the pack.
+- **What stays.** The hotbar is skipped: what is in hand is what the player chose to carry.
+  The pouches, the crafting grid and the pointer are skipped too, and so is any store
+  that is full or does not take the item (`Machine::bin_takes`).
+- **Quests.** What goes in is tallied by each store's block (`stocked:`), as a move into an
+  open store is, so a quest's `Stocked` counts clay put away with H. The Nomad home side
+  quest **Put It Away** (after From the Shelves) teaches the key: thirty-two planks into
+  any store with the key (`PutAway("tag:planks", 32)`, a `put_away:ITEM` tally only
+  `put_away` keeps; a move by hand counts for `Stocked` only). Test:
+  `planks_put_away_finish_put_it_away`.
+- **Which stores count.** Those in the home box (the same `home_stores` that Lay and the
+  stations draw from, nearest first), and only while the player stands in their own home.
+  `from_stores` belongs to stations and does not apply. A guest puts nothing into a
+  friend's stores.
+- **What the player hears and reads.** A lid lifted (the `base:open_store` sound, softer). The
+  chat says how many stacks went in (`store.put_away`). It says when nothing matched
+  (`store.put_away.none`), when the stores that hold it have no room (`store.put_away.full`), and when the player is not at home (`store.put_away.away`).
+  All four are in en and ja. There is no protocol change: the action rides
+  `ActionTarget::None`, and the inventory and any open store are resent as usual.
+- **Tests.** `put_away` tests in server/src/stores.rs (matched stacks move, the hotbar
+  stays, what went in is tallied for `Stocked`, a full store keeps the rest in the pack and
+  says so, away from home nothing moves). In the
+  gate's Home step, after Lay, check "home: put away": planks carried in the pack go into
+  the barrel when H is pressed.
 
 ## A well by the field
 
@@ -626,7 +689,12 @@ to one a player or a creature leans into is refused with placing's words ("Someo
 `CoatClear`, refusals.ron), as placing a block on them and shutting a door on them are. The
 dauber's client sees no other body, so the server sends those words itself; and `coat` keeps
 the cell clear whatever action asks for it. Once they step off, the same clay daubs it (test
-`a_panel_someone_leans_on_is_not_daubed_around_them`).
+`a_panel_someone_leans_on_is_not_daubed_around_them`). The same goes for a block placed or a
+door shut on someone the client cannot see: the server says why with refusals.ron's words
+for `Unobstructed` and `Swaps` (`Server::unforeseen`), and placing a solid block keeps out a
+creature as well as a player. The clay's puff (action_fx.ron `confirmed`) waits for the
+server to turn the panel, so a refused daub shows nothing (fx.rs
+`a_confirmed_burst_waits_for_its_block`).
 
 ## Curing hides
 
@@ -714,7 +782,10 @@ window draws across and back with a right click (`swaps`, as a door; drawn back 
 light in (`light_filter: 8`), so a lit home's window glows low at night, and drawn back
 the light goes through as air (`a_drawn_curtain_keeps_the_light_in`; the gate's walls step
 hangs one inside a pane and draws it back: "home: curtain"). Either way it is a curtain for
-the ladder's steps and a drape (`drape`, which Soft furnishings asks beside a rug). The gate's Door step then
+the ladder's steps and a drape (`drape`, which Soft furnishings asks beside a rug). Drawn
+across (`curtain_drawn`), curtains also hush a draughty room's whistle on a windy night:
+half with one near, silent with two (ambience.ron's `curtained` group, which the draught
+beds play under; `a_draughty_home_whistles_until_daubed`). The gate's Door step then
 sets a hide window in a candle-lit stone nook at midnight and judges the shot: the pane warm
 and bright against the night ("window: glows", shot `window-night`).
 
@@ -770,9 +841,23 @@ Company at Camp and A Lit Corner (Nomad), A Proper Workshop, A Larder, A Kitchen
 A Full House and A Herb Nook (Farm). Callers at the Door (Farm, after A Homely Home) asks
 for a supper or a talk with fireside guests.
 
+## Room to store (a tier perk)
+
+A home that climbs the ladder holds more. A store (barrel, crate, cupboard, jar, rack,
+chest) in its keeper's home, opened by the keeper, grows to its slots times the home's
+`store_room`. Homely and Cosy double it, and the Heart of the Home triples it, up to the
+screen's 54. A barrel of 9 holds 18 in a Homely home and 27 at its heart. It is a modifier
+on the ladder's steps (effects.ron, `store_room`, 1 to 6, checked at launch; steps replace
+each other, so one counts), so a mod's step or room can give it too. A guest opening a
+friend's store does not grow it. A store only grows, never shrinks: one filled while the
+home was Homely keeps what it holds if the home slips, and a save keeps its size
+(the store keeps the slots it grew to, `MachineState::grown`, saved with it; a store
+saved fuller than its own or grown slots, as when a package gives it fewer, still spills). Broken and set down
+again, it starts at its own size. It needs no protocol change: a store's slots go as a
+list, and the screen shows as many as come. Tests: server `stores.rs`, engine `effect.rs`.
+The gate's Home step gives Homely before opening its barrel ("home: store room").
+
 ## Not built (ideas)
 
-- Real storage (extra pack slots or a home chest) as a tier perk: needs the inventory and
-  protocol to take a slot count.
 - Passing the night by sleeping (sleep stays a rest, not a skip).
 - Sleeping, and the ladder, for villagers' houses.

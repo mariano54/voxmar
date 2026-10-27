@@ -400,6 +400,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ambience.check_shelter_tags(&content.blocks)?;
     ambience.check_home(&content.effects)?;
     recorded.check_ways(&content.blocks)?;
+    recorded.check_work_done(&content.blocks)?;
     recorded.check_files(&assets)?;
     ambience.check_recordings(&assets)?;
     recorded.mix.check().map_err(|e| format!("sounds.ron: {e}"))?;

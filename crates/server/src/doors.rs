@@ -175,6 +175,17 @@ fn a_double_gate_needs_room_for_both_leaves_and_breaks_whole() {
     server.set_block(DOOR + IVec3::Z, stone);
     place(&mut server);
     assert_eq!(double_gate(&server)[0], "core:air", "no room for its second leaf");
+    // A creature standing where the second leaf would go keeps the gate out too.
+    let mut server = fixture();
+    hold_double_gate(&mut server);
+    let mouflon = server.content.creatures.id("base:mouflon").expect("species");
+    let beast = server.spawn_creature(mouflon, (DOOR + IVec3::Z).as_vec3() + Vec3::new(0.5, 0.0, 0.5), 1).expect("room");
+    assert!(server.creature_in(DOOR + IVec3::Z) && !server.creature_in(DOOR), "the creature stands in the second leaf's cell only");
+    place(&mut server);
+    assert_eq!(double_gate(&server), ["core:air", "core:air"], "set with a creature in its second leaf");
+    server.creatures.live.remove(&beast);
+    place(&mut server);
+    assert_eq!(double_gate(&server), ["base:oak_double_gate_west", "base:oak_double_gate_leaf_west"], "the creature gone, the gate goes in");
     for leaf in [DOOR, DOOR + IVec3::Z] {
         let mut server = fixture();
         hold_double_gate(&mut server);

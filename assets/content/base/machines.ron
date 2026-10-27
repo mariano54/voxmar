@@ -48,6 +48,7 @@
         // A jar keeps what is edible, a basket what is foraged; furniture takes anything.
         (block: "barrel", role: Bin(slots: 9)),
         (block: "crate", role: Bin(slots: 9)),
+        (block: "sack", role: Bin(slots: 4, holds: Some("tag:grain"))),
         (block: "{name}_crate_stack", role: Bin(slots: 9)),
         (block: "{name}_barrel_rack", role: Bin(slots: 18)),
         (block: "{name}_cupboard", role: Bin(slots: 9)),
@@ -59,6 +60,7 @@
         (block: "{name}_spice_rack", role: Bin(slots: 3, holds: Some("tag:herb"))),
         (block: "{name}_candle_box", role: Bin(slots: 2, holds: Some("tag:candle"))),
         (block: "{name}_bread_bin", role: Bin(slots: 4, holds: Some("tag:baked"))),
+        (block: "{name}_kindling_box", role: Bin(slots: 4, holds: Some("tag:fuel"))),
         (block: "{name}_wardrobe", role: Bin(slots: 18)),
         (block: "{name}_jar", role: Bin(slots: 4, holds: Some("tag:edible"))),
         (block: "{name}_basket", role: Bin(slots: 4, holds: Some("tag:forage"))),

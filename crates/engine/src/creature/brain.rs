@@ -173,6 +173,11 @@ pub struct Situation<'a> {
     /// The lit fire's ward it stands in, at night, for kinds that keep out of wards
     /// (`creature::Fire::ward`).
     pub ward: Option<Ward>,
+    /// The nearest food it steals lying on the ground, for kinds that scavenge
+    /// (`creature::Scavenge`).
+    pub scrap: Option<Vec3>,
+    /// It carries a stolen piece of food off home (`creature::Scavenge`).
+    pub carrying: bool,
     /// Seconds since the last decision.
     pub dt: f32,
     /// The seed for this decision's random choices.
@@ -478,6 +483,10 @@ pub struct Decision {
     pub blink: Option<Vec3>,
     /// A leap toward a point (pounce).
     pub leap: Option<Vec3>,
+    /// It snatches a piece of the food lying here (`creature::Scavenge`).
+    pub take: Option<Vec3>,
+    /// It eats what it carries (`creature::Scavenge`), home with it.
+    pub swallow: bool,
     /// It raises the alarm for kin nearby.
     pub alarm: bool,
     pub pose: Pose,
@@ -639,6 +648,8 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     }
     mind.looking = taking.is_some();
     if let Some(p) = taking {
+        // Standing to look, it gets its wind back, whatever it then does.
+        rest(mind, dt);
         return Decision { face: Some(p.position), pose: Pose::Alert, ..Default::default() };
     }
     // Not running, it gets its wind back (`Tires`).
@@ -690,7 +701,7 @@ pub(super) mod tests {
     pub(super) const BODY: &str = "body: (size: (0.6, 0.6), model: Blob(body: (0.5, 0.5, 0.5)), colours: [(1, 2, 3)])";
 
     pub(super) fn situation<'a>(players: &'a [Seen]) -> Situation<'a> {
-        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, scale: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, ward: None, dt: 0.2, seed: 7 }
+        Situation { position: Vec3::ZERO, home: Vec3::ZERO, health: 1.0, phase: 0, scale: 1.0, daylight: 1.0, players, kin: &[], food: None, mate: None, kept: false, errand: None, ward: None, scrap: None, carrying: false, dt: 0.2, seed: 7 }
     }
 
     pub(super) fn player(at: Vec3) -> Seen {
@@ -786,6 +797,21 @@ pub(super) mod tests {
         let decision = think(&wolf, &mut mind, &situation(&close));
         assert_eq!((decision.pose, doing(&wolf, &mind)), (Pose::Alert, "hunt"), "a look at the one beside it");
         assert!(mind.warning.is_some_and(|w| (w.lapse - 0.2).abs() < 1e-4), "the look held the warning: {:?}", mind.warning);
+    }
+
+    /// A double take is a stand, not a run: prey winded from a sprint gets its wind back
+    /// while it looks, though it is fleeing it looks before.
+    #[test]
+    fn a_double_take_gets_its_wind_back() {
+        let deer = species(&format!(
+            "(creatures: [(name: \"deer\", health: 4, {BODY}, senses: (react: 0.4), temperament: (fear: 0.9), behaviours: [(do: Wander(radius: 6.0)), (do: Flee(radius: 10.0))])])"
+        ));
+        let near = [player(Vec3::new(5.0, 0.0, 0.0))];
+        let mut mind = Mind::new(&deer.def.temperament, 1);
+        (mind.sprinted, mind.winded) = (1.0, 1.0);
+        let decision = think(&deer, &mut mind, &situation(&near));
+        assert!(decision.goal.is_none() && decision.face == Some(near[0].position), "no look first: {decision:?}");
+        assert!(mind.sprinted < 1.0 && mind.winded < 1.0, "the look gave no wind back: {} {}", mind.sprinted, mind.winded);
     }
 
     /// Prey with a double take looks, then flees, and its first decision to flee still
@@ -1236,8 +1262,9 @@ pub(super) mod tests {
 
     /// A game bird that sits tight (`creature::Flush`) crouches still while a noticed
     /// player is beyond its `hold`, then bursts away when they come within it: its first
-    /// `seconds` at `burst` times its run, then at its run. Kept, it flees at its kind's
-    /// distance as ever. Bad numbers, or a flush on a kind that attacks, are refused.
+    /// `seconds` at `burst` times its run, then at its run. Hurt, it does not burst; beyond
+    /// its kind's flee distance it does not sit tight; kept, it flees at its kind's distance
+    /// as ever. Bad numbers, or a flush on a kind that attacks, are refused.
     #[test]
     fn a_game_bird_sits_tight_then_bursts_away() {
         let bird = species(&format!(
@@ -1262,6 +1289,33 @@ pub(super) mod tests {
         assert_eq!(ran, [200, 200, 200, 100, 100, 100], "{ran:?}");
         let _ = think(&bird, &mut mind, &situation(&far));
         assert_eq!(doing(&bird, &mind), "flee", "flushed, it runs clear and does not settle again at six blocks");
+        // Hurt, it flees as any prey does: no burst.
+        let mut hurt = Mind::new(&bird.def.temperament, 2);
+        hurt.hurt(&bird, Some(1), 0.9);
+        let ran: Vec<u32> = (0..3).map(|_| (think(&bird, &mut hurt, &situation(&near)).speed / full * 100.0).round() as u32).collect();
+        assert_eq!((doing(&bird, &hurt), ran), ("flee", vec![100; 3]), "a hurt bird does not burst");
+        // Its fright faded and its flight forgotten, it still recalls who hurt it, and flees
+        // them at its kind's distance rather than wait for them at its hold.
+        (hurt.fear, hurt.since) = (0.0, 0.0);
+        hurt.memories.retain(|(m, _)| !matches!(m, Memory::ScaredBy(_)));
+        let _ = think(&bird, &mut hurt, &situation(&far));
+        assert_eq!(doing(&bird, &hurt), "flee", "wounded, at six blocks from the one who hurt it");
+        // Nor does a bystander nearer than the hunter, beyond its hold, hide the hunter from it.
+        let _ = think(&bird, &mut hurt, &situation(&[Seen { id: 2, ..player(Vec3::new(4.0, 0.0, 0.0)) }, far[0]]));
+        assert_eq!(doing(&bird, &hurt), "flee", "a bystander at four blocks, the hunter at six");
+        // It hides out to its widest flight.
+        let wide = species(&format!(
+            "(creatures: [(name: \"quail\", health: 2, {BODY}, movement: (walk: 1.0, run: 5.0), flush: (hold: 2.5, burst: 2.0, seconds: 0.6), temperament: (fear: 0.9), behaviours: [(do: Flee(radius: 4.0)), (do: Flee(radius: 10.0))])])"
+        ));
+        let mut calm = Mind::new(&wide.def.temperament, 2);
+        let widest = 10.0 * (0.5 + calm.personality.fear());
+        let _ = think(&wide, &mut calm, &situation(&[player(Vec3::new(widest - 1.0, 0.0, 0.0))]));
+        assert_eq!(doing(&wide, &calm), "hide", "{:.1} blocks off, inside its widest flight", widest - 1.0);
+        // Beyond the distance it would flee at, it lives its day rather than sit tight.
+        let mut calm = Mind::new(&bird.def.temperament, 2);
+        let flees_at = 10.0 * (0.5 + calm.personality.fear());
+        let _ = think(&bird, &mut calm, &situation(&[player(Vec3::new(flees_at + 1.0, 0.0, 0.0))]));
+        assert_ne!(doing(&bird, &calm), "hide", "{:.1} blocks off, outside its flee distance", flees_at + 1.0);
         let mut kept = Mind::new(&bird.def.temperament, 2);
         let _ = think(&bird, &mut kept, &Situation { kept: true, ..situation(&far) });
         assert_eq!(doing(&bird, &kept), "flee", "a kept bird sits tight for no one");
@@ -1275,6 +1329,64 @@ pub(super) mod tests {
             assert!(build(bad).is_err_and(|e| e.contains("`flush` needs")), "{bad}");
         }
         assert!(build("flush: (hold: 3.0, burst: 1.8, seconds: 1.0), attack: (damage: (1, 3))").is_err_and(|e| e.contains("for prey")));
+    }
+
+    /// A scavenger (`creature::Scavenge`) slinks in, crouched, to food lying on the ground
+    /// while no player is within its `shy` of it or the food, snatches a piece when close,
+    /// and makes off home with it, eating it there. Watched, kept or hurt it lets it lie.
+    /// Bad numbers, and takes that are no item, are refused.
+    #[test]
+    fn a_fox_steals_meat_left_lying() {
+        let meat_blocks = || BlockRegistry::new(vec![crate::block::BlockDef { name: "test:venison".into(), tags: vec!["meat".into()], ..Default::default() }]).unwrap();
+        let defs = CreatureRegistry::read("test", &format!(
+            "(creatures: [(name: \"fox\", health: 6, {BODY}, movement: (walk: 1.5, run: 6.0), scavenge: (takes: [\"tag:meat\"], reach: 16.0, shy: 6.0), temperament: (fear: 0.3, curiosity: 0.8), behaviours: [(do: Wander(radius: 8.0))])])"
+        ))
+        .unwrap()
+        .defs;
+        let fox = CreatureRegistry::new(defs, Default::default(), &meat_blocks(), &SkillRegistry::default()).unwrap().get(CreatureId(0)).clone();
+        let scrap = Vec3::new(10.0, 0.0, 0.0);
+        fn at(players: &[Seen]) -> Situation<'_> {
+            Situation { scrap: Some(Vec3::new(10.0, 0.0, 0.0)), ..situation(players) }
+        }
+        let mut mind = Mind::new(&fox.def.temperament, 2);
+        let decision = think(&fox, &mut mind, &at(&[]));
+        assert_eq!((doing(&fox, &mind), decision.goal, decision.pose, decision.take), ("scavenge", Some(scrap), Pose::Crouched, None));
+        // A player by the meat, or by the fox, and it keeps off.
+        for by in [Vec3::new(13.0, 0.0, 0.0), Vec3::new(-3.0, 0.0, 0.0)] {
+            let mut wary = Mind::new(&fox.def.temperament, 2);
+            let _ = think(&fox, &mut wary, &at(&[player(by)]));
+            assert_ne!(doing(&fox, &wary), "scavenge", "a player at {by}");
+        }
+        // One further off, it comes all the same.
+        let mut bold = Mind::new(&fox.def.temperament, 2);
+        let _ = think(&fox, &mut bold, &at(&[player(Vec3::new(-8.0, 0.0, 0.0))]));
+        assert_eq!(doing(&fox, &bold), "scavenge");
+        // Up to it, it snatches a piece; carrying it, it runs home and eats it there.
+        let decision = think(&fox, &mut mind, &Situation { position: scrap - Vec3::X, ..at(&[]) });
+        assert_eq!((decision.take, decision.goal), (Some(scrap), None));
+        let away = Vec3::new(9.0, 0.0, 0.0);
+        let decision = think(&fox, &mut mind, &Situation { position: away, carrying: true, ..situation(&[]) });
+        assert_eq!((doing(&fox, &mind), decision.goal, decision.speed > 5.0, decision.swallow), ("scavenge", Some(Vec3::ZERO), true, false));
+        let decision = think(&fox, &mut mind, &Situation { position: Vec3::new(1.0, 0.0, 0.0), carrying: true, ..situation(&[]) });
+        assert!(decision.swallow, "home, it eats it");
+        let mut kept = Mind::new(&fox.def.temperament, 2);
+        let _ = think(&fox, &mut kept, &Situation { kept: true, ..at(&[]) });
+        assert_ne!(doing(&fox, &kept), "scavenge", "a kept fox lets food lie");
+        let mut hurt = Mind::new(&fox.def.temperament, 2);
+        hurt.hurt(&fox, Some(1), 0.9);
+        let _ = think(&fox, &mut hurt, &at(&[player(Vec3::new(-12.0, 0.0, 0.0))]));
+        assert_ne!(doing(&fox, &hurt), "scavenge", "hurt, it thinks of nothing but its hide");
+
+        let build = |creature: &str| {
+            let defs = CreatureRegistry::read("test", &format!("(creatures: [(name: \"c\", health: 2, {BODY}, {creature})])")).unwrap().defs;
+            CreatureRegistry::new(defs, Default::default(), &meat_blocks(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
+        };
+        assert_eq!(build("scavenge: (takes: [\"tag:meat\"], reach: 16.0, shy: 6.0)"), Ok(()));
+        for bad in ["(takes: [], reach: 16.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 30.0, shy: 6.0)", "(takes: [\"tag:meat\"], reach: 16.0, shy: 1.0)", "(takes: [\"tag:meat\"], reach: 6.0, shy: 8.0)"] {
+            assert!(build(&format!("scavenge: {bad}")).is_err_and(|e| e.contains("`scavenge` needs")), "{bad}");
+        }
+        assert!(build("scavenge: (takes: [\"tag:nothing\"], reach: 16.0, shy: 6.0)").is_err_and(|e| e.contains("nothing it `takes`")));
+        assert!(build("scavenge: (takes: [\"stone\"], reach: 16.0, shy: 6.0)").is_err_and(|e| e.contains("does not exist")));
     }
 
     #[test]

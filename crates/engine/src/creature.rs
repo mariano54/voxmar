@@ -301,6 +301,30 @@ impl Flush {
     }
 }
 
+/// How a creature scavenges (docs/creature-ai.md, "Scavenging"): it slinks in to food
+/// left lying on the ground within `reach` blocks, by item name or `tag:` (`takes`), and
+/// makes off home with one piece, which it eats there; killed first, it drops it. It
+/// comes only while no player is within `shy` blocks of it or the food, so a hunter who
+/// leaves the kill lying, turns their back and walks off may lose a share of it. Wild
+/// only: a kept one or one on an errand lets food lie.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Scavenge {
+    pub takes: Vec<String>,
+    pub reach: f32,
+    pub shy: f32,
+}
+
+impl Scavenge {
+    /// Near enough to be watched coming, and shy of a player close enough to stop it.
+    pub fn check(&self) -> Result<(), String> {
+        if self.takes.is_empty() || !(4.0..=24.0).contains(&self.reach) || !(2.0..=12.0).contains(&self.shy) || self.shy >= self.reach {
+            return Err(format!("`scavenge` needs something it takes, reach 4 to 24 blocks and shy 2 to 12 blocks, less than its reach, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
 /// How a creature tires as it flees (docs/creature-ai.md, "Winded"): after `after`
 /// seconds of running flat out it is winded, and runs at `pace` of its run for `rest`
 /// seconds; then flat out again. Time not spent fleeing gets its wind back a second for a
@@ -500,13 +524,16 @@ pub struct Senses {
     pub keep: f32,
 }
 
-/// How one of a settlement's people barks (`Server::bark`): heard by players within
-/// `range` blocks who see them, each bark to the same player no more than once in `every`
-/// seconds (a greeting, an alarm and a sigh each keep their own).
+/// How one of a settlement's people barks (`Server::bark`): each bark heard by players
+/// within its own range, in blocks, who see them (a cry of alarm carries farther than a
+/// hum), and to the same player no more than once in `every` seconds (a greeting, an alarm
+/// and a sigh each keep their own).
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Barking {
-    pub range: f32,
+    pub greet: f32,
+    pub alarm: f32,
+    pub content: f32,
     pub every: f32,
 }
 
@@ -517,14 +544,26 @@ pub const MOST_BARK_EVERY: f32 = 600.0;
 
 impl Default for Barking {
     fn default() -> Self {
-        Self { range: 24.0, every: 6.0 }
+        Self { greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0 }
     }
 }
 
 impl Barking {
+    /// Blocks within which `bark` is heard.
+    pub fn range(&self, bark: Bark) -> f32 {
+        match bark {
+            Bark::Greet => self.greet,
+            Bark::Alarm => self.alarm,
+            Bark::Content => self.content,
+        }
+    }
+
     pub fn check(&self) -> Result<(), String> {
-        if !(self.range >= 1.0 && self.range <= MOST_BARK_RANGE) {
-            return Err(format!("`barking.range` is from 1 to {MOST_BARK_RANGE} blocks, not {}", self.range));
+        for bark in Bark::ALL {
+            let range = self.range(bark);
+            if !(range >= 1.0 && range <= MOST_BARK_RANGE) {
+                return Err(format!("`barking.{}` is from 1 to {MOST_BARK_RANGE} blocks, not {range}", bark.name()));
+            }
         }
         if !(self.every.is_finite() && (0.0..=MOST_BARK_EVERY).contains(&self.every)) {
             return Err(format!("`barking.every` is from 0 to {MOST_BARK_EVERY} seconds, not {}", self.every));
@@ -749,6 +788,10 @@ pub struct CreatureDef {
     /// startles them. Unset, it flees at its kind's distance.
     #[serde(default)]
     pub flush: Option<Flush>,
+    /// It steals food left lying on the ground (`Scavenge`): a fox makes off with a
+    /// hunter's meat. Unset, it lets dropped food lie.
+    #[serde(default)]
+    pub scavenge: Option<Scavenge>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -1157,6 +1200,8 @@ pub struct Creature {
     pub breed_food: Vec<crate::block::BlockId>,
     /// Each product's item.
     pub products: Vec<crate::block::BlockId>,
+    /// What it steals from the ground (`Scavenge::takes`), as items.
+    pub scraps: Vec<crate::block::BlockId>,
 }
 
 impl Creature {
@@ -1281,6 +1326,12 @@ impl CreatureRegistry {
             if let Some(tires) = def.tires {
                 tires.check().map_err(error)?;
             }
+            if let Some(scavenge) = &def.scavenge {
+                if def.boss || def.supernatural {
+                    return Err(error("is a boss or supernatural, and steals no one's food (`scavenge`)".into()));
+                }
+                scavenge.check().map_err(error)?;
+            }
             if let Some(flush) = def.flush {
                 if def.boss || def.supernatural || def.attack.is_some() {
                     return Err(error("sits tight and bursts away (`flush`), which is for prey: not a boss, a supernatural kind or one that attacks".into()));
@@ -1324,6 +1375,13 @@ impl CreatureRegistry {
                 Ok(found)
             };
             let (eats, favourite) = (foods(&def.diet.eats)?, foods(&def.diet.favourite)?);
+            let scraps = match &def.scavenge {
+                Some(scavenge) => foods(&scavenge.takes)?,
+                None => Vec::new(),
+            };
+            if def.scavenge.is_some() && scraps.is_empty() {
+                return Err(error("scavenges (`scavenge`), but nothing it `takes` is an item".into()));
+            }
             let or_favourite = |names: Option<&Vec<String>>| -> Result<Vec<_>, RegistryError> {
                 match names.filter(|n| !n.is_empty()) {
                     Some(names) => foods(names),
@@ -1378,7 +1436,7 @@ impl CreatureRegistry {
             if registry.by_name.insert(def.name.clone(), id).is_some() {
                 return Err(error("defined twice".into()));
             }
-            registry.creatures.push(Creature { def, behaviours, modules, parts, reach, head, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products });
+            registry.creatures.push(Creature { def, behaviours, modules, parts, reach, head, layout, loot, eats, favourite, xp_skill, tame_food, breed_food, products, scraps });
         }
         Ok(registry)
     }
@@ -1512,8 +1570,9 @@ mod tests {
         let good = Barking::default();
         assert!(good.check().is_ok());
         let broken = [
-            Barking { range: 0.5, ..good },
-            Barking { range: MOST_BARK_RANGE + 1.0, ..good },
+            Barking { greet: 0.5, ..good },
+            Barking { alarm: MOST_BARK_RANGE + 1.0, ..good },
+            Barking { content: f32::NAN, ..good },
             Barking { every: -1.0, ..good },
             Barking { every: MOST_BARK_EVERY + 1.0, ..good },
             Barking { every: f32::NAN, ..good },

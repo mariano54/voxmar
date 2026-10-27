@@ -69,8 +69,8 @@
         (
             name: "opened_too_soon", age: "farm", branch: "fuel", title: "Opened Too Soon",
             side: true,
-            why: "A clamp opened before its two hours are up gives part-burnt wood, not charcoal: still fuel for a campfire or a hearth. Charcoal tells how to build a clamp; set down a chopping block to split its firewood on, break into the clamp early, while it smoulders, and keep four part-burnt wood.",
-            tasks: [[Placed("chopping_block", 1), Have("charred_wood", 4)]],
+            why: "A clamp opened before its two hours are up gives part-burnt wood, not charcoal: still fuel for a campfire or a hearth. Charcoal tells how to build a clamp; break into one early, while it smoulders, and keep four part-burnt wood.",
+            tasks: [[Have("charred_wood", 4)]],
             after: ["an_earth_clamp"],
             rewards: [Xp("engineering", 30.0)],
         ),
@@ -78,8 +78,8 @@
         // drafts 100 and 102: the nomad path alone left both short of 5).
         (
             name: "charcoal", age: "farm", branch: "fuel", title: "Charcoal",
-            why: "Fuel before metal: coal or charcoal smelts copper and makes torches, and only they burn hot enough for the Crucible Kiln. Charcoal comes from a clamp. Hold a log and right-click a chopping block (a flint over a log, Crafting 2) with an axe in your pack: two firewood. Lay nine firewood three by three on the ground, wall them round and roof them over with earth, and put kindling (three sticks) on the roof's middle for a flue. Light the kindling from a torch: two hours on, nobody by it, the clamp leaves thirty-six charcoal. Rain down the open flue spoils some to ash, so roof it over. Or dig out a coal seam: a small black-flecked stone on the ground marks one below. Light a clamp and have sixteen charcoal, or mine twenty-four coal.",
-            tasks: [[Lit("charcoal_clamp", 1), Have("charcoal", 16)], [Mine("coal_ore", 24)]],
+            why: "Fuel before metal: coal or charcoal smelts copper and makes torches, and only they burn hot enough for the Crucible Kiln. Charcoal comes from a clamp. Set down a chopping block (a flint over a log, Crafting 2), then hold a log and right-click it with an axe in your pack: two firewood. Lay nine firewood three by three on the ground, wall them round and roof them over with earth, and put kindling (three sticks) on the roof's middle for a flue. Light the kindling from a torch: two hours on, nobody by it, the clamp leaves thirty-six charcoal. Rain down the open flue spoils some to ash, so roof it over. Or dig out a coal seam: a small black-flecked stone on the ground marks one below. Set down a chopping block, light a clamp and have sixteen charcoal, or mine twenty-four coal.",
+            tasks: [[Placed("chopping_block", 1), Lit("charcoal_clamp", 1), Have("charcoal", 16)], [Mine("coal_ore", 24)]],
             after: ["fuel_to_hand", "a_pit_kiln"],
             rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
         ),
@@ -130,8 +130,8 @@
         ),
         (
             name: "a_clay_store", age: "farm", branch: "main", title: "Clay in Store",
-            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest, a barrel or a crate and leave it there. Clay keeps for ever, and the next load is a step away.",
-            tasks: [[Stocked("clay", "chest", 32)], [Stocked("clay", "barrel", 32)], [Stocked("clay", "crate", 32)]],
+            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest and leave it there. Clay keeps for ever, and the next load is a step away.",
+            tasks: [[Stocked("clay", "chest", 32)]],
             after: ["clay_banks", "fire_the_clay"],
             rewards: [Xp("crafting", 80.0), Item("bread", 2)],
         ),
@@ -557,16 +557,16 @@
         ),
         (
             name: "a_rug_underfoot", age: "farm", branch: "home", title: "A Rug Underfoot",
-            why: "A homely home (A Homely Home) wants a rug, and wool from your flock (Wool Gathering) makes one. A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two. Two cloths side by side make three rugs (Crafting 3). A rush mat, four rushes woven at the table (Crafting 1), counts as a rug. Lay them on the floor; curtains, cushions and banners are made from cloth too.",
-            tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)], [Cook("tag:cloth", 2), Craft("tag:rug", 1)]],
-            after: ["a_homely_home", "wool_gathering"],
+            why: "A homely home (A Homely Home) wants a rug, and wool from your flock (Wool Gathering) makes one. A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two, or weave them at a loom you set down. Two cloths side by side make three rugs (Crafting 3). A rush mat, four rushes woven at the table (Crafting 1), counts as a rug. Lay them on the floor; curtains, cushions and banners are made from cloth too.",
+            tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)], [Placed("loom_frame", 1), Cook("tag:cloth", 2), Craft("tag:rug", 1)]],
+            after: ["a_homely_home", "wool_gathering", "a_pit_kiln"],
             rewards: [Xp("crafting", 180.0)],
         ),
         (
             name: "earthenware", age: "farm", branch: "pottery", title: "Earthenware",
             why: "Fired clay makes plates, bowls, jars and jugs for the shelf. Two fired clay side by side make two plates, and three in a V make two bowls (Crafting 2); a jar takes three and a jug five (Crafting 3), and a basket is five twine. Make three pieces of crockery at the crafting table.",
             tasks: [[Craft("tag:crockery", 3)]],
-            after: ["a_kiln_load"],
+            after: ["the_potter"],
             rewards: [Xp("crafting", 120.0)],
         ),
         (

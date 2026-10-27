@@ -8,9 +8,10 @@
 use voxmar_engine::block::BlockId;
 use voxmar_engine::coords::ColumnPos;
 use voxmar_engine::glam::IVec3;
-use voxmar_engine::inventory::{ItemStack, Store};
+use voxmar_engine::inventory::{HOTBAR_SLOTS, ItemStack, SLOTS, Store, max_stack};
+use voxmar_engine::lang::Words;
 use voxmar_engine::traits;
-use voxmar_protocol::{PlayerId, ServerMessage};
+use voxmar_protocol::{ChatKind, PlayerId, ServerMessage};
 
 use crate::Server;
 
@@ -71,6 +72,21 @@ impl Server {
         }
         if self.factory.get(pos).is_none() {
             self.factory.insert(pos, block, &machines);
+        }
+        // A store in its keeper's home holds more as the home climbs (effects' store_room).
+        if self.in_home_with(agent, pos)
+            && let Some(machine) = machines.get(block)
+        {
+            // Judged afresh, at their own home: not what a visit or the last home left on
+            // their modifiers (they refresh only once a second).
+            crate::process::Survival::refresh(self, agent);
+            let want = machine.grown_bin(self.players[&agent].modifiers.store_room);
+            if let Some(state) = self.factory.state_mut(pos)
+                && state.bin.len() < want
+            {
+                state.bin.resize(want, None);
+                state.grown = want;
+            }
         }
         let Some(player) = self.players.get_mut(&agent) else { return };
         player.store = Some(pos);
@@ -153,6 +169,93 @@ impl Server {
             } else {
                 self.close_store(agent);
             }
+        }
+    }
+}
+
+impl Server {
+    /// `agent` puts their pack away at home (`base:put_away`): each stack off the hotbar
+    /// whose item a store in the home already holds goes into the stores holding it,
+    /// nearest first, onto that item's stacks and then into empty slots, as far as it fits.
+    /// The hotbar, the pouches, the grid and the pointer stay as they are. What goes in is
+    /// tallied by each store's block, for a quest's `Stocked`, as a move into it is.
+    pub(crate) fn put_away(&mut self, agent: PlayerId) {
+        if self.at_home(agent).is_none() {
+            return self.tell_store(agent, Words::key("store.put_away.away"));
+        }
+        let stores = self.home_stores(agent);
+        let machines = self.content.machines.clone();
+        let Some(player) = self.players.get(&agent) else { return };
+        let mut pack = player.inventory.clone();
+        let mut moved = 0u32;
+        let mut stocked: Vec<(String, String, u32)> = Vec::new();
+        // A stack some store holds and takes, whether or not it had room.
+        let mut matched = false;
+        for slot in HOTBAR_SLOTS..SLOTS {
+            let Some(mut stack) = pack.slots[slot] else { continue };
+            let most = max_stack(stack.item);
+            for &pos in &stores {
+                let Some((block, state)) = self.factory.get(pos) else { continue };
+                let holds = state.bin.iter().flatten().any(|s| s.item == stack.item);
+                if !holds || !machines.get(block).is_some_and(|m| m.bin_takes(stack.item)) {
+                    continue;
+                }
+                matched = true;
+                let blocks = &self.content.blocks;
+                // A turned store counts as its base form, as a move into it does.
+                let (kind, item) = (format!("stocked:{}", blocks.def(block).form_of().unwrap_or(&blocks.def(block).name)), blocks.def(stack.item).name.clone());
+                let before = stack.count;
+                let state = self.factory.state_mut(pos).expect("got above");
+                // Onto its stacks first, then into empty slots.
+                for onto in [true, false] {
+                    for cell in state.bin.iter_mut() {
+                        let room = match cell {
+                            // Worn stacks never merge.
+                            Some(s) if onto && s.item == stack.item && s.wear == 0 && stack.wear == 0 => most.saturating_sub(s.count),
+                            None if !onto => most,
+                            _ => 0,
+                        };
+                        let put = room.min(stack.count);
+                        if put == 0 {
+                            continue;
+                        }
+                        match cell {
+                            Some(s) => s.count += put,
+                            None => *cell = Some(ItemStack { count: put, ..stack }),
+                        }
+                        stack.count -= put;
+                    }
+                }
+                if stack.count < before {
+                    stocked.push((kind, item, u32::from(before - stack.count)));
+                }
+                if stack.count == 0 {
+                    break;
+                }
+            }
+            if Some(stack) != pack.slots[slot] {
+                moved += 1;
+                pack.slots[slot] = (stack.count > 0).then_some(stack);
+            }
+        }
+        if moved == 0 {
+            return self.tell_store(agent, Words::key(if matched { "store.put_away.full" } else { "store.put_away.none" }));
+        }
+        let player = self.players.get_mut(&agent).expect("got above");
+        player.inventory = pack;
+        player.changed(traits::INVENTORY);
+        for (kind, item, n) in stocked {
+            self.tally(agent, &kind, &item, n);
+            // Put away with the key, for a quest's `PutAway` (a move by hand is not).
+            self.tally(agent, "put_away", &item, n);
+        }
+        self.pull_store(agent);
+        self.tell_store(agent, Words::key("store.put_away").with("count", Words::text(moved)));
+    }
+
+    fn tell_store(&self, agent: PlayerId, words: Words) {
+        if let Some(player) = self.players.get(&agent) {
+            player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
         }
     }
 }
@@ -286,6 +389,24 @@ mod tests {
         assert_eq!(server.players[&1].tallies.get("stocked:base:oak_cupboard:base:dirt").copied(), Some(4), "tallied as the cupboard");
     }
 
+    /// Put away with H into a turned cupboard, what goes in is tallied as the cupboard too.
+    #[test]
+    fn putting_away_into_a_turned_cupboard_tallies_the_cupboard() {
+        let mut server = fixture();
+        let cupboard = id(&server, "base:oak_cupboard_east");
+        server.set_block(AT, cupboard);
+        let machines = server.content.machines.clone();
+        if server.factory.get(AT).is_none() {
+            server.factory.insert(AT, cupboard, &machines);
+        }
+        assert_eq!(server.factory.put(AT, ItemStack::new(id(&server, "base:dirt"), 1), &machines), None);
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(8.5, (FLOOR + 1) as f32, 8.5));
+        give(&mut server, 12, "base:dirt", 5);
+        act(&mut server, "base:put_away", ActionTarget::None);
+        assert_eq!(held(&server), vec![(id(&server, "base:dirt"), 6)]);
+        assert_eq!(server.players[&1].tallies.get("stocked:base:oak_cupboard:base:dirt").copied(), Some(5), "tallied as the cupboard");
+    }
+
     /// A jar keeps only what is edible (`holds`), from a player's hand or a chute; a
     /// basket only what is foraged.
     #[test]
@@ -366,5 +487,192 @@ mod tests {
         assert_eq!(player.store, Some(AT));
         let shown: Vec<(BlockId, u8)> = player.inventory.store.as_ref().unwrap().slots.iter().flatten().map(|s| (s.item, s.count)).collect();
         assert!(!shown.is_empty() && shown == held(&server), "its find, as the chest holds it");
+    }
+
+    fn slots(server: &Server) -> usize {
+        server.factory.get(AT).map_or(0, |(_, state)| state.bin.len())
+    }
+
+    /// Player 1 at home by `AT` (their bed beside it), and Homely for a while, as the
+    /// survival pass judges it.
+    fn homely(server: &mut Server) {
+        let homely = server.content.effects.id("base:homely").expect("base's homely");
+        let player = server.players.get_mut(&1).unwrap();
+        player.bed = Some(Vec3::new(9.5, (FLOOR + 1) as f32, 8.5));
+        player.give_effects(&[(homely, 60.0)]);
+        crate::process::Process::run(&mut crate::process::Survival, server);
+    }
+
+    /// A barrel of 9 in a Homely home, opened by its keeper, holds 18; in no home it holds
+    /// its 9.
+    #[test]
+    fn a_homely_home_doubles_the_stores_in_it() {
+        let mut server = fixture();
+        let barrel = id(&server, "base:barrel");
+        server.set_block(AT, barrel);
+        open(&mut server);
+        assert_eq!(slots(&server), 9, "a barrel away from any home");
+        server.close_store(1);
+        homely(&mut server);
+        assert_eq!(server.players[&1].modifiers.store_room, 2.0);
+        open(&mut server);
+        assert_eq!(slots(&server), 18, "a barrel in a Homely home");
+        assert_eq!(server.players[&1].inventory.store.as_ref().map(|s| s.slots.len()), Some(18), "the open store's slots, as the client is sent them");
+    }
+
+    /// What a finer home elsewhere (a friend's, or the one just left) last left on the
+    /// player's modifiers grows nothing: at their own plain home the barrel is judged afresh
+    /// and holds its 9.
+    #[test]
+    fn a_store_grows_by_the_home_it_is_in_not_the_last_one_felt() {
+        let mut server = fixture();
+        let barrel = id(&server, "base:barrel");
+        server.set_block(AT, barrel);
+        let player = server.players.get_mut(&1).unwrap();
+        player.bed = Some(Vec3::new(9.5, (FLOOR + 1) as f32, 8.5));
+        player.modifiers.store_room = 3.0;
+        open(&mut server);
+        assert_eq!(slots(&server), 9, "a barrel at a plain home grew by a finer home's store_room");
+    }
+
+    /// A store grown at home keeps its size: the home no longer Homely, opened again, and
+    /// taken out of the factory and put back as a save does, it still holds 18.
+    #[test]
+    fn a_grown_store_never_shrinks() {
+        let mut server = fixture();
+        let barrel = id(&server, "base:barrel");
+        server.set_block(AT, barrel);
+        homely(&mut server);
+        open(&mut server);
+        server.close_store(1);
+        server.players.get_mut(&1).unwrap().timed_effects.clear();
+        crate::process::Process::run(&mut crate::process::Survival, &mut server);
+        assert_eq!(server.players[&1].modifiers.store_room, 1.0);
+        open(&mut server);
+        assert_eq!(slots(&server), 18, "shrank when the home slipped");
+        server.close_store(1);
+        // Filled to the brim and saved, the world loads it with every stack in place.
+        let machines = server.content.machines.clone();
+        let stone = id(&server, "base:cobblestone");
+        let full = voxmar_engine::inventory::max_stack(stone);
+        for _ in 0..18 {
+            assert_eq!(server.factory.put(AT, ItemStack::new(stone, full), &machines), None);
+        }
+        let saved = server.saved_machines();
+        server.factory.remove(AT).unwrap();
+        server.restore_machines(saved);
+        assert_eq!(slots(&server), 18, "shrank in a save");
+        let kept: u32 = server.factory.get(AT).unwrap().1.bin.iter().flatten().map(|s| s.count as u32).sum();
+        assert_eq!(kept, 18 * full as u32, "nothing fell out on loading");
+        assert!(server.items.saved(|b| server.content.blocks.def(b).name.clone()).is_empty(), "nothing lies loose");
+    }
+
+    /// A barrel at `AT` holding `count` of `name`, and player 1's home where they stand.
+    fn home_barrel(server: &mut Server, name: &str, count: u8) {
+        let barrel = id(server, "base:barrel");
+        server.set_block(AT, barrel);
+        let machines = server.content.machines.clone();
+        if server.factory.get(AT).is_none() {
+            server.factory.insert(AT, barrel, &machines);
+        }
+        let item = id(server, name);
+        assert_eq!(server.factory.put(AT, ItemStack::new(item, count), &machines), None);
+        server.players.get_mut(&1).unwrap().bed = Some(Vec3::new(8.5, (FLOOR + 1) as f32, 8.5));
+    }
+
+    fn slot(server: &Server, slot: usize) -> Option<(BlockId, u8)> {
+        server.players[&1].inventory.slots[slot].map(|s| (s.item, s.count))
+    }
+
+    /// At home, H puts each stack off the hotbar whose item the barrel already holds into
+    /// it, onto the barrel's own stack first; the hotbar and what no store holds stay.
+    #[test]
+    fn putting_away_moves_what_the_home_stores_already_hold() {
+        let mut server = fixture();
+        home_barrel(&mut server, "base:oak_planks", 10);
+        give(&mut server, 0, "base:oak_planks", 5);
+        give(&mut server, 12, "base:oak_planks", 20);
+        give(&mut server, 20, "base:oak_planks", 64);
+        give(&mut server, 13, "base:cobblestone", 3);
+        act(&mut server, "base:put_away", ActionTarget::None);
+        let (planks, stone) = (id(&server, "base:oak_planks"), id(&server, "base:cobblestone"));
+        assert_eq!(held(&server), vec![(planks, 64), (planks, 30)], "onto the barrel's stack, then a new one");
+        assert_eq!(slot(&server, 0), Some((planks, 5)), "the hotbar stays");
+        assert_eq!((slot(&server, 12), slot(&server, 20)), (None, None));
+        assert_eq!(slot(&server, 13), Some((stone, 3)), "the barrel holds no cobblestone");
+        let stocked = server.players[&1].tallies.get("stocked:base:barrel:base:oak_planks").copied();
+        assert_eq!(stocked, Some(84), "what went in counts for a quest's Stocked, as a move in does");
+        let put_away = server.players[&1].tallies.get("put_away:base:oak_planks").copied();
+        assert_eq!(put_away, Some(84), "and for a quest's PutAway, which only H counts");
+    }
+
+    /// Planks put away with H into a home's store count for Put It Away (`PutAway`);
+    /// planks moved into the store by hand do not, though they are stocked.
+    #[test]
+    fn planks_put_away_finish_put_it_away() {
+        let mut server = fixture();
+        home_barrel(&mut server, "base:oak_planks", 1);
+        // Open: From the Shelves, the quest before it, is done.
+        server.players.get_mut(&1).unwrap().quests_done.push("base:from_the_shelves".into());
+        // Planks moved in by hand count for Stocked, not for the key the quest teaches.
+        give(&mut server, 0, "base:oak_planks", 40);
+        open(&mut server);
+        act(&mut server, "core:transfer", ActionTarget::Slots { from: 0, to: STORE as u8, count: 40 });
+        server.close_store(1);
+        assert_eq!(held(&server), vec![(id(&server, "base:oak_planks"), 41)], "the forty went in by hand");
+        server.update_quests(1);
+        assert!(!server.players[&1].quests_done.iter().any(|q| q == "base:put_it_away"), "done by moving planks in by hand");
+        give(&mut server, 12, "base:oak_planks", 20);
+        act(&mut server, "base:put_away", ActionTarget::None);
+        server.update_quests(1);
+        let done = |server: &Server| server.players[&1].quests_done.iter().any(|q| q == "base:put_it_away");
+        assert!(!done(&server), "done with twenty planks put away of thirty-two");
+        give(&mut server, 13, "base:oak_planks", 12);
+        act(&mut server, "base:put_away", ActionTarget::None);
+        server.update_quests(1);
+        assert!(done(&server), "thirty-two planks put away and Put It Away not done");
+    }
+
+    /// A store with no room keeps what does not fit in the pack.
+    #[test]
+    fn putting_away_into_a_full_store_leaves_the_rest_in_the_pack() {
+        let mut server = fixture();
+        home_barrel(&mut server, "base:oak_planks", 60);
+        let machines = server.content.machines.clone();
+        let stone = id(&server, "base:cobblestone");
+        let room = server.factory.get(AT).unwrap().1.bin.len();
+        for _ in 1..room {
+            assert_eq!(server.factory.put(AT, ItemStack::new(stone, 64), &machines), None);
+        }
+        give(&mut server, 12, "base:oak_planks", 20);
+        act(&mut server, "base:put_away", ActionTarget::None);
+        let planks = id(&server, "base:oak_planks");
+        assert_eq!(slot(&server, 12), Some((planks, 16)), "four fit");
+        assert!(held(&server).contains(&(planks, 64)));
+        // With the store full, the player is told it has no room, not that nothing matched.
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        act(&mut server, "base:put_away", ActionTarget::None);
+        assert_eq!(slot(&server, 12), Some((planks, 16)), "nothing more fits");
+        let mut told = Vec::new();
+        while let Ok(Some(message)) = client.try_recv() {
+            if let voxmar_protocol::ServerMessage::Chat { text: Words::Key(key, _), .. } = message {
+                told.push(key);
+            }
+        }
+        assert_eq!(told, ["store.put_away.full"]);
+    }
+
+    /// Away from home, nothing moves.
+    #[test]
+    fn putting_away_away_from_home_moves_nothing() {
+        let mut server = fixture();
+        home_barrel(&mut server, "base:oak_planks", 10);
+        give(&mut server, 12, "base:oak_planks", 20);
+        server.players.get_mut(&1).unwrap().position = Vec3::new(28.5, (FLOOR + 1) as f32, 28.5);
+        act(&mut server, "base:put_away", ActionTarget::None);
+        let planks = id(&server, "base:oak_planks");
+        assert_eq!(slot(&server, 12), Some((planks, 20)));
+        assert_eq!(held(&server), vec![(planks, 10)]);
     }
 }

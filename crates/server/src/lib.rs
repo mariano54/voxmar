@@ -20,6 +20,7 @@ mod death;
 mod doors;
 #[cfg(test)]
 mod seats;
+mod guests;
 mod hearth;
 mod journal;
 mod lairs;
@@ -1531,7 +1532,7 @@ impl Server {
 
     /// Whether a live creature's body is in `cell`.
     pub(crate) fn creature_in(&self, cell: IVec3) -> bool {
-        self.creatures.live.values().any(|c| c.health > 0 && c.body.aabb().intersects(|at| at == cell))
+        self.creatures.live.values().any(|c| c.health > 0 && c.body.takes(cell))
     }
 
     /// Whether putting `block` at `cell` would shut a player inside it: a solid block where
@@ -1724,18 +1725,67 @@ mod tests {
     /// only from a creature every player meets: not one that comes only with a wandering
     /// party or in a lair, nor a boss, unless one of those quests has the player kill it (a
     /// raider's hide is no sure way). It prints the route it found for each quest, and fails
-    /// naming each quest with no such route and what walls each of its routes. The main-line
+    /// naming each quest with no such route and what walls each of its routes. On the lines
+    /// of ages 1 and 2 (each capstone, the lit Homestead Hearth and the lit Crucible Kiln, and
+    /// what they come after) every route must be taught, not only one; a route there may wait
+    /// on a later age's station (one only that age's recipes make, not one its own age makes
+    /// that a later block shares a tag with) only while another route of its quest is taught
+    /// in its own age, and those routes are named. Goals that set down, stock, spread, eat or
+    /// offer an item ask for it as `Have` and `Placed` do, and a store stocked is set down. The main-line
     /// walk puts down any station a recipe needs and walks only the main line, so a side path
     /// asking for fired clay before the kiln got through (A Stove and a Quern's workshop
     /// half, once 451 made its pieces take kiln output).
     #[test]
     fn a_quest_asks_only_for_what_its_stations_are_taught_for() {
+        let content = test_content();
+        let quests: Vec<_> = content.quests.iter().cloned().collect();
+        let StationWalls { walled, half_taught, later_age, clamp_raised } = station_walls(&content, &quests);
+        assert!(walled.is_empty(), "these quests have no route whose stations the quests before them have the player make: {walled:#?}");
+        assert!(half_taught.is_empty(), "on the lines of ages 1 and 2, these routes ask for stations no quest before has the player make: {half_taught:#?}");
+        // The routes waiting on a later age's station, each with another route taught in its
+        // own: baked bread wants flour, and the quern grinding it is a Farm recipe.
+        assert_eq!(later_age, ["base:daily_bread route 2", "base:a_varied_table route 2"], "the routes left to a later age");
+        assert!(clamp_raised, "no quest has the player build a smouldering structure by a name the check knows");
+    }
+
+    /// A route waits on a later age only for a station that age makes: one its own age makes
+    /// is a gap in its own age's teaching, though a later block (a Farm cottage stove, which
+    /// cooks as a campfire does) carries the same tag.
+    #[test]
+    fn a_route_waits_on_a_later_age_only_for_a_station_that_age_makes() {
+        use voxmar_engine::quest::Goal;
+        let content = test_content();
+        let mut quests: Vec<_> = content.quests.iter().cloned().collect();
+        let mut quest = quests.iter().find(|q| q.name == "base:daily_bread").expect("a Nomad quest").clone();
+        quest.name = "base:a_cold_camp".into();
+        quest.capstone = true;
+        quest.after.clear();
+        quest.tasks = vec![vec![Goal::Craft("stick".into(), 1)], vec![Goal::CookAt("tag:edible".into(), "campfire".into(), 1)]];
+        quests.push(quest);
+        let found = station_walls(&content, &quests);
+        assert!(found.half_taught.iter().any(|line| line.starts_with("base:a_cold_camp: route 2 walled by CookAt")), "a campfire no quest before teaches is a gap: {:?}", found.half_taught);
+        assert!(!found.later_age.iter().any(|route| route.starts_with("base:a_cold_camp")), "not a wait on the Farm age: {:?}", found.later_age);
+    }
+
+    /// What the station check finds: quests with no taught route (`walled`), routes untaught
+    /// on the lines of ages 1 and 2 (`half_taught`), those left to a later age (`later_age`),
+    /// and whether a quest raised a smouldering structure (`clamp_raised`).
+    struct StationWalls {
+        walled: Vec<String>,
+        half_taught: Vec<String>,
+        later_age: Vec<String>,
+        clamp_raised: bool,
+    }
+
+    /// The station check over `quests` (the book's, or the book's with a case added); see
+    /// `a_quest_asks_only_for_what_its_stations_are_taught_for`.
+    fn station_walls(content: &Content, quests: &[voxmar_engine::quest::QuestDef]) -> StationWalls {
         use voxmar_engine::quest::Goal;
         use voxmar_engine::recipe_book::{Method, counts};
-        let content = test_content();
+        let quest_named = |name: &str| quests.iter().find(|q| q.name == name);
         let blocks = &content.blocks;
         // The book as the server has it: with what the world lays, found and broken loose.
-        let book = recipe_book_of(&content, &WorldContent::load(&content).expect("checked by load_content"));
+        let book = recipe_book_of(content, &WorldContent::load(content).expect("checked by load_content"));
         let id = |name: &str| blocks.id(name).or_else(|| blocks.id(&format!("base:{name}")));
         // What a goal names, as held: an item, or what a player can hold with a tag.
         let named = |item: &str| -> Vec<BlockId> {
@@ -1749,7 +1799,23 @@ mod tests {
         };
         let mut walled = Vec::new();
         let mut clamp_raised = false;
-        for quest in content.quests.iter() {
+        // The lines of ages 1 and 2: each capstone, the lit Homestead Hearth and the lit
+        // Crucible Kiln, and every quest they come after. On them every route is taught, not
+        // only one (a coal seam may be far, so charcoal's clamp must be taught too).
+        let mut age_lines: Vec<&str> = Vec::new();
+        let mut next: Vec<&str> = quests.iter().filter(|q| q.capstone && ["nomad", "farm"].iter().any(|age| q.age.ends_with(age))).map(|q| q.name.as_str()).collect();
+        next.extend(["base:homestead_hearth", "base:crucible_kiln"]);
+        while let Some(name) = next.pop() {
+            let q = quest_named(name).expect("a capstone and what it comes after");
+            if !age_lines.contains(&q.name.as_str()) {
+                age_lines.push(q.name.as_str());
+                next.extend(q.after.iter().filter(|a| !a.contains('|')).map(String::as_str));
+            }
+        }
+        let mut half_taught = Vec::new();
+        let mut later_age: Vec<String> = Vec::new();
+        let ages = content.quest_paths.ages();
+        for quest in quests {
             // The quests it surely comes after ("a|b" makes sure of neither), and itself.
             let mut before: Vec<&voxmar_engine::quest::QuestDef> = Vec::new();
             let mut next = vec![quest];
@@ -1758,7 +1824,7 @@ mod tests {
                     continue;
                 }
                 before.push(q);
-                next.extend(q.after.iter().filter(|a| !a.contains('|')).map(|a| content.quests.get(a).unwrap_or_else(|| panic!("{} comes after {a}, which is no quest", q.name))));
+                next.extend(q.after.iter().filter(|a| !a.contains('|')).map(|a| quest_named(a).unwrap_or_else(|| panic!("{} comes after {a}, which is no quest", q.name))));
             }
             // A station is taught by a goal that has the player make, set down or hold it by name.
             let taught: Vec<BlockId> = before.iter().flat_map(|q| q.tasks.iter().flatten()).filter_map(|g| match g {
@@ -1785,43 +1851,84 @@ mod tests {
                 })
                 .collect();
             clamp_raised |= raised.iter().any(|&name| content.multiblocks.get(name).is_some_and(|m| m.smoulder.is_some()));
-            let tagged = |tag: &str| taught.iter().any(|&b| blocks.def(b).has_tag(tag));
             let small = |cells: &[Option<BlockId>; voxmar_engine::craft::GRID]| cells.iter().enumerate().all(|(i, c)| c.is_none() || voxmar_engine::craft::SMALL.contains(&i));
-            let worked = |method: &Method| match method {
-                Method::Craft { variants, near, .. } => (variants.iter().any(small) || tagged("crafting_table")) && near.as_deref().is_none_or(tagged),
-                Method::Cook { station, .. } => tagged(station),
-                Method::Work { .. } | Method::Process { .. } | Method::Trap { .. } => method.stations(blocks).iter().any(|&s| taught.contains(&blocks.item_of(s))),
-                // A clamp's charcoal is the clamp's, built (or lit) by a quest before. What a
-                // thing burns out to needs no station: the thing itself, got as any other.
-                Method::Smoulder { structure, .. } => raised.contains(&structure.as_str()),
-                // What a creature a player may never meet drops (one that comes only with a
-                // wandering party or in a lair, `party_only`, or a boss) is no sure way, but
-                // for one a goal has them kill.
-                Method::Drop { creature, .. } => {
-                    let def = &content.creatures.get(*creature).def;
-                    !(def.habitat.party_only || def.boss) || killed.contains(creature)
+            let worked_with = |taught: &[BlockId], method: &Method| {
+                let tagged = |tag: &str| taught.iter().any(|&b| blocks.def(b).has_tag(tag));
+                match method {
+                    // Shapeless, four or fewer ingredients go in the two by two however the book lays them.
+                    Method::Craft { variants, near, shapeless, .. } => {
+                        let fits = |cells: &[Option<BlockId>; voxmar_engine::craft::GRID]| small(cells) || (*shapeless && cells.iter().flatten().count() <= voxmar_engine::craft::SMALL.len());
+                        (variants.iter().any(fits) || tagged("crafting_table")) && near.as_deref().is_none_or(tagged)
+                    }
+                    Method::Cook { station, .. } => tagged(station),
+                    Method::Work { .. } | Method::Process { .. } | Method::Trap { .. } => method.stations(blocks).iter().any(|&s| taught.contains(&blocks.item_of(s))),
+                    // A clamp's charcoal is the clamp's, built (or lit) by a quest before. What a
+                    // thing burns out to needs no station: the thing itself, got as any other.
+                    Method::Smoulder { structure, .. } => raised.contains(&structure.as_str()),
+                    // What a creature a player may never meet drops (one that comes only with a
+                    // wandering party or in a lair, `party_only`, or a boss) is no sure way, but
+                    // for one a goal has them kill.
+                    Method::Drop { creature, .. } => {
+                        let def = &content.creatures.get(*creature).def;
+                        !(def.habitat.party_only || def.boss) || killed.contains(creature)
+                    }
+                    _ => true,
                 }
-                _ => true,
             };
+            // Every station made by its own age's recipes (and those of the ages before), as
+            // if taught, and then a later age's too: a route waits on that age only if the
+            // first leaves it walled and the second clears it, so a later block sharing a
+            // station's tag hides no gap in this age's teaching.
+            let rank = |age: &str| ages.iter().position(|a| age.ends_with(a)).unwrap_or(usize::MAX);
+            let made = |later: bool| -> Vec<BlockId> {
+                taught.iter().copied().chain(content.recipes.iter().filter(|r| later || r.age.as_deref().is_none_or(|age| rank(age) <= rank(&quest.age))).map(|r| blocks.item_of(r.output))).collect()
+            };
+            let (own, later) = (made(false), made(true));
+            let worked = |method: &Method| worked_with(&taught, method);
+            let worked_own = |method: &Method| worked_with(&own, method);
+            let worked_later = |method: &Method| worked_with(&later, method);
             // Each route's goals that no way counting for them can be worked to, here.
-            let routes: Vec<Vec<String>> = quest
-                .tasks
-                .iter()
-                .map(|task| {
-                    task.iter()
-                        .filter_map(|goal| match goal {
-                            Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::CookAt(item, _, _) | Goal::Placed(item, _) | Goal::Have(item, _) if item != "any" => Some((goal, item)),
-                            _ => None,
-                        })
-                        .filter(|&(goal, item)| {
-                            let accepts = named(item);
-                            assert!(!accepts.is_empty(), "{}: {goal:?} names nothing a player holds", quest.name);
-                            !accepts.iter().any(|&b| book.making(b).into_iter().any(|e| counts(&content, goal, e) && works(&book, &content, e, &worked, &mut vec![e.output])))
-                        })
-                        .map(|(goal, _)| format!("{goal:?}"))
-                        .collect()
-                })
-                .collect();
+            let walls = |worked: &dyn Fn(&Method) -> bool| -> Vec<Vec<String>> {
+                quest
+                    .tasks
+                    .iter()
+                    .map(|task| {
+                        task.iter()
+                            .flat_map(|goal| match goal {
+                                Goal::Craft(item, _) | Goal::Cook(item, _) | Goal::CookAt(item, _, _) | Goal::CraftNear(item, _, _) | Goal::Placed(item, _) | Goal::Have(item, _) => vec![(goal, goal.clone(), item)],
+                                // What is set down to water a field, spread on a crop, eaten or offered
+                                // is got as anything held; what is stocked too, in a store set down.
+                                Goal::Watering(item, n) => vec![(goal, Goal::Placed(item.clone(), *n), item)],
+                                Goal::Fertilised(item, n) | Goal::Ate(item, n) | Goal::Offered(item, n) => vec![(goal, Goal::Have(item.clone(), *n), item)],
+                                Goal::Stocked(item, store, n) => vec![(goal, Goal::Have(item.clone(), *n), item), (goal, Goal::Placed(store.clone(), 1), store)],
+                                _ => Vec::new(),
+                            })
+                            .filter(|(goal, way, item)| {
+                                let accepts = named(item);
+                                assert!(item.as_str() == "any" || !accepts.is_empty(), "{}: {goal:?} names nothing a player holds", quest.name);
+                                item.as_str() != "any" && !accepts.iter().any(|&b| book.making(b).into_iter().any(|e| counts(&content, way, e) && works(&book, &content, e, worked, &mut vec![e.output])))
+                            })
+                            .map(|(goal, way, item)| if goal == &way { format!("{goal:?}") } else { format!("{goal:?} ({item})") })
+                            .collect()
+                    })
+                    .collect()
+            };
+            let routes = walls(&worked);
+            if age_lines.contains(&quest.name.as_str()) && routes.iter().any(|w| !w.is_empty()) {
+                // Skipped only where a later age's station is all it waits on and another
+                // route of the quest is taught in its own age.
+                let in_own = walls(&worked_own);
+                let in_later = walls(&worked_later);
+                let own_age = routes.iter().any(Vec::is_empty);
+                for (i, walls) in routes.iter().enumerate().filter(|(_, walls)| !walls.is_empty()) {
+                    let line = format!("{}: route {} walled by {}", quest.name, i + 1, walls.join(", "));
+                    if own_age && !in_own[i].is_empty() && in_later[i].is_empty() {
+                        later_age.push(format!("{} route {}", quest.name, i + 1));
+                    } else {
+                        half_taught.push(line);
+                    }
+                }
+            }
             match routes.iter().position(Vec::is_empty) {
                 Some(route) => println!("{}: route {} of {} is taught: {:?}", quest.name, route + 1, routes.len(), quest.tasks[route]),
                 None => {
@@ -1829,8 +1936,7 @@ mod tests {
                 }
             }
         }
-        assert!(walled.is_empty(), "these quests have no route whose stations the quests before them have the player make: {walled:#?}");
-        assert!(clamp_raised, "no quest has the player build a smouldering structure by a name the check knows");
+        StationWalls { walled, half_taught, later_age, clamp_raised }
     }
 
     /// Whether a player surely comes by `entry`'s output the book's ways, working only those
