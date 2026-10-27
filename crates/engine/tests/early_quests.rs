@@ -834,9 +834,11 @@ fn the_books_bring_a_book_trained_skill_to_the_first_wanderer_line_it_opens() {
     }
 }
 
-/// A `Dealt` goal sends the player to one line, so the line must be open to them: no
+/// A `Dealt` goal sends the player to one line, so the line must be open to them: what it
+/// takes is something the player can come by (an item, or one with the tag it asks), no
 /// `Below` gate (a player past it never hears the line again), and each `Skill` gate surely
-/// had when the quest opens (`Books::sure`) or asked by a `Level` goal beside it.
+/// had when the quest opens (`Books::sure`) or asked by a `Level` goal beside it, on at least
+/// one way.
 #[test]
 fn every_early_dealt_line_is_open_to_the_player_it_sends() {
     let shut = shut_lines(&content());
@@ -867,15 +869,26 @@ fn a_dealt_line_shut_to_its_player_is_caught() {
 }
 
 fn shut_lines(content: &Content) -> Vec<String> {
-    use voxmar_engine::wander::ResolvedNeed;
+    use voxmar_engine::wander::{ResolvedNeed, Want};
     let books = Books { content };
+    let ways = reachable(content);
     let mut shut = Vec::new();
     for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        // The skill gates each way leaves unmet; one way with none keeps the quest open (a
+        // player past one line's turn takes the next: Seed for Seed's swap, then swap_more).
+        let mut unmet: Vec<Vec<String>> = Vec::new();
         for task in &quest.tasks {
+            let mut way = Vec::new();
             for goal in task {
                 let Goal::Dealt(kind, name, _) = goal else { continue };
                 let event = content.wandering.iter().map(|(_, e)| e).find(|e| Books::local(&e.def.name) == Books::local(kind)).expect("load-checked kind");
                 let line = event.meetings.iter().flat_map(|m| m.lines.iter()).find(|l| l.name == *name).expect("load-checked line");
+                // What the line takes is something the land and recipes give.
+                match line.wants.as_ref().map(|(w, _)| w) {
+                    Some(Want::Item(item)) if !ways.contains_key(item) => shut.push(format!("{}: {kind}/{name} wants {}, which nothing gives", quest.name, content.blocks.def(*item).name)),
+                    Some(Want::Tag(tag)) if !ways.keys().any(|&id| content.blocks.def(id).has_tag(tag)) => shut.push(format!("{}: {kind}/{name} wants tag:{tag}, which nothing given has", quest.name)),
+                    _ => {}
+                }
                 for need in &line.needs {
                     match need {
                         ResolvedNeed::Below(skill, level) => shut.push(format!("{}: {kind}/{name} is only for a player below {} {level}", quest.name, content.skills.get(*skill).name)),
@@ -884,13 +897,17 @@ fn shut_lines(content: &Content) -> Vec<String> {
                             let asked = task.iter().any(|g| matches!(g, Goal::Level(s, n) if Books::local(s) == skill && n >= level));
                             let (sure, _) = books.sure(&quest.name, &skill);
                             if !asked && sure < books.xp_for(*level) {
-                                shut.push(format!("{}: {kind}/{name} wants {skill} {level}, the books surely give {sure:.0} of {:.0} xp", quest.name, books.xp_for(*level)));
+                                way.push(format!("{}: {kind}/{name} wants {skill} {level}, the books surely give {sure:.0} of {:.0} xp", quest.name, books.xp_for(*level)));
                             }
                         }
                         _ => {}
                     }
                 }
             }
+            unmet.push(way);
+        }
+        if unmet.iter().all(|w| !w.is_empty()) {
+            shut.extend(unmet.into_iter().flatten());
         }
     }
     shut
