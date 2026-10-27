@@ -203,9 +203,6 @@ struct Person {
     /// Each player found in their home at night, by `player_key`, is told to leave again
     /// no sooner than this tick.
     shooed: BTreeMap<String, u64>,
-    /// Each player who traded with them at their stall, by `player_key`, and the day they
-    /// did: one trade a day.
-    traded: BTreeMap<String, u64>,
 }
 
 /// What came of looking for a way.
@@ -845,20 +842,26 @@ impl Server {
         (!trades.is_empty()).then(|| &trades[(mix(resident.seed, day) % trades.len() as u64) as usize])
     }
 
+    /// Whether `player` has had their trade today, at any stall.
+    pub(crate) fn traded_today(&self, player: voxmar_protocol::PlayerId) -> bool {
+        self.players.get(&player).is_some_and(|p| p.traded_on == Some(days(self.day) as u64))
+    }
+
     /// `base:trade`: the player trades what they hold with creature `id` at their stall,
     /// today's want for what they give (`trade_today`), once a day; refused, with why,
-    /// away from the stall, with the wrong thing or too few in hand, or traded today.
+    /// away from the stall, with the wrong thing or too few in hand, or traded today at any
+    /// stall (`Player::traded_on`, saved with the player, so no reload or town let go
+    /// trades again).
     pub(crate) fn trade(&mut self, player: voxmar_protocol::PlayerId, id: u32) {
         use voxmar_engine::lang::Words;
         let Some(p) = self.players.get(&player) else { return };
-        let (held, key) = (p.held(), crate::player_key(&p.name));
+        let held = p.held();
         let Some(trade) = self.trade_today(id).cloned() else {
             self.refuse(player, Words::key("trade.no_stall"));
             return;
         };
-        let &(town, i) = self.villagers.by_creature.get(&id).expect("trades");
         let today = days(self.day) as u64;
-        if self.villagers.towns[&town].people[i].traded.get(&key) == Some(&today) {
+        if self.traded_today(player) {
             self.refuse(player, Words::key("trade.done_today"));
             return;
         }
@@ -879,9 +882,7 @@ impl Server {
             }
         }
         p.changed(voxmar_engine::traits::INVENTORY);
-        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
-        person.traded.retain(|_, day| *day == today);
-        person.traded.insert(key, today);
+        p.traded_on = Some(today);
         if let (Some(p), Some(who)) = (self.players.get(&player), self.speaker_name(id)) {
             p.connection.send(voxmar_protocol::ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key("trade.thanks")) });
         }
@@ -2046,20 +2047,31 @@ mod tests {
         assert!(server.villagers.saved().is_empty(), "dispersal must not mark a resident dead");
     }
 
-    /// Settlement 1's person 0 keeps a market stall (building 1, at 14..=16, 4..=6) and
-    /// stands at it, at work.
+    /// Settlement 1's person 0 keeps a market stall (at 14..=16, 4..=6) and stands at it,
+    /// at work.
     fn at_their_stall(server: &mut Server) -> u32 {
+        keeping_a_stall(server, 0, IVec3::new(15, 200, 5))
+    }
+
+    /// Settlement 1's person `i` keeps the market stall (at 14..=16, 4..=6, built the first
+    /// time) and stands at `stand` by it, at work.
+    fn keeping_a_stall(server: &mut Server, i: usize, stand: IVec3) -> u32 {
         use voxmar_worldgen::{SettlementBuilding, SettlementFacing};
         let town = server.villagers.towns.get_mut(&1).unwrap();
-        town.info.buildings.push(SettlementBuilding { kind: BuildingKind::Stall, min: IVec2::new(14, 4), max: IVec2::new(16, 6), floor: 199,
-            room: Vec::new(), byre: Vec::new(), door: None, facing: SettlementFacing::South, what: "stall".into(), work: None, beds: Vec::new(), seats: Vec::new() });
-        town.info.people[0].work = Some(1);
-        server.bring_out(1, 0);
-        let id = server.villagers.towns[&1].people[0].creature.expect("out");
-        let stand = IVec3::new(15, 200, 5);
+        let stall = match town.info.buildings.iter().position(|b| b.kind == BuildingKind::Stall) {
+            Some(stall) => stall,
+            None => {
+                town.info.buildings.push(SettlementBuilding { kind: BuildingKind::Stall, min: IVec2::new(14, 4), max: IVec2::new(16, 6), floor: 199,
+                    room: Vec::new(), byre: Vec::new(), door: None, facing: SettlementFacing::South, what: "stall".into(), work: None, beds: Vec::new(), seats: Vec::new() });
+                town.info.buildings.len() - 1
+            }
+        };
+        town.info.people[i].work = Some(stall);
+        server.bring_out(1, i);
+        let id = server.villagers.towns[&1].people[i].creature.expect("out");
         server.creatures.live.get_mut(&id).unwrap().body.position = stand.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
         let day = days(server.day) as u64;
-        server.villagers.towns.get_mut(&1).unwrap().people[0].trip = Some(Trip { place: Place::Work, slot: 0, day, path: vec![stand], step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, 0), retry: 0, pursuit: None });
+        server.villagers.towns.get_mut(&1).unwrap().people[i].trip = Some(Trip { place: Place::Work, slot: 0, day, path: vec![stand], step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, 0), retry: 0, pursuit: None });
         id
     }
 
@@ -2118,6 +2130,68 @@ mod tests {
             .collect();
         let offered = server.content.creatures.get(server.creatures.live[&id].species).trades.len();
         assert!(kinds.len() > 1 || offered == 1, "the same trade every day: {kinds:?}");
+    }
+
+    /// A player trades once a day at all the stalls of the world together, and that holds
+    /// through what the town forgets and the player's leaving and coming back: their trade
+    /// day is saved with them. Once traded, a stallholder shows no want for today.
+    #[test]
+    fn one_trade_a_day_holds_across_stalls_forgotten_towns_and_rejoining() {
+        let mut server = fixture("base:villager", 2);
+        let dir = std::env::temp_dir().join(format!("voxmar-trade-day-{}", std::process::id()));
+        let save = crate::save::WorldSave::new(&dir);
+        save.create(&server.meta).unwrap();
+        server.save = Some(save);
+        let join = |server: &mut Server, id: voxmar_protocol::PlayerId| {
+            let (client, connection) = voxmar_protocol::local_pair();
+            let player = crate::player::Player::new(id, connection, Vec3::new(8.0, 200.0, 8.0), 2, server.tick, server.survival.max_health, &server.config.limits);
+            server.players.insert(id, player);
+            server.hello(id, "Ada".into(), voxmar_protocol::PROTOCOL_VERSION, server.content.fingerprint(), None);
+            assert!(server.players[&id].joined);
+            client
+        };
+        let client = join(&mut server, 1);
+        let first = at_their_stall(&mut server);
+        // Holding a stallholder's want for today, a trade goes through if they may trade.
+        let tries = |server: &mut Server, player: voxmar_protocol::PlayerId, keeper: u32| {
+            let trade = server.trade_today(keeper).cloned().expect("no trade at the stall");
+            let p = server.players.get_mut(&player).unwrap();
+            p.inventory = Default::default();
+            p.inventory.add(trade.wants.0, trade.wants.1);
+            p.selected = 0;
+            server.trade(player, keeper);
+            server.players[&player].inventory.count(trade.wants.0) == 0
+        };
+        // What the player is shown inspecting them, from now.
+        let shown = |server: &mut Server| {
+            while let Ok(Some(_)) = client.try_recv() {}
+            server.inspect(1, first);
+            std::iter::from_fn(|| client.try_recv().ok().flatten()).map(|m| format!("{m:?}")).collect::<String>()
+        };
+        let lines = shown(&mut server);
+        assert!(lines.contains("\"inspect.trade\""), "today's want not shown: {lines}");
+        assert!(tries(&mut server, 1, first), "no first trade");
+        let lines = shown(&mut server);
+        assert!(lines.contains("\"inspect.traded\"") && !lines.contains("\"inspect.trade\""), "today's want still shown once traded: {lines}");
+        // Another keeper of a stall: not today either.
+        let second = keeping_a_stall(&mut server, 1, IVec3::new(14, 200, 4));
+        assert!(!tries(&mut server, 1, second), "traded again at another stall");
+        // The town let go of altogether and remembered: not today.
+        let info = server.villagers.towns[&1].info.clone();
+        server.release_town(1);
+        server.villagers.towns.remove(&1);
+        server.villagers.remember_town(info, 12);
+        let first = at_their_stall(&mut server);
+        assert!(!tries(&mut server, 1, first), "forgetting the town let them trade again");
+        // Gone and back (their file read again): not today.
+        server.leave(1);
+        let _client = join(&mut server, 2);
+        assert_eq!(server.players[&2].traded_on, Some(days(server.day) as u64), "the trade day was not saved");
+        assert!(!tries(&mut server, 2, first), "leaving and coming back let them trade again");
+        // The next day, once again.
+        server.day += TICKS_PER_DAY as f64;
+        assert!(tries(&mut server, 2, first), "no trade the next day");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Every stall trade wants something the first two ages teach a player to make (a Craft,

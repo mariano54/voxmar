@@ -477,9 +477,11 @@ stands between them.
 One keeping a market stall trades there, and only there (`trades` on their species in
 creatures_villagers.ron, checked at load): while at work within a block of their stall,
 they want one thing a day (by the day and who they are) that the first two ages teach a
-player to make, and give bread for it. Looking at them closely says today's want. Holding
-it, a player trades once a day with each stallholder; away from the stall, with the wrong
-thing or too few in hand, or traded already that day, they say why. A content test keeps
+player to make, and give bread for it. Looking at them closely says today's want, or, once
+the player has traded that day, that they have. Holding it, a player trades once a day at
+all the stalls together, the day saved with the player (no reload, rejoin or town let go
+trades again); away from the stall, with the wrong thing or too few in hand, or traded
+already that day, they say why. A content test keeps
 every want taught by a nomad or farm quest and every gift out of any quest's Have or
 Offered goals.
 
