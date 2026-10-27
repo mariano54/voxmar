@@ -394,6 +394,8 @@
     "block.base.{name}_chair": "{name}の椅子",
     "block.base.{name}_bench": "{name}のベンチ",
     "block.base.{name}_log_bench": "{name}の丸太ベンチ",
+    "block.base.{name}_fingerpost": "{name}の道しるべ",
+    "block.base.{name}_fingerpost_top": "{name}の道しるべ",
     "block.base.{name}_table": "{name}のテーブル",
     "block.base.{name}_bed": "{name}のベッド",
     "block.base.{name}_shelf": "{name}の棚",

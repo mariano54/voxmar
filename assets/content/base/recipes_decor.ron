@@ -18,6 +18,8 @@
         // Two stripped logs, one split for the seat and one cut into stumps, for two log
         // benches: the village's, for a home.
         (ingredients: ["stripped_{name}_log", "stripped_{name}_log"], output: "{name}_log_bench", count: 2, skill: "core:construction", level: 1, xp: 2.0),
+        // A fingerpost: a post with a plank out either side of it.
+        (pattern: [["{name}_planks", "{name}_post", "{name}_planks"]], output: "{name}_fingerpost", skill: "core:construction", level: 2, xp: 2.0),
         (pattern: [["stick", "", ""], ["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"]], output: "{name}_chair", skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_planks", "{name}_planks", "{name}_planks"], ["stick", "", "stick"], ["stick", "", "stick"]], output: "{name}_table", skill: "core:construction", level: 3, xp: 3.0),
         (pattern: [["{name}_planks", "stick", "{name}_planks"], ["{name}_planks", "{name}_planks", "{name}_planks"]], output: "{name}_crate_stack", skill: "core:construction", level: 2, xp: 3.0),
