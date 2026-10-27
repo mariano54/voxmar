@@ -1436,107 +1436,132 @@ fn cull(
             .clip_from_world
             .unwrap_or_else(|| view.clip_from_view * view.world_from_view.to_matrix().inverse());
         let is_light = light_entity.is_some();
-        let frustum = Frustum::new(clip_from_world, is_light);
-        let eye = view.world_from_view.translation();
         let light = is_light.then(|| view.world_from_view.forward().as_vec3());
-        let casters = light.zip(light_entity.and_then(|light| slice(light, &lights))).zip(viewer).map(|((towards, slice), viewer)| Casters::new(towards, slice, viewer));
-        let farthest = light_entity.is_some_and(|light| last_of_many(light, &lights));
-        // Whether plants and leaf cards are drawn: in cameras and the nearest cascades.
-        let detailed = match light_entity {
-            Some(LightEntity::Directional { cascade_index, .. }) => *cascade_index < DETAILED_CASCADES,
-            _ => true,
+        let culled = CulledBy {
+            frustum: Frustum::new(clip_from_world, is_light),
+            eye: view.world_from_view.translation(),
+            light,
+            casters: light.zip(light_entity.and_then(|light| slice(light, &lights))).zip(viewer).map(|((towards, slice), viewer)| Casters::new(towards, slice, viewer)),
+            farthest: light_entity.is_some_and(|light| last_of_many(light, &lights)),
+            // Whether plants and leaf cards are drawn: in cameras and the nearest cascades.
+            detailed: match light_entity {
+                Some(LightEntity::Directional { cascade_index, .. }) => *cascade_index < DETAILED_CASCADES,
+                _ => true,
+            },
         };
-        let passes: &[TerrainPass] = if is_light { &SHADOW_PASSES } else { &PASSES };
-        // Each stream's surviving ranges, and the translucent ones with their distance.
-        let mut ranges = std::mem::take(&mut draws.ranges);
-        let mut translucent = Vec::new();
-        let mut blades = Vec::new();
-        for (record, &(min, drawn)) in gpu.records.iter().zip(&gpu.bounds) {
-            let max = min + CHUNK_SIZE as f32;
-            if !drawn || !frustum.intersects(min, max) || casters.as_ref().is_some_and(|c| !c.matter(min, max)) {
+        cull_view(&gpu, &culled, &mut draws);
+    });
+}
+
+/// What culls a view (`cull`): its frustum, where it looks from, and for a sun cascade the
+/// light's direction and which chunks can shade what it covers.
+struct CulledBy {
+    frustum: Frustum,
+    eye: Vec3,
+    /// Towards the light, for a shadow view.
+    light: Option<Vec3>,
+    casters: Option<Casters>,
+    /// The farthest of several cascades (`last_of_many`).
+    farthest: bool,
+    detailed: bool,
+}
+
+/// Fills a view's draws with what survives `view`'s culling.
+fn cull_view(gpu: &TerrainGpu, view: &CulledBy, draws: &mut TerrainDraws) {
+    let CulledBy { frustum, eye, light, casters, farthest, detailed } = view;
+    let (eye, light, farthest, detailed) = (*eye, *light, *farthest, *detailed);
+    let is_light = light.is_some();
+    let passes: &[TerrainPass] = if is_light { &SHADOW_PASSES } else { &PASSES };
+    // Each stream's surviving ranges, and the translucent ones with their distance.
+    let mut ranges = std::mem::take(&mut draws.ranges);
+    let mut translucent = Vec::new();
+    let mut blades = Vec::new();
+    for (record, &(min, drawn)) in gpu.records.iter().zip(&gpu.bounds) {
+        let max = min + CHUNK_SIZE as f32;
+        if !drawn || !frustum.holds_chunk(min) || casters.as_ref().is_some_and(|c| !c.matter(min, max)) {
+            continue;
+        }
+        // Distance from the camera (not a shadow view's light) to the chunk's bounds.
+        let distance = (gpu.camera.clamp(min, max) - gpu.camera).length();
+        if let Some(seeds) = &record.blades
+            && !is_light
+            && blades_at(distance) > 0
+        {
+            blades.push((distance, BladeDraw { seeds: seeds.clone(), blades: blades_at(distance), slot: record.slot }));
+        }
+        let facing = facing(min, max, eye, light);
+        for &pass in passes {
+            if (pass == TerrainPass::Fringe && (distance >= CARD_DISTANCE || !detailed))
+                || (pass == TerrainPass::Inner && distance >= INNER_DISTANCE)
+            {
                 continue;
             }
-            // Distance from the camera (not a shadow view's light) to the chunk's bounds.
-            let distance = (gpu.camera.clamp(min, max) - gpu.camera).length();
-            if let Some(seeds) = &record.blades
-                && !is_light
-                && blades_at(distance) > 0
-            {
-                blades.push((distance, BladeDraw { seeds: seeds.clone(), blades: blades_at(distance), slot: record.slot }));
-            }
-            let facing = facing(min, max, eye, light);
-            for &pass in passes {
-                if (pass == TerrainPass::Fringe && (distance >= CARD_DISTANCE || !detailed))
-                    || (pass == TerrainPass::Inner && distance >= INNER_DISTANCE)
-                {
+            for stream in streams(pass) {
+                // Before the allocation is read: a record spans several cache lines.
+                if (pass == TerrainPass::Opaque && !facing[stream]) || (stream == PLANTS && (distance >= PLANT_DISTANCE || !detailed)) {
                     continue;
                 }
-                for stream in streams(pass) {
-                    let Some(allocation) = &record.streams[stream] else { continue };
-                    if (pass == TerrainPass::Opaque && !facing[stream]) || (stream == PLANTS && (distance >= PLANT_DISTANCE || !detailed)) {
-                        continue;
-                    }
-                    let range = (allocation.page, allocation.vertices.clone());
-                    if pass == TerrainPass::Translucent {
-                        let centre = min + CHUNK_SIZE as f32 / 2.0;
-                        translucent.push((centre.distance_squared(eye), range));
-                    } else {
-                        ranges[stream].push(range);
-                    }
+                let Some(allocation) = &record.streams[stream] else { continue };
+                let range = (allocation.page, allocation.vertices.clone());
+                if pass == TerrainPass::Translucent {
+                    let centre = min + CHUNK_SIZE as f32 / 2.0;
+                    translucent.push((centre.distance_squared(eye), range));
+                } else {
+                    ranges[stream].push(range);
                 }
             }
         }
-        let draws = &mut *draws;
-        draws.compaction.clear();
-        for pass in &mut draws.passes {
-            pass.clear();
+    }
+    let draws = &mut *draws;
+    draws.compaction.clear();
+    for pass in &mut draws.passes {
+        pass.clear();
+    }
+    // Each stream's ranges are gathered page by page, in page order.
+    let mut grouped = std::mem::take(&mut draws.grouped);
+    for pass in PASSES {
+        for stream in streams(pass) {
+            let ranges = &mut ranges[stream];
+            group_by_page(ranges, &mut grouped);
+            for run in grouped.chunk_by(|a, b| a.0 == b.0) {
+                let page = run[0].0;
+                let quads = run.iter().map(|(_, vertices)| vertices.clone());
+                let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
+                let pass = if farthest && stream == CUTOUT { TerrainPass::Opaque } else { pass };
+                draws.passes[pass as usize].push(ChunkDraw { stream: stream as u8, page, indices });
+            }
+            ranges.clear();
         }
-        // Each stream's ranges are gathered page by page, in page order.
-        let mut grouped = std::mem::take(&mut draws.grouped);
-        for pass in PASSES {
-            for stream in streams(pass) {
-                let ranges = &mut ranges[stream];
-                group_by_page(ranges, &mut grouped);
-                for run in grouped.chunk_by(|a, b| a.0 == b.0) {
-                    let page = run[0].0;
-                    let quads = run.iter().map(|(_, vertices)| vertices.clone());
-                    let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
-                    let pass = if farthest && stream == CUTOUT { TerrainPass::Opaque } else { pass };
-                    draws.passes[pass as usize].push(ChunkDraw { stream: stream as u8, page, indices });
-                }
-                ranges.clear();
+    }
+    draws.ranges = ranges;
+    draws.grouped = grouped;
+    // Translucent chunks keep their back-to-front order across pages.
+    translucent.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
+    let stream = streams(TerrainPass::Translucent).start;
+    for run in translucent.chunk_by(|a, b| a.1.0 == b.1.0) {
+        let page = run[0].1.0;
+        let quads = run.iter().map(|(_, (_, vertices))| vertices.clone());
+        let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
+        draws.passes[TerrainPass::Translucent as usize].push(ChunkDraw { stream: stream as u8, page, indices });
+    }
+    draws.distant.clear();
+    if !is_light {
+        for (&key, tile) in &gpu.tiles {
+            if frustum.intersects(tile.min, tile.max) && !gpu.covered_by_real(key) {
+                draws.distant.push(TileDraw {
+                    page: tile.mesh.page,
+                    indices: tile.mesh.indices.clone(),
+                    base_vertex: tile.mesh.vertices.start as i32,
+                    slot: tile.slot,
+                });
             }
         }
-        draws.ranges = ranges;
-        draws.grouped = grouped;
-        // Translucent chunks keep their back-to-front order across pages.
-        translucent.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));
-        let stream = streams(TerrainPass::Translucent).start;
-        for run in translucent.chunk_by(|a, b| a.1.0 == b.1.0) {
-            let page = run[0].1.0;
-            let quads = run.iter().map(|(_, (_, vertices))| vertices.clone());
-            let indices = draws.compaction.gather(stream, page, quads, indices_per_quad(stream));
-            draws.passes[TerrainPass::Translucent as usize].push(ChunkDraw { stream: stream as u8, page, indices });
-        }
-        draws.distant.clear();
-        if !is_light {
-            for (&key, tile) in &gpu.tiles {
-                if frustum.intersects(tile.min, tile.max) && !gpu.covered_by_real(key) {
-                    draws.distant.push(TileDraw {
-                        page: tile.mesh.page,
-                        indices: tile.mesh.indices.clone(),
-                        base_vertex: tile.mesh.vertices.start as i32,
-                        slot: tile.slot,
-                    });
-                }
-            }
-            draws.distant.sort_unstable_by_key(|draw| draw.page);
-        }
-        // Nearest first, so nearer blades hide the farther ones' fragments.
-        blades.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
-        draws.blades.clear();
-        draws.blades.extend(blades.into_iter().map(|(_, draw)| draw));
-    });
+        draws.distant.sort_unstable_by_key(|draw| draw.page);
+    }
+    // Nearest first, so nearer blades hide the farther ones' fragments.
+    blades.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+    draws.blades.clear();
+    draws.blades.extend(blades.into_iter().map(|(_, draw)| draw));
 }
 
 /// How much higher than what it shades terrain may stand and still cast a shadow, in
@@ -1646,6 +1671,9 @@ fn group_by_page(ranges: &[(u32, Range<u32>)], grouped: &mut Vec<(u32, Range<u32
 /// The planes of a view frustum, as `normal · p + d >= 0` inside.
 struct Frustum {
     planes: Vec<Vec4>,
+    /// How far a chunk's box reaches across each plane from its centre (`holds_chunk`),
+    /// worked out once for the thousands of chunks a view tests.
+    chunk_reach: Vec<f32>,
 }
 
 impl Frustum {
@@ -1658,7 +1686,15 @@ impl Frustum {
         if is_light {
             planes.push(rows[2]);
         }
-        Self { planes }
+        let half = Vec3::splat(CHUNK_SIZE as f32) * 0.5;
+        let chunk_reach = planes.iter().map(|plane| plane.truncate().abs().dot(half)).collect();
+        Self { planes, chunk_reach }
+    }
+
+    /// `intersects` for the box of the chunk whose minimum corner is `min`, to the bit.
+    fn holds_chunk(&self, min: Vec3) -> bool {
+        let centre = (min + (min + CHUNK_SIZE as f32)) * 0.5;
+        self.planes.iter().zip(&self.chunk_reach).all(|(plane, &reach)| plane.truncate().dot(centre) + reach + plane.w >= 0.0)
     }
 
     fn intersects(&self, min: Vec3, max: Vec3) -> bool {
@@ -2297,6 +2333,160 @@ mod tests {
         alloc.release(b);
         assert_eq!(alloc.free, vec![0..100]);
         assert_eq!(alloc.allocate(100), Some(0..100));
+    }
+
+    /// A loaded world at a view of 32: 65×65 columns of 12 chunks, those from 2 to 7 drawn
+    /// with a few streams each, as at the surface.
+    fn loaded_gpu() -> TerrainGpu {
+        let mut gpu = TerrainGpu::default();
+        for z in -32..=32 {
+            for x in -32..=32 {
+                for y in 0..12 {
+                    let chunk = ChunkPos(IVec3::new(x, y, z));
+                    let index = gpu.records.len() as u32;
+                    let mut record = ChunkRecord { slot: index, ..default() };
+                    let drawn = (2..8).contains(&y);
+                    if drawn {
+                        for stream in [0, 1, 2, 4, 5, CUTOUT, PLANTS, 8].into_iter().chain((y == 2).then_some(9)) {
+                            let quads = 20 + (index * 7919 + stream as u32 * 31) % 200;
+                            let start = (index % 512) * 1024;
+                            record.streams[stream] = Some(Allocation { page: index / 512, vertices: start..start + quads * 4, reserved: quads * 4, indices: 0..0 });
+                        }
+                        if y == 3 {
+                            record.blades = Some(0..64);
+                        }
+                    }
+                    gpu.records.push(record);
+                    gpu.bounds.push((chunk.origin().as_vec3(), drawn));
+                    gpu.chunks.insert(chunk, index);
+                }
+            }
+        }
+        gpu
+    }
+
+    /// `cargo test -p voxmar_client --release --bin voxmar culling_a_loaded_world -- --ignored --nocapture`
+    /// culls `loaded_gpu` for a camera flying over it and the four sun cascades of the
+    /// highest shadow quality, and reports the CPU time of each view, and of all of them.
+    #[test]
+    #[ignore]
+    fn culling_a_loaded_world() {
+        use crate::render::work::cpu_clock;
+        let mut gpu = loaded_gpu();
+        let eye = Vec3::new(8.0, 120.0, 8.0);
+        gpu.camera = eye;
+        let clip_from_view = Mat4::perspective_infinite_reverse_rh(70f32.to_radians(), 16.0 / 9.0, 0.1);
+        let towards = Vec3::new(-0.4, -0.8, -0.3).normalize();
+        let bounds = [12.0, 39.0, 91.0, 200.0];
+        let mut times = vec![Vec::new(); 1 + bounds.len()];
+        // Kept between frames, as each view's are.
+        let mut draws: Vec<TerrainDraws> = (0..1 + bounds.len()).map(|_| TerrainDraws::default()).collect();
+        for frame in 0..200 {
+            let views = flight_views(frame, eye, clip_from_view, towards, &bounds);
+            for ((view, times), draws) in views.iter().zip(&mut times).zip(&mut draws) {
+                draws.compaction.ready = true;
+                let start = cpu_clock().unwrap_or(0);
+                cull_view(&gpu, view, draws);
+                times.push((cpu_clock().unwrap_or(0) - start) as f64 / 1e6);
+                std::hint::black_box(&draws.passes);
+            }
+        }
+        let median = |times: &mut Vec<f64>| {
+            times.sort_by(f64::total_cmp);
+            times[times.len() / 2]
+        };
+        let drawn = gpu.bounds.iter().filter(|(_, drawn)| *drawn).count();
+        let each: Vec<f64> = times.iter_mut().map(median).collect();
+        println!("{} chunks, {drawn} drawn: camera {:.3} ms, cascades {:?} ms, in all {:.3} ms a frame", gpu.records.len(), each[0], &each[1..].iter().map(|t| format!("{t:.3}")).collect::<Vec<_>>(), each.iter().sum::<f64>());
+    }
+
+    /// The camera and the sun's cascades of `frame` of a flight east from `eye`, turning.
+    fn flight_views(frame: i32, eye: Vec3, clip_from_view: Mat4, towards: Vec3, bounds: &[f32]) -> Vec<CulledBy> {
+        // Turning and flying east.
+        let eye = eye + Vec3::X * frame as f32 * 2.0;
+        let forward = Vec3::new((frame as f32 * 0.03).cos(), -0.25, (frame as f32 * 0.03).sin()).normalize();
+        let world_from_view = Mat4::look_to_rh(eye, forward, Vec3::Y).inverse();
+        let clip_from_world = clip_from_view * world_from_view.inverse();
+        let viewer = Viewer {
+            eye,
+            forward,
+            sides: { let planes = Frustum::new(clip_from_world, false).planes; std::array::from_fn(|i| planes[i] / planes[i].truncate().length()) },
+        };
+        let mut views = vec![CulledBy { frustum: Frustum::new(clip_from_world, false), eye, light: None, casters: None, farthest: false, detailed: true }];
+        for (i, &far) in bounds.iter().enumerate() {
+            let near = if i == 0 { 0.1 } else { bounds[i - 1] * 0.8 };
+            let centre = eye + forward * (near + far) / 2.0;
+            let light_from_world = Mat4::look_to_rh(centre - towards * 500.0, towards, Vec3::Y);
+            let clip_from_light = Mat4::orthographic_rh(-far, far, -far, far, 0.0, 1000.0);
+            views.push(CulledBy {
+                frustum: Frustum::new(clip_from_light * light_from_world, true),
+                eye: centre - towards * 500.0,
+                light: Some(-towards),
+                casters: Some(Casters::new(-towards, (near, far), viewer)),
+                farthest: i + 1 == bounds.len(),
+                detailed: i < DETAILED_CASCADES,
+            });
+        }
+        views
+    }
+
+    /// The hash of every view's draws over 40 frames of `culling_a_loaded_world`'s flight,
+    /// as culling makes them now.
+    const CULLED: u64 = 0x78fe8194a4532109;
+
+    /// Culling stays exactly as it was: each view's draws (stream, page and indices, in
+    /// order), the copies that gather their indices, and the grass blades, over a flight
+    /// across `loaded_gpu` with the camera and four sun cascades.
+    #[test]
+    fn culling_is_unchanged() {
+        let mut gpu = loaded_gpu();
+        let eye = Vec3::new(8.0, 120.0, 8.0);
+        gpu.camera = eye;
+        let clip_from_view = Mat4::perspective_infinite_reverse_rh(70f32.to_radians(), 16.0 / 9.0, 0.1);
+        let towards = Vec3::new(-0.4, -0.8, -0.3).normalize();
+        let mix = |h: u64, v: u64| (h ^ v).wrapping_mul(0x9e37_79b9_7f4a_7c15).rotate_left(29);
+        let mut hash = 0;
+        let mut draws: Vec<TerrainDraws> = (0..5).map(|_| TerrainDraws::default()).collect();
+        for frame in (0..200).step_by(5) {
+            for (view, draws) in flight_views(frame, eye, clip_from_view, towards, &[12.0, 39.0, 91.0, 200.0]).iter().zip(&mut draws) {
+                draws.compaction.ready = true;
+                cull_view(&gpu, view, draws);
+                for draw in draws.passes.iter().flatten() {
+                    hash = [draw.stream as u64, draw.page as u64, draw.indices.start as u64, draw.indices.end as u64].into_iter().fold(hash, mix);
+                }
+                for copy in draws.compaction.gathered() {
+                    hash = copy.into_iter().fold(hash, |h, v| mix(h, v as u64));
+                }
+                for blade in &draws.blades {
+                    hash = [blade.seeds.start, blade.seeds.end, blade.blades, blade.slot].into_iter().fold(hash, |h, v| mix(h, v as u64));
+                }
+                hash = mix(hash, draws.passes.iter().map(Vec::len).sum::<usize>() as u64);
+            }
+        }
+        assert_eq!(hash, CULLED, "culling changed. If that is deliberate, set CULLED to {hash:#018x}");
+    }
+
+    /// A chunk is held exactly where its box intersects, for cameras and shadow views,
+    /// to the last bit of the comparison: on and off every side of each.
+    #[test]
+    fn a_frustum_holds_a_chunk_where_its_box_intersects() {
+        let camera = Mat4::perspective_infinite_reverse_rh(1.2, 16.0 / 9.0, 0.1) * Mat4::look_to_rh(Vec3::new(8.0, 120.0, 8.0), Vec3::new(1.0, -0.3, 0.4).normalize(), Vec3::Y);
+        let light = Mat4::orthographic_rh(-150.0, 150.0, -150.0, 150.0, 0.0, 1000.0) * Mat4::look_to_rh(Vec3::new(300.0, 500.0, 200.0), Vec3::new(-0.4, -0.8, -0.3).normalize(), Vec3::Y);
+        for (clip_from_world, is_light) in [(camera, false), (light, true)] {
+            let frustum = Frustum::new(clip_from_world, is_light);
+            let (mut held, mut culled) = (0, 0);
+            for z in -40..=40 {
+                for y in -2..14 {
+                    for x in -40..=40 {
+                        let min = IVec3::new(x, y, z).as_vec3() * CHUNK_SIZE as f32;
+                        let intersects = frustum.intersects(min, min + CHUNK_SIZE as f32);
+                        assert_eq!(frustum.holds_chunk(min), intersects, "({x}, {y}, {z})");
+                        if intersects { held += 1 } else { culled += 1 }
+                    }
+                }
+            }
+            assert!(held > 1000 && culled > 1000, "{held} held, {culled} culled");
+        }
     }
 
     #[test]
