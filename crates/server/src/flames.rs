@@ -223,6 +223,14 @@ impl Server {
                 self.burn_from(pos, here, full);
                 continue;
             }
+            // Else one going out to what is lit again is lit again from a kindling box there.
+            if let Some(lit) = self.rekindle(pos, here) {
+                match self.full_burn(here).filter(|_| lit == here) {
+                    Some(full) => self.burn_from(pos, here, full),
+                    None => self.set_block(pos, lit),
+                }
+                continue;
+            }
             if let Some((_, stub)) = self.content.flames.burns_out(&self.content.blocks, here) {
                 self.set_block(pos, stub);
             }
@@ -266,14 +274,38 @@ impl Server {
     fn take_spare(&mut self, pos: IVec3, light: BlockId) -> bool {
         let blocks = &self.content.blocks;
         let item = blocks.def(light).form_of().and_then(|base| blocks.id(base)).unwrap_or(light);
+        self.take_at_home(pos, voxmar_engine::flame::SPARE_LIGHTS, |it| it == item)
+    }
+
+    /// What `light` at `pos`, going out to something lit again into it (or into the light it
+    /// gutters from), is lit again into from a store tagged `relights_lights` in a home holding
+    /// it: one of what its `relight_with:` asks, else one `kindling`, taken out.
+    fn rekindle(&mut self, pos: IVec3, light: BlockId) -> Option<BlockId> {
+        let (blocks, flames) = (&self.content.blocks, &self.content.flames);
+        let (_, stub) = flames.burns_out(blocks, light)?;
+        let lit = flames.relit(blocks, stub)?;
+        let tag = flames.relit_with(stub).unwrap_or(voxmar_engine::flame::KINDLING).to_owned();
+        let blocks = self.content.blocks.clone();
+        self.take_at_home(pos, voxmar_engine::flame::RELIGHTS_LIGHTS, |it| blocks.def(it).has_tag(&tag)).then_some(lit)
+    }
+
+    /// Takes one item that `wanted` out of a store tagged `store_tag` in a home holding
+    /// `pos`, its owner's or nobody's, nearest first: whether there was one.
+    fn take_at_home(&mut self, pos: IVec3, store_tag: &str, wanted: impl Fn(BlockId) -> bool) -> bool {
         for (id, anchor) in self.homes_holding(pos) {
             let name = self.players[&id].name.clone();
-            let spares: Vec<IVec3> = self
-                .stores_around(anchor)
-                .into_iter()
-                .filter(|&at| self.factory.get(at).is_some_and(|(block, state)| self.content.blocks.def(block).has_tag(voxmar_engine::flame::SPARE_LIGHTS) && state.owner.as_deref().is_none_or(|owner| owner == name)))
-                .collect();
-            if self.take_from_stores(&spares, item, 1) == 1 {
+            for at in self.stores_around(anchor) {
+                let Some((block, state)) = self.factory.get(at) else { continue };
+                if !self.content.blocks.def(block).has_tag(store_tag) || state.owner.as_deref().is_some_and(|owner| owner != name) {
+                    continue;
+                }
+                let Some(slot) = state.bin.iter().position(|s| s.is_some_and(|s| wanted(s.item))) else { continue };
+                let state = self.factory.state_mut(at).unwrap();
+                let stack = state.bin[slot].as_mut().unwrap();
+                stack.count -= 1;
+                if stack.count == 0 {
+                    state.bin[slot] = None;
+                }
                 return true;
             }
         }
@@ -774,6 +806,46 @@ mod tests {
         server.day += 3.0 * TICKS_PER_DAY as f64;
         server.burn_flames();
         assert_eq!(at(&server, TORCH), "base:candle_end", "no spare left");
+    }
+
+    /// A light at home that burns out to something lit again is lit again on the spot from
+    /// a kindling box there (`relights_lights`): a torch by one bundle of kindling, an oil
+    /// lamp filled by one lard (what its `relight_with:` asks), in its facing; the lard is
+    /// never spent on the torch. The box empty, it goes out.
+    #[test]
+    fn a_kindling_box_at_home_keeps_its_torches_and_lamps_lit() {
+        let mut server = fixture("base:torch");
+        let bed = TORCH + IVec3::new(-2, 0, 0);
+        let blocks = &server.content.blocks;
+        let sleeping = blocks.ids().find(|&b| blocks.def(b).has_tag("bed") && blocks.upper(b).is_none()).unwrap();
+        server.set_block(bed, sleeping);
+        server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        let (kindling_item, lard) = (id(&server, "base:kindling"), id(&server, "base:lard"));
+        let kindling = TORCH + IVec3::new(-1, 0, 2);
+        let block = id(&server, "base:oak_kindling_box");
+        server.set_block(kindling, block);
+        if server.factory.get(kindling).is_none() {
+            let machines = server.content.machines.clone();
+            server.factory.insert(kindling, block, &machines);
+        }
+        let bin = &mut server.factory.state_mut(kindling).unwrap().bin;
+        (bin[0], bin[1]) = (Some(ItemStack::new(kindling_item, 1)), Some(ItemStack::new(lard, 1)));
+        let held = |server: &Server| server.factory.get(kindling).unwrap().1.bin.iter().flatten().map(|s| (s.item, s.count)).collect::<Vec<_>>();
+        let lamp = TORCH + IVec3::Z;
+        server.set_block(TORCH, id(&server, "base:torch"));
+        server.set_block(lamp, id(&server, "base:clay_oil_lamp"));
+        // A day on the torch is out, and lit again by the kindling.
+        server.day += TICKS_PER_DAY as f64;
+        server.burn_flames();
+        assert_eq!(at(&server, TORCH), "base:torch", "the torch lit again from the box");
+        assert!(server.flames.get(&TORCH).is_some_and(|f| f.out > server.day.floor() as u64), "burning afresh");
+        assert_eq!(held(&server), vec![(lard, 1)], "the kindling used, not the lard");
+        // Five days on the lamp is dry, and filled by the lard; the torch has nothing left.
+        server.day += 4.0 * TICKS_PER_DAY as f64;
+        server.burn_flames();
+        assert_eq!(at(&server, lamp), "base:clay_oil_lamp", "the lamp filled from the box");
+        assert_eq!(at(&server, TORCH), "base:torch_stub", "nothing left to light the torch");
+        assert!(held(&server).is_empty(), "the lard used");
     }
 
     /// The keys of the lines player 1 was told since last asked.
