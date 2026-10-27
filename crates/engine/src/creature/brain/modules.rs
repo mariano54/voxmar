@@ -14,7 +14,7 @@ use std::sync::Arc;
 use glam::Vec3;
 
 use super::{Band, Ctx, Decision, Memory, Mind, Module, Pose, Seen, Want};
-use crate::creature::{Behaviour, Style};
+use crate::creature::{Behaviour, Creature, Style};
 
 /// Blocks from a goal that count as there.
 const ARRIVED: f32 = 0.8;
@@ -109,7 +109,18 @@ fn flier(ctx: &Ctx) -> bool {
 }
 
 /// A bird flies to a goal further than this many blocks off, and hops to a nearer one.
-const FLIES_PAST: f32 = 6.0;
+pub(super) const FLIES_PAST: f32 = 6.0;
+
+/// A bird flies to a goal more than this many blocks above or below it, however near.
+pub(super) const HOPS_UP: f32 = 1.5;
+
+/// The speed a bird goes to `goal` at, wanting to go at `speed`: on the wing to anywhere
+/// far, or further up or down than it hops (off a treetop it hopped up into, up a bank, home
+/// across a valley), whatever has it go there; hopping, it would stand at the edge for good.
+pub(super) fn on_the_wing(creature: &Creature, at: Vec3, goal: Vec3, speed: f32) -> f32 {
+    let far = flat(goal, at) > FLIES_PAST || (goal.y - at.y).abs() > HOPS_UP;
+    if creature.def.movement.style == Style::Flier && far { speed.max(creature.def.movement.run * 0.8) } else { speed }
+}
 
 fn flat(a: Vec3, b: Vec3) -> f32 {
     a.with_y(0.0).distance(b.with_y(0.0))
@@ -180,9 +191,8 @@ impl Module for Wander {
             let pose = if flier(ctx) && ctx.lively >= 0.4 && (mind.pause * 1.3).fract() < 0.6 { Pose::Grazing } else { resting_pose(ctx) };
             return Decision { pose, ..Default::default() };
         }
-        // It flies to where is far, and hops the last of the way.
-        let speed = if flier(ctx) && mind.goal.is_some_and(|g| flat(g, at.position) > FLIES_PAST) { run(ctx) * 0.8 } else { walk(ctx) };
-        Decision { goal: mind.goal, speed, ..Default::default() }
+        // A bird flies to where is far (`on_the_wing`), and hops the last of the way.
+        Decision { goal: mind.goal, speed: walk(ctx), ..Default::default() }
     }
 }
 
