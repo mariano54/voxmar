@@ -9745,6 +9745,13 @@ impl Fresh {
     /// when empty, takes what it fired when it shows fired, and while it fires digs the clay
     /// for the next load from the ponds, or waits by it when no more is wanted.
     fn fire_clay(&mut self, site: &Site, need: u32) {
+        self.fire_clay_while(site, need, |_| false);
+    }
+
+    /// Fires clay as `fire_clay` does, and while a load fires does a step of something else
+    /// (`meanwhile`, true while it found a step to do), as a quest's `meanwhile` says, coming
+    /// back for the load when there is no step left.
+    fn fire_clay_while(&mut self, site: &Site, need: u32, mut meanwhile: impl FnMut(&mut Self) -> bool) {
         let (clay, fired) = ("base:clay", "base:fired_clay");
         while self.have(fired) < need {
             let kiln = |c: &Client| c.world.block(site.kiln).map(|b| c.content.blocks.def(b).name.clone()).unwrap_or_default();
@@ -9755,6 +9762,9 @@ impl Fresh {
             let wanted = need.saturating_sub(self.have(fired) + coming).min(12);
             if self.have(clay) < wanted {
                 self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, wanted);
+            }
+            if kiln(&self.c) == "base:pit_kiln_firing" && meanwhile(self) {
+                continue;
             }
             if across(self.at, Self::middle(site.kiln)) > 3.5 {
                 self.walk_toward(Self::middle(site.kiln), 3.0);
@@ -9864,15 +9874,25 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     }
 
     // The Potter: six clay pots at the table, five fired clay round an empty top middle
-    // making two (Crafting 2).
-    f.fire_clay(&site, 15);
+    // making two (Crafting 2). While its loads fire, as its text says (its `meanwhile`), Fuel
+    // to Hand's trees are felled, a trunk at a time: forty logs carried at once, past its
+    // thirty-two, for the clamp's charcoal and the planks of a chest, and what the clamp is
+    // built of.
+    let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
+    let fell = |f: &mut Fresh| {
+        let logs = f.have(log);
+        if logs >= 40 {
+            return false;
+        }
+        f.gather("base:stone_axe", trunks.clone(), log, (logs + 4).min(40));
+        true
+    };
+    f.fire_clay_while(&site, 15, fell);
     f.at_table(site.table);
     f.craft(&[(0, fired, 3), (2, fired, 3), (3, fired, 3), (4, fired, 3), (5, fired, 3)], "base:clay_pot", 6);
     f.mark("the_potter");
 
-    // Fuel to Hand: forty logs carried at once, past its thirty-two, for the clamp's charcoal
-    // and the planks of a chest, and what the clamp is built of.
-    let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
+    // Fuel to Hand: the rest of the forty logs.
     f.gather("base:stone_axe", trunks, log, 40);
     f.wait(5.0, "the server counting the logs carried", |c| quest_status(c, "fuel_to_hand").0);
     f.mark("fuel_to_hand");

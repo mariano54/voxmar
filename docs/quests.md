@@ -407,7 +407,8 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
   Place to Pray). Loading refuses one done before it, one not open while it is (each
   `after` a quest it waits on), or one its `why` does not name in brackets; a client test
   checks each language's text names the translated title. A Pot on the Chimney now opens
-  with The Potter, beside Earthenware, so it is open during the first load. Brick by Brick's names A Table for Two, and Charcoal's A Place to Pray.
+  with The Potter, beside Earthenware, so it is open during the first load. Brick by Brick's names A Table for Two, Charcoal's A Place to Pray, and The Potter's Fuel
+  to Hand.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
 

@@ -520,6 +520,13 @@ the longest wait with nothing new is 25 to 34 s (ended by the chopping block); B
 44 to 47 s with three new, Charcoal 48 to 52 s with six, A Kiln Load 38 to 57 s with three;
 the lit Crucible Kiln at 437 to 461 s (447 to 493 s before).
 
+The Potter's load firing was a wait with one new thing in 17 to 24 s, and Fuel to Hand's
+forty logs another 22 to 26 s with one. The Potter's `meanwhile` now names Fuel to Hand and
+its text says to fell trees while the clay fires; the bot (`fire_clay_while`) fells a trunk
+at a time while a load fires. Over twenty walks: The Potter 16 to 25 s with the same one new
+and a dozen logs felled, Fuel to Hand 10 to 16 s, the longest wait with nothing new from the
+lit hearth 24 to 25 s (25 to 34 s before), and the lit Crucible Kiln at 418 to 441 s.
+
 ### Nomad pacing (Oct 21)
 
 The Nomad walk now runs the same pacing check as the Farm walk, by the same floors. Two runs:

@@ -1770,6 +1770,59 @@ mod tests {
         assert!(!found.later_age.iter().any(|route| route.starts_with("base:a_cold_camp")), "not a wait on the Farm age: {:?}", found.later_age);
     }
 
+    /// What a quest's why says when it teaches opening a store (`base:open_store`).
+    const OPENS_A_STORE: &str = "to open it beside your pack";
+
+    /// Whether a quest asks to fill a store (`Stocked`, `PutAway`).
+    fn fills_a_store(quest: &voxmar_engine::quest::QuestDef) -> bool {
+        use voxmar_engine::quest::Goal;
+        quest.tasks.iter().flatten().any(|goal| matches!(goal, Goal::Stocked(..) | Goal::PutAway(..)))
+    }
+
+    /// The quests filling a store that are not taught to open one: neither their own why
+    /// says how nor a quest they must come after is taught (of an `"a|b"`, both).
+    fn store_untaught(quests: &[voxmar_engine::quest::QuestDef]) -> Vec<String> {
+        type Book<'a> = FxHashMap<&'a str, &'a voxmar_engine::quest::QuestDef>;
+        fn taught<'a>(name: &'a str, book: &Book<'a>, seen: &mut FxHashMap<&'a str, bool>) -> bool {
+            if let Some(&known) = seen.get(name) {
+                return known;
+            }
+            let Some(quest) = book.get(name) else { return false };
+            let yes = quest.why.contains(OPENS_A_STORE) || quest.after.iter().any(|after| after.split('|').all(|n| taught(n, book, seen)));
+            seen.insert(name, yes);
+            yes
+        }
+        let book: Book = quests.iter().map(|q| (q.name.as_str(), q)).collect();
+        let mut seen = FxHashMap::default();
+        quests.iter().filter(|q| fills_a_store(q) && !taught(&q.name, &book, &mut seen)).map(|q| q.name.clone()).collect()
+    }
+
+    /// Every quest asking to fill a store says how to open one, or comes after a quest that
+    /// does: a store opens on a right-click, which nothing else tells a new player, and the
+    /// walk reaches Clay in Store before From the Shelves.
+    #[test]
+    fn a_quest_filling_a_store_is_taught_to_open_one() {
+        let content = test_content();
+        let quests: Vec<_> = content.quests.iter().cloned().collect();
+        let asking = quests.iter().filter(|q| fills_a_store(q)).count();
+        assert!(asking >= 3, "the check sees the quests that fill a store: {asking}");
+        let untaught = store_untaught(&quests);
+        assert!(untaught.is_empty(), "these quests ask to fill a store without saying how to open one (\"{OPENS_A_STORE}\"), nor come after one that does: {untaught:?}");
+    }
+
+    /// The check finds a quest filling a store with no lesson on opening one.
+    #[test]
+    fn a_store_quest_with_no_lesson_is_found() {
+        let content = test_content();
+        let mut quests: Vec<_> = content.quests.iter().cloned().collect();
+        let mut quest = quests.iter().find(|q| q.name == "base:a_clay_store").expect("a Farm quest").clone();
+        quest.name = "base:a_shut_store".into();
+        quest.why = "Put clay in a chest.".into();
+        quest.after = vec!["base:clay_banks".into()];
+        quests.push(quest);
+        assert_eq!(store_untaught(&quests), ["base:a_shut_store"]);
+    }
+
     /// A structure is built of what its cells take: a route raising one whose pieces no
     /// quest before has the player come by is walled, as a route crafting them would be.
     #[test]

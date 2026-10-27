@@ -685,6 +685,19 @@ pub struct SleepRule {
     pub night: bool,
 }
 
+/// Coming home after `away` seconds or more away from it gives `effect` for `seconds`, if
+/// the effect named by `needs` (when there is one) holds there: home again after a long day
+/// out. The time away is counted only while the player has a home, and alive.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HomecomingRule {
+    pub effect: String,
+    pub away: f32,
+    pub seconds: f32,
+    #[serde(default)]
+    pub needs: Option<String>,
+}
+
 /// One package's `effects.ron`.
 #[derive(Deserialize, Default)]
 #[serde(deny_unknown_fields)]
@@ -695,6 +708,8 @@ pub struct EffectFile {
     pub foods: Vec<FoodRule>,
     #[serde(default)]
     pub sleeps: Vec<SleepRule>,
+    #[serde(default)]
+    pub homecomings: Vec<HomecomingRule>,
     /// Tags a home counts only where the block stands under the open sky (`yard`: things set
     /// out in the yard, not kept indoors). Each must be one a `HomeHas` asks.
     #[serde(default)]
@@ -712,6 +727,9 @@ pub struct EffectRegistry {
     /// What sleeping gives: the effect, its seconds, the effect whose condition must hold,
     /// the bed tag it asks and whether only a night's sleep gives it.
     sleeps: Vec<(EffectId, f32, Option<EffectId>, Option<String>, bool)>,
+    /// What coming home gives: the effect, its seconds, the seconds away it asks and the
+    /// effect whose condition must hold.
+    homecomings: Vec<(EffectId, f32, f32, Option<EffectId>)>,
     /// The tags effects ask of a home, each once.
     home_tags: Vec<String>,
     /// Those of them a home counts only under the open sky (`EffectFile::outdoors`).
@@ -759,15 +777,21 @@ impl EffectRegistry {
             qualify(&mut rule.effect);
             rule.needs.iter_mut().for_each(qualify);
         }
+        for rule in &mut file.homecomings {
+            qualify(&mut rule.effect);
+            rule.needs.iter_mut().for_each(qualify);
+        }
         Ok(file)
     }
 
     pub fn new(files: Vec<EffectFile>) -> Result<Self, RegistryError> {
         let (mut defs, mut rules, mut sleeps, mut outdoors) = (Vec::new(), Vec::new(), Vec::new(), Vec::<String>::new());
+        let mut homecomings = Vec::new();
         for file in files {
             defs.extend(file.effects);
             rules.extend(file.foods);
             sleeps.extend(file.sleeps);
+            homecomings.extend(file.homecomings);
             outdoors.extend(file.outdoors);
         }
         let mut by_name = FxHashMap::default();
@@ -807,6 +831,27 @@ impl EffectRegistry {
                     })
                     .transpose()?;
                 Ok((id, rule.seconds, needs, rule.bed, rule.night))
+            })
+            .collect::<Result<_, RegistryError>>()?;
+        // Coming home gives what only it gives (no `when` of its own), after some time away.
+        let homecomings = homecomings
+            .into_iter()
+            .map(|rule: HomecomingRule| {
+                let id = by_name.get(&rule.effect).copied().ok_or_else(|| RegistryError(format!("a homecoming gives `{}`, which does not exist", rule.effect)))?;
+                if defs[id.0 as usize].when.is_some() {
+                    return Err(RegistryError(format!("a homecoming gives `{}`, which comes on by its own `when`", rule.effect)));
+                }
+                if !(rule.seconds > 0.0 && rule.away > 0.0 && rule.seconds.is_finite() && rule.away.is_finite()) {
+                    return Err(RegistryError(format!("the homecoming for `{}` asks {} seconds away and lasts {}: both above 0", rule.effect, rule.away, rule.seconds)));
+                }
+                let needs = rule
+                    .needs
+                    .map(|name| {
+                        let needed = by_name.get(&name).copied().ok_or_else(|| RegistryError(format!("the homecoming for `{}` needs `{name}`, which does not exist", rule.effect)))?;
+                        defs[needed.0 as usize].when.is_some().then_some(needed).ok_or_else(|| RegistryError(format!("the homecoming for `{}` needs `{name}`, which has no `when` to hold", rule.effect)))
+                    })
+                    .transpose()?;
+                Ok((id, rule.seconds, rule.away, needs))
             })
             .collect::<Result<_, RegistryError>>()?;
         let mut tags: Vec<&str> = Vec::new();
@@ -885,7 +930,7 @@ impl EffectRegistry {
             return Err(RegistryError(format!("effects.ron: `outdoors` names `{tag}`, which no `HomeHas` asks")));
         }
         let outdoor_tags = once(outdoors.iter().map(String::as_str).collect());
-        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, outdoor_tags, home_walls, quests, near_asks, held_tags, worn_tags, seat_tags })
+        Ok(Self { defs, by_name, replaces, foods, sleeps, homecomings, home_tags, outdoor_tags, home_walls, quests, near_asks, held_tags, worn_tags, seat_tags })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -1297,6 +1342,21 @@ impl EffectRegistry {
         given
     }
 
+    /// The timed effects coming home after `away` seconds away gives where `situation` is:
+    /// each homecoming rule asking no more time away whose needed effect holds there, each
+    /// effect once, for the longest of its rules.
+    pub fn given_by_homecoming(&self, situation: &Situation, away: f32) -> Vec<(EffectId, f32)> {
+        let mut given: Vec<(EffectId, f32)> = Vec::new();
+        let needed = |needs: &Option<EffectId>| needs.is_none_or(|n| self.get(n).when.as_ref().is_some_and(|c| c.holds(situation)));
+        for &(id, seconds, ..) in self.homecomings.iter().filter(|(_, _, asks, needs)| away >= *asks && needed(needs)) {
+            match given.iter_mut().find(|(e, _)| *e == id) {
+                Some(had) => had.1 = had.1.max(seconds),
+                None => given.push((id, seconds)),
+            }
+        }
+        given
+    }
+
     pub fn fingerprint(&self) -> u64 {
         let mut h = 0xcbf2_9ce4_8422_2325u64;
         for def in &self.defs {
@@ -1630,6 +1690,27 @@ mod tests {
         assert!(dark.active(&noon, &[]).is_empty());
         assert_eq!(dark.active(&Situation { night: true, ..noon }, &[]).len(), 1);
         assert!(dark.active(&Situation { night: true, ..situation(&calm, false, 15.0, true) }, &[]).is_empty(), "out of doors");
+    }
+
+    /// Home again after long enough away, where the needed effect holds: not after a
+    /// short step out, and not where the home lacks what it needs. Broken rules are refused.
+    #[test]
+    fn coming_home_after_long_away_gives_its_effect() {
+        let source = r#"(effects: [(name: "roofed", kind: Buff, title: "Roofed", description: "", when: Some(Indoors)), (name: "again", kind: Buff, title: "Again", description: "")], homecomings: [(effect: "again", away: 600.0, seconds: 300.0, needs: "roofed")])"#;
+        let effects = EffectRegistry::new(vec![EffectRegistry::read("core", source).unwrap()]).unwrap();
+        let calm = Weather::NONE;
+        let (indoors, outdoors) = (situation(&calm, false, 15.0, false), situation(&calm, false, 15.0, true));
+        let again = effects.id("core:again").unwrap();
+        assert_eq!(effects.given_by_homecoming(&indoors, 600.0), [(again, 300.0)]);
+        assert!(effects.given_by_homecoming(&indoors, 599.0).is_empty(), "a short step out is no homecoming");
+        assert!(effects.given_by_homecoming(&outdoors, 900.0).is_empty(), "home without what it needs");
+        let read = |source: &str| EffectRegistry::new(vec![EffectRegistry::read("core", source).unwrap()]).map(|_| ()).unwrap_err().0;
+        let own_when = r#"(effects: [(name: "x", kind: Buff, title: "X", description: "", when: Some(Indoors))], homecomings: [(effect: "x", away: 1.0, seconds: 1.0)])"#;
+        assert!(read(own_when).contains("its own `when`"));
+        let zero = r#"(effects: [(name: "x", kind: Buff, title: "X", description: "")], homecomings: [(effect: "x", away: 0.0, seconds: 1.0)])"#;
+        assert!(read(zero).contains("both above 0"));
+        let no_when = r#"(effects: [(name: "x", kind: Buff, title: "X", description: "")], homecomings: [(effect: "x", away: 1.0, seconds: 1.0, needs: "x")])"#;
+        assert!(read(no_when).contains("no `when`"));
     }
 
     #[test]
