@@ -94,6 +94,10 @@ const LIT_REACH: i32 = 5;
 /// Where a creature's stuck clock (`Live::stuck`, to 2 s) stands once a search finds no way
 /// to its goal.
 const NO_WAY_STUCK: f32 = 1.5;
+/// Going somewhere, a creature that gets no further from where it was than a block (or, slow,
+/// two fifths of the way it would have walked) in this many seconds is stuck
+/// (`Live::headway`), however it jostles about on the spot.
+const HEADWAY: f32 = 5.0;
 /// How soon after balking at a chase a second balk makes a creature give it up, in ticks.
 const BALK_WINDOW: u64 = 8 * TICKS_PER_SECOND as u64;
 /// How long after giving a chase up a creature that takes one up again gives it up at its
@@ -148,6 +152,10 @@ pub struct Live {
     pub companion: bool,
     /// Seconds without getting nearer its goal, to notice being stuck.
     pub stuck: f32,
+    /// Where it last got clear of (`HEADWAY`), going somewhere, and the tick it got there:
+    /// one jostling to and fro on a spot (at a ledge two high it finds no way up) gains a
+    /// little every tick but gets nowhere. Not saved.
+    pub headway: (Vec3, u64),
     /// The side it is going round something in its way to (`motion::steer`): 1 or -1, 0
     /// while its way is open.
     pub detour: f32,
@@ -1388,7 +1396,17 @@ impl Server {
                 creature.mind.held_off = decision.target.zip(decision.goal);
             }
         }
-        if over || wanted != Vec3::ZERO && (!gained || detour != 0.0) {
+        // Getting nowhere for `HEADWAY` seconds, however it jostles on the spot.
+        let going = !held && charging.is_none() && wanted != Vec3::ZERO;
+        let headway = (drive.speed * HEADWAY * 0.4).min(1.0);
+        if !going || body.position.distance(creature.headway.0) > headway {
+            creature.headway = (body.position, self.tick);
+        }
+        let nowhere = going && self.tick >= creature.headway.1 + (HEADWAY * TICKS_PER_SECOND as f32) as u64;
+        if nowhere {
+            creature.stuck = creature.stuck.max(2.0);
+        }
+        if over || nowhere || wanted != Vec3::ZERO && (!gained || detour != 0.0) {
             creature.stuck += if gained && !over { dt * 0.5 } else { dt };
             if creature.stuck > 2.0 {
                 // Stuck short of food on the ground (a fence, a wall between): it leaves food
@@ -1402,6 +1420,7 @@ impl Server {
                 creature.decision.goal = None;
                 creature.mind.goal = None;
                 creature.stuck = 0.0;
+                creature.headway = (body.position, self.tick);
                 // Balked twice running in a chase (a player behind a fence it has no way
                 // through, or round a box it cannot get into): it gives the chase up and
                 // goes home rather than hang there. Back at it within a minute, it gives up
@@ -1929,6 +1948,7 @@ impl Server {
             wanderer: false,
             companion: false,
             stuck: 0.0,
+            headway: (Vec3::ZERO, 0),
             detour: 0.0,
             way: Vec::new(),
             way_from: None,
@@ -5344,7 +5364,7 @@ mod fight_tests {
                 fight.hops += 1;
             }
             rising = up;
-            if std::env::var("VOXMAR_TRACE").is_ok_and(|v| v == name) && t % 5 == 0 {
+            if std::env::var("VOXMAR_TRACE").is_ok_and(|v| v == name) && t % 20 == 0 {
                 println!("t {t:>4} at {:.2} goal {:?} speed {:.2} doing {} stuck {:.2} detour {} way {} wall {}", body.position - c.as_vec3(), creature.decision.goal.map(|g| g - c.as_vec3()), creature.decision.speed, creature.mind.doing.map_or("-", |i| server.content.creatures.get(creature.species).modules[i].0.name()), creature.stuck, creature.detour, creature.way.len(), body.against_wall);
             }
             let flat = body.position.with_y(0.0).distance(stand.with_y(0.0));

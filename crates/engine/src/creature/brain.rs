@@ -732,6 +732,9 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         mind.doing = None;
         return think(creature, mind, &Situation { dt: 0.0, ..*at });
     }
+    if let Some(goal) = decision.goal {
+        decision.speed = modules::on_the_wing(creature, at.position, goal, decision.speed);
+    }
     decision.speed *= mind.personality.pace();
     decision.target = want.target.map(|p| p.id);
     decision
@@ -925,6 +928,15 @@ pub(super) mod tests {
             }
         }
         assert!(hops > flights && flights > 10, "{hops} hops, {flights} flights");
+        // Up in a treetop it hopped into, a hop's way off on the ground below, or below a
+        // bank a hop's way off, it flies there: hopping, it would stand at the edge.
+        for below in [7.0, -2.0] {
+            let mut mind = Mind::new(&finch.def.temperament, 1);
+            think(&finch, &mut mind, &situation(&[]));
+            (mind.goal, mind.pause) = (Some(Vec3::new(2.0, -below, 0.0)), 0.0);
+            let decision = think(&finch, &mut mind, &situation(&[]));
+            assert!(decision.goal.is_some() && flight(decision.speed), "it hopped for a goal {below} below: {decision:?}");
+        }
     }
 
     #[test]
