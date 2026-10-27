@@ -130,8 +130,8 @@
         ),
         (
             name: "a_clay_store", age: "farm", branch: "main", title: "Clay in Store",
-            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest, a barrel or a crate and leave it there. Clay keeps for ever, and the next load is a step away.",
-            tasks: [[Stocked("clay", "chest", 32)], [Stocked("clay", "barrel", 32)], [Stocked("clay", "crate", 32)]],
+            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest and leave it there. Clay keeps for ever, and the next load is a step away.",
+            tasks: [[Stocked("clay", "chest", 32)]],
             after: ["clay_banks", "fire_the_clay"],
             rewards: [Xp("crafting", 80.0), Item("bread", 2)],
         ),
@@ -533,16 +533,16 @@
         ),
         (
             name: "a_rug_underfoot", age: "farm", branch: "home", title: "A Rug Underfoot",
-            why: "A homely home (A Homely Home) wants a rug, and wool from your flock (Wool Gathering) makes one. A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two. Two cloths side by side make three rugs (Crafting 3). A rush mat, four rushes woven at the table (Crafting 1), counts as a rug. Lay them on the floor; curtains, cushions and banners are made from cloth too.",
-            tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)], [Cook("tag:cloth", 2), Craft("tag:rug", 1)]],
-            after: ["a_homely_home", "wool_gathering"],
+            why: "A homely home (A Homely Home) wants a rug, and wool from your flock (Wool Gathering) makes one. A cloth is a wool and a flower of the colour you want, side by side in the grid (Crafting 2): white from a daisy, yellow from a dandelion, red from a poppy. Daisies grow on plains, dandelions in flower meadows, poppies on the steppe. Make two, or weave them at a loom you set down. Two cloths side by side make three rugs (Crafting 3). A rush mat, four rushes woven at the table (Crafting 1), counts as a rug. Lay them on the floor; curtains, cushions and banners are made from cloth too.",
+            tasks: [[Craft("tag:cloth", 2), Craft("tag:rug", 1)], [Placed("loom_frame", 1), Cook("tag:cloth", 2), Craft("tag:rug", 1)]],
+            after: ["a_homely_home", "wool_gathering", "a_pit_kiln"],
             rewards: [Xp("crafting", 180.0)],
         ),
         (
             name: "earthenware", age: "farm", branch: "pottery", title: "Earthenware",
             why: "Fired clay makes plates, bowls, jars and jugs for the shelf. Two fired clay side by side make two plates, and three in a V make two bowls (Crafting 2); a jar takes three and a jug five (Crafting 3), and a basket is five twine. Make three pieces of crockery at the crafting table.",
             tasks: [[Craft("tag:crockery", 3)]],
-            after: ["a_kiln_load"],
+            after: ["the_potter"],
             rewards: [Xp("crafting", 120.0)],
         ),
         (
