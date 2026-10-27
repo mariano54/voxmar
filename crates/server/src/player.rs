@@ -61,6 +61,10 @@ pub struct Player {
     /// The announced effects (`EffectDef::announce`) the player has been told of this
     /// session, so stepping out of a room and back in does not say it twice.
     pub announced: Vec<EffectId>,
+    /// Seconds spent away from their own home since last there, while they had one and
+    /// were alive: coming home after long enough gives effects.ron's `homecomings`. Not
+    /// saved: one who joins at home has not come home.
+    pub away: f32,
     /// The home steps their home met when last surveyed (`EffectRegistry::home_steps`),
     /// where that home stood (its `home_spot`'s cell: a home moved since says nothing of
     /// what was lost), and whether it is yet to be surveyed since they joined, to tell them
@@ -224,6 +228,7 @@ impl Player {
             vitals: Vitals::default(),
             timed_effects: Vec::new(),
             announced: Vec::new(),
+            away: 0.0,
             home_steps: Vec::new(),
             home_anchor: None,
             home_unchecked: false,

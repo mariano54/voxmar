@@ -195,6 +195,7 @@ impl Survival {
         let seat: Vec<String> = seated.and_then(|at| server.block(at)).map_or_else(Vec::new, |b| effects.seat_by(server.content.blocks.def(b)));
 
         let anchor = server.at_home(id);
+        let has_home = server.players[&id].home_spot(&server.lit).is_some();
         let player = server.players.get_mut(&id).unwrap();
         // What their home meets now, and where it stands, to tell on their return what
         // lights burnt out while they were away cost; not before that is told
@@ -221,6 +222,23 @@ impl Survival {
         let mut situation = Situation { felt: vitals::felt_air(cold_air, heat), warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), seat: &seat, night };
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
+        // Time away from their own home counts while they have one; home again after
+        // long enough away, coming home gives what it gives (`homecomings`), told in chat.
+        if home.is_some() && !guest {
+            let away = std::mem::take(&mut player.away);
+            for (effect, seconds) in effects.given_by_homecoming(&situation, away) {
+                match player.timed_effects.iter_mut().find(|(e, _)| *e == effect) {
+                    Some((_, left)) => *left = left.max(seconds),
+                    None => player.timed_effects.push((effect, seconds)),
+                }
+                let def = effects.get(effect);
+                let key = voxmar_engine::lang::def_key("effect", &def.name);
+                let words = Words::key("effect.gained").with("name", Words::Own(key.clone(), def.title.clone())).with("what", Words::Own(format!("{key}.description"), def.description.clone()));
+                player.connection.send(ServerMessage::Chat { kind: ChatKind::Info, text: words });
+            }
+        } else if has_home {
+            player.away += seconds;
+        }
         let first = effects.active(&situation, &player.timed_effects);
         situation.felt = effects.modifiers(&first).felt(vitals::felt_air(cold_air, heat), server.survival.comfort_top);
         let active = effects.active(&situation, &player.timed_effects);

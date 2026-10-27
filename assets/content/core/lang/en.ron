@@ -1034,6 +1034,7 @@
     "treat.unwanted": "They do not care for that.",
     "treat.not_now": "They have had a treat already: later, perhaps.",
     "treat.thanks": "For me? Thank you!",
+    "villager.scold": "Hey! That was ours. Leave our things be!",
     "inspect.shows": "Shows: {traits}.",
     "inspect.carries": "Carries, hidden: {alleles}.",
     "inspect.carries_nothing": "Carries nothing hidden.",

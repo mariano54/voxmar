@@ -23,9 +23,10 @@
         // The Farm age: fired clay, copper and tin, and the Crucible Kiln that opens bronze.
         (
             name: "the_potter", age: "farm", branch: "main", title: "The Potter",
-            why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
+            why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2). While the clay fires, fell trees for the clamp's fuel (Fuel to Hand).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["the_farm_age", "fire_the_clay"],
+            meanwhile: ["fuel_to_hand"],
             rewards: [Xp("crafting", 305.0), Item("firewood", 4)],
         ),
         (
@@ -139,7 +140,7 @@
         ),
         (
             name: "a_clay_store", age: "farm", branch: "main", title: "Clay in Store",
-            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest, a barrel or a crate and leave it there. Clay keeps for ever, and the next load is a step away.",
+            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: right-click a chest, a barrel or a crate to open it beside your pack, put thirty-two clay in and leave it there. Clay keeps for ever, and the next load is a step away.",
             tasks: [[Stocked("clay", "chest", 32)], [Stocked("clay", "barrel", 32)], [Stocked("clay", "crate", 32)]],
             after: ["clay_banks", "fire_the_clay"],
             rewards: [Xp("crafting", 80.0), Item("bread", 2)],
@@ -312,7 +313,7 @@
         (
             name: "the_scarecrows_pockets", age: "farm", branch: "farming", title: "The Scarecrow's Pockets",
             side: true,
-            why: "By night a scarecrow walks the fields of those with a home, keeping its distance. Get near enough to talk and it empties its pockets: seed mix for your animals, saved from the crows.",
+            why: "By night a scarecrow walks the fields of those with a home, keeping its distance, but it stands stock still while you watch it. Keep your eyes on it as you walk up, and once near enough to talk it empties its pockets: seed mix for your animals, saved from the crows.",
             tasks: [[Dealt("scarecrow", "pockets", 1)]],
             after: ["seed_mix"],
             rewards: [Xp("farming", 40.0)],
@@ -340,7 +341,7 @@
         ),
         (
             name: "a_trough_for_the_pen", age: "farm", branch: "husbandry", title: "A Trough for the Pen",
-            why: "Kept animals graze within seven blocks of home, and a full pen strips its grass and goes hungry. A feed trough is five planks in a low U (Construction 4). Set it by the pen and stock it with eight wheat: a hungry animal with nothing to graze walks to it and eats one of its foods, so the pen is fed while you are away.",
+            why: "Kept animals graze within seven blocks of home, and a full pen strips its grass and goes hungry. A feed trough is five planks in a low U (Construction 4). Set it by the pen, right-click it to open it beside your pack and stock it with eight wheat: a hungry animal with nothing to graze walks to it and eats one of its foods, so the pen is fed while you are away.",
             tasks: [[Placed("feed_trough", 1), Stocked("wheat", "feed_trough", 8)]],
             after: ["hens_in_a_row"],
             rewards: [Xp("construction", 80.0), Xp("farming", 60.0)],
@@ -736,6 +737,14 @@
             tasks: [[Craft("stone_altar", 1)]],
             after: ["a_pit_kiln"],
             rewards: [Xp("magic", 120.0)],
+        ),
+        (
+            name: "a_tale_by_night", age: "farm", branch: "prayer", title: "A Tale by Night",
+            side: true,
+            why: "After dark a storyteller sits by the road with a tale to tell. Sit and listen: the tale is of something strange not far off, and you leave it with a clear head.",
+            tasks: [[Dealt("story_teller", "tale", 1)]],
+            after: ["a_place_to_pray"],
+            rewards: [Xp("magic", 30.0)],
         ),
         (
             name: "paying_respects", age: "farm", branch: "prayer", title: "Paying Respects",

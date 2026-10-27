@@ -681,6 +681,26 @@ mod tests {
         assert!(server.wear_command(me, &["2".into(), "2".into()]).is_err(), "an empty slot");
     }
 
+    /// Tilling with a hoe never tells of a faster tool carried, though an iron shovel in the
+    /// pack would break the same soil far faster: tilling is no break.
+    #[test]
+    fn tilling_never_tells_of_a_faster_tool_carried() {
+        let (mut server, client) = holding("base:stone_hoe", 0);
+        let [hoe, shovel, dirt] = ["base:stone_hoe", "base:iron_shovel", "base:dirt"].map(|n| server.content.blocks.expect(n));
+        server.players.get_mut(&1).unwrap().inventory.slots[1] = Some(ItemStack::new(shovel, 1));
+        let hardness = server.content.blocks.info(dirt).hardness;
+        assert!(server.content.tools.faster_carried(Some(hoe), dirt, hardness, [shovel].into_iter()).is_some(), "breaking it would tell");
+        let soil = put(&mut server, "base:dirt");
+        let target = voxmar_engine::action::ActionTarget::Block { block: soil, face: voxmar_engine::coords::Face::PosY };
+        let at = std::time::Instant::now();
+        server.propose(1, server.content.actions.expect("base:till"), target, at);
+        server.complete_actions(at + std::time::Duration::from_secs(1));
+        assert_eq!(server.block(soil), server.content.blocks.id("base:farmland"), "tilled");
+        assert_eq!(server.players[&1].inventory.slots[0].unwrap().wear, server.content.tools.wear().till, "the hoe wore");
+        let told = std::iter::from_fn(|| client.try_recv().ok().flatten()).any(|m| matches!(m, ServerMessage::Chat { text: voxmar_engine::lang::Words::Key(key, _), .. } if key == "tool.faster_carried"));
+        assert!(!told);
+    }
+
     /// A hoe wears as it tills; in creative nothing wears; a block a player holds that never
     /// wears (a stick) and a bare hand are untouched.
     #[test]
