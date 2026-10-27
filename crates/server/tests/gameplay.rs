@@ -1156,12 +1156,13 @@ fn a_village_hay_bale_gives_nothing_but_a_players_breaks_into_nine_straw_across_
     furnishing_drops_across_restarts("hay-bale", "hay_bale", "straw", 9);
 }
 
-/// Every village prop (settlements.ron's furnishings) that a player's own copy breaks into
-/// something gives nothing where the world set it: each is set as a village sets it and
-/// broken, and nothing of what it drops comes to hand or lies loose.
+/// Every village prop (settlements.ron's furnishings, and the furnishings its `blocks` props
+/// are made of) that a player's own copy breaks into something gives nothing where the
+/// world set it: each is set as a village sets it and broken, and nothing of what it drops
+/// comes to hand or lies loose.
 #[test]
 fn village_props_set_by_the_world_give_nothing() {
-    use voxmar_worldgen::{Select, WorldContent};
+    use voxmar_worldgen::{Select, SettlementPropKind, WorldContent};
     let mut client = Client::join();
     let world = WorldContent::load(&client.content).expect("world content");
     let f = &world.settlements.furnishings;
@@ -1175,6 +1176,12 @@ fn village_props_set_by_the_world_give_nothing() {
             }
         }
     }
+    // The furnishings a package's own props are made of (the log bench) too.
+    for prop in &world.settlements.props {
+        if let SettlementPropKind::Blocks(_, cells) = &prop.kind {
+            props.extend(cells.iter().map(|(_, name)| blocks.expect(name)).filter(|&id| blocks.def(id).has_tag("furnishing")));
+        }
+    }
     props.sort();
     props.dedup();
     let giving: Vec<(String, BlockId)> = props
@@ -1183,6 +1190,7 @@ fn village_props_set_by_the_world_give_nothing() {
         .map(|id| (blocks.def(id).name.trim_start_matches("base:").to_owned(), blocks.info(id).drops))
         .collect();
     assert!(giving.iter().any(|(name, _)| name == "hay_bale"), "no village prop gives anything: {giving:?}");
+    assert!(giving.iter().any(|(name, _)| name == "oak_log_bench"), "the log bench is not among the props: {giving:?}");
     let spot = client.position.floor().as_ivec3() + IVec3::new(1, 0, 1);
     for line in ["/clear", "/fill ~1 ~-1 ~1 ~1 ~-1 ~1 stone", "/fill ~1 ~ ~1 ~1 ~1 ~1 air"] {
         client.ok(line);
@@ -9034,10 +9042,10 @@ impl Fresh {
         for (i, &ground) in grounds.iter().enumerate() {
             let last = i + 1 == grounds.len();
             let cell = ground + IVec3::Y;
-            // Open as the place action finds it: air, or a plant or snow a block replaces
+            // Open as the place action finds it: air, or a plant a block replaces
             // (not water), on solid ground.
             let open = |c: &Client| {
-                c.world.block(cell).is_some_and(|b| b == BlockId::AIR || (c.content.blocks.info(b).replaceable && c.content.blocks.info(b).fluid.is_none()))
+                c.world.block(cell).is_some_and(|b| c.content.blocks.info(b).gives_room())
                     && c.world.block(ground).is_some_and(|b| c.content.blocks.def(b).solid)
             };
             if !last && (!open(&self.c) || Self::creature_on(&self.c, cell)) {
@@ -9936,9 +9944,14 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     // Load's four were given, not shaped), then twelve tempered, two from four fired clay
     // and a straw at the table. What is left when it is spent waits for the charcoal.
     // Earthenware, open since The Potter: two bowls and a jar of fired clay in the grid
-    // (Crafting 2 and 3).
-    let bowls = |f: &mut Fresh| f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
+    // (Crafting 2 and 3), at the table: between loads the player may be off digging clay.
+    let table = site.table;
+    let bowls = |f: &mut Fresh| {
+        f.at_table(table);
+        f.craft(&[(0, fired, 1), (2, fired, 1), (4, fired, 1)], "base:earthen_bowl", 2);
+    };
     let jar = |f: &mut Fresh| {
+        f.at_table(table);
         f.craft(&[(1, fired, 1), (3, fired, 1), (4, fired, 1)], "base:earthen_jar", 1);
         f.wait(5.0, "the server counting the crockery", |c| quest_status(c, "earthenware").0);
     };

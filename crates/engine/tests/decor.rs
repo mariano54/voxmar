@@ -54,7 +54,7 @@ fn a_swap_state_keeps_its_partners_colour_and_tags() {
 fn the_templates_make_every_family_in_full() {
     let content = content();
     let names: BTreeSet<String> = made(&content).into_iter().map(|id| content.blocks.def(id).name.clone()).collect();
-    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight", "dresser", "pot_crane", "rocking_chair", "cradle", "mantel_shelf", "fireside_bench", "plate_rack", "bedside_table", "footstool", "spice_rack", "candle_box", "bread_bin", "kindling_box"];
+    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight", "dresser", "pot_crane", "rocking_chair", "cradle", "mantel_shelf", "fireside_bench", "plate_rack", "bedside_table", "footstool", "spice_rack", "candle_box", "bread_bin", "kindling_box", "log_bench"];
     let cloth = ["cloth", "rug", "banner", "wall_hanging", "curtain", "paper_lantern", "cushion", "bunting", "awning"];
     let crockery = ["plate", "bowl", "jar", "jug", "basket"];
     let woods = ["birch", "oak", "dark_oak"];
@@ -68,7 +68,7 @@ fn the_templates_make_every_family_in_full() {
             }
         }
     }
-    assert_eq!(expected.len(), 3 * 36 + 12 * 9 + 3 * 5);
+    assert_eq!(expected.len(), 3 * 37 + 12 * 9 + 3 * 5);
     let missing: Vec<_> = expected.difference(&names).collect();
     let extra: Vec<_> = names.difference(&expected).collect();
     assert!(missing.is_empty() && extra.is_empty(), "missing {missing:?}, unexpected {extra:?}");
@@ -117,25 +117,29 @@ fn a_placed_piece_gives_itself_back_and_a_village_one_nothing() {
     }
 }
 
+/// Every recipe's own ingredients, laid out as the book and the lay button lay them, are
+/// matched by a recipe with the same output: none is shadowed by another that takes the same
+/// things (six twine laid as a sack once made thatch, `tag:fibre`).
 #[test]
-fn every_recipe_for_decor_can_be_crafted_as_written() {
+fn every_recipe_can_be_crafted_as_written() {
     let content = content();
-    let decor: BTreeSet<BlockId> = content.blocks.ids().filter(|&id| content.blocks.def(id).has_tag("decor")).collect();
     let mut crafted = 0;
     let mut shadowed = Vec::new();
-    for recipe in content.recipes.iter().filter(|r| decor.contains(&r.output)) {
-        // The recipe's own ingredients, laid out as it asks, are matched by a recipe with the
-        // same output: none is shadowed by another that takes the same things.
+    for recipe in content.recipes.iter() {
         let grid = recipe.cells();
-        let found = content.recipes.find(&grid).unwrap_or_else(|| panic!("{} cannot be crafted", content.blocks.def(recipe.output).name));
-        if found.output != recipe.output {
-            shadowed.push(format!("{} is shadowed by {}", content.blocks.def(recipe.output).name, content.blocks.def(found.output).name));
+        let found = content.recipes.find_near(&grid, |tag| recipe.near.as_deref() == Some(tag));
+        let name = |id| content.blocks.def(id).name.clone();
+        match found {
+            None => shadowed.push(format!("{} cannot be crafted", name(recipe.output))),
+            Some(found) if found.output != recipe.output => shadowed.push(format!("{} is shadowed by {}", name(recipe.output), name(found.output))),
+            Some(_) => {}
         }
         crafted += 1;
     }
     assert!(crafted >= 172, "{crafted} recipes");
     assert!(shadowed.is_empty(), "{}", shadowed.join("\n"));
 }
+
 
 /// The singles and the lanterns and columns of metal and stone: each a block with a way to
 /// make it, a light where it is a light, and a drop that is nothing or the metal it is.
@@ -145,7 +149,7 @@ fn the_singles_load_and_can_be_made() {
     let obtained: BTreeSet<BlockId> = content.recipes.iter().map(|r| r.output).collect();
     let singles = [
         "candle", "brazier", "cauldron", "cottage_stove", "loom_frame", "spindle_stand", "quern_stones", "wind_flags", "stone_grave_slab", "mossy_grave_slab", "stone_headstone",
-        "mossy_headstone", "iron_hanging_lantern", "copper_hanging_lantern", "stone_lantern", "sandstone_lantern", "calcite_column", "sandstone_column", "stone_column", "window_box", "rush_mat",
+        "mossy_headstone", "iron_hanging_lantern", "copper_hanging_lantern", "stone_lantern", "sandstone_lantern", "calcite_column", "sandstone_column", "stone_column", "window_box", "rush_mat", "fishing_net", "sack",
     ];
     for name in singles {
         let id = content.blocks.id(&format!("base:{name}")).unwrap_or_else(|| panic!("no {name}"));
@@ -225,4 +229,59 @@ fn a_kindling_box_keeps_fuel_to_hand() {
         assert!(content.machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() == 4), "{name} keeps four");
         assert!(keeps(id, stick) && keeps(id, charcoal) && !keeps(id, bread), "{name} keeps what burns alone");
     }
+}
+
+/// The sack of grain a village's farmers and millers keep is one a player can weave and
+/// fill at home: a store of grain alone, home storage, given back whole where a player set
+/// it and nothing where a village did (`furnishing`).
+#[test]
+fn a_sack_is_woven_at_home_and_keeps_grain() {
+    let content = content();
+    let blocks = &content.blocks;
+    let sack = blocks.expect("base:sack");
+    let (def, info) = (blocks.def(sack), blocks.info(sack));
+    assert!(!def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "a sack is a survival piece");
+    assert!(def.has_tag("furnishing") && def.has_tag("storage"), "a village's sack gives nothing, a home's is storage");
+    assert_eq!((info.drops, info.drop_count), (sack, 1), "a sack set at home comes back whole");
+    let keeps = |thing| content.machines.get(sack).and_then(|m| m.holds.as_ref()).is_some_and(|holds| holds.contains(&thing));
+    assert!(content.machines.get(sack).is_some_and(|m| m.is_store() && m.bin_slots() == 4), "a sack keeps four");
+    assert!(keeps(blocks.expect("base:wheat")) && !keeps(blocks.expect("base:bread")) && !keeps(blocks.expect("base:stick")), "a sack keeps grain alone");
+    let twine = blocks.expect("base:twine");
+    let recipe = content.recipes.iter().find(|r| r.output == sack).expect("a sack is made");
+    assert!(recipe.cells().iter().flatten().all(|&cell| cell == twine), "woven of twine");
+}
+
+/// The log bench a village sets by its lanes is one a player can make at home from two
+/// stripped logs: a seat (so no shelter tag), given back whole where a player set it and
+/// nothing where a village did (`furnishing`).
+#[test]
+fn a_log_bench_is_made_at_home_as_the_villages_set_it() {
+    let content = content();
+    let blocks = &content.blocks;
+    let bench = blocks.expect("base:oak_log_bench");
+    let (def, info) = (blocks.def(bench), blocks.info(bench));
+    assert!(!def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "a log bench is a survival piece");
+    assert!(def.has_tag("furnishing") && def.has_tag("seat") && !def.solid, "a log bench is a seat");
+    assert!(!def.tags.iter().any(|tag| tag.starts_with("shelter:")), "furniture keeps no shelter tag");
+    assert_eq!((info.drops, info.drop_count), (bench, 1), "a bench set at home comes back whole");
+    let logs = blocks.expect("base:stripped_oak_log");
+    let recipe = content.recipes.iter().find(|r| r.output == bench).expect("a log bench is made");
+    assert_eq!(recipe.cells().iter().flatten().filter(|&&cell| cell == logs).count(), 2, "made of two stripped logs");
+}
+
+/// The fishing net a village hangs to dry on a frame by the water is one a player can knot
+/// and hang at home: made of twine, given back whole where a player hung it and nothing where a
+/// village did (`furnishing`).
+#[test]
+fn a_fishing_net_is_made_at_home_as_the_villages_hang_it() {
+    let content = content();
+    let blocks = &content.blocks;
+    let net = blocks.expect("base:fishing_net");
+    let (def, info) = (blocks.def(net), blocks.info(net));
+    assert!(!def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "a net is a survival piece");
+    assert!(def.has_tag("furnishing") && def.has_tag("decor"), "a village's net gives nothing, a player's comes back");
+    assert_eq!((info.drops, info.drop_count), (net, 1), "a net hung at home comes back whole");
+    let twine = blocks.expect("base:twine");
+    let recipe = content.recipes.iter().find(|r| r.output == net).expect("a net is made");
+    assert!(recipe.cells().iter().flatten().any(|&cell| cell == twine), "knotted of twine");
 }
