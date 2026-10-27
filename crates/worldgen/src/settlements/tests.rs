@@ -947,6 +947,36 @@ fn a_village_log_bench_is_the_piece_a_player_makes() {
     assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the bench a village builds");
 }
 
+/// What a village keeps its stores and nets in (its barrel, crates, sacks and nets) is what
+/// a player makes at home: a survival piece with a recipe, given back whole where a player
+/// set it and nothing where a village did (`furnishing`).
+#[test]
+fn a_villages_stores_are_pieces_a_player_makes() {
+    use crate::content::Select;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let (f, blocks) = (&world_content.settlements.furnishings, &content.blocks);
+    let mut stores: Vec<BlockId> = f.barrel.iter().map(|name| blocks.expect(name)).collect();
+    for select in f.crates.iter().chain(&f.sacks).chain(&f.nets) {
+        match select {
+            Select::Name(name, _) => stores.push(blocks.expect(name)),
+            Select::Tag(tag, _) => stores.extend(blocks.tagged(tag)),
+        }
+    }
+    let names: Vec<&str> = stores.iter().map(|&id| blocks.def(id).name.as_str()).collect();
+    for want in ["base:barrel", "base:crate", "base:sack", "base:fishing_net"] {
+        assert!(names.contains(&want), "a village keeps no {want}: {names:?}");
+    }
+    for id in stores {
+        let (def, info) = (blocks.def(id), blocks.info(id));
+        assert!(!def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "{} is a village's only", def.name);
+        assert!(def.has_tag("furnishing"), "{} would give itself away where a village set it", def.name);
+        assert_eq!((info.drops, info.drop_count), (id, 1), "{} does not come back whole", def.name);
+        assert!(content.recipes.iter().any(|r| r.output == id), "a player cannot make {}", def.name);
+    }
+}
+
 /// The settlements of a few squares, held fixed: a change to planning that moves a single
 /// building shows here, to be looked at in shots and the hash then renewed.
 #[test]

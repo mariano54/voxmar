@@ -140,6 +140,10 @@
         // Six twine woven into a sack for grain, as a village's millers keep: two across and
         // three down, where thatch lays its fibre three across.
         (pattern: [["twine", "twine"], ["twine", "twine"], ["twine", "twine"]], output: "sack", skill: "core:crafting", level: 2, xp: 2.0),
+        // A barrel: staves round an open middle, a twine hoop at top and bottom (Construction 4).
+        (pattern: [["tag:planks", "twine", "tag:planks"], ["tag:planks", "", "tag:planks"], ["tag:planks", "twine", "tag:planks"]], output: "barrel", skill: "core:construction", level: 4, xp: 6.0),
+        // A crate: boards round an open middle, sticks bracing the corners (Construction 2).
+        (pattern: [["stick", "tag:planks", "stick"], ["tag:planks", "", "tag:planks"], ["stick", "tag:planks", "stick"]], output: "crate", skill: "core:construction", level: 2, xp: 4.0),
         // Four twine knotted into a net on a stick to hang it from: the fisher's, for a home.
         (ingredients: ["twine", "twine", "twine", "twine", "stick"], output: "fishing_net", skill: "core:crafting", level: 3, xp: 3.0),
         (pattern: [["copper_ingot"], ["torch"], ["copper_ingot"]], output: "copper_hanging_lantern", skill: "core:engineering", level: 5, xp: 12.0),

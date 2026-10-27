@@ -1133,7 +1133,7 @@ pub fn life(content: &voxmar_engine::content::Content, item: voxmar_engine::bloc
 /// down to the share where it warns (`tool::Wear::warn`).
 pub fn worn_low(content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId, wear: u16) -> bool {
     let uses = life(content, item);
-    uses > 0 && wear > 0 && uses.saturating_sub(wear) <= (uses as f32 * content.tools.wear().warn).ceil() as u16
+    uses > 0 && wear > 0 && uses.saturating_sub(wear) <= content.tools.wear().warn_at(uses)
 }
 
 fn weapon_lines(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, item: voxmar_engine::block::BlockId) -> Vec<(String, Color)> {

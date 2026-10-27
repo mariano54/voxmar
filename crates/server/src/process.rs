@@ -191,6 +191,8 @@ impl Survival {
             vitals::still_seated(server.players[&id].position, seat)
                 && server.block(seat).is_some_and(|b| server.content.blocks.def(b).has_tag(voxmar_engine::action::SEAT_TAG))
         });
+        // And what effects ask of the seat sat on (`SeatedOn`).
+        let seat: Vec<String> = seated.and_then(|at| server.block(at)).map_or_else(Vec::new, |b| effects.seat_by(server.content.blocks.def(b)));
 
         let anchor = server.at_home(id);
         let player = server.players.get_mut(&id).unwrap();
@@ -216,7 +218,7 @@ impl Survival {
         // Warmth from what was eaten and the weather counts before the bands of warmth
         // are judged: soaked through, a mild day feels chilly.
         let biome = server.overworld.biome_at(feet.x, feet.z);
-        let mut situation = Situation { felt: vitals::felt_air(cold_air, heat), warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), night };
+        let mut situation = Situation { felt: vitals::felt_air(cold_air, heat), warmed, outdoors, weather: &weather, biome: &biome.name, biome_tags: &biome.tags, home: home.as_ref(), done: &player.quests_done, held: &held, near: &near, worn: &worn, seated: seated.is_some(), seat: &seat, night };
         // What clings (smoke) is topped up while it holds, and lasts after.
         effects.linger(&situation, &mut player.timed_effects);
         let first = effects.active(&situation, &player.timed_effects);

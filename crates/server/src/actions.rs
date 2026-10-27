@@ -593,7 +593,7 @@ impl Server {
         let feet = self.players[&agent].position.floor().as_ivec3();
         let outdoors = self.open_sky(feet + IVec3::Y * 2);
         let calm = voxmar_engine::weather::Weather::NONE;
-        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], worn: &[], seated: false, night: self.night() };
+        let situation = voxmar_engine::effect::Situation { felt: 0.0, warmed: false, outdoors, weather: &calm, biome: "", biome_tags: &[], home: home.as_ref(), done: &self.players[&agent].quests_done, held: &[], near: &[], worn: &[], seated: false, seat: &[], night: self.night() };
         // A proper bed rests better than a bag on the ground (effects.ron's `bed` tags).
         let bed_tags = self.block(bed).map(|b| self.content.blocks.def(b).tags.clone()).unwrap_or_default();
         let given = effects.given_by_sleep(&situation, &bed_tags);
