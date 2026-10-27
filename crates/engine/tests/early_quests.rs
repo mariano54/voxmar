@@ -908,6 +908,12 @@ fn shut_lines(content: &Content) -> Vec<String> {
         }
         if unmet.iter().all(|w| !w.is_empty()) {
             shut.extend(unmet.into_iter().flatten());
+        } else {
+            // An open way keeps the quest open; a way whose gate the books never surely reach is
+            // still named, for whoever reads the run.
+            for gap in unmet.iter().flatten() {
+                eprintln!("an alternative way's gate the books never surely reach: {gap}");
+            }
         }
     }
     shut

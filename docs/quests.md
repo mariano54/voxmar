@@ -621,6 +621,12 @@ Garden: a loaf for the wassailers' toast that grows the crops). The Dealt-line c
 one way of a quest to have every skill gate met (a player past one line's turn takes the
 next), and checks a tag a line wants against what can be come by.
 
+Three more got one: **Paying Respects** (Farm, after A Place to Pray: stand with a funeral
+procession for their prayer), **Join the Dance** (Nomad, after Hard to Put Down: a round with
+a dance circle) and **The Scarecrow's Pockets** (Farm, after Seed Mix: the seed a scarecrow
+carries). The Dealt-line check now also reports, without failing, an alternative way whose
+skill gate the books never surely reach, the same way the gap check reports one.
+
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).
 
