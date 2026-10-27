@@ -1804,13 +1804,13 @@ mod tests {
         // The books of ages 1 and 2: every quest of theirs, side quests too (where an untaught
         // ask hides longest), and every quest they come after. On them every route is taught,
         // not only one (a coal seam may be far, so charcoal's clamp must be taught too).
-        let mut age_lines: Vec<&str> = Vec::new();
+        let mut age_books: Vec<&str> = Vec::new();
         let mut next: Vec<&str> = quests.iter().filter(|q| ["nomad", "farm"].iter().any(|age| q.age.ends_with(age))).map(|q| q.name.as_str()).collect();
         next.extend(["base:homestead_hearth", "base:crucible_kiln"]);
         while let Some(name) = next.pop() {
-            let q = quest_named(name).expect("a capstone and what it comes after");
-            if !age_lines.contains(&q.name.as_str()) {
-                age_lines.push(q.name.as_str());
+            let q = quest_named(name).expect("a quest of ages 1 and 2, or one they come after");
+            if !age_books.contains(&q.name.as_str()) {
+                age_books.push(q.name.as_str());
                 next.extend(q.after.iter().filter(|a| !a.contains('|')).map(String::as_str));
             }
         }
@@ -1918,7 +1918,7 @@ mod tests {
                     .collect()
             };
             let routes = walls(&worked);
-            if age_lines.contains(&quest.name.as_str()) && routes.iter().any(|w| !w.is_empty()) {
+            if age_books.contains(&quest.name.as_str()) && routes.iter().any(|w| !w.is_empty()) {
                 // Skipped only where a later age's station is all it waits on and another
                 // route of the quest is taught in its own age.
                 let in_own = walls(&worked_own);
