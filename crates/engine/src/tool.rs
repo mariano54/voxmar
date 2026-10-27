@@ -177,7 +177,8 @@ pub struct ToolFile {
     #[serde(default)]
     pub wear: Option<WearDef>,
     /// Seconds the hand waits after each block it breaks before it starts on the next
-    /// (Minecraft's five ticks); the last package to give one decides, none for none.
+    /// (Minecraft's five ticks); the last package to give one decides, `DEFAULT_BREAK_WAIT`
+    /// if none does.
     #[serde(default)]
     pub break_wait: Option<f32>,
 }
@@ -250,6 +251,9 @@ pub struct ToolRegistry {
     burnt: Vec<Option<BlockId>>,
 }
 
+/// Seconds the hand waits after a break where no package says (Minecraft's five ticks).
+pub const DEFAULT_BREAK_WAIT: f32 = 0.25;
+
 /// The tag of a tool that never wears (a pail, a fishing rod): every other tool says
 /// `uses:N`.
 pub const NEVER_WEARS: &str = "never_wears";
@@ -272,7 +276,7 @@ impl ToolRegistry {
             wear_def = file.wear.or(wear_def);
             break_wait = file.break_wait.or(break_wait);
         }
-        let break_wait = break_wait.unwrap_or(0.0);
+        let break_wait = break_wait.unwrap_or(DEFAULT_BREAK_WAIT);
         if !(0.0..=2.0).contains(&break_wait) {
             return Err(RegistryError(format!("tools.ron: `break_wait` {break_wait} is not from 0 to 2 seconds")));
         }
@@ -1140,37 +1144,37 @@ mod tests {
     /// tier takes at most 1/1.35 of the time with the one before, counting the wait after
     /// each break (`tools.ron`'s `break_wait`). Bare hands to flint (a digging stick for a
     /// shovel), flint to stone, stone to copper, copper to iron, for the axe, the pickaxe and
-    /// the shovel: every step the wait leaves room for, that is, every one the fastest tool
-    /// of the kind would make felt from the tier before.
+    /// the shovel. Soil breaks so fast that past a stone shovel the wait is most of a break:
+    /// those steps alone are pinned as not felt, still faster, and near the floor (no tool
+    /// could make the copper one felt, an instant one barely 1.4x), so a step newly unfelt fails.
     #[test]
     fn every_tool_tier_is_felt() {
         const FELT: f32 = 1.35;
+        const UNFELT: [(&str, usize); 6] = [("dirt", 2), ("dirt", 3), ("sand", 2), ("sand", 3), ("gravel", 2), ("gravel", 3)];
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
         let content = crate::content::Content::load(&assets).unwrap();
         let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
         let wait = content.tools.break_wait();
-        assert!(wait > 0.0, "the base package gives a break_wait");
         let tiers = |kind: &str| ["flint", "stone", "copper", "iron"].map(|tier| format!("{tier}_{kind}"));
         let mut shovels = tiers("shovel");
         shovels[0] = "digging_stick".into();
+        let mut unfelt = Vec::new();
         for (kind, held, blocks) in [("axe", tiers("axe"), ["oak_log"].as_slice()), ("pickaxe", tiers("pickaxe"), ["cobblestone", "coal_ore"].as_slice()), ("shovel", shovels, ["dirt", "sand", "gravel"].as_slice())] {
-            for block in blocks {
+            for &block in blocks {
                 let hardness = content.blocks.info(id(block)).hardness;
-                let seconds = |item: Option<BlockId>| hardness / content.tools.speed(item, id(block)) + wait;
                 let held: Vec<Option<BlockId>> = std::iter::once(None).chain(held.iter().map(|item| Some(id(item)))).collect();
-                let times: Vec<f32> = held.iter().map(|&item| seconds(item)).collect();
-                let fastest = content.blocks.ids().filter(|&t| content.tools.tool(Some(t)).kind == content.tools.tool(held[1]).kind).map(|t| seconds(Some(t))).fold(f32::MAX, f32::min);
-                let mut reached = 0;
+                let times: Vec<f32> = held.iter().map(|&item| hardness / content.tools.speed(item, id(block)) + wait).collect();
                 for (step, pair) in times.windows(2).enumerate() {
-                    if pair[0] / fastest < FELT {
+                    if pair[0] / pair[1] >= FELT {
                         continue;
                     }
-                    reached += 1;
-                    assert!(pair[0] / pair[1] >= FELT, "{block}: tier {step} to {} with a {kind} is only {:.2}x ({times:?}, waiting {wait} s)", step + 1, pair[0] / pair[1]);
+                    assert!(UNFELT.contains(&(block, step)), "{block}: tier {step} to {} with a {kind} is only {:.2}x ({times:?}, waiting {wait} s)", step + 1, pair[0] / pair[1]);
+                    assert!(pair[1] < pair[0] && pair[0] / wait < 1.5, "{block}: tier {step} to {} with a {kind} is slower, or not near the {wait} s floor ({times:?})", step + 1);
+                    unfelt.push((block, step));
                 }
-                assert!(reached >= 2, "{block}: the wait leaves room for only {reached} {kind} steps ({times:?})");
             }
         }
+        assert_eq!(unfelt, UNFELT, "the steps soil leaves no room to feel");
     }
 
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower

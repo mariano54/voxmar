@@ -33,8 +33,8 @@ are for (log, cobblestone, ore; stone 1.35x and 1.30x):
 Soft ground stays near the quarter-second floor whatever the tool past stone (1.1x a
 step): it was already quick, and only the wait could change that, which is not a tier's
 to change. The stone shovel is 5 (Oct 27), so the digging stick to stone is still felt on
-soil (1.43x); `every_tool_tier_is_felt` asserts every step the wait leaves room for (the
-fastest tool of the kind would make it 1.35x felt).
+soil (1.43x); `every_tool_tier_is_felt` asserts every step, and pins the soil steps past stone
+as the only ones not felt (still faster, and near the wait's floor).
 
 Bare hands break neither natural stone nor a standing log: their rules in `base/tools.ron`
 ask for a pickaxe and an axe of tier 1 (Mariano, Oct 15: the early game was too easy, and
