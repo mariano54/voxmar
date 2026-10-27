@@ -733,6 +733,21 @@ struct TileRecord {
     mesh: Allocation,
     min: Vec3,
     max: Vec3,
+    /// Columns under the tile that have real chunks, kept as they come and go so that
+    /// culling need not look each one up every frame.
+    real_columns: u32,
+}
+
+// A tile's side is a whole number of columns, every ring's (the sizes double), so each
+// column lies under exactly one tile of each ring.
+const _: () = assert!(super::lod::FIRST_CELL * super::lod::CELLS % CHUNK_SIZE == 0);
+
+impl TileRecord {
+    /// Whether every column under the tile has real chunks, so it need not be drawn.
+    fn covered_by_real(&self, key: TileKey) -> bool {
+        let side = (key.size() / CHUNK_SIZE) as u32;
+        key.size() <= CHUNK_SIZE * COVERAGE_SIZE && self.real_columns == side * side
+    }
 }
 
 /// Columns around the camera that have real chunks, one bit each, for distant terrain to
@@ -783,6 +798,8 @@ pub(super) struct TerrainGpu {
     /// first.
     bounds: Vec<(Vec3, bool)>,
     tiles: FxHashMap<TileKey, TileRecord>,
+    /// One more than the highest ring a tile has been uploaded for.
+    tile_levels: u8,
     /// Chunks with a mesh, per column.
     columns: FxHashMap<IVec2, u32>,
     visible: VisibleChunks,
@@ -833,6 +850,7 @@ impl Default for TerrainGpu {
             free_records: Vec::new(),
             bounds: Vec::new(),
             tiles: FxHashMap::default(),
+            tile_levels: 0,
             columns: FxHashMap::default(),
             visible: VisibleChunks::default(),
             real_columns: 0,
@@ -904,7 +922,11 @@ impl TerrainGpu {
                     }
                 };
                 self.chunks.insert(chunk, index);
-                *self.columns.entry(column).or_default() += 1;
+                let chunks = self.columns.entry(column).or_default();
+                *chunks += 1;
+                if *chunks == 1 {
+                    self.count_real_column(column, true);
+                }
                 index
             }
         };
@@ -933,6 +955,7 @@ impl TerrainGpu {
             *count -= 1;
             if *count == 0 {
                 self.columns.remove(&column);
+                self.count_real_column(column, false);
             }
         }
     }
@@ -1021,17 +1044,28 @@ impl TerrainGpu {
         let corner = corner.as_vec2();
         let min = Vec3::new(corner.x, tile.heights.start as f32, corner.y);
         let max = Vec3::new(corner.x + size, tile.heights.end as f32, corner.y + size);
-        self.tiles.insert(tile.key, TileRecord { slot, mesh, min, max });
+        self.insert_tile(tile.key, TileRecord { slot, mesh, min, max, real_columns: 0 });
     }
 
-    /// Whether every column under a tile has real chunks, so it need not be drawn.
-    fn covered_by_real(&self, key: TileKey) -> bool {
-        if key.size() > CHUNK_SIZE * COVERAGE_SIZE {
-            return false;
-        }
+    /// Keeps a distant tile, counting the columns under it that have real chunks.
+    fn insert_tile(&mut self, key: TileKey, mut tile: TileRecord) {
         let first = key.origin().div_euclid(IVec2::splat(CHUNK_SIZE));
-        let side = (key.size() / CHUNK_SIZE).max(1);
-        (0..side * side).all(|i| self.columns.contains_key(&(first + IVec2::new(i % side, i / side))))
+        let side = key.size() / CHUNK_SIZE;
+        tile.real_columns = (0..side * side).filter(|i| self.columns.contains_key(&(first + IVec2::new(i % side, i / side)))).count() as u32;
+        self.tile_levels = self.tile_levels.max(key.level + 1);
+        self.tiles.insert(key, tile);
+    }
+
+    /// Counts `column` in or out of the tiles over it, as it gains its first real chunk
+    /// or loses its last.
+    fn count_real_column(&mut self, column: IVec2, gained: bool) {
+        for level in 0..self.tile_levels {
+            let side = TileKey { level, x: 0, z: 0 }.size() / CHUNK_SIZE;
+            let at = column.div_euclid(IVec2::splat(side));
+            if let Some(tile) = self.tiles.get_mut(&TileKey { level, x: at.x, z: at.y }) {
+                if gained { tile.real_columns += 1 } else { tile.real_columns -= 1 }
+            }
+        }
     }
 
     fn clear(&mut self) {
@@ -1547,7 +1581,7 @@ fn cull_view(gpu: &TerrainGpu, view: &CulledBy, draws: &mut TerrainDraws) {
     draws.distant.clear();
     if !is_light {
         for (&key, tile) in &gpu.tiles {
-            if frustum.intersects(tile.min, tile.max) && !gpu.covered_by_real(key) {
+            if frustum.intersects(tile.min, tile.max) && !tile.covered_by_real(key) {
                 draws.distant.push(TileDraw {
                     page: tile.mesh.page,
                     indices: tile.mesh.indices.clone(),
@@ -2376,7 +2410,7 @@ mod tests {
                     let mesh = Allocation { page: index / 16, vertices: start..start + quads * 4, reserved: quads * 4, indices: start * 3 / 2..(start + quads * 4) * 3 / 2 };
                     let min = Vec3::new(corner.x, low as f32, corner.y);
                     let max = Vec3::new(corner.x + size, (low + 20 + (index * 13) % 90) as f32, corner.y + size);
-                    gpu.tiles.insert(key, TileRecord { slot: 5000 + index, mesh, min, max });
+                    gpu.insert_tile(key, TileRecord { slot: 5000 + index, mesh, min, max, real_columns: 0 });
                 }
             }
         }
@@ -2526,6 +2560,51 @@ mod tests {
         let nan = Vec3::splat(f32::NAN);
         assert_eq!(frustum.holds_chunk(nan), frustum.intersects(nan, nan + CHUNK_SIZE as f32));
         assert!(!frustum.holds_chunk(nan));
+    }
+
+    /// Each distant tile's count of real columns follows them as they come and go, in any
+    /// order with the tiles themselves: it is the count under the tile, looked up column by
+    /// column, and the tile is covered exactly where every one of them is real.
+    #[test]
+    fn distant_tiles_count_the_real_columns_under_them() {
+        use crate::render::lod::LEVELS;
+        let mut gpu = TerrainGpu::default();
+        let under = |gpu: &TerrainGpu, key: TileKey| {
+            let first = key.origin().div_euclid(IVec2::splat(CHUNK_SIZE));
+            let side = key.size() / CHUNK_SIZE;
+            (0..side * side).filter(|i| gpu.columns.contains_key(&(first + IVec2::new(i % side, i / side)))).count() as u32
+        };
+        let keys: Vec<TileKey> = (0..LEVELS as u8).flat_map(|level| (-3..3).flat_map(move |z| (-3..3).map(move |x| TileKey { level, x, z }))).collect();
+        let mut seed = 0x2545_f491u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let (mut covered, mut uncovered) = (0, 0);
+        for step in 0..40_000 {
+            let r = next();
+            let key = keys[(r >> 8) as usize % keys.len()];
+            match r % 16 {
+                0 => gpu.insert_tile(key, TileRecord { slot: 0, mesh: Allocation { page: 0, vertices: 0..0, reserved: 0, indices: 0..0 }, min: Vec3::ZERO, max: Vec3::ZERO, real_columns: 0 }),
+                1 => drop(gpu.tiles.remove(&key)),
+                _ => {
+                    let chunk = ChunkPos(IVec3::new((r >> 8) as i32 % 13, (r >> 16) as i32 % 3, (r >> 20) as i32 % 13) - IVec3::new(6, 0, 6));
+                    if r % 4 == 2 { gpu.forget_if_empty(chunk) } else { gpu.record(chunk); }
+                }
+            }
+            if step % 50 == 0 {
+                for (&key, tile) in &gpu.tiles {
+                    let real = under(&gpu, key);
+                    assert_eq!(tile.real_columns, real, "{key:?} at step {step}");
+                    let side = (key.size() / CHUNK_SIZE) as u32;
+                    assert_eq!(tile.covered_by_real(key), real == side * side);
+                    if tile.covered_by_real(key) { covered += 1 } else { uncovered += 1 }
+                }
+            }
+        }
+        assert!(covered > 100 && uncovered > 100, "{covered} covered, {uncovered} not");
     }
 
     #[test]
