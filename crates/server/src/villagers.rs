@@ -647,6 +647,7 @@ impl Server {
         if self.react(id, town, i, at, &react, live) {
             return;
         }
+        self.rest_gone(town, i);
         let (place, slot, day) = self.place_now(town, i, seed);
         let fresh = {
             let trip = self.villagers.towns[&town].people[i].trip.as_ref();
@@ -1263,6 +1264,11 @@ impl Server {
         let spot = match place {
             Place::Sleep | Place::Home => {
                 trip.pose = if place == Place::Sleep { Pose::Resting } else { Pose::Idle };
+                if place == Place::Sleep
+                    && let Some(bed) = self.own_bed(t, i)
+                {
+                    return Some(bed);
+                }
                 if place == Place::Home {
                     stay(trip, 1);
                     if unit_from(mix(seed, 0x5ea7)) < people.sit
@@ -1366,6 +1372,10 @@ impl Server {
         let b = &town.info.buildings[home];
         let k = town.info.people[..i].iter().filter(|p| p.home == home).count();
         let seat = *b.seats.get(k)?;
+        // A player sitting there has it.
+        if self.players.values().any(|p| p.vitals.seated == Some(seat)) {
+            return None;
+        }
         let block = self.block(seat)?;
         let info = self.content.blocks.info(block);
         let feet = voxmar_engine::vitals::seated_feet(seat, info.solid).floor().as_ivec3();
@@ -1381,14 +1391,47 @@ impl Server {
         Some((feet, at.as_vec3() + Vec3::new(0.5, 1.0, 0.5)))
     }
 
+    /// Where person `i` sleeps: on the bed of their own (`Building::beds`, one for each of
+    /// the home's people in the order they live there), if it is there and no player lies
+    /// in it.
+    fn own_bed(&self, town: &Town, i: usize) -> Option<IVec3> {
+        let home = town.info.people[i].home;
+        let b = &town.info.buildings[home];
+        let k = town.info.people[..i].iter().filter(|p| p.home == home).count();
+        let bed = *b.beds.get(k)?;
+        let block = self.block(bed)?;
+        let on = if self.content.blocks.info(block).solid { bed + IVec3::Y } else { bed };
+        let taken = self.players.values().any(|p| p.joined && p.position.floor().as_ivec3().xz() == bed.xz() && (p.position.y - on.y as f32).abs() < 1.5);
+        (self.content.blocks.def(block).has_tag("bed") && self.stands(on) && !taken).then_some(on)
+    }
+
+    /// Person `i`, resting on a seat or a bed of their home that is gone (broken) or that a
+    /// player has taken, gets up: their trip looks for another spot of its place at once.
+    fn rest_gone(&mut self, town: u64, i: usize) {
+        let t = &self.villagers.towns[&town];
+        let Some(trip) = t.people[i].trip.as_ref() else { return };
+        let Some(&end) = trip.path.last() else { return };
+        let b = &t.info.buildings[t.info.people[i].home];
+        let gone = match trip.place {
+            Place::Home if trip.pose == Pose::Resting => self.own_seat(t, i).is_none_or(|(feet, _)| feet != end),
+            Place::Sleep => b.beds.iter().any(|&bed| end == bed || end == bed + IVec3::Y) && self.own_bed(t, i) != Some(end),
+            _ => false,
+        };
+        if gone {
+            let tick = self.tick;
+            let trip = self.villagers.towns.get_mut(&town).expect("listed").people[i].trip.as_mut().expect("checked");
+            trip.next_spot = Some(tick);
+        }
+    }
+
     fn spot_inside(&self, b: usize, town: &Town, seed: u64) -> Option<IVec3> {
         let b = &town.info.buildings[b];
         let cells: Vec<IVec3> = b.room.iter()
             // Building::floor is the solid floor block; feet stand one above it.
             .map(|p| IVec3::new(p.x, b.floor + 1, p.y))
-            // Not in a chair or on a stool: one stands about the room, and sits only on a
-            // seat of their own (`own_seat`).
-            .filter(|&c| self.stands(c) && !b.seats.contains(&c) && !b.seats.contains(&(c - IVec3::Y)))
+            // Not in a chair, on a stool or on a bed: one stands about the room, and sits or
+            // lies only on a seat or a bed of their own (`own_seat`, `own_bed`).
+            .filter(|&c| self.stands(c) && ![c, c - IVec3::Y].iter().any(|s| b.seats.contains(s) || b.beds.contains(s)))
             .collect();
         if cells.is_empty() {
             return None;
@@ -1962,6 +2005,58 @@ mod tests {
             let spot = server.target(1, 0, mix(100, pick), &mut trip, &live);
             assert!(spot.is_none_or(|s| !seats.contains(&s)), "went to sleep on a seat");
         }
+    }
+
+    /// At bedtime each of a home's people goes to a bed of their own (`Building::beds`, in
+    /// the order they live there), lying on it; one with none, or whose bed is gone, sleeps
+    /// about the room as before. Nobody is sent to a bed or a seat a player is in, and one
+    /// resting on a seat or a bed that is broken, or that a player takes, gets up.
+    #[test]
+    fn they_sleep_in_their_own_beds_and_leave_seats_and_beds_players_take() {
+        let mut server = fixture("base:villager", 3);
+        let bed = server.content.blocks.expect("base:oak_bed");
+        let stool = server.content.blocks.expect("base:oak_stool");
+        let beds = [IVec3::new(6, 200, 6), IVec3::new(10, 200, 6)];
+        beds.iter().for_each(|&b| server.set_block(b, bed));
+        let seat = IVec3::new(7, 200, 9);
+        server.set_block(seat, stool);
+        let home = &mut server.villagers.towns.get_mut(&1).unwrap().info.buildings[0];
+        (home.beds, home.seats) = (beds.to_vec(), vec![seat]);
+        let live = server.live();
+        let trip = |place: Place| Trip { place, slot: 0, day: 0, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, 0), retry: 0, pursuit: None };
+        let sleeps = |server: &Server, i: usize| (0..40u64).map(|pick| server.target(1, i, mix(100 + i as u64, pick), &mut trip(Place::Sleep), &live)).collect::<Vec<_>>();
+        for i in 0..2 {
+            assert!(sleeps(&server, i).iter().all(|&s| s == Some(beds[i] + IVec3::Y)), "person {i} did not go to their own bed: {:?}", sleeps(&server, i));
+        }
+        assert!(sleeps(&server, 2).iter().all(|s| s.is_some_and(|s| !beds.iter().any(|&b| s.xz() == b.xz()))), "person 2, with no bed, slept on another's");
+        // A player lying in person 1's bed: they sleep elsewhere.
+        player(&mut server);
+        server.players.get_mut(&1).unwrap().position = (beds[1] + IVec3::Y).as_vec3() + Vec3::new(0.5, -0.4, 0.5);
+        assert!(sleeps(&server, 1).iter().all(|s| s.is_some_and(|s| s.xz() != beds[1].xz())), "sent to a bed a player lies in");
+        server.players.get_mut(&1).unwrap().position = Vec3::new(20.5, 200.0, 20.5);
+        // A player sitting on person 0's seat: they never go to sit there.
+        server.players.get_mut(&1).unwrap().vitals.seated = Some(seat);
+        assert!(server.own_seat(&server.villagers.towns[&1], 0).is_none(), "sent to a seat a player sits on");
+        server.players.get_mut(&1).unwrap().vitals.seated = None;
+        let (feet, _) = server.own_seat(&server.villagers.towns[&1], 0).expect("their seat");
+        // Sat, then the seat broken under them: up at once.
+        let mut sat = trip(Place::Home);
+        (sat.path, sat.pose, sat.next_spot) = (vec![feet], Pose::Resting, Some(server.tick + 1_000));
+        server.villagers.towns.get_mut(&1).unwrap().people[0].trip = Some(sat);
+        server.rest_gone(1, 0);
+        assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().unwrap().next_spot, Some(server.tick + 1_000), "got up from a seat still there");
+        server.set_block(seat, BlockId::AIR);
+        server.rest_gone(1, 0);
+        assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().unwrap().next_spot, Some(server.tick), "still sitting on a broken seat");
+        // Abed, then the bed broken: up, to sleep about the room.
+        let mut abed = trip(Place::Sleep);
+        (abed.path, abed.pose) = (vec![beds[0] + IVec3::Y], Pose::Resting);
+        server.villagers.towns.get_mut(&1).unwrap().people[0].trip = Some(abed);
+        server.rest_gone(1, 0);
+        assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().unwrap().next_spot, None, "got up from a bed still there");
+        server.set_block(beds[0], BlockId::AIR);
+        server.rest_gone(1, 0);
+        assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().unwrap().next_spot, Some(server.tick), "still lying where a broken bed was");
     }
 
     /// The wait to greet again is each player's own; and one struck stops greeting the

@@ -415,14 +415,17 @@ impl Creatures {
     /// Which blocks a body meets as a whole block, by id: what stands in its way and is
     /// not walked up (stairs and a roof's courses, pieces with a floor across all of their
     /// cell), and every railing, whatever its shape (`RAILING_TAG`). A post, a panel, a
-    /// lattice window or a lean-to is whole: a quail or a mouse fits the gap beside a
+    /// lattice window or a lean-to is whole (a bed is not): a quail or a mouse fits the gap beside a
     /// fence's post, or a hedgehog the corner where two panels meet, and a pen keeps them
     /// in only as a whole wall.
     fn whole_blocks(&self, blocks: &voxmar_engine::block::BlockRegistry) -> &[bool] {
         self.whole.get_or_init(|| {
             let (in_way, railings) = (self.in_way_blocks(blocks), self.railing_blocks(blocks));
             let floored = |a: &voxmar_engine::physics::Aabb| a.min.y <= 1e-3 && a.min.x <= 1e-3 && a.min.z <= 1e-3 && a.max.x >= 1.0 - 1e-3 && a.max.z >= 1.0 - 1e-3;
-            blocks.ids().map(|b| railings[b.0 as usize] || in_way[b.0 as usize] && !blocks.collision(b).iter().any(floored)).collect()
+            // A bed is lain on: its mattress walked up onto between its ends, as one sleeping
+            // in it does (`Server::own_bed`).
+            let bed = |b: voxmar_engine::block::BlockId| blocks.def(b).has_tag("bed");
+            blocks.ids().map(|b| railings[b.0 as usize] || in_way[b.0 as usize] && !bed(b) && !blocks.collision(b).iter().any(floored)).collect()
         })
     }
 

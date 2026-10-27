@@ -498,7 +498,10 @@ stall wants taught also keeps every villager's favourite taught by a nomad or fa
 People sit at their own tables: `people.sit` of their stays about the house (0.4) are spent
 on a seat of their own (`Building::seats`, one for each of the home's people in the order
 they live there), resting and turned to the table beside it; one with no seat to sit on, or
-whose seat is gone, stays on their feet about the room.
+whose seat is gone, stays on their feet about the room. At bedtime each lies on a bed of
+their own (`Building::beds`, the same way), and one with none sleeps about the room. Nobody
+is sent to a seat a player sits on or a bed a player lies in, and one resting on a seat or a
+bed that is broken, or that a player takes, gets up at once and finds another spot.
 
 People mind their things: one whose home or work a building is, out of bed, who sees a
 player break a furnishing the world set there (a village's barrel, crate or bed; one a player
