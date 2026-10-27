@@ -409,6 +409,12 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
   checks each language's text names the translated title. A Pot on the Chimney now opens
   with The Potter, beside Earthenware, so it is open during the first load. Brick by Brick's names A Table for Two, Charcoal's A Place to Pray, and The Potter's Fuel
   to Hand.
+- **The book and tracker show it too.** Once a quest's work is begun (any goal counted:
+  a load firing, a clamp charring) and until it is done, its page in the book and its
+  card on the tracker read "While you wait: [quest]" (`quest.meanwhile`, en and ja) for
+  each `meanwhile` quest open then. On the page the line is a button that turns the book
+  to that quest. Client side only: it reads the progress the server already sends. The
+  gate's Meanwhile step checks both.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
 

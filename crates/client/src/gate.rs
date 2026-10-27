@@ -605,6 +605,10 @@ steps! {
     /// torches crafted for it as the server counts them, and a quest done reads so, then
     /// drops off.
     Quests,
+    /// A quest begun (some charcoal of its sixteen, the pit kiln done) shows under it on the
+    /// tracker, and on its page in the book, the quest its words give to do while it waits;
+    /// pressed there, the line turns the book to that quest.
+    Meanwhile,
     /// The Kindle step's fire caught once fire.ron's catching time had passed and was gone
     /// once its burning time had, as the frames of the steps between saw it.
     Blaze,
@@ -2269,6 +2273,7 @@ fn step(world: &mut World, gate: &mut Gate, now: f32) {
         Step::StepUp => step_up(world, gate, now, in_phase),
         Step::Makeable => makeable(world, gate, now, in_phase),
         Step::Quests => quests(world, gate, now, in_phase),
+        Step::Meanwhile => meanwhile(world, gate, now, in_phase),
         Step::Blaze => blaze(world, gate, now),
         Step::Catalogue => catalogue(world, gate, now, in_phase),
         Step::Screenshot => screenshot(world, gate, now, in_phase),
@@ -10655,6 +10660,9 @@ const TRACKED: &str = "base:torchlight";
 const DONE_QUEST: &str = "base:crafting_table";
 /// A quest the session finishes before the book opens, for the line out of it.
 const DONE_FIRST: &str = "base:twine_and_thong";
+/// A quest whose words give another to do while it waits (`meanwhile`), and that one.
+const MEANWHILE_ON: &str = "base:charcoal";
+const MEANWHILE: &str = "base:a_place_to_pray";
 /// Longest the quest stages wait for the server, in its seconds.
 const QUEST_WAIT: f32 = 10.0;
 /// Where the quest book's web is pressed to be dragged, in the window's points, and how
@@ -10777,6 +10785,86 @@ fn road_words(world: &World) -> Result<String, String> {
     Ok(lines.join("; "))
 }
 
+/// A quest begun (two charcoal of sixteen) names what to do while it waits, by its
+/// `meanwhile`, open once the pit kiln is done: under it on the tracker, and on its page in
+/// the book, where pressed it turns the book to that quest.
+fn meanwhile(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
+    use crate::hud::quests::{QuestView, toggle_pin};
+    let waited = gate.server_in_phase();
+    let quit = |world: &mut World, gate: &mut Gate, what: &str, why: String| {
+        gate.check(what, Err(why));
+        world.resource_mut::<UiState>().quests_open = false;
+        world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
+        world.resource::<Net>().command("clear charcoal");
+        gate.next(Step::Blaze, now);
+    };
+    match gate.phase {
+        0 => {
+            let known = world.resource::<Launch>().content.quests.get(MEANWHILE_ON).is_some_and(|q| q.meanwhile.iter().any(|n| n == MEANWHILE));
+            if !known {
+                return quit(world, gate, "quests: meanwhile", format!("the content's {MEANWHILE_ON} gives no {MEANWHILE} to do meanwhile"));
+            }
+            let net = world.resource::<Net>();
+            for line in ["quest a_pit_kiln", "clear charcoal", "give charcoal 2"] {
+                net.command(line);
+            }
+            let content = world.resource::<Launch>().content.clone();
+            let mut settings = world.resource_mut::<crate::settings::Settings>();
+            settings.pinned_quests.clear();
+            toggle_pin(&mut settings, &content, MEANWHILE_ON);
+            gate.advance(now);
+        }
+        1 => {
+            let words = {
+                let (locale, content) = (world.resource::<Locale>(), &world.resource::<Launch>().content);
+                let quest = content.quests.get(MEANWHILE).expect("known");
+                locale.format("quest.meanwhile", &[("quest", &crate::hud::quests::title(locale, quest))])
+            };
+            let lines = tracker_lines(world).unwrap_or_default();
+            if !lines.contains(&words) {
+                if waited > QUEST_WAIT {
+                    let state = world.resource::<LocalPlayer>().quests.iter().find(|q| q.name == MEANWHILE_ON).cloned();
+                    quit(world, gate, "quests: meanwhile tracker", format!("{waited:.1} server s on, {MEANWHILE_ON} stands {state:?} and the tracker reads {lines:?}, not `{words}`"));
+                }
+                return;
+            }
+            gate.check("quests: meanwhile tracker", Ok(format!("{MEANWHILE_ON} begun, the tracker reads `{words}` under it")));
+            *world.resource_mut::<QuestView>() = QuestView { picked: Some(MEANWHILE_ON.into()), ..default() };
+            world.resource_mut::<UiState>().quests_open = true;
+            gate.advance(now);
+        }
+        2 => {
+            let line = world.query::<(Entity, &crate::hud::quests::MeanwhileLine, &InheritedVisibility)>().iter(world).find(|(_, line, v)| line.0 == MEANWHILE && v.get()).map(|(entity, ..)| entity);
+            let Some(line) = line else {
+                if in_phase > 2.0 {
+                    quit(world, gate, "quests: meanwhile", format!("the book open on {MEANWHILE_ON} shows no line naming {MEANWHILE}"));
+                }
+                return;
+            };
+            if in_phase < 0.5 {
+                return;
+            }
+            world.resource_mut::<UiClicks>().next = Some((line, MouseButton::Left));
+            gate.advance(now);
+        }
+        3 => {
+            let picked = world.resource::<QuestView>().picked.clone();
+            if picked.as_deref() != Some(MEANWHILE) && in_phase < 2.0 {
+                return;
+            }
+            gate.check(
+                "quests: meanwhile",
+                if picked.as_deref() == Some(MEANWHILE) { Ok(format!("the line on {MEANWHILE_ON}'s page, pressed, turned the book to {MEANWHILE}")) } else { Err(format!("2 s after the line naming {MEANWHILE} was pressed the book is on {picked:?}")) },
+            );
+            world.resource_mut::<UiState>().quests_open = false;
+            world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
+            world.resource::<Net>().command("clear charcoal");
+            gate.next(Step::Blaze, now);
+        }
+        _ => gate.next(Step::Blaze, now),
+    }
+}
+
 fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     use crate::hud::quests::{QuestView, toggle_pin};
     let key_code = world.resource::<crate::settings::Settings>().quests_key.0;
@@ -10787,7 +10875,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
     };
     if !known {
         gate.check("quests", Err(format!("the content lacks {TRACKED}, {DONE_QUEST} or {DONE_FIRST}")));
-        gate.next(Step::Blaze, now);
+        gate.next(Step::Meanwhile, now);
         return;
     }
     let quit = |world: &mut World, gate: &mut Gate, what: &str, why: String| {
@@ -10797,7 +10885,7 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         }
         world.resource_mut::<UiState>().quests_open = false;
         world.resource_mut::<crate::settings::Settings>().pinned_quests.clear();
-        gate.next(Step::Blaze, now);
+        gate.next(Step::Meanwhile, now);
     };
     match gate.phase {
         // Ten twine, from fifteen wheat in three stacks of five, to finish Twine and Thong, so
@@ -11378,9 +11466,9 @@ fn quests(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
                 },
             );
             world.resource_mut::<UiState>().quests_open = false;
-            gate.next(Step::Blaze, now);
+            gate.next(Step::Meanwhile, now);
         }
-        _ => gate.next(Step::Blaze, now),
+        _ => gate.next(Step::Meanwhile, now),
     }
 }
 

@@ -531,6 +531,7 @@
     "quest.routes": "Any one of these:",
     "quest.after": "Comes after: {list}",
     "quest.leads": "Leads to: {list}",
+    "quest.meanwhile": "While you wait: {quest}",
     "quest.chapter.count": "{done}/{all}",
     "quest.mark.done": "✓",
     "quest.mark.todo": "•",
