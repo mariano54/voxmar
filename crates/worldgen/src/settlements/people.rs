@@ -149,6 +149,7 @@ pub(super) struct ReactFile {
     chat: Option<f32>,
     chat_for: Option<f32>,
     chat_every: Option<f32>,
+    intruder_every: Option<f32>,
 }
 
 /// `people.live` as written: each number it gives replaces the one before.
@@ -313,11 +314,14 @@ pub struct ReactDef {
     pub chat: f32,
     pub chat_for: f32,
     pub chat_every: f32,
+    /// A player one of them sees in their home at night (they are bound for bed or in it)
+    /// is told to leave, with a cry, each again no sooner than `intruder_every`.
+    pub intruder_every: f32,
 }
 
 impl Default for ReactDef {
     fn default() -> Self {
-        Self { greet: 4.0, greet_for: 3.0, greet_every: 90.0, fear: 12.0, afraid: 30.0, rain: 0.2, shelter: Vec::new(), outdoor: Vec::new(), chat: 2.5, chat_for: 6.0, chat_every: 120.0 }
+        Self { greet: 4.0, greet_for: 3.0, greet_every: 90.0, fear: 12.0, afraid: 30.0, rain: 0.2, shelter: Vec::new(), outdoor: Vec::new(), chat: 2.5, chat_for: 6.0, chat_every: 120.0, intruder_every: 30.0 }
     }
 }
 
@@ -494,7 +498,7 @@ impl PeopleDef {
                 })*
             };
         }
-        react!(greet, greet_for, greet_every, fear, afraid, rain, shelter, outdoor, chat, chat_for, chat_every);
+        react!(greet, greet_for, greet_every, fear, afraid, rain, shelter, outdoor, chat, chat_for, chat_every, intruder_every);
         Ok(())
     }
 
@@ -564,7 +568,7 @@ impl PeopleDef {
         let r = &self.react;
         // Sleep and Home are where rain sends people: sheltering from them would leave
         // nowhere to go.
-        if [r.greet_for, r.greet_every, r.afraid, r.chat_for, r.chat_every].iter().any(|&t| !(t > 0.0))
+        if [r.greet_for, r.greet_every, r.afraid, r.chat_for, r.chat_every, r.intruder_every].iter().any(|&t| !(t > 0.0))
             || r.greet_for >= r.greet_every
             || r.chat_for >= r.chat_every
             || [r.greet, r.fear, r.chat].iter().any(|&d| !(d >= 0.0))
