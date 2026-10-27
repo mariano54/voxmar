@@ -137,9 +137,10 @@
         ),
         (
             name: "a_kiln_load", age: "farm", branch: "pottery", title: "A Kiln Load",
-            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks toward the seven plain ones of the crucible. Between loads, turn spare fired clay into crockery (Earthenware), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
+            why: "Brick by Brick takes forty fired clay, and the crucible a pot, so keep the pit kiln busy. Fire forty clay in all, counting what you have fired before, and the potters' trick is yours: four kiln bricks toward the seven plain ones of the crucible. While a load fires, turn spare fired clay into crockery (Earthenware) and set a pot on your chimney (A Pot on the Chimney), fire cobblestone into stone for an altar (A Place to Pray), or hand clay to potters on the road.",
             tasks: [[Cook("fired_clay", 40)]],
             after: ["the_potter"],
+            meanwhile: ["earthenware", "a_pot_on_the_chimney", "a_place_to_pray"],
             rewards: [Xp("crafting", 120.0), Item("kiln_bricks", 4)],
         ),
         (

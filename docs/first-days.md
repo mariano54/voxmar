@@ -499,6 +499,10 @@ Chimney, open once Earthenware is done: two chimney pots of fired clay at the ta
 on the chimney, the spare put by with the crockery. A Kiln Load then runs 53 to 57 s with
 three new things.
 
+The book now says so too: A Kiln Load's text points to the chimney pot while a load fires,
+and its `meanwhile` list (Earthenware, A Pot on the Chimney, A Place to Pray) is load-checked
+against the text and the order of the book (docs/quests.md).
+
 ### Nomad pacing (Oct 21)
 
 The Nomad walk now runs the same pacing check as the Farm walk, by the same floors. Two runs:

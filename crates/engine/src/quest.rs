@@ -199,6 +199,10 @@ pub struct QuestDef {
     /// recipes.ron) are refused until it is done. One rite to an age, load-checked.
     #[serde(default)]
     pub opens: Option<String>,
+    /// Quests its text names to do while it waits (a load firing, a clamp smouldering):
+    /// each opens while this one is open and has its title in brackets in `why`, load-checked.
+    #[serde(default)]
+    pub meanwhile: Vec<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -498,6 +502,9 @@ impl QuestRegistry {
             for after in &mut quest.after {
                 *after = after.split('|').map(|n| if n.contains(':') { n.to_owned() } else { format!("{namespace}:{n}") }).collect::<Vec<_>>().join("|");
             }
+            for name in &mut quest.meanwhile {
+                qualify(name);
+            }
         }
         Ok(file)
     }
@@ -606,6 +613,26 @@ impl QuestRegistry {
                     capstone.age,
                     capstone.branch
                 )));
+            }
+        }
+        // What a quest's text gives to do while it waits is there to do then: not done
+        // before it (one it waits on), open while it is (each `after` has a choice it waits
+        // on or another of the same list), and named in its words.
+        for quest in quests.iter().filter(|q| !q.meanwhile.is_empty()) {
+            let before = waited_on(&quests, quest);
+            for name in &quest.meanwhile {
+                let Some(other) = quests.iter().find(|q| &q.name == name) else {
+                    return Err(RegistryError(format!("quest {} gives `{name}` to do meanwhile, which does not exist", quest.name)));
+                };
+                if other.name == quest.name || before.contains(other.name.as_str()) {
+                    return Err(RegistryError(format!("quest {} gives {name} to do meanwhile, which is done before it", quest.name)));
+                }
+                if let Some(after) = other.after.iter().find(|a| !a.split('|').any(|a| a != name && (before.contains(a) || quest.meanwhile.iter().any(|m| m == a)))) {
+                    return Err(RegistryError(format!("quest {} gives {name} to do meanwhile, which waits on {after}: it is not open while {} is", quest.name, quest.name)));
+                }
+                if !quest.why.split('(').skip(1).filter_map(|rest| rest.split_once(')')).any(|(inside, _)| inside.contains(other.title.as_str())) {
+                    return Err(RegistryError(format!("quest {} gives {name} to do meanwhile, yet its words do not name it: put ({}) in its `why`", quest.name, other.title)));
+                }
             }
         }
         // Every quest of an age a rite opens follows that rite on every route: one done
@@ -1650,6 +1677,24 @@ mod tests {
         assert_eq!(error.0, "quests t:a after t:b after t:c after t:a come after each other, so none of them ever opens");
         let escaped = [quest("start", ""), quest("a", r#""start", "b""#), quest("b", r#""c""#), quest("c", r#""a|start""#)].concat();
         assert!(book(&escaped).is_ok(), "c opens by start, so the loop opens");
+    }
+
+    /// What a quest gives to do meanwhile opens while it is open and is named in its words:
+    /// one done before it, one waiting on it, an unknown one or one its words leave out is
+    /// refused by name.
+    #[test]
+    fn what_a_quest_gives_to_do_meanwhile_is_open_and_named() {
+        let book = |quests: &str| QuestRegistry::new(vec![QuestRegistry::read("t", &format!("(quests: [{quests}])")).unwrap()]).err().map(|e| e.0);
+        let quest = |name: &str, more: &str| format!(r#"(name: "{name}", age: "nomad", branch: "main", title: "{}", tasks: [[Home]], {more}),"#, name.to_uppercase());
+        let wait = |why: &str, meanwhile: &str| [quest("a", r#"why: """#), quest("b", r#"why: "", after: ["a"]"#), quest("c", r#"why: "", after: ["b"]"#), quest("d", r#"why: "", after: ["c|a"]"#), quest("w", &format!(r#"why: "{why}", after: ["a"], meanwhile: [{meanwhile}]"#))].concat();
+        assert_eq!(book(&wait("Meanwhile, B (B) and then C (C).", r#""b", "c""#)), None, "b opens as w does, c after b");
+        assert_eq!(book(&wait("Do D (D, B).", r#""d", "b""#)), None, "d by either of its choices");
+        assert_eq!(book(&wait("(A)", r#""a""#)), Some("quest t:w gives t:a to do meanwhile, which is done before it".into()));
+        assert_eq!(book(&wait("(C)", r#""c""#)), Some("quest t:w gives t:c to do meanwhile, which waits on t:b: it is not open while t:w is".into()));
+        assert_eq!(book(&wait("(B)", r#""e""#)), Some("quest t:w gives `t:e` to do meanwhile, which does not exist".into()));
+        assert_eq!(book(&wait("B, then", r#""b""#)), Some("quest t:w gives t:b to do meanwhile, yet its words do not name it: put (B) in its `why`".into()));
+        let after = [quest("a", r#"why: """#), quest("w", r#"why: "(B)", after: ["a"], meanwhile: ["b"]"#), quest("b", r#"why: "", after: ["w"]"#)].concat();
+        assert_eq!(book(&after), Some("quest t:w gives t:b to do meanwhile, which waits on t:w: it is not open while t:w is".into()));
     }
 
     #[test]
