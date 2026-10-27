@@ -15,8 +15,8 @@ a plank's edge cuts nothing); an older save's come back as the flint tool, the d
 stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`).
 
 **Why those speeds** (Oct 14 tier audit). A block takes its hardness over the speed, and
-after each break the hand waits a quarter second before the next (`mine_cooldown`,
-Minecraft's five ticks), so what a player feels sweeping a wall is hardness / speed + 0.25 s.
+after each break the hand waits a quarter second before the next (`break_wait` in
+`base/tools.ron`, Minecraft's five ticks), so what a player feels sweeping a wall is hardness / speed + 0.25 s.
 With 2, 4, 6, 8 the copper and iron steps were near that floor: on a log (hardness 2)
 0.75 to 0.58 to 0.50 s a block, 1.29x then 1.17x, and on stone 1.25x then 1.14x, under the
 1.4x a step needs to be felt. Copper 7 and iron 14 make each step about 1.4x on what tools
@@ -27,12 +27,14 @@ are for (log, cobblestone, ore; stone 1.35x and 1.30x):
 | Log (needs an axe), cobblestone (2.0) | 2.25 (cobblestone) | 1.25 | 0.75 | 0.54 | 0.39 |
 | Stone (1.5, needs a pickaxe) | | 1.00 | 0.63 | 0.46 | 0.36 |
 | Ore (3.0, needs a pickaxe) | | 1.75 | 1.00 | 0.68 | 0.46 |
-| Clay, gravel (0.6) | 0.85 | 0.55 | 0.40 | 0.34 | 0.29 |
-| Dirt (0.5) | 0.75 | 0.50 | 0.38 | 0.32 | 0.29 |
+| Clay, gravel (0.6) | 0.85 | 0.55 | 0.37 | 0.34 | 0.29 |
+| Dirt (0.5) | 0.75 | 0.50 | 0.35 | 0.32 | 0.29 |
 
-Soft ground stays near the quarter-second floor whatever the tool (1.2x a step past
-stone): it was already quick, and only the wait could change that, which is not a tier's
-to change.
+Soft ground stays near the quarter-second floor whatever the tool past stone (1.1x a
+step): it was already quick, and only the wait could change that, which is not a tier's
+to change. The stone shovel is 5 (Oct 27), so the digging stick to stone is still felt on
+soil (1.43x); `every_tool_tier_is_felt` asserts every step, and pins the soil steps past stone
+as the only ones not felt (still faster, and near the wait's floor).
 
 Bare hands break neither natural stone nor a standing log: their rules in `base/tools.ron`
 ask for a pickaxe and an axe of tier 1 (Mariano, Oct 15: the early game was too easy, and

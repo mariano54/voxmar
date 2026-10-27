@@ -527,7 +527,7 @@ pub(crate) struct Recordings {
     /// An item picked up off the ground, played when the player's Minecraft sounds are not.
     /// A later package that lists any replaces these.
     pickup: Vec<String>,
-    /// A tool in hand nearly worn out (`tools.ron`'s `wear.warn`), and one that broke. A
+    /// A tool in hand nearly worn out (`tools.ron`'s `wear.warn` and `warn_uses`), and one that broke. A
     /// later package that lists any replaces these.
     tool_worn: Vec<String>,
     tool_break: Vec<String>,

@@ -106,7 +106,7 @@
         (template: "drop", name: "stone_head", tags: ["tool_head"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_pickaxe", tags: ["uses:150", "mend:stone_head", "pickaxe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_axe", tags: ["uses:150", "mend:stone_head", "axe", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
-        (template: "drop", name: "stone_shovel", tags: ["uses:150", "mend:stone_head", "shovel", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
+        (template: "drop", name: "stone_shovel", tags: ["uses:150", "mend:stone_head", "shovel", "tool", "tier:2", "speed:5", "yield:0.05"], all: (color: (120, 120, 125))),
         (template: "drop", name: "stone_hoe", tags: ["uses:150", "mend:stone_head", "hoe", "tool", "tier:2", "speed:4", "yield:0.05", "reap:1"], all: (color: (120, 120, 125), action: Some("base:till"))),
         (template: "drop", name: "stone_knife", tags: ["uses:150", "mend:stone_head", "knife", "tool", "tier:2", "speed:4", "yield:0.05"], all: (color: (120, 120, 125))),
         // Copper: tier 3.

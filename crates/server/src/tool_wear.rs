@@ -203,8 +203,8 @@ mod tests {
     }
 
     /// A pickaxe wears a use for each stone it breaks, two for a block it is not made for
-    /// (planks), none for one that breaks at a touch; it warns once at a tenth left, and worn
-    /// out it breaks to nothing (or a head a pack names) and the player hears it.
+    /// (planks), none for one that breaks at a touch; it warns once where `Wear::warn_at` says
+    /// (a tenth left, or `warn_uses` if more), and worn out it breaks to nothing (or a head a pack names) and the player hears it.
     #[test]
     fn a_tool_wears_by_use_and_breaks() {
         let (mut server, client) = holding("base:flint_pickaxe", 0);
@@ -222,13 +222,13 @@ mod tests {
         server.wear_on_block(1, grass, false, server.tool_in_hand(1));
         assert_eq!(wear(&server), Some(3), "grass breaks at a touch");
         assert_eq!(told(&client), (0, 0));
-        // Down to a tenth left, it warns once.
+        // Down to where it warns (`Wear::warn_at`), it warns once.
         let warn_at = server.content.tools.wear().warn_at(uses);
         server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - warn_at - 1;
         let stone = put(&mut server, "base:stone");
         server.wear_on_block(1, stone, false, server.tool_in_hand(1));
         server.wear_on_block(1, stone, false, server.tool_in_hand(1));
-        assert_eq!(told(&client), (1, 0), "warned once, crossing a tenth left");
+        assert_eq!(told(&client), (1, 0), "warned once, crossing where it warns");
         server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - 1;
         server.wear_on_block(1, stone, false, server.tool_in_hand(1));
         let pick = server.content.blocks.expect("base:stone_pickaxe");
