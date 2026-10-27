@@ -989,6 +989,26 @@ mod tests {
         }
     }
 
+    /// A window seat is a seat and a store: with nothing in hand a right click sits on it,
+    /// with something in hand it opens the box under the cushion.
+    #[test]
+    fn a_window_seat_is_sat_on_empty_handed_and_opened_with_something_in_hand() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        for (held, wanted) in [(None, "base:sit"), (Some("base:cobblestone"), "base:open_store")] {
+            let (mut app, block, server_side) = app(content.actions.clone());
+            app.world_mut().resource_mut::<ClientWorld>().set_block(block, content.blocks.expect("base:oak_window_seat"));
+            app.world_mut().resource_mut::<Target>().hit = Some(RayHit { block, face: voxmar_engine::coords::Face::PosY, distance: 1.0 });
+            let mut player = app.world_mut().resource_mut::<LocalPlayer>();
+            player.inventory.slots[0] = held.map(|name| voxmar_engine::inventory::ItemStack::new(content.blocks.expect(name), 4));
+            player.selected = 0;
+            app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Right);
+            app.update();
+            let proposed: Vec<ActionId> = std::iter::from_fn(|| server_side.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ClientMessage::Propose { action, .. } => Some(action), _ => None }).collect();
+            let names: Vec<&str> = proposed.iter().filter_map(|&a| content.actions.get(a)).map(|def| def.name.as_str()).collect();
+            assert_eq!(names.first(), Some(&wanted), "with {held:?} in hand: {names:?}");
+        }
+    }
+
     /// A chest opened with a block in hand, the button held on while its screen comes: the
     /// block is not laid against it.
     #[test]

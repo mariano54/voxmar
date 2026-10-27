@@ -54,6 +54,13 @@
         (block: "{name}_barrel_rack", role: Bin(slots: 18)),
         (block: "{name}_cupboard", role: Bin(slots: 9)),
         (block: "{name}_stair_cupboard", role: Bin(slots: 9)),
+        // The pieces whose model is full already keep things too, behind what they show: a
+        // window seat's box under its cushion, a bookshelf among its books, a pantry shelf's
+        // food by its crocks, a pot shelf's crockery by its pots.
+        (block: "{name}_window_seat", role: Bin(slots: 9)),
+        (block: "{name}_bookshelf", role: Bin(slots: 6)),
+        (block: "{name}_pantry_shelf", role: Bin(slots: 6, holds: Some("tag:edible"))),
+        (block: "{name}_pot_shelf", role: Bin(slots: 6, holds: Some("tag:crockery"))),
         (block: "{name}_blanket_chest", role: Bin(slots: 9)),
         (block: "{name}_dresser", role: Bin(slots: 9)),
         // A wall shelf and a sill show what is put on them (blocks' `shows`). A family
