@@ -370,6 +370,24 @@ step sets midnight in the walled room by the hearth and waits on the Evening in 
 line seen at any point in the run, since the server tells an effect once a session and the
 motifs step can be where it first came on ("home: evening in"), then sets noon.
 
+## Home again
+
+Coming home is a moment of its own. Back within reach of the lit hearth after ten minutes
+or more away (half a game day out), the player is welcomed home in chat ("Home again: back
+by your own hearth after a long day out...") and is **Home again** for five minutes: heal
+x1.2 and 2° warmer (a home's warmth, so never Hot), wherever they go next. A short step out
+to the woodpile is no homecoming, nor is joining or waking at home.
+
+It is data (effects.ron `homecomings`, engine `HomecomingRule`): a rule gives an effect
+that has no `when` of its own for `seconds`, once the player comes home after `away`
+seconds or more away, if the effect `needs` names holds there (base: `hearthside`, so a
+lit hearth, not a bedroll alone). The server counts the time away (`Player::away`, not
+saved) only while the player has a home and is alive, and only at their own home, never a
+guest's; dying and waking at home starts it again. Loading refuses a rule whose effect has a
+`when`, a time of 0 or less, or a `needs` with no `when`. Tests: the engine's
+`coming_home_after_long_away_gives_its_effect`, the server's
+`coming_home_after_a_long_day_out_is_a_welcome_home` (guests.rs).
+
 ## Drying off
 
 Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet

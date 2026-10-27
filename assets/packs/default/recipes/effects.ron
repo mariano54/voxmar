@@ -717,6 +717,19 @@
             ".wwkwwkww.",
             ".kwwkwwkk.",
         ])]),
+        // A cottage at dusk, its door open and lit, a wisp of smoke from the chimney: home again.
+        "ui/effect/home_again": (size: (10, 10), layers: [Grid(legend: {'s': "#b0b0b8", 'r': "#a04428", 'k': "#3a2410", 'w': "#c89858", 'y': "#ffd850", 'o': "#f08a20"}, rows: [
+            ".......s..",
+            "......s...",
+            "....rrkr..",
+            "...rrrkrr.",
+            "..rrrrrrrr",
+            "..wwwwwww.",
+            "..wwwwyyw.",
+            "..woowyyw.",
+            "..wyowwww.",
+            "..kkkkkkk.",
+        ])]),
         // A shelf with its jars in a row.
         "ui/effect/everything_in_its_place": (size: (10, 10), layers: [Grid(legend: {'k': "#1a1008", 'w': "#a0703a", 'b': "#4a80c0", 'r': "#c04030", 'g': "#40a040"}, rows: [
             "..........",
