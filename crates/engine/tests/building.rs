@@ -216,6 +216,9 @@ fn an_arch_curves_alike_from_both_its_jambs() {
             let def = blocks.def(blocks.expect(name));
             assert_eq!(def.tags.iter().filter(|t| t.starts_with("shelter:")).count(), 1, "{name} walls a room once");
             assert!(def.solid, "{name} is walked into");
+            // Masonry, as the wall it arches: a town's comes back when broken, as its wall's
+            // stone does, where a village's furnishings give nothing.
+            assert!(!def.has_tag("furnishing"), "{name} would give nothing where a town set it");
         }
         for (name, made) in [(&arch, true), (&wide, true), (&half, false)] {
             assert_eq!(content.recipes.iter().any(|r| r.output == blocks.expect(name)), made, "{name} made or not");
