@@ -495,6 +495,12 @@ holding it) they take it, say thanks and go back to their day, wanting another n
 why. A child coming to food is not counted as a lured creature. The content test that keeps
 stall wants taught also keeps every villager's favourite taught by a nomad or farm quest.
 
+People mind their things: one whose home or work a building is, out of bed, who sees a
+player break a furnishing the world set there (a village's barrel, crate or bed; one a player
+set down is theirs to take) within `people.react.scold` and their sight cries out and says
+it was theirs, to each player again no sooner than `scold_every`. It calls no guards: theft
+and crime rules wait for P54.
+
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter
 roles remain follow-ups. Single-valued people data and same-named routines follow the
