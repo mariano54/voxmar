@@ -1083,8 +1083,7 @@ pub(crate) fn tool_line(locale: &Locale, content: &voxmar_engine::content::Conte
 /// What a tool breaks that a lesser one of its kind cannot (`ToolRegistry::opens`): a stone
 /// pickaxe names coal and copper, so making it says where it leads.
 pub(crate) fn opens_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
-    let tool = content.tools.tool(Some(item));
-    let names: Vec<String> = content.tools.opens(&content.blocks, tool.kind?, tool.tier).into_iter().map(|b| locale.block(content.blocks.def(b))).collect();
+    let names: Vec<String> = content.tools.opens(item).iter().map(|&b| locale.block(content.blocks.def(b))).collect();
     (!names.is_empty()).then(|| (locale.format("item.tool_opens", &[("list", &listed(locale, names, 3))]), SOFT))
 }
 
@@ -1621,7 +1620,7 @@ mod tests {
             let locale = Locale::load(&assets.join("content"), code);
             let line = |name: &str| opens_line(&locale, &content, content.blocks.id(name).unwrap()).map(|(line, _)| line);
             let block = |name: &str| locale.block(content.blocks.def(content.blocks.id(name).unwrap()));
-            let more = content.tools.opens(&content.blocks, content.tools.tool(content.blocks.id("base:stone_pickaxe")).kind.unwrap(), 2).len() - 3;
+            let more = content.tools.opens(content.blocks.id("base:stone_pickaxe").unwrap()).len() - 3;
             let list = locale.format("tooltip.more", &[("list", &[block("base:coal_ore"), block("base:copper_ore"), block("base:tin_ore")].join(locale.get("language.comma"))), ("count", &more)]);
             assert_eq!(line("base:stone_pickaxe"), Some(locale.format("item.tool_opens", &[("list", &list)])), "{code}");
             assert_eq!(line("base:flint_pickaxe"), None, "{code}");
