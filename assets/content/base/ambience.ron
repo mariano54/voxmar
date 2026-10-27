@@ -50,7 +50,9 @@
 // (how many live there: its size), sheltered (how much a roof overhead muffles the open
 // rain), home (how far up `home`'s ladder the player stands), the groups below, the
 // roof patters, and `effect:NAME` for any effect (effects.ron): 1 while the player holds
-// it, else 0, so a home is heard as the server judged it (a door shut, an evening in).
+// it, else 0, so a home is heard as the server judged it (a door shut, an evening in: the
+// weather outside drops away with the door shut, the night's crickets and owls on an
+// evening in by the fire).
 // Each must be an effect, or the game does not start.
 //
 // home: the home ladder's effects (effects.ron), lowest first: the `home` axis is 0 away
@@ -115,7 +117,8 @@
         // A pot on the boil (`simmering`): one within five blocks is full.
         (name: "pot", tags: ["simmering"], range: (2, 10)),
         // A window in the wall (`window`: glass, oiled hide, a lattice, shutters open); shut
-        // shutters are none. A window or two near counts fully.
+        // shutters are none. A window or two near counts fully. By tag alone: a pane laid in
+        // a floor or set as decor counts too, as no wall is asked of it.
         (name: "window", tags: ["window"], range: (0, 2)),
         (name: "falls", materials: [Water], falling: true, range: (6, 90)),
         (name: "water", materials: [Water], range: (20, 300)),
@@ -268,7 +271,7 @@
             name: "crickets", sound: Crickets, volume: 0.12, fade: 8,
             when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3), "sky": (min: 0.4, fade: 0.4)},
             not_biome: ["desert", "frozen"],
-            duck: {"sheltered": 0.6, "rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95, "shelter": 0.75},
+            duck: {"sheltered": 0.6, "rain": 0.9, "high_wind": 0.6, "hail": 0.95, "sleet": 0.9, "dust": 0.95, "shelter": 0.75, "effect:evening_in": 0.5},
         ),
         // Running water, recorded: a creek's babble, louder the more the place is by the
         // water (a wide fade on `flowing`, so it grows from the edge of the valley in).
@@ -445,7 +448,7 @@
             reach: 24,
             when: {"sun": (max: -0.1, fade: 0.1), "leaves": (min: 0.3, fade: 0.3)},
             biome: ["forest"],
-            duck: {"shelter": 0.75, "rain": 0.8},
+            duck: {"shelter": 0.75, "rain": 0.8, "effect:evening_in": 0.5},
         ),
         // A cricket close by in the grass at night.
         (
@@ -453,7 +456,7 @@
             pitch: (0.95, 1.05), reach: 6,
             when: {"sun": (max: -0.1, fade: 0.1), "temperature": (min: 9, fade: 6), "grass": (min: 0.35, fade: 0.3)},
             not_biome: ["desert", "frozen"],
-            duck: {"shelter": 0.8, "rain": 0.9},
+            duck: {"shelter": 0.8, "rain": 0.9, "effect:evening_in": 0.5},
         ),
         // A nightjar churring on a warm night over open ground (grass, few trees), from dusk:
         // a long dry rattle now and then, somewhere out past the camp.
@@ -462,7 +465,7 @@
             pitch: (0.95, 1.05), reach: 20,
             when: {"sun": (max: -0.05, fade: 0.1), "temperature": (min: 12, fade: 5), "grass": (min: 0.4, fade: 0.3), "leaves": (max: 0.2, fade: 0.2), "sky": (min: 0.6, fade: 0.3)},
             not_biome: ["desert", "frozen", "wetland"],
-            duck: {"shelter": 0.8, "rain": 0.9, "high_wind": 0.7},
+            duck: {"shelter": 0.8, "rain": 0.9, "high_wind": 0.7, "effect:evening_in": 0.5},
         ),
         // Ice on frozen water singing as the night cools: a deep thoom, then a falling
         // whistle running away through the sheet. Now and then by day too, more after dark.
@@ -478,7 +481,7 @@
             pitch: (0.85, 1.15), reach: 12,
             when: {"sun": (max: 0.1, fade: 0.15), "temperature": (min: 12, fade: 5), "water": (min: 0.25, fade: 0.2), "continentalness": (min: 0.05, fade: 0.1)},
             biome: ["wetland", "river"],
-            duck: {"shelter": 0.8, "rain": 0.3},
+            duck: {"shelter": 0.8, "rain": 0.3, "effect:evening_in": 0.5},
         ),
         // Gusts on heights.
         (
@@ -774,13 +777,13 @@
             name: "night_dog", sound: Bark, volume: 0.26, at: Around(distance: (20, 45), height: (0, 3)), per_minute: 0.8, cooldown: 30,
             pitch: (0.9, 1.1), reach: 16,
             when: {"settlement_edge": (max: 0, fade: 50), "sun": (max: -0.2, fade: 0.1), "depth": (max: 2, fade: 4)},
-            duck: {"rain": 0.8},
+            duck: {"rain": 0.8, "effect:evening_in": 0.5},
         ),
         (
             name: "night_owl", sound: Owl, volume: 0.3, at: Around(distance: (25, 45), height: (6, 14)), per_minute: 0.4, cooldown: 60,
             reach: 24,
             when: {"settlement_edge": (max: 0, fade: 50), "sun": (max: -0.25, fade: 0.1), "depth": (max: 2, fade: 4)},
-            duck: {"rain": 0.8},
+            duck: {"rain": 0.8, "effect:evening_in": 0.5},
         ),
     ],
 )
