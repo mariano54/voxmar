@@ -225,6 +225,14 @@
             rewards: [Xp("farming", 250.0)],
         ),
         (
+            name: "seed_for_seed", age: "farm", branch: "farming", title: "Seed for Seed",
+            side: true,
+            why: "Seed swappers camp on grassland near the fields. Once you have Farming 3 they give two rye for four wheat seed, and from Farming 7 two rye, carrots or chickpeas: seed you will not find wild. Hold four wheat seed and swap with them once.",
+            tasks: [[Dealt("seed_swappers", "swap", 1)], [Dealt("seed_swappers", "swap_more", 1)]],
+            after: ["a_field_of_gold"],
+            rewards: [Xp("farming", 60.0)],
+        ),
+        (
             name: "a_well_by_the_field", age: "farm", branch: "farming", title: "A Well by the Field",
             why: "Crops want water within four blocks, so a field far from a river or pond stays poor. A well waters as water does. Make one at the crafting table (Construction 8): a stick, a plank and a stick along the top; a cobblestone, a pail and a cobblestone across the middle; three cobblestones along the bottom. A pail is two planks set corner to corner. Set the well on the ground beside your tilled field, or sunk level with it, no more than four blocks from the crops.",
             tasks: [[Craft("well", 1), Watering("well", 1)]],
@@ -384,6 +392,14 @@
             tasks: [[Kill("mouflon", 2), Craft("drying_rack", 1)], [Kill("red_deer", 1), Craft("drying_rack", 1)], [Kill("wild_boar", 1), Craft("drying_rack", 1)], [Kill("aurochs", 1), Craft("drying_rack", 1)]],
             after: ["the_farm_age"],
             rewards: [Xp("hunter", 200.0), Xp("attack", 100.0)],
+        ),
+        (
+            name: "fangs_for_the_watch", age: "farm", branch: "hunter", title: "Fangs for the Watch",
+            side: true,
+            why: "Guards patrol the roads near towns and pay a bounty on dangerous beasts. A boar, a wolf or a bear sometimes leaves a fang: hand one to the patrol and they pay a gold coin.",
+            tasks: [[Dealt("guard_patrol", "bounty", 1)]],
+            after: ["bigger_game"],
+            rewards: [Xp("hunter", 40.0), Xp("attack", 40.0)],
         ),
         (
             name: "a_haunch_for_the_pot", age: "farm", branch: "hunter", title: "A Haunch for the Pot",
@@ -742,6 +758,14 @@
             rewards: [Xp("farming", 120.0), Item("carrot", 4)],
         ),
         (
+            name: "wassail", age: "farm", branch: "farming", title: "Wassail",
+            side: true,
+            why: "By night, wassailers come singing to homes with a lit hearth. Give them a loaf while your crops grow within 24 blocks and they toast the field: every crop about it grows a stage. Meet them near home after dark.",
+            tasks: [[Dealt("wassailers", "toast", 1)]],
+            after: ["kitchen_garden"],
+            rewards: [Xp("farming", 60.0)],
+        ),
+        (
             name: "a_full_house", age: "farm", branch: "husbandry", title: "A Full House",
             why: "Keep four animals about the house: you heal a fifth faster and learn a little more at home. Junglefowl, mallards and mouflon tamed near home all count.",
             tasks: [[Built("home_full_house", 1)]],
@@ -794,7 +818,7 @@
         (
             name: "coin_at_the_roadside", age: "farm", branch: "callers", title: "Coin at the Roadside",
             side: true,
-            why: "Folk on the road buy what you have to spare. A tanner pays two gold coins for four hides; a woodcarver one for eight logs; a potter two for four fired clay; shearers one for six wool; an ore assayer one for four copper ore. Sell to any of them once, and keep the coin for the road.",
+            why: "Folk on the road buy what you have to spare. A tanner on open ground pays two gold coins for four hides; a woodcarver in the woods one for eight logs; a potter on grassland two for four fired clay; shearers on grass and highland one for six wool; an ore assayer in the mountains and rocky hills one for four copper ore. Sell to any of them once, and keep the coin for the road.",
             tasks: [[Dealt("tanner", "buy", 1)], [Dealt("woodcarver", "buy", 1)], [Dealt("potter", "buy", 1)], [Dealt("shearers", "buy", 1)], [Dealt("ore_assayer", "buy", 1)]],
             after: ["neighbourly"],
             rewards: [Xp("crafting", 60.0)],
