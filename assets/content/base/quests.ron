@@ -138,8 +138,8 @@
         ),
         (
             name: "a_clay_store", age: "farm", branch: "main", title: "Clay in Store",
-            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest and leave it there. Clay keeps for ever, and the next load is a step away.",
-            tasks: [[Stocked("clay", "chest", 32)]],
+            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest, a barrel or a crate and leave it there. Clay keeps for ever, and the next load is a step away.",
+            tasks: [[Stocked("clay", "chest", 32)], [Stocked("clay", "barrel", 32)], [Stocked("clay", "crate", 32)]],
             after: ["clay_banks", "fire_the_clay"],
             rewards: [Xp("crafting", 80.0), Item("bread", 2)],
         ),

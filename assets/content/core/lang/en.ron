@@ -500,6 +500,8 @@
     "item.flame.tended": "Tended inside a settlement: it never goes out there",
     "item.mend": "Mend with {item} at a {station}",
     "tool.nearly_worn": "Your {item} is nearly worn out. {how} before it breaks.",
+    "tool.broke": "Your {item} broke.",
+    "tool.broke_spare": "Your {item} broke. Your {spare} is in hand now.",
     "item.slot.charm": "Charm",
     "item.slot.empty": "Wear a piece here: Shift-click it, or drop it in",
     "item.weight.light": "Light",

@@ -623,7 +623,7 @@ impl Server {
         }
         let (day, tamed_at) = (self.day, self.content.creatures.condition().tamed);
         let content = &self.content;
-        let mut tamed = Vec::new();
+        let (mut tamed, mut held) = (Vec::new(), Vec::new());
         for (&id, creature) in self.creatures.live.iter_mut().filter(|(_, c)| near(c)) {
             match what {
                 // Taken in as feeding takes one in: newly tamed, just fed, at home here.
@@ -644,6 +644,10 @@ impl Server {
                 // a picture.
                 "hold" => {
                     creature.held_until = tick + 60 * voxmar_protocol::TICKS_PER_SECOND as u64;
+                    // A wind-up in hand is called off (below): held, it neither walks on
+                    // after the player it wound up at nor lands the blow.
+                    (creature.tracking, creature.winding) = (None, false);
+                    held.push(id);
                     let to = (at - creature.body.position).with_y(0.0);
                     let side = voxmar_engine::glam::Vec3::new(to.z, 0.0, -to.x);
                     if side.length_squared() > 1e-4 {
@@ -668,6 +672,9 @@ impl Server {
         }
         for id in tamed {
             self.settle(id);
+        }
+        for id in held {
+            self.fights_forget(id);
         }
         Ok(Words::key("command.creatures.done").with("count", Words::text(count)))
     }

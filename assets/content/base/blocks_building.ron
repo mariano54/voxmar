@@ -142,6 +142,8 @@
             (name: "{name}_shingles_corner", render: Model, shape: "roof_corner", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "roof_corner", "wood", "building", "fuel", "shelter:sound"]),
             (name: "{name}_shingles_inner_corner", render: Model, shape: "roof_inner_corner", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "roof_corner", "wood", "building", "fuel", "shelter:sound"]),
             (name: "{name}_shingle_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "ridge", "shingle", "wood", "building", "fuel", "shelter:sound"]),
+            (name: "{name}_shingle_ridge_end", render: Model, shape: "roof_ridge_end", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "ridge", "shingle", "wood", "building", "fuel", "shelter:sound"]),
+            (name: "{name}_shingle_peak", render: Model, shape: "roof_peak", light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "ridge", "shingle", "wood", "building", "fuel", "shelter:sound"]),
         ],
         // Slabs and stairs of one cut stone (`{name}`, by default the full block's name and
         // texture too).
@@ -224,5 +226,7 @@
         (name: "thatch_corner", render: Model, shape: "roof_corner", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "thatch", "roof_corner", "building", "fuel", "shelter:sound"]),
         (name: "thatch_inner_corner", render: Model, shape: "roof_inner_corner", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "thatch", "roof_corner", "building", "fuel", "shelter:sound"]),
         (name: "thatch_ridge", render: Model, shape: "roof_ridge", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "ridge", "thatch", "building", "fuel", "shelter:sound"]),
+        (name: "thatch_ridge_end", render: Model, shape: "roof_ridge_end", facing: true, light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "ridge", "thatch", "building", "fuel", "shelter:sound"]),
+        (name: "thatch_peak", render: Model, shape: "roof_peak", light_filter: 14, sound: Grass, textures: All("thatch"), hardness: 0.8, color: (196, 166, 82), tags: ["roof", "ridge", "thatch", "building", "fuel", "shelter:sound"]),
     ],
 )
