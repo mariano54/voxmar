@@ -53,6 +53,7 @@
         (block: "{name}_crate_stack", role: Bin(slots: 9)),
         (block: "{name}_barrel_rack", role: Bin(slots: 18)),
         (block: "{name}_cupboard", role: Bin(slots: 9)),
+        (block: "{name}_stair_cupboard", role: Bin(slots: 9)),
         (block: "{name}_blanket_chest", role: Bin(slots: 9)),
         (block: "{name}_dresser", role: Bin(slots: 9)),
         // A wall shelf and a sill show what is put on them (blocks' `shows`). A family

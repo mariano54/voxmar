@@ -55,8 +55,9 @@
             // at (`seat`) with things kept in it (`storage`).
             (name: "{name}_window_seat", render: Model, shape: "window_seat", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "cushioned", "storage", "decor", "wood"]),
             // A deep sill: a board on two brackets along the wall at the top of its cell, set
-            // under a window inside, for a pot or a candle.
-            (name: "{name}_sill", render: Model, shape: "deep_sill", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "sill", "storage", "decor", "wood"],
+            // under a window inside, for a pot or a candle: it shows two things in front of the
+            // window (a store kept for show, `display`, not a home's storage).
+            (name: "{name}_sill", render: Model, shape: "deep_sill", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "sill", "display", "decor", "wood"],
                 shows: [(0.3, 1.0, 0.69), (0.7, 1.0, 0.69)]),
             // Pantry shelves: a shelf stood with crocks and a keg, a store for the home's food
             // (`storage`, counted by a pantry and a larder).
