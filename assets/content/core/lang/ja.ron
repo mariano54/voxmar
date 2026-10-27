@@ -517,6 +517,7 @@
     "quest.routes": "いずれか一つで達成：",
     "quest.after": "先に：{list}",
     "quest.leads": "次へ：{list}",
+    "quest.meanwhile": "待つあいだに：{quest}",
     "quest.chapter.count": "{done}/{all}",
     "quest.mark.done": "✓",
     "quest.mark.todo": "•",

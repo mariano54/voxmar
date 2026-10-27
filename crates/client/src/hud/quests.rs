@@ -268,6 +268,16 @@ pub fn standing(content: &Content, player: &LocalPlayer, quest: &QuestDef) -> St
     }
 }
 
+/// What `quest`'s words give to do while it waits (its `meanwhile`), once its work is under
+/// way (a goal begun: a load firing, a stack charring) and it is not done: those open now.
+pub(crate) fn waiting_on<'a>(content: &'a Content, player: &LocalPlayer, quest: &QuestDef) -> Vec<&'a QuestDef> {
+    let begun = state(player, &quest.name).is_some_and(|s| !s.done && s.tasks.iter().flatten().any(|&(have, _)| have > 0));
+    if !begun {
+        return Vec::new();
+    }
+    quest.meanwhile.iter().filter_map(|name| content.quests.get(name)).filter(|q| standing(content, player, q) == Standing::Open).collect()
+}
+
 /// A quest's name and its reason, in the player's language.
 pub fn title(locale: &Locale, quest: &QuestDef) -> String {
     locale.get_or(&def_key("quest", &quest.name), &quest.title).to_owned()
@@ -580,6 +590,10 @@ struct Chapters;
 /// A quest in the chapters' column's list of those open now: pressed, the book turns to it.
 #[derive(Component)]
 struct OpenQuest(String);
+/// A line under a quest begun naming one to do while it waits: pressed, the book turns to
+/// that one (for the gate to find).
+#[derive(Component)]
+pub(crate) struct MeanwhileLine(pub String);
 #[derive(Component)]
 pub(crate) struct Web;
 /// The web's quests and lines, inside the well, at its margins (which centre a web smaller
@@ -1293,6 +1307,13 @@ fn draw(
                 let names: Vec<String> = next.iter().map(|q| title(&locale, q)).collect();
                 let line = locale.format("quest.leads", &[("list", &names.join(locale.get("language.comma")))]);
                 detail.spawn((Node { flex_shrink: 0.0, ..default() }, text(font, line, BODY, MUTED)));
+            }
+            // What to do while its work waits, each pressed to turn the book to it.
+            for other in waiting_on(content, &player, quest) {
+                let node = Node { flex_shrink: 0.0, align_self: AlignSelf::FlexStart, padding: UiRect::axes(Val::Px(space::INNER), Val::Px(space::HAIR)), ..default() };
+                let style = ButtonStyle::Secondary;
+                let line = locale.format("quest.meanwhile", &[("quest", &title(&locale, other))]);
+                detail.spawn((Button, style, node, style.pieces()[0].image(), OpenQuest(other.name.clone()), MeanwhileLine(other.name.clone()))).with_child(text(font, line, BODY, TEXT));
             }
             // What it asks: its goals, or its routes when there are several.
             let asks = if quest.tasks.len() > 1 { "quest.routes" } else { "quest.goals" };
@@ -2133,6 +2154,10 @@ fn track(
                             }
                         }
                     });
+                }
+                // What to do while its work waits.
+                for other in waiting_on(content, &player, quest) {
+                    card.spawn((shadowed(font, locale.format("quest.meanwhile", &[("quest", &title(&locale, other))]), BODY, SOFT), TrackerLine));
                 }
                 card.spawn((Node { display: Display::None, ..default() }, shadowed(font, "", BODY, MUTED), TrackerMore));
                 if let Some(line) = book_line {
@@ -3061,6 +3086,29 @@ pub(crate) mod tests {
         }
         assert!(content.quests.iter().any(|q| !q.meanwhile.is_empty()), "a quest gives something to do meanwhile");
         assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// A quest names what to do while it waits only once its work is begun and not done,
+    /// and only those open then.
+    #[test]
+    fn what_to_do_meanwhile_shows_while_a_quest_is_under_way() {
+        let content = content();
+        let charcoal = content.quests.get("base:charcoal").expect("the charcoal quest");
+        assert!(charcoal.meanwhile.iter().any(|n| n == "base:a_place_to_pray"), "{:?}", charcoal.meanwhile);
+        let done = |name: &str| QuestState { name: name.into(), done: true, claimed: true, tasks: Vec::new() };
+        let begun = |have: u32| QuestState { name: charcoal.name.clone(), done: false, claimed: false, tasks: vec![vec![(0, 1), (0, 1), (have, 16)], vec![(0, 24)]] };
+        let names = |player: &LocalPlayer| waiting_on(&content, player, charcoal).iter().map(|q| q.name.clone()).collect::<Vec<_>>();
+        let mut player = LocalPlayer::default();
+        player.quests = vec![done("base:a_pit_kiln"), begun(0)];
+        assert!(names(&player).is_empty(), "nothing begun yet");
+        player.quests = vec![done("base:a_pit_kiln"), begun(2)];
+        assert_eq!(names(&player), ["base:a_place_to_pray"]);
+        player.quests = vec![begun(2)];
+        assert!(names(&player).is_empty(), "A Place to Pray is not open before the pit kiln: {:?}", names(&player));
+        player.quests = vec![done("base:a_pit_kiln"), done("base:a_place_to_pray"), begun(2)];
+        assert!(names(&player).is_empty(), "A Place to Pray is done");
+        player.quests = vec![done("base:a_pit_kiln"), done(&charcoal.name)];
+        assert!(names(&player).is_empty(), "Charcoal is done");
     }
 
     /// The Nomad age is the first chapter, and a new player's quest is a Nomad one, though
