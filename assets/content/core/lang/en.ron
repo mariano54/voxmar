@@ -573,6 +573,7 @@
     "quest.goal.lit": "Build and light the {item} ({fuels})",
     "quest.goal.thriving": "Animals kept in good condition",
     "quest.goal.met": "Deal with: {who}",
+    "quest.goal.dealt": "Learn from: {who}",
     "quest.goal.met_any": "Deal with travellers on the road",
     "quest.goal.met_kinds": "Kinds of traveller dealt with",
     "quest.goal.prayed": "Turn on {prayer}",
