@@ -529,7 +529,10 @@ pub(crate) fn receive(
                 fighting.pings += 1;
             }
             ServerMessage::Prayers { points, most, on } => fighting.prayers = crate::fight::Prayers { points, most, on },
-            ServerMessage::Fires { lit } => world.fires = lit.into_iter().collect(),
+            ServerMessage::Fires { lit } => {
+                world.fires = lit.into_iter().collect();
+                world.fires_told = world.fires_told.wrapping_add(1);
+            }
             ServerMessage::ToolWore { item, broke } => {
                 wore.write(crate::breaking::ToolWore { item, broke });
             }

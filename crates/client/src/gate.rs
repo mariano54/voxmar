@@ -972,6 +972,9 @@ struct Gate {
     rain_open: Option<crate::ambience::RoofHeard>,
     /// The bag the Nest step keeps its hen at: home, until the step breaks it.
     nest_bag: Option<IVec3>,
+    /// Where the door step stood when it began: its door, nook and fire are laid out from
+    /// there, not from wherever the player has since been pushed.
+    door_stand: Option<IVec3>,
     storm_wet: Vec<String>,
     /// Frames in a row the door step's lit or darkened spot has had nothing near it waiting
     /// to be meshed (`light_drawn`); each phase counts afresh.
@@ -1251,6 +1254,7 @@ impl Gate {
             rain_roof: None,
             rain_open: None,
             nest_bag: None,
+            door_stand: None,
             storm_wet: Vec::new(),
             light_frames: 0,
             tame_aim: [0; 3],
@@ -10204,7 +10208,10 @@ fn door_cells(world: &World, at: IVec3) -> Option<(bool, bool)> {
 /// nook stood, the ground before it lit warm (`campfire-night`) against the same ground with
 /// the fire put out (`campfire-night-out`).
 fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
-    let stand = world.resource::<LocalPlayer>().position.floor().as_ivec3();
+    if gate.phase == 0 {
+        gate.door_stand = Some(world.resource::<LocalPlayer>().position.floor().as_ivec3());
+    }
+    let stand = gate.door_stand.unwrap_or_else(|| world.resource::<LocalPlayer>().position.floor().as_ivec3());
     let at = stand + IVec3::new(0, 0, -2);
     // The window's nook, standing on the ground a block beyond the door, and its pane.
     let (nook, pane) = (stand + IVec3::new(0, 1, -4), stand + IVec3::new(0, 1, -3));
@@ -10221,9 +10228,17 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         let actions = world.resource::<crate::Actions>().0.clone();
         world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("base:open"), voxmar_engine::action::ActionTarget::Block { block: at, face: voxmar_engine::coords::Face::PosZ });
     };
+    // Set on the ground before the player, as a click would.
+    let place = |world: &mut World| {
+        let actions = world.resource::<crate::Actions>().0.clone();
+        world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: at - IVec3::Y, face: voxmar_engine::coords::Face::PosY });
+    };
     match gate.phase {
         0 => {
             let net = world.resource::<Net>();
+            // The Nest step's hen, which stood a block past the door, goes first: a creature
+            // in a door's cell refuses the door.
+            net.command("creatures remove junglefowl");
             net.command(&format!("fill {} {} {} {} {} {} air", at.x, at.y, at.z, at.x, at.y + 1, at.z));
             net.command("clear wooden_door");
             net.command("give wooden_door 1");
@@ -10232,25 +10247,45 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // In hand, set on the ground before the player.
         1 => {
             if select(world, "base:wooden_door") {
-                let actions = world.resource::<crate::Actions>().0.clone();
-                world.resource::<Net>().propose_from(world.resource::<LocalPlayer>(), actions.expect("core:place"), voxmar_engine::action::ActionTarget::Block { block: at - IVec3::Y, face: voxmar_engine::coords::Face::PosY });
+                place(world);
                 gate.advance(now);
+                // The first ask counts as a tap, as each one after it does.
+                gate.tap_at = now;
+                gate.taps = 1;
             } else if waited > 10.0 {
                 let held = holding(world, "base:wooden_door");
                 gate.check("door: placed", Err(format!("no wooden door came to hand {waited:.1} server s after it was given (carried, first slot: {held:?})")));
                 leave(world, gate);
             }
         }
+        // Asked again each `TAP_EVERY` while the door is still in hand, as a player clicks
+        // again: one the server refused (something in the way) is tried until it goes in.
         2 => match door_cells(world, at) {
             Some((true, false)) => {
-                gate.check("door: placed", Ok("a wooden door went in whole, both halves shut".into()));
+                // A pass that needed more than the first ask says so, and what was refused
+                // on the way: with nothing in the cells, the first ask should go in.
+                let refusals: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
+                gate.check("door: placed", Ok(format!("a wooden door went in whole, both halves shut ({} asks; refused {refusals:?})", gate.taps)));
                 aim_at(world, at.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
                 use_door(world);
                 gate.advance(now);
             }
             _ if waited > 10.0 => {
-                gate.check("door: placed", Err(format!("{waited:.1} server s after placing, the door's cells are {:?}", door_cells(world, at))));
+                let refusals: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
+                let inside: Vec<String> = {
+                    let content = &world.resource::<Launch>().content;
+                    let cells = [at, at + IVec3::Y];
+                    world.resource::<crate::creatures::Creatures>().views().filter(|v| cells.contains(&v.position.floor().as_ivec3())).map(|v| format!("{} at {:.1}", content.creatures.get(v.species).def.name, v.position)).collect()
+                };
+                gate.check("door: placed", Err(format!("{waited:.1} server s after placing ({} asks), the door's cells at {at} are {:?}; refused {refusals:?}; creatures in its cells {inside:?}", gate.taps, door_cells(world, at))));
                 leave(world, gate);
+            }
+            _ if now - gate.tap_at >= TAP_EVERY => {
+                if select(world, "base:wooden_door") {
+                    place(world);
+                    gate.taps += 1;
+                }
+                gate.tap_at = now;
             }
             _ => {}
         },

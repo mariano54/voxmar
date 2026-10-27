@@ -303,7 +303,8 @@ impl Flush {
 
 /// How a creature scavenges (docs/creature-ai.md, "Scavenging"): it slinks in to food
 /// left lying on the ground within `reach` blocks, by item name or `tag:` (`takes`), and
-/// makes off home with one piece, which it eats there; killed first, it drops it. It
+/// makes off home with one piece, which it eats there; killed first, it drops it. Stuck
+/// short of food (a fence, a wall between), it leaves it be for `give_up` seconds. It
 /// comes only while no player is within `shy` blocks of it or the food, so a hunter who
 /// leaves the kill lying, turns their back and walks off may lose a share of it. Wild
 /// only: a kept one or one on an errand lets food lie.
@@ -313,13 +314,44 @@ pub struct Scavenge {
     pub takes: Vec<String>,
     pub reach: f32,
     pub shy: f32,
+    /// Seconds it leaves be food it got stuck short of (a fence, a wall between), as a
+    /// chase with no way is given up.
+    #[serde(default = "scrap_give_up")]
+    pub give_up: f32,
+}
+
+fn scrap_give_up() -> f32 {
+    30.0
 }
 
 impl Scavenge {
     /// Near enough to be watched coming, and shy of a player close enough to stop it.
     pub fn check(&self) -> Result<(), String> {
-        if self.takes.is_empty() || !(4.0..=24.0).contains(&self.reach) || !(2.0..=12.0).contains(&self.shy) || self.shy >= self.reach {
-            return Err(format!("`scavenge` needs something it takes, reach 4 to 24 blocks and shy 2 to 12 blocks, less than its reach, not {self:?}"));
+        if self.takes.is_empty() || !(4.0..=24.0).contains(&self.reach) || !(2.0..=12.0).contains(&self.shy) || self.shy >= self.reach || !(5.0..=120.0).contains(&self.give_up) {
+            return Err(format!("`scavenge` needs something it takes, reach 4 to 24 blocks, shy 2 to 12 blocks, less than its reach, and give_up 5 to 120 seconds, not {self:?}"));
+        }
+        Ok(())
+    }
+}
+
+/// How a creature sleeps (docs/creature-ai.md, "Sleeping"): out of its active hours,
+/// with no one in mind, it sleeps, eyes shut. A player walking up it notices only within
+/// `quiet` blocks, and then as it would anyone close, so a careful hunter gets near; one
+/// going faster than a walk within `wakes` blocks wakes it with a start, and a fighter
+/// comes up provoked, with no warning, while prey bolts. Kept, or on an errand, it does
+/// not sleep so.
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Sleeps {
+    pub quiet: f32,
+    pub wakes: f32,
+}
+
+impl Sleeps {
+    /// Close enough that a quiet step is a skill, and a sprint heard well beyond it.
+    pub fn check(&self) -> Result<(), String> {
+        if !(1.0..=6.0).contains(&self.quiet) || !(4.0..=24.0).contains(&self.wakes) || self.wakes <= self.quiet {
+            return Err(format!("`sleeps` needs quiet 1 to 6 blocks and wakes 4 to 24 blocks, beyond its quiet, not {self:?}"));
         }
         Ok(())
     }
@@ -817,6 +849,10 @@ pub struct CreatureDef {
     /// piglets. Unset, its young are nothing to it.
     #[serde(default)]
     pub guards: Option<Guards>,
+    /// It sleeps out of its active hours (`Sleeps`), woken by a sprint, not a quiet step.
+    /// Unset, it rests but notices players as ever.
+    #[serde(default)]
+    pub sleeps: Option<Sleeps>,
     /// Attacks besides `attack`, chosen by phase and distance (`moves::Creature::choose`).
     #[serde(default)]
     pub moves: Vec<moves::Move>,
@@ -1364,6 +1400,12 @@ impl CreatureRegistry {
                     return Err(error("guards its young (`guards`), which is for an animal that fights back: not a boss or a supernatural kind".into()));
                 }
                 guards.check().map_err(error)?;
+            }
+            if let Some(sleeps) = def.sleeps {
+                if def.habitat.active == Active::Any {
+                    return Err(error("sleeps (`sleeps`), but is about at all hours (`active: Any`), so it never sleeps".into()));
+                }
+                sleeps.check().map_err(error)?;
             }
             if let Some(flush) = def.flush {
                 if def.boss || def.supernatural || def.attack.is_some() {

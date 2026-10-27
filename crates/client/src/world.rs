@@ -156,6 +156,9 @@ pub struct ClientWorld {
     /// The cores of lit structures whose fire burns, as the server last said
     /// (`ServerMessage::Fires`): a hearth crackles and smokes only while lit.
     pub fires: FxHashSet<IVec3>,
+    /// How many times the server has said which fires burn, so a change is looked for
+    /// only when it has.
+    pub fires_told: u32,
     /// Blocks smouldering, about to catch fire, as the server last said
     /// (`ServerMessage::Smoulders`): they smoke and crackle until they catch or are saved.
     pub smoulders: FxHashSet<IVec3>,
@@ -200,6 +203,7 @@ impl ClientWorld {
             view_distance,
             stats: WorldStats::default(),
             fires: FxHashSet::default(),
+            fires_told: 0,
             smoulders: FxHashSet::default(),
             shown: FxHashMap::default(),
         }
@@ -398,8 +402,14 @@ impl ClientWorld {
 fn mesh_order(pos: ColumnPos, center: ColumnPos, facing: Vec2) -> i32 {
     let distance = pos.distance(center) as f32;
     let along = (pos.0 - center.0).as_vec2().dot(facing).clamp(-distance, distance);
-    ((2.0 * distance - along) * 4.0).round() as i32
+    ((BESIDE * distance - along) * ORDER_STEPS).round() as i32
 }
+
+/// How much farther a column beside the camera counts than one as far ahead (`mesh_order`);
+/// one behind counts one more.
+const BESIDE: f32 = 2.0;
+/// Steps in `mesh_order` to a column of distance, so columns a fraction apart differ.
+const ORDER_STEPS: f32 = 4.0;
 
 /// Starts relight+remesh jobs for dirty columns, nearest to the camera first and those it
 /// faces before the rest (`mesh_order`), and remeshes columns whose level of detail
@@ -802,7 +812,12 @@ mod tests {
         assert_eq!(order(9, 0, east), order(-3, 0, east));
         assert_eq!(order(3, 0, Vec2::ZERO), order(-3, 0, Vec2::ZERO), "no facing: the nearest");
         // Dispatched so: with columns all round and room for a few jobs, those east first.
+        // The rest of the jobs are taken, far off, however many threads there are.
+        let max = rayon::current_num_threads() * 2;
+        let free = max.min(8);
+        let taken = max - free;
         let mut world = test_world();
+        world.in_flight.extend((0..taken).map(|x| (ColumnPos::new(1000 + x as i32, 1000), 0)));
         for x in -6..=6 {
             for z in -6..=6 {
                 world.voxels.insert(ColumnPos::new(x, z), Arc::new(Column::default()));
@@ -816,11 +831,19 @@ mod tests {
         app.world_mut().spawn((Camera3d::default(), GlobalTransform::from(Transform::from_xyz(8.0, 100.0, 8.0).looking_to(Vec3::X, Vec3::Y))));
         app.update();
         let world = app.world().resource::<ClientWorld>();
-        let started: Vec<ColumnPos> = world.in_flight.keys().copied().collect();
-        assert!(!started.is_empty() && started.len() < 121, "{} started", started.len());
-        let east = started.iter().filter(|p| p.0.x > 0).count();
-        let west = started.iter().filter(|p| p.0.x < 0).count();
-        assert!(east > 2 * west.max(1), "{east} east, {west} west of {started:?}");
+        let started: Vec<ColumnPos> = world.in_flight.keys().copied().filter(|p| p.0.x < 1000).collect();
+        assert_eq!(started.len(), free, "{started:?}");
+        // None behind, and half at least ahead: those beside tie with those twice as far ahead.
+        let ahead = started.iter().filter(|p| p.0.x > 0).count();
+        let behind = started.iter().filter(|p| p.0.x < 0).count();
+        assert!(behind == 0 && 2 * ahead >= free, "{ahead} east, {behind} west of {started:?}");
+        // The player's own column first of all.
+        assert!(started.contains(&ColumnPos::new(0, 0)), "{started:?}");
+        for x in -5..=5 {
+            for z in -5..=5 {
+                assert!((x, z) == (0, 0) || order(x, z, east) > order(0, 0, east), "({x}, {z})");
+            }
+        }
     }
 
     #[test]
@@ -995,5 +1018,204 @@ mod tests {
             app.update();
         }
         assert_eq!(app.world().resource::<ClientWorld>().check_meshed(centre), Ok(()));
+    }
+
+    /// The main thread's share of streaming in a fast flight, frame by frame, as the game
+    /// does it on a machine with no GPU: an in-process server at view 32 on seed 1, a
+    /// player flying along +x at four times flight speed for `FLIGHT` seconds, and a frame
+    /// every 4 ms (the w4 sweep's median) that takes in the server's columns and unloads,
+    /// starts meshing jobs, applies their results and walks cave culling. Prints the time
+    /// of each step and of the whole frame (median, p99, worst), and for the slowest frames
+    /// what each step took and how much it handled.
+    ///
+    /// Ignored by default: `cargo test --release -p voxmar_client --bin voxmar
+    /// streaming_main_thread -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn streaming_main_thread() {
+        use bevy::ecs::schedule::Schedule;
+        use std::time::{Duration, Instant};
+        use voxmar_protocol::{ClientMessage, PROTOCOL_VERSION, PlayerInput, ServerMessage, local_pair};
+        const FLIGHT: f32 = 30.0;
+        const FRAME: Duration = Duration::from_millis(4);
+        const ALTITUDE: f32 = 240.0;
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let server = voxmar_server::spawn(voxmar_server::ServerConfig { seed: 1, view_distance: 32, ..Default::default() }, content.clone()).unwrap();
+        let (connection, server_side) = local_pair();
+        server.connections().send(server_side).unwrap();
+        connection.send(ClientMessage::Hello { name: "bench".into(), protocol: PROTOCOL_VERSION, content: content.fingerprint(), admin_token: None });
+        connection.send(ClientMessage::Settings { view_distance: 32, fly_speed: 4.0 });
+        let mut app = App::new();
+        app.insert_resource(ClientWorld::new(content.blocks.clone(), 32, Terrain::detached()));
+        app.insert_resource(Time::<Real>::default());
+        let camera = app.world_mut().spawn((Camera3d::default(), GlobalTransform::default())).id();
+        let mut steps: Vec<(&str, Schedule)> = Vec::new();
+        for (name, system) in [("dispatch", dispatch_jobs.into_configs()), ("apply", apply_meshes.into_configs()), ("cull", cull_chunks.into_configs())] {
+            let mut schedule = Schedule::default();
+            schedule.add_systems(system);
+            steps.push((name, schedule));
+        }
+        // Each frame: how long the server's messages took to take in, and each step.
+        struct Frame { total: f32, parts: Vec<f32>, columns: usize, unloads: usize, jobs: usize, applied: usize, chunks: usize }
+        let mut frames: Vec<Frame> = Vec::new();
+        let speed = content.movement.fly_sprint_speed * 4.0 * 0.9;
+        let (mut position, mut started, mut last_input, mut teleports) = (None::<Vec3>, None::<Instant>, Instant::now(), 0);
+        loop {
+            let frame = Instant::now();
+            let cpu = || crate::render::work::cpu_clock().map_or(0.0, |ns| ns as f32 / 1e6);
+            let frame_cpu = cpu();
+            let (mut columns, mut unloads) = (0, 0);
+            {
+                let mut world = app.world_mut().resource_mut::<ClientWorld>();
+                while let Ok(Some(message)) = connection.try_recv() {
+                    match message {
+                        ServerMessage::Welcome { position: at, .. } => position = Some(at.with_y(ALTITUDE)),
+                        ServerMessage::Column { pos, column } => {
+                            columns += 1;
+                            world.insert_column(pos, column);
+                        }
+                        ServerMessage::Unload { pos } => {
+                            unloads += 1;
+                            world.remove_column(pos);
+                        }
+                        ServerMessage::Teleport { seq, .. } => teleports = seq,
+                        _ => {}
+                    }
+                }
+            }
+            let mut parts = vec![cpu() - frame_cpu];
+            let Some(at) = position.as_mut() else { std::thread::sleep(FRAME); continue };
+            app.world_mut().entity_mut(camera).insert(GlobalTransform::from(Transform::from_translation(*at).looking_to(Vec3::X, Vec3::Y)));
+            app.world_mut().resource_mut::<Time<Real>>().update();
+            let results_before = app.world().resource::<ClientWorld>().results_rx.len();
+            let chunks = app.world().resource::<ClientWorld>().chunks.len();
+            for (_, schedule) in &mut steps {
+                let step = cpu();
+                schedule.run(app.world_mut());
+                parts.push(cpu() - step);
+            }
+            let world = app.world().resource::<ClientWorld>();
+            let jobs = world.stats.jobs_in_flight;
+            let applied = results_before.saturating_sub(world.results_rx.len());
+            let flying = *started.get_or_insert_with(Instant::now);
+            if flying.elapsed().as_secs_f32() > FLIGHT {
+                break;
+            }
+            let dt = last_input.elapsed().as_secs_f32();
+            if dt >= 0.05 {
+                *at += Vec3::X * speed * dt;
+                last_input = Instant::now();
+                connection.send(ClientMessage::Input(PlayerInput { position: *at, yaw: -std::f32::consts::FRAC_PI_2, pitch: 0.0, selected_slot: 0, flying: true, teleport: teleports }));
+            }
+            frames.push(Frame { total: cpu() - frame_cpu, parts, columns, unloads, jobs, applied, chunks });
+            std::thread::sleep(FRAME.saturating_sub(frame.elapsed()));
+        }
+        let names = ["messages", "dispatch", "apply", "cull"];
+        let stats = |mut values: Vec<f32>| {
+            values.sort_by(f32::total_cmp);
+            let at = |q: f32| values[((values.len() - 1) as f32 * q) as usize];
+            format!("median {:.2}, p99 {:.2}, worst {:.2} ms", at(0.5), at(0.99), at(1.0))
+        };
+        eprintln!("{} frames over {FLIGHT} s; main thread's streaming work a frame, in thread CPU time: {}", frames.len(), stats(frames.iter().map(|f| f.total).collect()));
+        for (i, name) in names.iter().enumerate() {
+            eprintln!("  {name}: {}", stats(frames.iter().map(|f| f.parts[i]).collect()));
+        }
+        let mut slowest: Vec<&Frame> = frames.iter().collect();
+        slowest.sort_by(|a, b| b.total.total_cmp(&a.total));
+        for f in slowest.iter().take(12) {
+            let parts: Vec<String> = names.iter().zip(&f.parts).map(|(n, t)| format!("{n} {t:.2}")).collect();
+            eprintln!("  {:.2} ms: {}; {} columns in, {} unloaded, {} jobs, {} results waiting before, {} chunks", f.total, parts.join(", "), f.columns, f.unloads, f.jobs, f.applied, f.chunks);
+        }
+    }
+
+    /// The main thread's streaming steps at the full view of 32, which a cloud server
+    /// cannot stream in fast enough for `streaming_main_thread` to reach: 65×65 columns of
+    /// 16 chunks each, all meshed. Times, in thread CPU, a row of 65 columns unloading and
+    /// another arriving (as the camera crosses a column), the detail-range scan and the
+    /// dirty-column scan that follow, and building cave culling's job.
+    ///
+    /// Ignored by default: `cargo test --release -p voxmar_client --bin voxmar
+    /// streaming_steps_at_full_view -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn streaming_steps_at_full_view() {
+        use bevy::ecs::schedule::Schedule;
+        const VIEW: i32 = 32;
+        let cpu = || crate::render::work::cpu_clock().map_or(0.0, |ns| ns as f64 / 1e6);
+        let mut app = App::new();
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let mut world = ClientWorld::new(content.blocks.clone(), VIEW, Terrain::detached());
+        let column = Arc::new(Column::default());
+        for x in -VIEW..=VIEW {
+            for z in -VIEW..=VIEW {
+                let pos = ColumnPos::new(x, z);
+                world.voxels.insert(pos, column.clone());
+                world.details.insert(pos, 1);
+                for cy in 0..COLUMN_CHUNKS {
+                    world.chunks.insert(pos.chunk(cy), ChunkRender { passes: [true, true, false, false, false], quads: [400, 50, 0, 0, 0], ..Default::default() });
+                }
+            }
+        }
+        app.insert_resource(world);
+        app.insert_resource(Time::<Real>::default());
+        let camera = app.world_mut().spawn((Camera3d::default(), GlobalTransform::default())).id();
+        let mut dispatch = Schedule::default();
+        dispatch.add_systems(dispatch_jobs);
+        let mut cull = Schedule::default();
+        cull.add_systems(cull_chunks);
+        let mut times: [Vec<f64>; 5] = Default::default();
+        for step in 0..40 {
+            // The camera crosses into the next column east: the row VIEW behind goes, the
+            // row VIEW ahead comes.
+            let (gone, come) = (step - VIEW, step + 1 + VIEW);
+            let t = cpu();
+            {
+                let mut world = app.world_mut().resource_mut::<ClientWorld>();
+                for z in -VIEW..=VIEW {
+                    world.remove_column(ColumnPos::new(gone, z));
+                }
+            }
+            times[0].push(cpu() - t);
+            let t = cpu();
+            {
+                let mut world = app.world_mut().resource_mut::<ClientWorld>();
+                for z in -VIEW..=VIEW {
+                    world.insert_column(ColumnPos::new(come, z), column.clone());
+                }
+            }
+            times[1].push(cpu() - t);
+            let at = Vec3::new((step + 1) as f32 * CHUNK_SIZE as f32 + 8.0, 100.0, 8.0);
+            app.world_mut().entity_mut(camera).insert(GlobalTransform::from(Transform::from_translation(at).looking_to(Vec3::X, Vec3::Y)));
+            // No room for jobs: the detail scan alone, then with room, the dirty scan.
+            let t = cpu();
+            {
+                let mut world = app.world_mut().resource_mut::<ClientWorld>();
+                let max = rayon::current_num_threads() * 2;
+                world.in_flight.extend((0..max).map(|i| (ColumnPos::new(1000 + i as i32, 0), 0)));
+            }
+            dispatch.run(app.world_mut());
+            times[2].push(cpu() - t);
+            app.world_mut().resource_mut::<ClientWorld>().in_flight.clear();
+            let t = cpu();
+            dispatch.run(app.world_mut());
+            times[3].push(cpu() - t);
+            {
+                // Its jobs dropped, as if done: only the scans are timed.
+                let mut world = app.world_mut().resource_mut::<ClientWorld>();
+                world.in_flight.clear();
+                world.culler.busy = false;
+                world.visibility_dirty = true;
+            }
+            app.world_mut().resource_mut::<Time<Real>>().update();
+            let t = cpu();
+            cull.run(app.world_mut());
+            times[4].push(cpu() - t);
+            let _ = app.world().resource::<ClientWorld>().culler.results.recv();
+            app.world_mut().resource_mut::<ClientWorld>().culler.busy = false;
+        }
+        for (name, mut t) in ["unload a row of 65", "a row of 65 arriving", "detail scan", "dirty scan and dispatch", "cave culling's job"].into_iter().zip(times) {
+            t.sort_by(f64::total_cmp);
+            eprintln!("{name}: median {:.3}, worst {:.3} ms", t[t.len() / 2], t[t.len() - 1]);
+        }
     }
 }

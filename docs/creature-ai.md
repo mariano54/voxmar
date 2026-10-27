@@ -131,6 +131,15 @@ seconds, facing them, alert, before it runs, hunts or comes to look: the moment 
 back off, or to creep closer behind it. A blow skips the double take. What it then does starts
 afresh after the look, so prey that looks and then runs still raises the alarm to its kin.
 
+Asleep (`sleeps: (quiet, wakes)` in its data, for a kind that keeps hours: refused at load for
+one active at any hour, `quiet` 1..6, `wakes` 4..24 and above `quiet`), out of its waking hours
+with nothing on its mind, it lies down and notices only a friend, someone who hurt it, a player
+within `quiet` blocks, or a loud one (moving faster than a walk) within `wakes`. A player who
+creeps up can pass a sleeping bear or pick a sleeping deer; one who sprints past wakes it with a
+start: a fighter wakes angry at them, prey bolts. Its food held within `wakes` (or its hearing, if that is less, as awake) wakes it calmly, so a
+lure still works on a sleeper. A held creature drops any blow it was winding
+up, so a hold means it stands still.
+
 ## Aggression
 
 - **Temperament, not type.** Hostile is high aggression and low fear; neutral is a
@@ -220,7 +229,7 @@ afresh after the look, so prey that looks and then runs still raises the alarm t
   its `reach` across the ground and 3 up or down that anyone may pick up and that it
   senses, as it does a player: in its sight and look (`in_view`), or within its `close`
   by smell (`Items::scrap_near`). Stuck short of it two seconds (a fence, a wall between)
-  it leaves food there be for 30 s (`Live::no_scrap`), as a chase with no way is given
+  it leaves food there be for its `give_up` seconds (5 to 120, 30 unset; `Live::no_scrap`), as a chase with no way is given
   up. While no player it has noticed is within its `shy` of it or of
   the food, it slinks in at a walk, crouched, and within 1.3 blocks snatches one piece
   (`Items::snatch`, `Live::carrying`), then runs home and eats it there. Killed first, it
@@ -228,8 +237,8 @@ afresh after the look, so prey that looks and then runs still raises the alarm t
   an errand it lets food lie; wild ones are never saved, so a piece carried out of the
   loaded world is gone with it. A hunter who leaves a kill lying and walks off may come
   back to less. Refused at load: no `takes`, takes naming nothing that is an item, reach
-  outside 4 to 24, shy outside 2 to 12 or not under its reach, or a boss or supernatural
-  kind. Base game: fox, arctic fox and fennec fox (`tag:meat`, reach 16, shy 6). Tests:
+  outside 4 to 24, shy outside 2 to 12 or not under its reach, give_up outside 5 to 120, or a boss or supernatural
+  kind. Base game: fox, arctic fox and fennec fox (`tag:meat`, reach 16, shy 6, give_up 30 s). Tests:
   the brain's `a_fox_steals_meat_left_lying` and the server's of the same name (a fox
   takes one piece of three lying 9 blocks off with the player 20 blocks from it, and
   drops it killed; with the player 3 blocks from the meat it does not), and
