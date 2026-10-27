@@ -110,6 +110,8 @@
         // A small flame burning down (`tended`: a candle, an oil lamp, a rushlight, a torch),
         // a lit room's light; spent, it has no tag and no sound. Fully within two blocks.
         (name: "flame", tags: ["tended"], range: (0, 2)),
+        // Herbs hung up to dry (`drying`), as in a home's herb nook.
+        (name: "herbs", tags: ["drying"], range: (0, 2)),
         (name: "kiln_cooling", cools: ("kiln", 120), range: (1, 4)),
         (name: "fire_cooling", cools: ("fire", 60), range: (1, 4)),
         // Lava and falling water sound like water to the step, so they come first.
@@ -616,6 +618,13 @@
             name: "hearth_settle", sound: Settle, volume: 0.28, at: Block("fire"), per_minute: 1.2, cooldown: 20,
             pitch: (0.9, 1.1), reach: 6,
             when: {"fire": (min: 0.6, fade: 0.55)},
+        ),
+        // Herbs hung to dry indoors, stirred by the hearth's warm air rising past them: a
+        // dry whisper of leaves and stalks now and then, from the herbs.
+        (
+            name: "herb_whisper", sound: Herbs, volume: 0.14, at: Block("herbs"), per_minute: 1.2, cooldown: 18,
+            pitch: (0.9, 1.15), reach: 4,
+            when: {"herbs": (min: 0.3, fade: 0.25), "fire": (min: 0.6, fade: 0.55), "shelter": (min: 0.6, fade: 0.3)},
         ),
         // A kiln gone out: its fired bricks ticking now and then as they cool, a small tink
         // among them; a hearth gone out, its stones the same, lower and fewer. (Only a

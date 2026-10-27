@@ -188,12 +188,14 @@ pub enum Synth {
     IceSing,
     /// Fired brick or hearthstone cooling after the fire is out: a few dry ticks, irregular,
     /// now and then a small bright tink as it contracts.
-    Cooling,
+    Cooling,    /// Herbs hung to dry, stirred by warm air rising: a soft, dry whisper of leaves and
+    /// stalks brushing, swelling and dying away, a few crisp ticks of brittle leaf in it.
+    Herbs,
 }
 
 impl Synth {
     #[cfg(test)]
-    pub const ALL: [Synth; 65] = [
+    pub const ALL: [Synth; 66] = [
         Synth::Wind,
         Synth::Gale,
         Synth::Rustle,
@@ -259,6 +261,7 @@ impl Synth {
         Synth::Churr,
         Synth::IceSing,
         Synth::Cooling,
+        Synth::Herbs,
     ];
 
     /// Whether it makes a continuous bed rather than one-shots.
@@ -365,6 +368,7 @@ pub fn one_shot(synth: Synth, variant: usize) -> (Vec<f32>, [Vec<f32>; 2]) {
         Synth::Churr => churr(&mut noise),
         Synth::IceSing => ice_sing(&mut noise),
         Synth::Cooling => cooling(&mut noise),
+        Synth::Herbs => herbs(&mut noise),
         bed => panic!("{bed:?} makes a bed, not one-shots"),
     };
     let scale = loudness(&dry, 0.14, 0.8);
@@ -2092,6 +2096,31 @@ fn cooling(noise: &mut Noise) -> Vec<f32> {
             });
         }
         t += between(noise, 0.12, 0.6);
+    }
+    out
+}
+
+/// Dry herbs brushing in warm air: a high, airy rustle swelling and easing, a lower
+/// breath of stalks under it, and a few brittle ticks of leaf on the swell.
+fn herbs(noise: &mut Noise) -> Vec<f32> {
+    let length = seconds(between(noise, 1.0, 1.6));
+    let peak = between(noise, 0.3, 0.5);
+    let (mut leaf, mut stalk) = (Svf::new(between(noise, 4000.0, 5200.0), 1.3), Svf::new(1700.0, 1.0));
+    let mut flutter = 0.0f32;
+    let mut out: Vec<f32> = (0..length)
+        .map(|i| {
+            let x = i as f32 / length as f32;
+            let swell = if x < peak { (x / peak).powi(2) } else { ((1.0 - x) / (1.0 - peak)).powf(1.5) };
+            flutter += (noise.unit() - flutter) * 0.004;
+            let white = noise.next();
+            (leaf.band(white) * (0.5 + flutter) + stalk.band(white) * 0.2) * 0.3 * swell
+        })
+        .collect();
+    let last = length as f32 / SR;
+    for _ in 0..3 + (noise.unit() * 6.0) as usize {
+        let at = last * (peak + between(noise, -0.25, 0.3)).clamp(0.05, 0.85);
+        let gain = between(noise, 0.08, 0.2);
+        crack(&mut out, noise, at, (0.001, 0.0025), (3800.0, 6500.0), gain);
     }
     out
 }

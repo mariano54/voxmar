@@ -1002,6 +1002,29 @@ fn a_home_settles_at_night_and_its_eaves_drip_after_rain() {
     assert!(indoors < 0.7 * porch, "eaves heard indoors at {indoors:.3}, from the porch at {porch:.3}");
 }
 
+/// Herbs hung to dry indoors whisper now and then as the hearth's warm air rises past
+/// them, from the herbs; never with no fire lit, out of doors, nor with none hung near.
+#[test]
+fn herbs_hung_to_dry_whisper_over_the_hearth() {
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let groups = ambience.block_groups(blocks);
+    let herbs = ambience.groups.iter().position(|g| g.name == "herbs").expect("a group of drying herbs");
+    let group_of = |name: &str| groups[blocks.id(name).unwrap_or_else(|| panic!("{name}")).0 as usize].map(|g| g as usize);
+    assert_eq!(group_of("base:hanging_herbs"), Some(herbs));
+    let sound = ambience.sounds.iter().position(|s| s.name == "base:herb_whisper").expect("herbs whispering");
+    assert_eq!(ambience.sounds[sound].at, super::defs::Placement::Block(herbs), "from the herbs");
+    let played = |set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "farm", &["plains", "temperate"], set), 900.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound)).count()
+    };
+    assert!(played(&[("herbs", 1.0), ("fire", 1.0), ("shelter", 1.0)]) > 0, "over a lit hearth");
+    assert_eq!(played(&[("herbs", 1.0), ("shelter", 1.0)]), 0, "no fire lit");
+    assert_eq!(played(&[("herbs", 1.0), ("fire", 1.0)]), 0, "out of doors");
+    assert_eq!(played(&[("fire", 1.0), ("shelter", 1.0)]), 0, "no herbs hung");
+}
+
 /// A first night out on warm open grass has a nightjar churring somewhere past the camp,
 /// never by day, in the woods, in the cold or under a roof; and a frozen lake sings, most
 /// after dark, never without ice.
