@@ -192,6 +192,8 @@
     "block.base.{name}_shingle_peak": "{name}のいたぶきのいただき",
     "block.base.thatch_roof": "かやぶきやね",
     "block.base.thatch_ridge": "かやぶきのむね",
+    "block.base.dry_stone_wall": "からづみのいしがき",
+    "block.base.dry_stone_wall_corner": "からづみのいしがきのかど",
     "block.base.thatch_ridge_end": "かやぶきのむねはし",
     "block.base.thatch_peak": "かやぶきのいただき",
     "block.base.hide_lean_to": "かわのさしかけやね",

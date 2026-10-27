@@ -176,10 +176,10 @@
             when: Some(All([AtHome, HomeHas("hive", 1), HomeHas("flower", 3)])),
             replaces: [], modifiers: (heal: 1.1)),
         // A dooryard, the Farm age's: an awning over the door and two things set out under the
-        // sky about it (`yard`: a bench, bunting, a hay bale), counted only where they stand
-        // in the open (`outdoors` below). Out in the yard, not under the roof, the home is a
-        // place to sit a while.
-        (name: "dooryard", kind: Buff, title: "Dooryard", description: "An awning at your door, a bench, bunting or bales out in the open about it: in the yard you heal a twentieth faster.", announce: true,
+        // sky about it (`yard`: a bench, bunting, a hay bale, a dry-stone wall), counted only
+        // where they stand in the open (`outdoors` below). Out in the yard, not under the
+        // roof, the home is a place to sit a while.
+        (name: "dooryard", kind: Buff, title: "Dooryard", description: "An awning at your door, a bench, bunting, bales or a dry-stone wall out in the open about it: in the yard you heal a twentieth faster.", announce: true,
             when: Some(All([AtHome, Not(Indoors), HomeHas("awning", 1), HomeHas("yard", 2)])),
             replaces: [], modifiers: (heal: 1.05)),
         // Reactions: a home answers what is around it. A roof and a fire in a storm, animals
