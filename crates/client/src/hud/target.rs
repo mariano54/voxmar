@@ -391,7 +391,7 @@ fn show(
                     let name = |item: BlockId| locale.block(sight.world.registry.def(item));
                     station_tags(&locale, name, hit.block, ready, charring(launch, block), &seen, time.elapsed_secs_f64())
                 }
-                _ => Vec::new(),
+                _ => wants(&locale, &launch.content, player, block),
             };
             Some(Readout { name: locale.block(def), name_colour: rarity_color(def.rarity), tags, ..Readout::default() })
         }
@@ -454,6 +454,28 @@ fn show(
         }
     }
     *readout = next;
+}
+
+/// What breaking `block` wants that the player lacks, in red under its name before they try,
+/// in the words its refusal would say (`refusals.ron`): the tool, if what is in hand is not
+/// one good enough ("Needs a Stone Pickaxe or better" on coal held with flint), and the level,
+/// once the server has said the player's skills. Nothing when they have both.
+fn wants(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, block: BlockId) -> Vec<(String, Color)> {
+    use voxmar_engine::action::Requirement;
+    let Some(rule) = content.tools.rule(block) else { return Vec::new() };
+    let held = player.inventory.get(player.selected).map(|s| s.item);
+    let mut lines = Vec::new();
+    if !content.tools.good_enough(held, block)
+        && let (Some(key), Some(tool)) = (content.refusals.says(Requirement::ToolGood), rule.tool.and_then(|kind| content.least_tool(kind, rule.tier)))
+    {
+        lines.push((locale.format(key, &[("tool", &locale.block(content.blocks.def(tool)))]), ERROR));
+    }
+    if let (true, Some(skill), Some(key)) = (player.skills_known, rule.skill, content.refusals.says(Requirement::BlockLevel))
+        && content.skills.level(player.skills.xp(skill)) < rule.level
+    {
+        lines.push((locale.format(key, &[("skill", &locale.skill(content.skills.get(skill))), ("level", &rule.level)]), ERROR));
+    }
+    lines
 }
 
 /// The quiet line under a creature's name: kept (and by whom, when not by us), young, and
@@ -539,6 +561,33 @@ mod tests {
         seen.tell(at, Some(StationLoad { item: BlockId(1), count: 9, output: BlockId(2), makes: 36, seconds: 90 }), None, 30.0);
         let charring = station_tags(&locale, name, at, false, true, &seen, 30.0).into_iter().map(|(words, _)| words).collect::<Vec<_>>();
         assert_eq!(charring, ["Charring 9 Raw Beef", "36 Jerky in about 2 min"]);
+    }
+
+    /// Coal looked at with a flint pickaxe in hand says, in red, the stone pickaxe it wants;
+    /// copper ore, the Mining level too, once the skills are known; with a stone pickaxe and
+    /// the level, or at stone, nothing.
+    #[test]
+    fn a_block_says_the_tool_and_level_it_wants_before_a_try() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        let id = |n: &str| content.blocks.id(n).unwrap();
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&assets.join("content"), code);
+            let mut player = LocalPlayer::default();
+            player.inventory.slots[0] = Some(ItemStack::new(id("base:flint_pickaxe"), 1));
+            let tool = |name: &str| (locale.format("tools.needs", &[("tool", &locale.block(content.blocks.def(id(name))))]), ERROR);
+            assert_eq!(wants(&locale, &content, &player, id("base:coal_ore")), [tool("base:stone_pickaxe")], "{code}");
+            assert_eq!(wants(&locale, &content, &player, id("base:stone")), [], "{code}");
+            assert_eq!(wants(&locale, &content, &player, id("base:copper_ore")), [tool("base:stone_pickaxe")], "{code}: skills not yet known");
+            player.skills_known = true;
+            let mining = content.skills.id("core:mining").unwrap();
+            let level = (locale.format("skills.needs", &[("skill", &locale.skill(content.skills.get(mining))), ("level", &5)]), ERROR);
+            assert_eq!(wants(&locale, &content, &player, id("base:copper_ore")), [tool("base:stone_pickaxe"), level.clone()], "{code}");
+            player.inventory.slots[0] = Some(ItemStack::new(id("base:stone_pickaxe"), 1));
+            assert_eq!(wants(&locale, &content, &player, id("base:copper_ore")), [level], "{code}");
+            player.skills.grant(mining, content.skills.xp_for(5));
+            assert_eq!(wants(&locale, &content, &player, id("base:copper_ore")), [], "{code}");
+        }
     }
 
     #[test]
