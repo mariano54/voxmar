@@ -21,6 +21,10 @@ has a flint pickaxe, axe and knife and a digging stick (a shovel), but no hoe: t
 a plank's edge cuts nothing); an older save's come back as the flint tool, the digging
 stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`).
 
+A tool that breaks says so in chat: with a spare brought up, what is in hand now; with none,
+what another takes, by the first recipe making it ("Your Flint Axe broke. Another takes 2
+Flint, 1 Stick.").
+
 A block broken while a tool carried would break it at least `faster_carried` times as fast
 (2 in `base/tools.ron`, hardness / speed + `break_wait` each way) says so in chat ("Your
 Stone Pickaxe breaks Cobblestone 3× as fast: take it in hand"), once a kind of tool each time
