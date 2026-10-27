@@ -572,6 +572,8 @@
             temperament: (fear: 0.5, nervousness: 0.3, curiosity: 0.5, sociability: 0.8, energy: 0.9, spread: 0.25),
             senses: (sight: 16.0, hearing: 16.0),
             barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
+            // Bread or a roast carrot held out draws them to stand by whoever holds it.
+            diet: (favourite: ["bread", "roast_carrot"]),
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],
         ),

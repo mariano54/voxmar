@@ -138,7 +138,7 @@ fn a_dry_stone_wall_turns_its_corner_in_its_own_courses() {
     }
     assert!(wrong.is_empty(), "{corner} is not {wall}'s west part and its turned run's north part at {} points, first {:?}", wrong.len(), wrong.first());
     let cobbles = blocks.expect("base:cobblestone");
-    for name in [wall, corner] {
+    for name in [wall, corner, "base:dry_stone_stile"] {
         let id = blocks.expect(name);
         let def = blocks.def(id);
         let shelter: Vec<_> = def.tags.iter().filter(|t| t.starts_with("shelter:")).collect();
@@ -180,5 +180,48 @@ fn a_brace_comes_in_every_wood_and_facing_and_turned_over() {
         }
         let brace = blocks.expect(&format!("base:{wood}_brace"));
         assert!(content.recipes.iter().any(|recipe| recipe.output == brace), "a {wood} brace is made");
+    }
+}
+
+/// An arch stands over an opening in a stone wall, open beneath its crown and curving down
+/// to its jambs alike on both sides; the wide one's two halves, set together, are each
+/// other's mirror, and only the first is made or comes back.
+#[test]
+fn an_arch_curves_alike_from_both_its_jambs() {
+    let content = content();
+    let blocks = &content.blocks;
+    let inside = |name: &str, at: glam::Vec3| {
+        let shape = blocks.shape(blocks.expect(name)).unwrap_or_else(|| panic!("{name} has no shape"));
+        shape.bounds.iter().any(|&(min, max)| at.cmpgt(min).all() && at.cmplt(max).all())
+    };
+    let points = || (0..32 * 32 * 32).map(|i| (glam::Vec3::new((i % 32) as f32, (i / 32 % 32) as f32, (i / 1024) as f32) + 0.5) / 32.0);
+    let mirror = |at: glam::Vec3| glam::Vec3::new(1.0 - at.x, at.y, at.z);
+    for stone in ["cobblestone", "stone_brick"] {
+        let (arch, wide, half) = (format!("base:{stone}_arch"), format!("base:{stone}_wide_arch"), format!("base:{stone}_wide_arch_half"));
+        let lopsided = points().filter(|&at| inside(&arch, at) != inside(&arch, mirror(at))).count();
+        assert_eq!(lopsided, 0, "{arch} curves differently on its two sides");
+        let unmatched = points().filter(|&at| inside(&wide, at) != inside(&half, mirror(at))).count();
+        assert_eq!(unmatched, 0, "{half} is not {wide} mirrored");
+        for at in points() {
+            assert!(at.y < 11.0 / 16.0 || inside(&arch, at), "{arch} is not whole above its crown at {at}");
+            assert!(at.y < 12.0 / 16.0 || inside(&wide, at), "{wide} is not whole above its crown at {at}");
+        }
+        assert!(!inside(&arch, glam::Vec3::new(0.5, 10.5 / 16.0, 0.5)), "{arch} is shut under its crown");
+        assert!(!inside(&wide, glam::Vec3::new(0.05, 11.5 / 16.0, 0.5)), "{wide} is shut under its crown");
+        assert!(inside(&wide, glam::Vec3::new(0.95, 0.05, 0.5)) && !inside(&wide, glam::Vec3::new(0.05, 0.05, 0.5)), "{wide} springs from its east side");
+        let (wide_id, half_id) = (blocks.expect(&wide), blocks.expect(&half));
+        assert_eq!(blocks.beside(wide_id).map(|(_, b)| b), Some(half_id), "{half} is not set beside {wide}");
+        assert_eq!(blocks.info(half_id).drops, blocks.expect("core:air"), "{half} comes back as well as {wide}");
+        for name in [&arch, &wide, &half] {
+            let def = blocks.def(blocks.expect(name));
+            assert_eq!(def.tags.iter().filter(|t| t.starts_with("shelter:")).count(), 1, "{name} walls a room once");
+            assert!(def.solid, "{name} is walked into");
+            // Masonry, as the wall it arches: a town's comes back when broken, as its wall's
+            // stone does, where a village's furnishings give nothing.
+            assert!(!def.has_tag("furnishing"), "{name} would give nothing where a town set it");
+        }
+        for (name, made) in [(&arch, true), (&wide, true), (&half, false)] {
+            assert_eq!(content.recipes.iter().any(|r| r.output == blocks.expect(name)), made, "{name} made or not");
+        }
     }
 }

@@ -46,6 +46,11 @@
 //   shut, it notices a quiet step only within `quiet` blocks (1 to 6), and a sprint within
 //   `wakes` (4 to 24, beyond its quiet) wakes it with a start: a fighter comes up provoked
 //   with no warning, prey bolts. Not for a kind about at all hours.
+// - `guards` is how a mother guards her young (docs/creature-ai.md, "Young"): a wild group
+//   comes with young by the chance `young` (above 0, up to 0.6); a grown one that notices a
+//   player within `near` blocks (2 to 12) of a young one of its kind huffs at them for
+//   `huff` seconds (0.3 to 2), then goes for them if they stay; one who strikes a young one
+//   it goes for at once. For an animal that fights back.
 // - `loot` is what it drops: always (chance 1) or by chance, more with the right tool
 //   (`tools`: the tags of what the killer holds) and, for rarer finds, with level.
 (
@@ -356,6 +361,7 @@
             group: (size: (1, 4)),
             temperament: (aggression: 0.0, fear: 0.65, nervousness: 0.45, curiosity: 0.45, sociability: 0.6, territory: 0.1, energy: 0.6),
             leash: 28.0,
+            guards: (near: 6.0, young: 0.3, huff: 1.0),
             sleeps: (quiet: 2.5, wakes: 12.0),
             diet: (eats: ["brown_mushroom", "red_mushroom", "short_grass"], favourite: ["apple", "carrot"]),
             behaviours: [
@@ -476,6 +482,7 @@
             temperament: (aggression: 0.25, fear: 0.1, nervousness: 0.4, curiosity: 0.5, sociability: 0.1, territory: 0.8, energy: 0.3),
             senses: (sight: 16.0, hearing: 24.0, field: 100.0, react: 0.8),
             leash: 48.0,
+            guards: (near: 8.0, young: 0.35, huff: 1.2),
             sleeps: (quiet: 3.0, wakes: 14.0),
             diet: (eats: ["sweet_berry_bush", "brown_mushroom"], favourite: ["apple"]),
             behaviours: [

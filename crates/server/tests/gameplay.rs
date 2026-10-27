@@ -9112,10 +9112,18 @@ impl Fresh {
         let mut swings = 0;
         let hand = if self.have("base:stone_axe") > 0 { "base:stone_axe" } else { "" };
         self.hold(hand);
-        // In by the open end.
+        // In by the open end, and the mouth shut behind: an animal struck at the far end gets
+        // past the player (who does not block it), and with the mouth open it ran out of the
+        // lane, so a hunt for two hides ran down two dozen rabbits and past a minute in three
+        // Farm walks of twenty (Oct 27).
         if (self.at.x - lane_x).abs() > 0.5 {
             self.walk_toward(mouth, 0.05);
         }
+        let inside = Self::middle(self.rel(-9, 0, 0));
+        if self.at.z > inside.z {
+            self.walk_toward(inside, 0.05);
+        }
+        self.shut_lane(true);
         while !done(&self.c) {
             swings += 1;
             assert!(swings <= 400, "hunting took over 400 swings: at {:?}, lane {:?}, blows {} damage {:?}", self.at, lane(&self.c, self.origin), self.c.blows, self.c.damage);
@@ -9144,7 +9152,7 @@ impl Fresh {
             };
             // Up close behind it, in the lane.
             if (p.z - at.z).abs() > 1.6 {
-                self.walk_toward(Vec3::new(lane_x, at.y, p.z + 1.3), 0.1);
+                self.walk_toward(Vec3::new(lane_x, at.y, (p.z + 1.3).min(inside.z)), 0.1);
             }
             self.propose("core:attack", ActionTarget::Creature(id));
             self.swung.push(id);
@@ -9157,6 +9165,15 @@ impl Fresh {
                 }
             });
         }
+        self.shut_lane(false);
+    }
+
+    /// Shuts the lane's mouth (two blocks of stone across it, the player inside), or opens it.
+    fn shut_lane(&mut self, shut: bool) {
+        let (block, id) = if shut { ("stone", self.c.content.blocks.id("base:stone")) } else { ("air", Some(BlockId::AIR)) };
+        let mouth = self.rel(-9, 0, 1);
+        self.c.fill(self.origin, IVec3::new(-9, 0, 1), IVec3::new(-9, 1, 1), block);
+        self.c.pump_until(|c| (0..2).all(|y| c.world.block(mouth + IVec3::Y * y) == id));
     }
 
     /// Builds the plot beside a player who has just joined, and starts the clock. Coordinates
@@ -9728,6 +9745,13 @@ impl Fresh {
     /// when empty, takes what it fired when it shows fired, and while it fires digs the clay
     /// for the next load from the ponds, or waits by it when no more is wanted.
     fn fire_clay(&mut self, site: &Site, need: u32) {
+        self.fire_clay_while(site, need, |_| false);
+    }
+
+    /// Fires clay as `fire_clay` does, and while a load fires does a step of something else
+    /// (`meanwhile`, true while it found a step to do), as a quest's `meanwhile` says, coming
+    /// back for the load when there is no step left.
+    fn fire_clay_while(&mut self, site: &Site, need: u32, mut meanwhile: impl FnMut(&mut Self) -> bool) {
         let (clay, fired) = ("base:clay", "base:fired_clay");
         while self.have(fired) < need {
             let kiln = |c: &Client| c.world.block(site.kiln).map(|b| c.content.blocks.def(b).name.clone()).unwrap_or_default();
@@ -9738,6 +9762,9 @@ impl Fresh {
             let wanted = need.saturating_sub(self.have(fired) + coming).min(12);
             if self.have(clay) < wanted {
                 self.gather_from("base:stone_shovel", &site.banks, site.bed.clone(), clay, wanted);
+            }
+            if kiln(&self.c) == "base:pit_kiln_firing" && meanwhile(self) {
+                continue;
             }
             if across(self.at, Self::middle(site.kiln)) > 3.5 {
                 self.walk_toward(Self::middle(site.kiln), 3.0);
@@ -9847,15 +9874,25 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     }
 
     // The Potter: six clay pots at the table, five fired clay round an empty top middle
-    // making two (Crafting 2).
-    f.fire_clay(&site, 15);
+    // making two (Crafting 2). While its loads fire, as its text says (its `meanwhile`), Fuel
+    // to Hand's trees are felled, a trunk at a time: forty logs carried at once, past its
+    // thirty-two, for the clamp's charcoal and the planks of a chest, and what the clamp is
+    // built of.
+    let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
+    let fell = |f: &mut Fresh| {
+        let logs = f.have(log);
+        if logs >= 40 {
+            return false;
+        }
+        f.gather("base:stone_axe", trunks.clone(), log, (logs + 4).min(40));
+        true
+    };
+    f.fire_clay_while(&site, 15, fell);
     f.at_table(site.table);
     f.craft(&[(0, fired, 3), (2, fired, 3), (3, fired, 3), (4, fired, 3), (5, fired, 3)], "base:clay_pot", 6);
     f.mark("the_potter");
 
-    // Fuel to Hand: forty logs carried at once, past its thirty-two, for the clamp's charcoal
-    // and the planks of a chest, and what the clamp is built of.
-    let trunks: Vec<IVec3> = [-7, -9].into_iter().flat_map(|z| [1, 3, 5, 7, 11, 13, 15].into_iter().flat_map(move |x| (0..4).map(move |y| o + IVec3::new(x, y, z)))).collect();
+    // Fuel to Hand: the rest of the forty logs.
     f.gather("base:stone_axe", trunks, log, 40);
     f.wait(5.0, "the server counting the logs carried", |c| quest_status(c, "fuel_to_hand").0);
     f.mark("fuel_to_hand");
@@ -9979,16 +10016,31 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
         if !quest_status(&f.c, "a_kiln_load").0 {
             let more = f.have(fired) + 12;
             f.fire_clay(&site, more);
-            // Between loads, as A Kiln Load says: Earthenware's crockery from the fired clay,
-            // the bowls after one load and the jar after the next.
-            if !quest_status(&f.c, "earthenware").0 && f.have(fired) >= 3 {
-                if f.have("base:earthen_bowl") == 0 {
+            // Between loads, as A Kiln Load says (its `meanwhile`): Earthenware's bowls, A Pot
+            // on the Chimney's pots and Earthenware's jar, one a load, and what is left once the
+            // last load is out (two loads, with clay fired before, left no room for the third).
+            let between = |f: &mut Fresh| {
+                let crockery = quest_status(&f.c, "earthenware").0;
+                if !crockery && f.have("base:earthen_bowl") == 0 && f.have(fired) >= 3 {
                     bowls(f);
-                } else if f.have("base:earthen_jar") == 0 {
+                } else if !quest_status(&f.c, "a_pot_on_the_chimney").0 && f.have(fired) >= 4 {
+                    // Two chimney pots of four fired clay at the table (Construction 3), one
+                    // set on the chimney.
+                    f.at_table(table);
+                    f.craft(&[(0, fired, 1), (2, fired, 1), (3, fired, 1), (5, fired, 1)], "base:chimney_pot", 2);
+                    f.walk_toward(Fresh::middle(f.rel(3, 0, 4)), 0.3);
+                    f.place("base:chimney_pot", f.rel(3, 2, 6));
+                    f.wait(5.0, "the server counting the chimney pot", |c| quest_status(c, "a_pot_on_the_chimney").0);
+                } else if !crockery && f.have(fired) >= 3 {
                     jar(f);
+                } else {
+                    return false;
                 }
-            }
+                true
+            };
+            between(f);
             if quest_status(&f.c, "a_kiln_load").0 {
+                while between(f) {}
                 f.mark("a_kiln_load");
             }
         } else if !quest_status(&f.c, "first_bricks").0 {
@@ -10009,10 +10061,26 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
                 bowls(f);
             }
             jar(f);
-        } else if !quest_status(&f.c, "a_table_for_two").0 {
-            // A Table for Two, open since the Farm Age, made between firings: two oak stools
-            // (Construction 1) and a table (Construction 3) at the crafting table, set by the
-            // hearth.
+        } else if f.have(straw) < 12u32.saturating_sub(done_tempered).div_ceil(2) {
+            // Straw for the Kiln: the tufts of wild wheat beyond the east pond, picked for the
+            // straw that tempers the ring's bricks (one a tuft) and the seeds a field would take,
+            // with room in the pack for them.
+            f.make_room(4);
+            for tuft in (8..=10).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, 0, z))) {
+                if f.c.world.block(tuft) != Some(BlockId::AIR) {
+                    f.walk_toward(Fresh::middle(tuft), 1.3);
+                    f.propose("core:mine", ActionTarget::Block { block: tuft, face: Face::PosY });
+                    f.wait(5.0, "picking the wild wheat", |c| c.world.block(tuft) == Some(BlockId::AIR));
+                }
+            }
+            f.collect(straw, 12u32.saturating_sub(done_tempered).div_ceil(2));
+            // Six kept at once, as the quest asks, before any is spent.
+            f.wait(5.0, "the server counting the straw kept", |c| quest_status(c, "straw_for_the_kiln").0);
+        } else if !quest_status(&f.c, "a_table_for_two").0 && done_tempered >= 6 {
+            // A Table for Two, open since the Farm Age, made between the tempered bricks' loads
+            // (Brick by Brick's `meanwhile`), halfway, where the shaping ran 40 s with nothing
+            // new (Oct 27): two oak stools (Construction 1) and a table (Construction 3) at the
+            // crafting table, set by the hearth.
             f.make_room(4);
             f.at_table(site.table);
             while f.have(stick) < 8 {
@@ -10032,10 +10100,11 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
             for (x, item) in [(3, "base:oak_stool"), (4, "base:oak_table"), (5, "base:oak_stool")] {
                 f.place(item, f.rel(x, -1, 5));
             }
-            // The crockery put by in the chest beside them, for room in the pack.
+            // The crockery and the spare chimney pot put by in the chest beside them, for
+            // room in the pack.
             f.propose("base:open_store", ActionTarget::Block { block: chest, face: Face::PosY });
             f.wait(5.0, "the chest opening", |c| c.inventory.store.is_some());
-            for item in ["base:earthen_bowl", "base:earthen_jar", "base:earthen_plate", "base:earthen_jug"] {
+            for item in ["base:earthen_bowl", "base:earthen_jar", "base:earthen_plate", "base:earthen_jug", "base:chimney_pot"] {
                 let id = f.c.content.blocks.expect(item);
                 while let Some(from) = (0..voxmar_engine::inventory::SLOTS).find(|&s| f.c.inventory.get(s).is_some_and(|x| x.item == id)) {
                     let count = f.c.inventory.get(from).map_or(0, |x| x.count);
@@ -10045,21 +10114,6 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
                 }
             }
             f.propose("core:stow", ActionTarget::None);
-        } else if f.have(straw) < 12u32.saturating_sub(done_tempered).div_ceil(2) {
-            // Straw for the Kiln: the tufts of wild wheat beyond the east pond, picked for the
-            // straw that tempers the ring's bricks (one a tuft) and the seeds a field would take,
-            // with room in the pack for them.
-            f.make_room(4);
-            for tuft in (8..=10).flat_map(|z| [29, 30].map(|x| o + IVec3::new(x, 0, z))) {
-                if f.c.world.block(tuft) != Some(BlockId::AIR) {
-                    f.walk_toward(Fresh::middle(tuft), 1.3);
-                    f.propose("core:mine", ActionTarget::Block { block: tuft, face: Face::PosY });
-                    f.wait(5.0, "picking the wild wheat", |c| c.world.block(tuft) == Some(BlockId::AIR));
-                }
-            }
-            f.collect(straw, 12u32.saturating_sub(done_tempered).div_ceil(2));
-            // Six kept at once, as the quest asks, before any is spent.
-            f.wait(5.0, "the server counting the straw kept", |c| quest_status(c, "straw_for_the_kiln").0);
         } else if done_tempered >= 12 {
             f.wait(5.0, "the server counting the bricks shaped", |c| quest_status(c, "brick_by_brick").0);
             f.mark("brick_by_brick");
@@ -10240,7 +10294,26 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let (gap, from, ended) = pacing.longest_gap(hearth, end);
     eprintln!("from the lit hearth: the longest wait with nothing new {gap:.1} s from {from:.1} s, ended by {}", ended.unwrap_or("the end of the run"));
     assert!(gap <= PACING_WAIT, "{gap:.1} s with nothing new from {from:.1} s on the Farm line (the hearth lit at {hearth:.1} s), ended by {}", ended.unwrap_or("the end of the run"));
+    // And each of its chapters (from one milestone to the next) that runs PACING_CHAPTER or
+    // longer brings something new for every PACING_CHAPTER it began: no chapter is all one
+    // chore, however short its waits.
+    let mut thin = Vec::new();
+    for pair in f.marks.windows(2).filter(|m| m[0].at >= hearth) {
+        let (from, to) = (pair[0].at, pair[1].at);
+        let new = pacing.new.iter().filter(|(at, _, _)| *at > from && *at <= to).count();
+        let wanted = ((to - from) / PACING_CHAPTER).ceil() as usize;
+        eprintln!("chapter {}: {:.1} s, {new} new", pair[1].name, to - from);
+        if to - from >= PACING_CHAPTER && new < wanted {
+            thin.push(format!("{} ({:.1} s, {new} new of {wanted})", pair[1].name, to - from));
+        }
+    }
+    assert!(thin.is_empty(), "Farm chapters with too little new: {thin:?}");
 }
+
+/// The pacing check's chapter: a Farm milestone's stretch brings at least one new thing for
+/// each this many server seconds it began (A Kiln Load fired forty clay over 68 to 74 s with
+/// two new things, Oct 27).
+const PACING_CHAPTER: f32 = 30.0;
 
 /// Something new comes every three minutes of the line, several things, and no one action
 /// is done over and over for long (docs/first-days.md, "Pacing"): the report printed, and

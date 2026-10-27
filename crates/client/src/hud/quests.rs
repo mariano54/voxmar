@@ -3041,6 +3041,28 @@ pub(crate) mod tests {
         assert_eq!(content.quests.tracker(), voxmar_engine::quest::Tracker { pins: 3, done_stays: 5.0, backing_alpha: 0.5, follow_on: true, ways: 1, book_key: true });
     }
 
+    /// What a quest gives to do meanwhile is named in its words in every language, as the
+    /// load checks the book's own words.
+    #[test]
+    fn what_to_do_meanwhile_is_named_in_each_language() {
+        let content = content();
+        let mut wrong = Vec::new();
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), code);
+            for quest in content.quests.iter() {
+                let why = locale.get_or(&format!("{}.why", def_key("quest", &quest.name)), &quest.why).to_owned();
+                for other in quest.meanwhile.iter().filter_map(|name| content.quests.iter().find(|q| &q.name == name)) {
+                    let title = locale.get_or(&def_key("quest", &other.name), &other.title).to_owned();
+                    if !why.contains(&title) {
+                        wrong.push(format!("{code}: {} gives {} to do meanwhile, but its words do not name {title}", quest.name, other.name));
+                    }
+                }
+            }
+        }
+        assert!(content.quests.iter().any(|q| !q.meanwhile.is_empty()), "a quest gives something to do meanwhile");
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
     /// The Nomad age is the first chapter, and a new player's quest is a Nomad one, though
     /// the Farm book's file (`quests.ron`) is read before the Nomad's (`quests_nomad.ron`).
     #[test]

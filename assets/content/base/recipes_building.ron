@@ -71,6 +71,8 @@
         // turn a corner.
         (pattern: [["cobblestone", "cobblestone", "cobblestone"], ["cobblestone", "cobblestone", "cobblestone"]], output: "dry_stone_wall", count: 6, skill: "core:construction", level: 2, xp: 3.0),
         (pattern: [["dry_stone_wall", "dry_stone_wall"]], output: "dry_stone_wall_corner", count: 2, skill: "core:construction", level: 2, xp: 1.0),
+        // A stile: a wall with a cobble stepped out from either side of it.
+        (pattern: [["cobblestone", "dry_stone_wall", "cobblestone"]], output: "dry_stone_stile", skill: "core:construction", level: 3, xp: 2.0),
         (pattern: [["{name}_fence", "{name}_fence"]], output: "{name}_fence_corner", skill: "core:construction", level: 2, xp: 1.0),
         (pattern: [["{name}_fence", "{name}_slab", "{name}_fence"]], output: "{name}_fence_gate", skill: "core:construction", level: 2, xp: 2.0),
         (pattern: [["{name}_fence_gate", "{name}_fence_gate"]], output: "{name}_double_gate", skill: "core:construction", level: 2, xp: 3.0),
@@ -85,6 +87,12 @@
         (pattern: [["{name}_lattice_window"], ["wooden_door"]], output: "balcony_door", skill: "core:construction", level: 4, xp: 3.0),
         // An arrow slit: two stone bricks either side of a gap and a slab over it.
         (pattern: [["", "stone_brick_slab", ""], ["stone_bricks", "", "stone_bricks"]], output: "stone_arrow_slit", count: 2, skill: "core:construction", level: 6, xp: 4.0),
+        // An arch: three slabs over two blocks either side of the gap; two arches side by
+        // side make a wide one.
+        (pattern: [["cobblestone_slab", "cobblestone_slab", "cobblestone_slab"], ["cobblestone", "", "cobblestone"]], output: "cobblestone_arch", count: 2, skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["cobblestone_arch", "cobblestone_arch"]], output: "cobblestone_wide_arch", skill: "core:construction", level: 3, xp: 3.0),
+        (pattern: [["stone_brick_slab", "stone_brick_slab", "stone_brick_slab"], ["stone_bricks", "", "stone_bricks"]], output: "stone_brick_arch", count: 2, skill: "core:construction", level: 6, xp: 4.0),
+        (pattern: [["stone_brick_arch", "stone_brick_arch"]], output: "stone_brick_wide_arch", skill: "core:construction", level: 6, xp: 4.0),
         (pattern: [["fired_clay", "", "fired_clay"], ["fired_clay", "", "fired_clay"]], output: "chimney_pot", count: 2, skill: "core:construction", level: 3, xp: 3.0),
     ],
 )

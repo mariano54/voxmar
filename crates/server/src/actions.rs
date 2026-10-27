@@ -411,6 +411,7 @@ impl Server {
                 (Effect::Tend, ActionTarget::Creature(id)) => self.tend(agent, id),
                 (Effect::Inspect, ActionTarget::Creature(id)) => self.inspect(agent, id),
                 (Effect::Trade, ActionTarget::Creature(id)) => self.trade(agent, id),
+                (Effect::Treat, ActionTarget::Creature(id)) => self.treat(agent, id),
                 (Effect::Release, ActionTarget::Creature(id)) => self.release(agent, id),
                 (Effect::ClearTarget, ActionTarget::Block { block, .. }) => {
                     let plants = supported_by(&Context { server: self, agent, held: None }, block);
@@ -481,6 +482,8 @@ impl Server {
                     let spawn = player.home_spot(&self.lit).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
+                    // Woken at home is no homecoming.
+                    player.away = 0.0;
                     // Where they wake is where a grave goes until they stand elsewhere,
                     // not where they last stood in the life before.
                     player.last_ground = Some(spawn);
@@ -505,7 +508,13 @@ impl Server {
                     self.set_blocks(&changes);
                     self.placed.extend(placed);
                 }
-                (Effect::WearHeld, ActionTarget::Block { block, .. }) => self.wear_on_block(agent, block, def.effects.contains(&Effect::Till), tool),
+                (Effect::WearHeld, ActionTarget::Block { block, .. }) => {
+                    let tilling = def.effects.contains(&Effect::Till);
+                    if !tilling {
+                        self.tell_faster_carried(agent, block, tool.1);
+                    }
+                    self.wear_on_block(agent, block, tilling, tool);
+                }
                 (Effect::Coat, ActionTarget::Block { block, .. }) => self.coat(agent, block),
                 (Effect::Till, ActionTarget::Block { block, .. }) => {
                     if let Some(farmland) = self.content.blocks.id("base:farmland") {
@@ -987,6 +996,41 @@ mod tests {
         };
         assert_eq!(broken(&mut server, true), 1, "a player's log bench came not back");
         assert_eq!(broken(&mut server, false), 0, "a village's log bench gave itself");
+    }
+
+    /// A fingerpost is a furnishing, as the log bench: a player's comes back, a village's
+    /// gives nothing. A town's gate arch is masonry, as its wall: it comes back whoever set it.
+    #[test]
+    fn a_villages_fingerpost_gives_nothing_and_its_arch_comes_back() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 2, 0);
+        let broken = |server: &mut crate::Server, block: voxmar_engine::block::BlockId, players: bool| {
+            server.set_block(pos, block);
+            server.placed.remove(&pos);
+            if players && server.marks_placed(block, block) {
+                server.placed.insert(pos);
+            }
+            server.items.take_all().for_each(drop);
+            server.break_loot(1, pos, None);
+            server.items.take_all().filter(|d| d.stack.item == block).map(|d| u32::from(d.stack.count)).sum::<u32>()
+        };
+        let sign = server.content.blocks.expect("base:oak_fingerpost");
+        assert_eq!(broken(&mut server, sign, true), 1, "a player's fingerpost came not back");
+        assert_eq!(broken(&mut server, sign, false), 0, "a village's fingerpost gave itself");
+        for name in ["base:cobblestone_arch", "base:stone_brick_arch_east"] {
+            let arch = server.content.blocks.expect(name);
+            let item = server.content.blocks.info(arch).drops;
+            server.set_block(pos, arch);
+            server.placed.remove(&pos);
+            server.items.take_all().for_each(drop);
+            server.break_loot(1, pos, None);
+            let back: u32 = server.items.take_all().filter(|d| d.stack.item == item).map(|d| u32::from(d.stack.count)).sum();
+            assert_eq!(back, 1, "a town's {name} gave nothing back");
+        }
     }
 
     /// A coal sample a player sets down where the world laid one, over its seam, and mines

@@ -150,6 +150,13 @@
         "cut_stone": [
             (name: "{name}_slab", render: Model, shape: "slab", flips: true, textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["slab", "stone", "building"]),
             (name: "{name}_stairs", render: Model, shape: "stairs", facing: true, flips: true, textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["stairs", "stone", "building"]),
+            // An arch to stand over an opening in a stone wall, its underside curving from
+            // the jambs up to the crown, the way through running away from whoever sets it.
+            // The wide one spans two cells, set together (`beside`, as a double gate's leaves)
+            // and broken together, its second half dropping nothing of its own.
+            (name: "{name}_arch", render: Model, shape: "arch", facing: true, textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["arch", "stone", "building"]),
+            (name: "{name}_wide_arch", render: Model, shape: "wide_arch", facing: true, beside: "{name}_wide_arch_half", textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["arch", "stone", "building"]),
+            (name: "{name}_wide_arch_half", render: Model, shape: "wide_arch_half", facing: true, drops: "core:air", textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["arch", "stone", "building"]),
         ],
     },
     families: [
@@ -222,6 +229,9 @@
         // wall does.
         (name: "dry_stone_wall", render: Model, shape: "dry_stone_wall", facing: true, sound: Stone, material: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), tags: ["railing", "stone_wall", "stone", "building", "yard", "shelter:draughty"]),
         (name: "dry_stone_wall_corner", render: Model, shape: "dry_stone_wall_corner", facing: true, sound: Stone, material: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), tags: ["railing", "stone_wall", "stone", "building", "yard", "shelter:draughty"]),
+        // A stile, to step over the wall without a gate to leave open: penned animals stay
+        // in (a railing stands two high to them), a player walks over.
+        (name: "dry_stone_stile", render: Model, shape: "dry_stone_stile", facing: true, sound: Stone, material: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), tags: ["railing", "stone_wall", "stile", "stone", "building", "yard", "shelter:draughty"]),
         (name: "stone_flue", render: Model, shape: "chimney_stack", sound: Stone, material: "cobblestone", textures: All("cobblestone"), hardness: 2.0, color: (110, 110, 110), tags: ["chimney_piece", "stone", "building", "shelter:sound"]),
         (name: "chimney_hood", render: Model, shape: "chimney_hood", sound: Stone, textures: All("stone_bricks"), hardness: 2.0, color: (120, 120, 120), tags: ["chimney_piece", "stone", "bricks", "building", "shelter:sound"]),
         (name: "chimney_pot", render: Model, shape: "chimney_pot", sound: Stone, textures: All("terracotta"), hardness: 1.25, color: (152, 94, 67), tags: ["chimney_piece", "terracotta", "building", "shelter:fine"]),

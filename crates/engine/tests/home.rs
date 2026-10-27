@@ -227,6 +227,16 @@ fn a_mantel_shelf_and_a_fireside_bench_make_a_lived_in_hearth() {
     }
 }
 
+/// Every wood's rocking chair is a seat that rocks the view of whoever sits in it.
+#[test]
+fn a_rocking_chair_rocks() {
+    let content = content();
+    for wood in ["birch", "oak", "dark_oak"] {
+        let chair = content.blocks.def(content.blocks.expect(&format!("base:{wood}_rocking_chair")));
+        assert!(chair.has_tag("seat") && chair.has_tag(voxmar_engine::vitals::ROCKS), "{wood} rocking chair");
+    }
+}
+
 /// The bedchamber: under a roof, the bed with a blanket chest, a washstand and a rug; any
 /// of them missing, or out under the sky, it is not one. Every wood makes both pieces, and
 /// the chest is storage.

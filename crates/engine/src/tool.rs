@@ -181,6 +181,11 @@ pub struct ToolFile {
     /// if none does.
     #[serde(default)]
     pub break_wait: Option<f32>,
+    /// How many times as fast a tool carried must break a block than the one it is broken
+    /// with for the player to be told so, once a kind of tool each time they join; 0 never
+    /// tells. The last package to give one decides, `DEFAULT_FASTER_CARRIED` if none does.
+    #[serde(default)]
+    pub faster_carried: Option<f32>,
 }
 
 /// What breaking a block takes and teaches.
@@ -231,6 +236,8 @@ pub struct ToolRegistry {
     wear: Wear,
     /// Seconds the hand waits after a break (`ToolFile::break_wait`).
     break_wait: f32,
+    /// How much faster a carried tool tells (`ToolFile::faster_carried`); 0 never.
+    faster_carried: f32,
     /// Each kind's skill that saves its wear.
     savers: Vec<Option<SkillId>>,
     /// Each item: what is left of it when it breaks, what mends it, and the tag of the
@@ -294,6 +301,10 @@ fn opened(blocks: &BlockRegistry, rules: &[Rule], tools: &[Tool], covered: &[Opt
         .collect()
 }
 
+/// How many times as fast a carried tool must break a block to be told of where no package
+/// says.
+pub const DEFAULT_FASTER_CARRIED: f32 = 2.0;
+
 /// Seconds the hand waits after a break where no package says (Minecraft's five ticks).
 pub const DEFAULT_BREAK_WAIT: f32 = 0.25;
 
@@ -312,12 +323,17 @@ impl ToolRegistry {
     }
 
     pub fn new(files: Vec<ToolFile>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
-        let (mut kinds, mut defs, mut wear_def, mut break_wait) = (Vec::new(), Vec::new(), None, None);
+        let (mut kinds, mut defs, mut wear_def, mut break_wait, mut faster_carried) = (Vec::new(), Vec::new(), None, None, None);
         for file in files {
             kinds.extend(file.kinds);
             defs.extend(file.blocks);
             wear_def = file.wear.or(wear_def);
             break_wait = file.break_wait.or(break_wait);
+            faster_carried = file.faster_carried.or(faster_carried);
+        }
+        let faster_carried = faster_carried.unwrap_or(DEFAULT_FASTER_CARRIED);
+        if !(faster_carried == 0.0 || (1.0..=100.0).contains(&faster_carried)) {
+            return Err(RegistryError(format!("tools.ron: `faster_carried` {faster_carried} is neither 0 (never told) nor from 1 to 100 times")));
         }
         let break_wait = break_wait.unwrap_or(DEFAULT_BREAK_WAIT);
         if !(0.0..=2.0).contains(&break_wait) {
@@ -467,7 +483,7 @@ impl ToolRegistry {
             suited.push(kinds.iter().enumerate().filter(|(_, k)| k.mines.iter().any(has)).map(|(i, _)| i).collect());
         }
         let opens = opened(blocks, &rules, &tools, &covered);
-        Ok(Self { kinds, rules, tools, covered, suited, wear, break_wait, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag, burnt, opens })
+        Ok(Self { kinds, rules, tools, covered, suited, wear, break_wait, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag, burnt, opens, faster_carried })
     }
 
     /// How tools and weapons wear.
@@ -478,6 +494,36 @@ impl ToolRegistry {
     /// Seconds the hand waits after each block it breaks before it starts on the next.
     pub fn break_wait(&self) -> f32 {
         self.break_wait
+    }
+
+    /// Seconds breaking `block` (of `hardness`) takes with `item` in hand, the wait after
+    /// it included.
+    pub fn break_seconds(&self, item: Option<BlockId>, block: BlockId, hardness: f32) -> f32 {
+        hardness / self.speed(item, block) + self.break_wait
+    }
+
+    /// Of `carried`, the tool that breaks `block` fastest, if it does so at least
+    /// `faster_carried` times as fast as `held` (a pickaxe in the pack while a log is hit
+    /// at stone, a stone one while the flint one digs coal's neighbour), with how many times.
+    pub fn faster_carried(&self, held: Option<BlockId>, block: BlockId, hardness: f32, carried: impl Iterator<Item = BlockId>) -> Option<(BlockId, f32)> {
+        if self.faster_carried == 0.0 {
+            return None;
+        }
+        self.fastest_carried(held, block, hardness, carried).filter(|&(_, times)| times >= self.faster_carried)
+    }
+
+    /// Of `carried`, the tool good enough for `block` that breaks it fastest, if any is
+    /// faster at all than `held`, with how many times (the first of equals).
+    pub fn fastest_carried(&self, held: Option<BlockId>, block: BlockId, hardness: f32, carried: impl Iterator<Item = BlockId>) -> Option<(BlockId, f32)> {
+        let now = self.break_seconds(held, block, hardness);
+        let mut best: Option<(BlockId, f32)> = None;
+        for item in carried.filter(|&item| Some(item) != held && self.tool(Some(item)).kind.is_some() && self.good_enough(Some(item), block)) {
+            let times = now / self.break_seconds(Some(item), block, hardness);
+            if times > 1.0 && best.is_none_or(|(_, b)| times > b) {
+                best = Some((item, times));
+            }
+        }
+        best
     }
 
     /// The slot of `slots` (other than `hand`) holding the spare to bring up for `broken`, a
@@ -1225,6 +1271,41 @@ mod tests {
             }
         }
         assert_eq!(unfelt, UNFELT, "the steps soil leaves no room to feel");
+    }
+
+    /// A pickaxe carried while cobblestone is broken with an axe or by hand is found; one no
+    /// faster by the share is not (a stone pickaxe over a flint one), nor what is no tool,
+    /// nor the one in hand; a package's 0 finds nothing, and a share under 1 is refused.
+    #[test]
+    fn a_faster_tool_carried_is_found() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        let tools = &content.tools;
+        let (stone, hardness) = (id("cobblestone"), content.blocks.info(id("cobblestone")).hardness);
+        let pack = [id("flint_pickaxe"), id("oak_log"), id("stone_pickaxe")];
+        let (best, times) = tools.faster_carried(Some(id("flint_axe")), stone, hardness, pack.into_iter()).unwrap();
+        assert_eq!(best, id("stone_pickaxe"));
+        assert!((times - tools.break_seconds(Some(id("flint_axe")), stone, hardness) / tools.break_seconds(Some(best), stone, hardness)).abs() < 1e-4);
+        assert_eq!(tools.faster_carried(None, stone, hardness, pack.into_iter()).map(|(b, _)| b), Some(id("stone_pickaxe")), "by hand");
+        // Under the share, nothing: a stone pickaxe over the flint one in hand.
+        assert!(tools.break_seconds(Some(id("flint_pickaxe")), stone, hardness) / tools.break_seconds(Some(id("stone_pickaxe")), stone, hardness) < DEFAULT_FASTER_CARRIED);
+        assert_eq!(tools.faster_carried(Some(id("flint_pickaxe")), stone, hardness, pack.into_iter()), None);
+        // Yet it is the fastest carried, which the middle button picks by any share.
+        assert_eq!(tools.fastest_carried(Some(id("flint_pickaxe")), stone, hardness, pack.into_iter()).map(|(b, _)| b), Some(id("stone_pickaxe")));
+        assert_eq!(tools.fastest_carried(Some(id("stone_pickaxe")), stone, hardness, pack.into_iter()), None, "none faster than in hand");
+        assert_eq!(tools.faster_carried(Some(id("stone_pickaxe")), stone, hardness, pack.into_iter()), None);
+        assert_eq!(tools.faster_carried(None, stone, hardness, [id("oak_log")].into_iter()), None);
+
+        // A package's 0 tells of none; what is neither 0 nor from 1 to 100 is refused.
+        let (blocks, skills, _) = setup();
+        let with = |given: &str| ToolRegistry::new(vec![ToolRegistry::read("t", &format!(r#"(faster_carried: {given}, kinds: [(name: "pickaxe", mines: ["stone"])])"#)).unwrap()], &blocks, &skills);
+        let found = |given: &str| with(given).unwrap().faster_carried(None, blocks.expect("t:stone"), 1.0, blocks.ids()).map(|(b, _)| b);
+        assert_eq!(found("2.0"), Some(blocks.expect("t:stone_pickaxe")));
+        assert_eq!(found("0.0"), None);
+        for bad in ["0.5", "101.0", "-1.0"] {
+            assert!(with(bad).unwrap_err().0.contains("faster_carried"), "{bad}");
+        }
     }
 
     /// A better pickaxe names what it opens up, plain ore standing for its deepslate form and

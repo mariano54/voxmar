@@ -834,17 +834,20 @@ fn the_books_bring_a_book_trained_skill_to_the_first_wanderer_line_it_opens() {
     }
 }
 
-/// A `Dealt` goal sends the player to one line, so the line must be open to them: no
+/// A `Dealt` goal sends the player to one line, so the line must be open to them: what it
+/// takes is something the player can come by (an item, or one with the tag it asks), no
 /// `Below` gate (a player past it never hears the line again), and each `Skill` gate surely
-/// had when the quest opens (`Books::sure`) or asked by a `Level` goal beside it.
+/// had when the quest opens (`Books::sure`) or asked by a `Level` goal beside it, on at least
+/// one way.
 #[test]
 fn every_early_dealt_line_is_open_to_the_player_it_sends() {
     let shut = shut_lines(&content());
     assert!(shut.is_empty(), "{shut:#?}");
 }
 
-/// The check catches both gates: A Prospector's Eye sent to the prospector's beginner lesson
-/// (Below Mining 10), or to the hedge witch's mote (Alchemy 5) straight after the Farm rite.
+/// The check catches every gate: A Prospector's Eye sent to the prospector's beginner lesson
+/// (Below Mining 10), or to the hedge witch's mote (Alchemy 5) straight after the Farm rite,
+/// and A Sweep's Luck (the sweep comes to a home) opened before Homestead Hearth.
 #[test]
 fn a_dealt_line_shut_to_its_player_is_caught() {
     use voxmar_engine::quest::QuestRegistry;
@@ -854,42 +857,84 @@ fn a_dealt_line_shut_to_its_player_is_caught() {
     let nomad = std::fs::read_to_string(base.join("quests_nomad.ron")).unwrap();
     let eye = "tasks: [[Dealt(\"prospector\", \"vein\", 1)]],\n            after: [\"charcoal\"],";
     assert!(source.contains(eye), "A Prospector's Eye");
-    for (changed, caught) in [(eye.replace("vein", "lesson"), "below"), (eye.replace("Dealt(\"prospector\", \"vein\"", "Dealt(\"hedge_witch\", \"mote\"").replace("charcoal", "the_farm_age"), "wants")] {
+    let sweep = "tasks: [[Dealt(\"chimney_sweep\", \"luck\", 1)]],\n            after: [\"homestead_hearth\"],";
+    assert!(nomad.contains(sweep), "A Sweep's Luck");
+    let cases = [
+        (source.replace(eye, &eye.replace("vein", "lesson")), nomad.clone(), "base:a_prospectors_eye", "below"),
+        (source.replace(eye, &eye.replace("Dealt(\"prospector\", \"vein\"", "Dealt(\"hedge_witch\", \"mote\"").replace("charcoal", "the_farm_age")), nomad.clone(), "base:a_prospectors_eye", "wants"),
+        (source.clone(), nomad.replace(sweep, &sweep.replace("homestead_hearth", "torchlight")), "base:a_sweeps_luck", "with a home"),
+    ];
+    for (farm, nomad, quest, caught) in cases {
         let mut content = content();
         content.quests = std::sync::Arc::new(QuestRegistry::new(vec![
             QuestRegistry::read("core", &core).unwrap(),
-            QuestRegistry::read("base", &source.replace(eye, &changed)).unwrap(),
+            QuestRegistry::read("base", &farm).unwrap(),
             QuestRegistry::read_named("base", "quests_nomad.ron", &nomad).unwrap(),
         ]).unwrap());
         let shut = shut_lines(&content);
-        assert!(shut.iter().any(|s| s.starts_with("base:a_prospectors_eye") && s.contains(caught)), "{caught}: {shut:#?}");
+        assert!(shut.iter().any(|s| s.starts_with(quest) && s.contains(caught)), "{caught}: {shut:#?}");
     }
 }
 
 fn shut_lines(content: &Content) -> Vec<String> {
-    use voxmar_engine::wander::ResolvedNeed;
+    use voxmar_engine::wander::{ResolvedNeed, Want};
     let books = Books { content };
+    let ways = reachable(content);
     let mut shut = Vec::new();
     for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        // The skill gates each way leaves unmet; one way with none keeps the quest open (a
+        // player past one line's turn takes the next: Seed for Seed's swap, then swap_more).
+        let mut unmet: Vec<Vec<String>> = Vec::new();
         for task in &quest.tasks {
+            let mut way = Vec::new();
             for goal in task {
                 let Goal::Dealt(kind, name, _) = goal else { continue };
                 let event = content.wandering.iter().map(|(_, e)| e).find(|e| Books::local(&e.def.name) == Books::local(kind)).expect("load-checked kind");
                 let line = event.meetings.iter().flat_map(|m| m.lines.iter()).find(|l| l.name == *name).expect("load-checked line");
+                // What the line takes is something the land and recipes give.
+                match line.wants.as_ref().map(|(w, _)| w) {
+                    Some(Want::Item(item)) if !ways.contains_key(item) => shut.push(format!("{}: {kind}/{name} wants {}, which nothing gives", quest.name, content.blocks.def(*item).name)),
+                    Some(Want::Tag(tag)) if !ways.keys().any(|&id| content.blocks.def(id).has_tag(tag)) => shut.push(format!("{}: {kind}/{name} wants tag:{tag}, which nothing given has", quest.name)),
+                    _ => {}
+                }
+                // A line or party for a player with a home (or without one) is for one whose
+                // books surely made one (or surely did not yet).
+                let homed = books.chain(&quest.name).iter().any(|q| content.quests.get(q).unwrap().tasks.iter().all(|t| t.contains(&Goal::Home)));
+                let home = line.needs.iter().find_map(|n| match n {
+                    ResolvedNeed::Home(want) => Some(*want),
+                    _ => None,
+                });
+                if let Some(want) = home.or(event.def.needs.home).filter(|&want| want != homed) {
+                    let has = if want { "with" } else { "without" };
+                    shut.push(format!("{}: {kind}/{name} is for a player {has} a home, and its books do not surely leave one so", quest.name));
+                }
                 for need in &line.needs {
                     match need {
+                        ResolvedNeed::Holds(tag) if !ways.keys().any(|&id| content.blocks.def(id).has_tag(tag)) => {
+                            shut.push(format!("{}: {kind}/{name} wants tag:{tag} held, which nothing given has", quest.name));
+                        }
                         ResolvedNeed::Below(skill, level) => shut.push(format!("{}: {kind}/{name} is only for a player below {} {level}", quest.name, content.skills.get(*skill).name)),
                         ResolvedNeed::Skill(skill, level) => {
                             let skill = Books::local(&content.skills.get(*skill).name);
                             let asked = task.iter().any(|g| matches!(g, Goal::Level(s, n) if Books::local(s) == skill && n >= level));
                             let (sure, _) = books.sure(&quest.name, &skill);
                             if !asked && sure < books.xp_for(*level) {
-                                shut.push(format!("{}: {kind}/{name} wants {skill} {level}, the books surely give {sure:.0} of {:.0} xp", quest.name, books.xp_for(*level)));
+                                way.push(format!("{}: {kind}/{name} wants {skill} {level}, the books surely give {sure:.0} of {:.0} xp", quest.name, books.xp_for(*level)));
                             }
                         }
                         _ => {}
                     }
                 }
+            }
+            unmet.push(way);
+        }
+        if unmet.iter().all(|w| !w.is_empty()) {
+            shut.extend(unmet.into_iter().flatten());
+        } else {
+            // An open way keeps the quest open; a way whose gate the books never surely reach is
+            // still named, for whoever reads the run.
+            for gap in unmet.iter().flatten() {
+                eprintln!("an alternative way's gate the books never surely reach: {gap}");
             }
         }
     }

@@ -45,7 +45,8 @@
         (block: "hopper", role: Bin(slots: 5, feeds: true)),
         (block: "chest", role: Bin(slots: 27)),
         // Stores about the home: each opens into a screen of its slots, as a chest does.
-        // A jar keeps what is edible, a basket what is foraged; furniture takes anything.
+        // A jar keeps what is edible, a basket what is foraged, a jug flowers; furniture takes
+        // anything.
         (block: "barrel", role: Bin(slots: 9)),
         (block: "crate", role: Bin(slots: 9)),
         (block: "sack", role: Bin(slots: 4, holds: Some("tag:grain"))),
@@ -64,6 +65,7 @@
         (block: "{name}_wardrobe", role: Bin(slots: 18)),
         (block: "{name}_jar", role: Bin(slots: 4, holds: Some("tag:edible"))),
         (block: "{name}_basket", role: Bin(slots: 4, holds: Some("tag:forage"))),
+        (block: "{name}_jug", role: Bin(slots: 3, holds: Some("tag:flower"))),
         // A feed trough: kept animals eat their food from it (`trough`, server/src/troughs.rs).
         (block: "feed_trough", role: Bin(slots: 9)),
         (block: "chute", role: Chute(rate: 1.0)),

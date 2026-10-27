@@ -121,6 +121,17 @@
             (from: (2, 0, 5), to: (5, 5, 11)),
             (from: (11, 0, 5), to: (14, 5, 11)),
         ]),
+        // A fingerpost: a post the width of a fence's, and over it its top, capped, with an
+        // arm out east and one out west below it.
+        "fingerpost": (boxes: [
+            (from: (7, 0, 7), to: (9, 16, 9)),
+        ]),
+        "fingerpost_top": (boxes: [
+            (from: (7, 0, 7), to: (9, 10, 9)),
+            (from: (6.5, 10, 6.5), to: (9.5, 11, 9.5)),
+            (from: (9, 6, 7.5), to: (15.5, 8.5, 8.5)),
+            (from: (0.5, 3, 7.5), to: (7, 5.5, 8.5)),
+        ]),
         // Foot end north, head end south: a frame, a mattress and a pillow, a board at each end.
         "bed": (boxes: [
             (from: (1, 0, 2), to: (15, 5, 14)),
@@ -813,6 +824,31 @@
             (from: (6.5, 0, 0), to: (9.5, 3, 16), cull: true),
             (from: (6.5, 13, 0), to: (9.5, 16, 16), cull: true),
         ]),
+        // An arch over a one-cell opening, a full block of stone above with its underside
+        // stepped up from narrow jambs at either side to the crown, the way through running
+        // north-south. Set over a gap two high, it leaves a doorway for anyone.
+        "arch": (boxes: [
+            (from: (0, 11, 0), to: (16, 16, 16), cull: true),
+            (from: (0, 6, 0), to: (3.5, 11, 16), cull: true),
+            (from: (12.5, 6, 0), to: (16, 11, 16), cull: true),
+            (from: (0, 0, 0), to: (1.5, 6, 16), cull: true),
+            (from: (14.5, 0, 0), to: (16, 6, 16), cull: true),
+        ]),
+        // A wide arch over two cells: this half springs from its east side (the placer's
+        // left) and the half set beside it, to the west, from its west, mirrored, meeting
+        // at the crown between them.
+        "wide_arch": (boxes: [
+            (from: (0, 12, 0), to: (16, 16, 16), cull: true),
+            (from: (6, 7, 0), to: (16, 12, 16), cull: true),
+            (from: (11, 3, 0), to: (16, 7, 16), cull: true),
+            (from: (14, 0, 0), to: (16, 3, 16), cull: true),
+        ]),
+        "wide_arch_half": (boxes: [
+            (from: (0, 12, 0), to: (16, 16, 16), cull: true),
+            (from: (0, 7, 0), to: (10, 12, 16), cull: true),
+            (from: (0, 3, 0), to: (5, 7, 16), cull: true),
+            (from: (0, 0, 0), to: (2, 3, 16), cull: true),
+        ]),
         // A railing along the back (south) of its cell: a bottom rail, a handrail and four
         // balusters between them, a block high in all. The corner has a second run along
         // its east side, and a hull of the two runs, so a blow at one in its open part
@@ -964,21 +1000,32 @@
             (from: (2.5, 9.5, 7.5), to: (13.5, 11, 8.5)),
         ]),
         // A dry-stone wall across the middle of its cell, running east to west: courses of
-        // cobbles narrowing to a cap, a block high (a railing).
+        // cobbles narrowing to a cap, a block high (a railing). Its lowest course is higher
+        // than a step, so no walker climbs the courses as stairs.
         "dry_stone_wall": (boxes: [
-            (from: (0, 0, 3), to: (16, 6, 13), cull: true),
-            (from: (0, 6, 3.5), to: (16, 12, 12.5), cull: true),
-            (from: (0, 12, 4), to: (16, 16, 12), cull: true),
+            (from: (0, 0, 3), to: (16, 10, 13), cull: true),
+            (from: (0, 10, 3.5), to: (16, 14, 12.5), cull: true),
+            (from: (0, 14, 4), to: (16, 16, 12), cull: true),
+        ]),
+        // A stile in a dry-stone wall, running east to west as the wall does: its courses
+        // brought down to a low middle with a stone at each end a block high (a railing, so
+        // nothing that does not climb gets over), and a step out of it on either side.
+        "dry_stone_stile": (boxes: [
+            (from: (0, 0, 3), to: (16, 10, 13), cull: true),
+            (from: (0, 10, 4), to: (2, 16, 12), cull: true),
+            (from: (14, 10, 4), to: (16, 16, 12), cull: true),
+            (from: (0, 0, 0), to: (16, 5, 3), cull: true),
+            (from: (0, 0, 13), to: (16, 5, 16), cull: true),
         ]),
         // A dry-stone wall's corner: its courses out to the west and the north, crossing in
         // the middle.
         "dry_stone_wall_corner": (boxes: [
-            (from: (0, 0, 3), to: (13, 6, 13), cull: true),
-            (from: (0, 6, 3.5), to: (13, 12, 12.5), cull: true),
-            (from: (0, 12, 4), to: (13, 16, 12), cull: true),
-            (from: (3, 0, 0), to: (13, 6, 13), cull: true),
-            (from: (3.5, 6, 0), to: (12.5, 12, 13), cull: true),
-            (from: (4, 12, 0), to: (12, 16, 13), cull: true),
+            (from: (0, 0, 3), to: (13, 10, 13), cull: true),
+            (from: (0, 10, 3.5), to: (13, 14, 12.5), cull: true),
+            (from: (0, 14, 4), to: (13, 16, 12), cull: true),
+            (from: (3, 0, 0), to: (13, 10, 13), cull: true),
+            (from: (3.5, 10, 0), to: (12.5, 14, 13), cull: true),
+            (from: (4, 14, 0), to: (12, 16, 13), cull: true),
         ], hull: [
             (from: (0, 0, 3), to: (13, 16, 13)),
             (from: (3, 0, 0), to: (13, 16, 3)),

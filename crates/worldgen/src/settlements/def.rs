@@ -303,6 +303,8 @@ pub enum Prop {
     Washtub,
     Sacks,
     ChickenCoop,
+    /// A post of frame and a board of trim. Base sets a fingerpost instead (its `signpost`
+    /// prop of blocks); kept for packages that name it.
     Signpost,
     /// A boat drawn up on the bank (by water only).
     Boat,
@@ -719,11 +721,34 @@ pub struct WallsDef {
     /// A tower at each corner and every this many blocks along it, this much higher
     /// than the wall.
     pub towers: (u32, u32),
+    /// What a stone wall's gate is arched with in place of its lintel: the first whose
+    /// `walls` holds the wall's block (or names none). None, and the lintel stays plain.
+    pub arches: Vec<ArchDef>,
 }
 
 impl Default for WallsDef {
     fn default() -> Self {
-        Self { margin: 4, height: (3, 4), stone: 0.5, towers: (24, 2) }
+        Self { margin: 4, height: (3, 4), stone: 0.5, towers: (24, 2), arches: Vec::new() }
+    }
+}
+
+/// The arch over a gate in a stone wall: over a gate one block wide, `arch`; over a wider
+/// one, `wide` springing from the post at one end and `wide_half` (its mirror) from the
+/// post at the other, the lintel between. Each a block tagged `arch` in every facing (the
+/// bare name runs east to west; `wide` springs from its east side, `wide_half` its west).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ArchDef {
+    #[serde(default)]
+    pub walls: Vec<String>,
+    pub arch: String,
+    pub wide: String,
+    pub wide_half: String,
+}
+
+impl ArchDef {
+    fn pieces(&self) -> [&String; 3] {
+        [&self.arch, &self.wide, &self.wide_half]
     }
 }
 
@@ -1490,7 +1515,12 @@ impl SettlementsDef {
             if let Some(dressing) = rules.dressing {
                 mine.dressing = dressing;
             }
-            if let Some(walls) = rules.walls {
+            if let Some(mut walls) = rules.walls {
+                for arch in &mut walls.arches {
+                    for name in arch.walls.iter_mut().chain([&mut arch.arch, &mut arch.wide, &mut arch.wide_half]) {
+                        *name = qualify(package, name);
+                    }
+                }
                 mine.walls = walls;
             }
             if let Some(mut fire) = rules.fire {
@@ -1998,6 +2028,20 @@ impl SettlementsDef {
         if let Some(p) = &self.rules.fire.instead {
             pieces("rules.fire's", p, "", "")?;
         }
+        for arch in &self.rules.walls.arches {
+            for name in &arch.walls {
+                if registry.id(name).is_none() {
+                    return fail(format!("rules.walls' arch is for walls of `{name}`, which is no block"));
+                }
+            }
+            for name in arch.pieces() {
+                for suffix in super::roofs::SUFFIXES {
+                    if !registry.id(&format!("{name}{suffix}")).is_some_and(|id| registry.def(id).has_tag("arch")) {
+                        return fail(format!("rules.walls' arch piece `{name}{suffix}` is no block tagged `arch` (an arch faces four ways)"));
+                    }
+                }
+            }
+        }
         // A jetty beam faces four ways in every wood of its style, tagged `jetty` and with
         // a shelter tag of its own (it is part of a home's walls).
         for style in &self.styles {
@@ -2247,6 +2291,21 @@ impl Resolved {
                         if let Some(id) = registry.id(&name) {
                             map.insert(name, id);
                         }
+                    }
+                }
+            }
+        }
+        for arch in &def.rules.walls.arches {
+            for name in &arch.walls {
+                if let Some(id) = registry.id(name) {
+                    map.insert(name.clone(), id);
+                }
+            }
+            for name in arch.pieces() {
+                for suffix in super::roofs::SUFFIXES {
+                    let name = format!("{name}{suffix}");
+                    if let Some(id) = registry.id(&name) {
+                        map.insert(name, id);
                     }
                 }
             }

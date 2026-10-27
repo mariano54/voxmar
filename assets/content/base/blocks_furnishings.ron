@@ -33,6 +33,12 @@
         // colour (the family line below). Broken, a placed piece gives itself back. Seats
         // are not solid: a player sits in one, feet on the floor, so a chair under a roof
         // two blocks up is sat on as one in the open is.
+        // A fingerpost's top, set and broken with it: decor as its post is, but no furnishing,
+        // as it drops nothing of its own (the fingerpost gives itself back, or nothing where
+        // a village set it), and not `yard`, so a fingerpost dresses a dooryard once.
+        "fingerpost_top": [
+            (name: "{name}_fingerpost_top", render: Model, shape: "fingerpost_top", facing: true, support: Below, drops: "core:air", sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["fingerpost", "decor", "wood"]),
+        ],
         "furniture": [
             (name: "{name}_stool", render: Model, shape: "stool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
             (name: "{name}_chair", render: Model, shape: "chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
@@ -40,6 +46,11 @@
             // A log bench: a split log, its flat face up, on two stumps, as a village sets two
             // end to end along a lane (settlements.ron's `log_bench`); a seat.
             (name: "{name}_log_bench", render: Model, shape: "log_bench", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "seat", "log_bench", "decor", "wood", "yard"]),
+            // A fingerpost: a post two high with an arm out either way at the height of a
+            // passer's eyes, as a village sets one by its lanes (settlements.ron's
+            // `signpost`), the arms across the placer's view. Its top (`fingerpost_top`) is
+            // set and broken with it.
+            (name: "{name}_fingerpost", render: Model, shape: "fingerpost", facing: true, upper: "{name}_fingerpost_top", sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "fingerpost", "decor", "wood", "yard", "fuel"]),
             (name: "{name}_table", render: Model, shape: "table", sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
             (name: "{name}_bed", render: Model, shape: "bed", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "bed", "decor", "wood"]),
             (name: "{name}_shelf", render: Model, shape: "shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
@@ -86,7 +97,7 @@
             (name: "{name}_pot_crane", render: Model, shape: "pot_crane", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "pot_crane", "decor", "wood"]),
             // By the fire: a rocking chair, a chair on two curved rockers with arms (a `seat`);
             // a cradle, a crib of boards on rockers with a rush bed and a pillow in it.
-            (name: "{name}_rocking_chair", render: Model, shape: "rocking_chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "rocking_chair", "decor", "wood"]),
+            (name: "{name}_rocking_chair", render: Model, shape: "rocking_chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "rocking_chair", "rocks", "decor", "wood"]),
             (name: "{name}_cradle", render: Model, shape: "cradle", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "cradle", "decor", "wood"]),
             // Lived in: a mantel shelf, a deep board on two brackets on the wall over the hearth,
             // that shows the three things put on it (`shows`, its store's three slots, a
@@ -113,8 +124,9 @@
                 shows: [(0.4, 0.4375, 0.8125), (0.6, 0.4375, 0.8125)]),
             (name: "{name}_bread_bin", render: Model, shape: "bread_bin", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "bread_bin", "storage", "decor", "wood"]),
             // A kindling box: an open box on the floor by the fire that keeps only what burns,
-            // the top two things in it showing over its sides.
-            (name: "{name}_kindling_box", render: Model, shape: "kindling_box", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "kindling_box", "storage", "decor", "wood"],
+            // the top two things in it showing over its sides; at home it lights again what
+            // burns out there, kindling for a torch, fat for a lamp (`relights_lights`, flame.rs).
+            (name: "{name}_kindling_box", render: Model, shape: "kindling_box", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "kindling_box", "storage", "relights_lights", "decor", "wood"],
                 shows: [(0.35, 0.375, 0.5), (0.65, 0.375, 0.5)]),
             (name: "{name}_pot_shelf", render: Model, shape: "pot_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
         ],
@@ -140,12 +152,14 @@
             (name: "{name}_awning", render: Model, shape: "awning", facing: true, solid: false, sound: Moss, textures: All("awning_grey"), hardness: 0.3, color: (200, 200, 200), tags: ["cloth", "awning", "decor", "building", "colour:{name}", "shelter:draughty"]),
         ],
         // Crockery in one glaze: a plate, a bowl, a jar, a jug and a basket for tables and
-        // shelves; broken, a placed piece gives itself back.
+        // shelves; broken, a placed piece gives itself back. A jug keeps a few flowers
+        // (machines.ron), standing in its neck, a posy for the table.
         "crockery": [
             (name: "{name}_plate", render: Model, shape: "plate", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
             (name: "{name}_bowl", render: Model, shape: "bowl", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
             (name: "{name}_jar", render: Model, shape: "jar", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor", "jar"]),
-            (name: "{name}_jug", render: Model, shape: "jug", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "decor"]),
+            (name: "{name}_jug", render: Model, shape: "jug", solid: false, sound: Stone, textures: All("crockery_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor", "jug"],
+                shows: [(0.44, 0.6, 0.5), (0.56, 0.6, 0.5), (0.5, 0.62, 0.45)]),
             (name: "{name}_basket", render: Model, shape: "basket", solid: false, sound: Grass, textures: All("basket_grey"), hardness: 0.1, color: (190, 120, 80), tags: ["crockery", "storage", "decor", "basket"]),
         ],
         // A hanging lantern of one metal (`{name}`: iron or copper), its drawing tinted the
@@ -349,6 +363,9 @@
         (template: "furniture", name: "birch", tags: ["furnishing"], all: (tint: Fixed(236, 212, 164), color: (200, 175, 125))),
         (template: "furniture", name: "oak", tags: ["furnishing"], all: (tint: Fixed(205, 150, 86), color: (160, 120, 70))),
         (template: "furniture", name: "dark_oak", tags: ["furnishing"], all: (tint: Fixed(130, 88, 58), color: (100, 70, 45))),
+        (template: "fingerpost_top", name: "birch", all: (tint: Fixed(236, 212, 164), color: (200, 175, 125))),
+        (template: "fingerpost_top", name: "oak", all: (tint: Fixed(205, 150, 86), color: (160, 120, 70))),
+        (template: "fingerpost_top", name: "dark_oak", all: (tint: Fixed(130, 88, 58), color: (100, 70, 45))),
         (template: "dyed", dyes: true, tags: ["furnishing"]),
         (template: "crockery", name: "earthen", tags: ["furnishing"], all: (tint: Fixed(196, 120, 82), color: (196, 120, 82))),
         (template: "crockery", name: "ivory", tags: ["furnishing"], all: (tint: Fixed(238, 230, 208), color: (238, 230, 208))),

@@ -485,6 +485,27 @@ already that day, they say why. A content test keeps
 every want taught by a nomad or farm quest and every gift out of any quest's Have or
 Offered goals.
 
+Children like some food (`diet.favourite` on their species in creatures_villagers.ron, bread
+and a roast carrot, both taught in the first two ages): one out on their day who has noticed
+and sees a player within `people.react.treat` holding it (and within their sight) walks up to
+stand a step and a half from them, turned to them, with a contented hum, and keeps by them
+while it is held and they stay within half as far again. Given one (`base:treat`, right-click
+holding it) they take it, say thanks and go back to their day, wanting another no sooner than
+`treat_every`; offered what they do not like, or within that wait, they take nothing and say
+why. A child coming to food is not counted as a lured creature. The content test that keeps
+stall wants taught also keeps every villager's favourite taught by a nomad or farm quest.
+
+People sit at their own tables: `people.sit` of their stays about the house (0.4) are spent
+on a seat of their own (`Building::seats`, one for each of the home's people in the order
+they live there), resting and turned to the table beside it; one with no seat to sit on, or
+whose seat is gone, stays on their feet about the room.
+
+People mind their things: one whose home or work a building is, out of bed, who sees a
+player break a furnishing the world set there (a village's barrel, crate or bed; one a player
+set down is theirs to take) within `people.react.scold` and their sight cries out and says
+it was theirs, to each player again no sooner than `scold_every`. It calls no guards: theft
+and crime rules wait for P54.
+
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter
 roles remain follow-ups. Single-valued people data and same-named routines follow the

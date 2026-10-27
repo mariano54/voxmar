@@ -151,9 +151,17 @@
             rewards: [Xp("engineering", 21.0)],
         ),
         (
+            name: "moths_to_the_flame", age: "nomad", branch: "hunter", title: "Moths to the Flame",
+            side: true,
+            why: "On dry nights, moth netters sweep the open with their nets. Walk up with a torch in hand and the moths come to it: the netters share a coin and show you a little of keeping still for game.",
+            tasks: [[Dealt("moth_netters", "net", 1)]],
+            after: ["torchlight"],
+            rewards: [Xp("hunter", 30.0)],
+        ),
+        (
             name: "stone_and_clay", age: "nomad", branch: "main", title: "Stone and Clay",
             side: true,
-            why: "Gather for the hearth before you build it: twenty-eight cobblestone (four loose stones knock together into two) and four clay from the bottom of a pond, dug with a shovel. Hold them all at once.",
+            why: "Gather for the hearth before you build it: twenty-eight cobblestone (four loose stones knock together into two) and four clay from the bottom of a pond, dug with a shovel (a digging stick, one stick over another, will do). Hold them all at once.",
             tasks: [[Have("cobblestone", 28), Have("clay", 4)]],
             after: ["stone_in_hand"],
             rewards: [Xp("mining", 40.0)],
@@ -169,10 +177,18 @@
         (
             name: "homestead_hearth", age: "nomad", branch: "main", title: "Homestead Hearth",
             capstone: true,
-            why: "Your home: you wake here after dying, and the road to the Farm age begins. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone or cobblestone blocks level with it, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel (one cobblestone over two sticks).",
+            why: "Your home: you wake here after dying, and the road to the Farm age begins. Craft a hearthstone (eight cobblestone round an empty middle) and two chimney blocks (six cobblestone and two clay each). Set the hearthstone in a ring of eight stone or cobblestone blocks level with it, stack both chimneys on one corner stone, then right-click the hearthstone. About 28 cobblestone and 4 clay in all; clay lies on the bottom of ponds and lakes, so wade in and dig it with a shovel: a digging stick (one stick over another, in the 2×2 grid) will do.",
             tasks: [[Craft("hearthstone", 1), Craft("chimney", 2), Home]],
             after: ["torchlight"],
             rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 1)],
+        ),
+        (
+            name: "a_sweeps_luck", age: "nomad", branch: "home", title: "A Sweep's Luck",
+            side: true,
+            why: "Once you have a home, a chimney sweep and a lad come round the homes near it by day. Shake the sweep's hand for luck: a coin found, a lighter step, or word of a wonder near.",
+            tasks: [[Dealt("chimney_sweep", "luck", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("construction", 30.0)],
         ),
         (
             name: "an_evening_in", age: "nomad", branch: "home", title: "An Evening In",
@@ -252,7 +268,7 @@
         (
             name: "from_the_shelves", age: "nomad", branch: "home", title: "From the Shelves",
             capstone: true,
-            why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Put planks in a store and lay three recipes from it.",
+            why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Right-click a store to open it beside your pack, put planks in, and lay three recipes from it.",
             tasks: [[Laid("any", 3)]],
             after: ["pantry_shelves", "a_bench_to_work_at"],
             rewards: [Xp("crafting", 40.0), Xp("construction", 20.0)],
@@ -293,6 +309,14 @@
             tasks: [[Kinds(Plants, "any", 5), Pick("tag:herb", 5)]],
             after: ["daily_bread"],
             rewards: [Xp("farming", 110.0)],
+        ),
+        (
+            name: "a_basket_of_mushrooms", age: "nomad", branch: "cooking", title: "A Basket of Mushrooms",
+            side: true,
+            why: "Mushroom pickers comb the woods and wet ground while it rains. Ask and they point you to where mushrooms grow; bring them four and they trade a loaf of bread for the basket.",
+            tasks: [[Dealt("mushroom_pickers", "basket", 1)]],
+            after: ["wild_harvest"],
+            rewards: [Xp("cooking", 40.0)],
         ),
         (
             name: "herb_lore", age: "nomad", branch: "cooking", title: "Herb Lore",
@@ -361,6 +385,14 @@
             tasks: [[Kill("any", 3), Cook("tag:meat", 1)]],
             after: ["something_to_swing", "a_tempting_bite"],
             rewards: [Xp("hunter", 80.0)],
+        ),
+        (
+            name: "a_bone_for_the_dog", age: "nomad", branch: "hunter", title: "A Bone for the Dog",
+            side: true,
+            why: "By day, folk walk out with their dog. Hold out a bone (cattle drop them, and so do the dead that walk at night) and the dog takes it gladly; its owner thanks you with twine.",
+            tasks: [[Dealt("stroll_with_dog", "treat", 1)]],
+            after: ["small_game"],
+            rewards: [Xp("hunter", 30.0)],
         ),
         (
             name: "hide_and_seek", age: "nomad", branch: "hunter", title: "Hide and Seek",
@@ -463,6 +495,14 @@
             tasks: [[Level("defence", 4), Level("hitpoints", 12)]],
             after: ["raise_your_guard", "a_stones_throw"],
             rewards: [Xp("defence", 60.0), Xp("hitpoints", 40.0)],
+        ),
+        (
+            name: "join_the_dance", age: "nomad", branch: "combat", title: "Join the Dance",
+            side: true,
+            why: "By night, folk dance in a ring on open grass. Walk up and join a round: a night of dancing builds the wind a long fight wants, and trains Hitpoints.",
+            tasks: [[Dealt("dance_circle", "round", 1)]],
+            after: ["hard_to_put_down"],
+            rewards: [Xp("hitpoints", 40.0)],
         ),
         // Mining: stone, the coal seam and the first mine.
         (

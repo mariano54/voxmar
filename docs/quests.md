@@ -402,6 +402,13 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
   of its age and branch but the age's rite and the side quests (`side: true`: chance meetings,
   conveniences such as pouches); loading refuses one that does not, naming the quests left
   out. The Farm book's side marks are placeholders until its own pass (piece 13) chains it.
+- **A wait names what to do meanwhile.** `meanwhile: [...]` lists the quests a quest's text
+  gives to do while it waits (A Kiln Load's firing: Earthenware, A Pot on the Chimney, A
+  Place to Pray). Loading refuses one done before it, one not open while it is (each
+  `after` a quest it waits on), or one its `why` does not name in brackets; a client test
+  checks each language's text names the translated title. A Pot on the Chimney now opens
+  with The Potter, beside Earthenware, so it is open during the first load. Brick by Brick's names A Table for Two, Charcoal's A Place to Pray, and The Potter's Fuel
+  to Hand.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
 
@@ -598,6 +605,38 @@ Road** (Farm cooking, after Camp Cook: the travelling cook roasts one of two raw
 fire). `every_early_dealt_line_is_open_to_the_player_it_sends` holds that a line a quest names
 has no `Below` gate (a player past it would never hear it) and its `Skill` gates are surely had
 when the quest opens, or asked beside it by a `Level` goal.
+
+Coin had no lesson (Oct 27): wanderers buy goods and sell services for gold, and no quest said
+so. Two Farm side quests on the callers path do: **Coin at the Roadside** (after Neighbourly:
+sell once to a tanner, woodcarver, potter, shearers or ore assayer, each by their `buy` line)
+and **Coin Well Spent** (pay a travelling smith to whet a blade, or a truffle hunter to point
+to a truffle). The Dealt-line check also holds that what a named line takes is something the
+land and recipes give.
+
+More wanderers with no quest got one (Oct 27), each by its trading line: **Seed for Seed**
+(Farm, after A Field of Gold: the seed swappers' rye for wheat seed, `swap` from Farming 3 or
+`swap_more` from Farming 7, whichever the player's level reaches), **A Basket of Mushrooms**
+(Nomad, after Wild Harvest: four mushrooms for a loaf), **Fangs for the Watch** (Farm, after
+Bigger Game: a guard patrol's gold coin for a fang) and **Wassail** (Farm, after A Kitchen
+Garden: a loaf for the wassailers' toast that grows the crops). The Dealt-line check now asks
+one way of a quest to have every skill gate met (a player past one line's turn takes the
+next), and checks a tag a line wants against what can be come by.
+
+Three more got one: **Paying Respects** (Farm, after A Place to Pray: stand with a funeral
+procession for their prayer), **Join the Dance** (Nomad, after Hard to Put Down: a round with
+a dance circle) and **The Scarecrow's Pockets** (Farm, after Seed Mix: the seed a scarecrow
+carries). The Dealt-line check now also reports, without failing, an alternative way whose
+skill gate the books never surely reach, the same way the gap check reports one.
+
+Four more: **A Bone for the Dog** (Nomad, after Small Game: a bone for a dog out walking, for
+twine), **Moths to the Flame** (Nomad, after Torchlight: a torch held up for the moth
+netters), **A Sweep's Luck** (Nomad, after Homestead Hearth: shake a chimney sweep's hand)
+and **A Tale by Night** (Farm, after A Place to Pray: a storyteller's tale of something
+strange near). The Scarecrow's Pockets now says how to reach it (it stands still while
+watched), and a server test walks a watching player up to it until the trade fires The Dealt-line check
+now also holds a line or party that comes only to a player with a home (or without one) to
+quests whose books surely leave the player so, and a line wanting something held to a tag
+something given carries.
 
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).

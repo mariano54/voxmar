@@ -61,6 +61,10 @@ pub struct Player {
     /// The announced effects (`EffectDef::announce`) the player has been told of this
     /// session, so stepping out of a room and back in does not say it twice.
     pub announced: Vec<EffectId>,
+    /// Seconds spent away from their own home since last there, while they had one and
+    /// were alive: coming home after long enough gives effects.ron's `homecomings`. Not
+    /// saved: one who joins at home has not come home.
+    pub away: f32,
     /// The home steps their home met when last surveyed (`EffectRegistry::home_steps`),
     /// where that home stood (its `home_spot`'s cell: a home moved since says nothing of
     /// what was lost), and whether it is yet to be surveyed since they joined, to tell them
@@ -90,6 +94,9 @@ pub struct Player {
     /// Whether they have been told this session why something of theirs smoulders
     /// (`blaze_hint`).
     pub told_fire: bool,
+    /// The kinds of tool they have been told this session they carry one of that breaks
+    /// what they broke much faster (`tool_wear::tell_faster_carried`).
+    pub told_faster: Vec<usize>,
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
@@ -221,6 +228,7 @@ impl Player {
             vitals: Vitals::default(),
             timed_effects: Vec::new(),
             announced: Vec::new(),
+            away: 0.0,
             home_steps: Vec::new(),
             home_anchor: None,
             home_unchecked: false,
@@ -232,6 +240,7 @@ impl Player {
             bed: None,
             kindled: true,
             told_fire: false,
+            told_faster: Vec::new(),
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),

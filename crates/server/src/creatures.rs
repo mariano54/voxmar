@@ -79,8 +79,8 @@ pub(crate) const SEEN_WITHIN: f32 = 96.0;
 const KIN_RANGE: f32 = 14.0;
 /// The width of a `Neighbours` cell, in blocks: the widest search (kin) and a block more for
 /// how far a creature moves in a pass, so the three by three cells around one hold every
-/// creature in range. This holds while no creature moves more than a block in a pass: a
-/// species that blinks (5 to 8 blocks at once) would need a wider margin. None does today.
+/// creature in range. This holds while no creature walks more than a block in a pass; one
+/// that blinks (5 to 8 blocks at once) is moved to its new cell then (`Neighbours::moved`).
 const CELL: f32 = 16.0;
 const _: () = assert!(KIN_RANGE + 1.0 <= CELL && voxmar_engine::creature::husbandry::MATE_RANGE + 1.0 <= CELL);
 /// How far creatures look for food.
@@ -353,6 +353,18 @@ impl Neighbours {
 
     fn cell(at: Vec3) -> (i32, i32) {
         ((at.x / CELL).floor() as i32, (at.z / CELL).floor() as i32)
+    }
+
+    /// Creature `id` went from `from` to `to` in a pass further than a walk takes it (a
+    /// blink): it is looked for in its new cell from then on.
+    pub(crate) fn moved(&mut self, id: u32, from: Vec3, to: Vec3) {
+        let (old, new) = (Self::cell(from), Self::cell(to));
+        if old == new {
+            return;
+        }
+        let Some(at) = self.cells.get_mut(&old).and_then(|ids| ids.iter().position(|&(other, _)| other == id).map(|i| ids.remove(i))) else { return };
+        self.cells.entry(new).or_default().push(at);
+        self.kinds.get_mut().clear();
     }
 
     /// The creatures of `species` but `id` that stood in the cells around `at`, in id order
@@ -831,6 +843,7 @@ impl Server {
                     in_view: d < senses.sight && self.in_view(body, senses.field, p.eye()),
                     fire: p.held().is_some_and(|item| self.content.blocks.def(item).has_tag(creature::HELD_FIRE)),
                     warded: false,
+                    by_young: false,
                     loud: self.creatures.paces.get(&p.id).is_some_and(|&(_, _, pace)| pace > self.content.movement.walk_speed * LOUD_OVER_WALK),
                 }
             })
@@ -842,7 +855,7 @@ impl Server {
     /// Once a second: a wild creature within `LURED_WITHIN` blocks of a player holding its
     /// favourite food was drawn there by it, and the player's `lured` tally counts it, once
     /// for each creature.
-    fn note_lured(&mut self) {
+    pub(crate) fn note_lured(&mut self) {
         if !self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             return;
         }
@@ -852,6 +865,10 @@ impl Server {
                 continue;
             }
             let species = self.content.creatures.get(creature.species);
+            // A settlement's child coming to food held out is no creature lured.
+            if species.def.kind == voxmar_engine::creature::Kind::Villager {
+                continue;
+            }
             let at = creature.body.position;
             let drawn = |p: &&crate::player::Player| p.joined && p.health.alive() && p.position.distance(at) < LURED_WITHIN && p.held().is_some_and(|item| species.favourite.contains(&item));
             if let Some(player) = self.players.values().find(drawn) {
@@ -909,7 +926,7 @@ impl Server {
         self.find_wards();
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ids: Vec<u32> = self.creatures.live.keys().copied().collect();
-        let neighbours = Neighbours::of(&self.creatures.live);
+        let mut neighbours = Neighbours::of(&self.creatures.live);
         let daylight = self.daylight();
         let handoff = self.overworld.settlement_people().live.handoff;
         let mut actions: Vec<(u32, Decision)> = Vec::new();
@@ -936,6 +953,11 @@ impl Server {
                 let warded = species.def.fire.is_some_and(|f| f.ward) && !self.creatures.wards.is_empty();
                 if warded {
                     players.iter_mut().for_each(|p| p.warded = self.creatures.ward_at(p.position).is_some());
+                }
+                // A grown, wild one that guards its young: who is too near one.
+                if let Some(guards) = species.def.guards.filter(|_| creature.owner.is_none() && creature.grows_up.is_none()) {
+                    let young = self.young_kin_of(id, &neighbours);
+                    players.iter_mut().for_each(|p| p.by_young = young.iter().any(|y| y.distance(p.position) < guards.near));
                 }
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
@@ -1017,7 +1039,7 @@ impl Server {
         }
         self.push_apart();
         for (id, decision) in actions {
-            self.carry_out(id, decision, &neighbours);
+            self.carry_out(id, decision, &mut neighbours);
         }
     }
 
@@ -1031,6 +1053,34 @@ impl Server {
             .filter(|c| c.species == species && c.body.position.distance(at) < KIN_RANGE)
             .map(|c| c.body.position)
             .collect()
+    }
+
+    /// Where creature `id`'s young kin are: wild young of its kind within `KIN_RANGE` (a
+    /// keeper's young are none of a wild mother's).
+    fn young_kin_of(&self, id: u32, neighbours: &Neighbours) -> Vec<Vec3> {
+        let Some(creature) = self.creatures.live.get(&id) else { return Vec::new() };
+        let (species, at) = (creature.species, creature.body.position);
+        neighbours
+            .kind_around(at, species, id)
+            .filter_map(|other| self.creatures.live.get(&other))
+            .filter(|c| c.species == species && c.grows_up.is_some() && c.owner.is_none() && c.body.position.distance(at) < KIN_RANGE)
+            .map(|c| c.body.position)
+            .collect()
+    }
+
+    /// `player` struck young creature `id`: the grown, wild ones of its kind about that
+    /// guard their young (`creature::Guards`) go for them.
+    fn rouse_guardians(&mut self, id: u32, player: PlayerId) {
+        let Some(young) = self.creatures.live.get(&id).filter(|c| c.grows_up.is_some() && c.owner.is_none()) else { return };
+        let (species, at) = (young.species, young.body.position);
+        if self.content.creatures.get(species).def.guards.is_none() {
+            return;
+        }
+        for c in self.creatures.live.values_mut() {
+            if c.species == species && c.grows_up.is_none() && c.owner.is_none() && c.body.position.distance(at) < KIN_RANGE {
+                c.mind.provoked(player);
+            }
+        }
     }
 
     /// Creatures that touch push each other apart, as Minecraft's mobs do: they may brush
@@ -1391,7 +1441,7 @@ impl Server {
     }
 
     /// Acts on what a creature decided.
-    fn carry_out(&mut self, id: u32, decision: Decision, neighbours: &Neighbours) {
+    fn carry_out(&mut self, id: u32, decision: Decision, neighbours: &mut Neighbours) {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species_id = creature.species;
         let position = creature.body.position;
@@ -1429,17 +1479,34 @@ impl Server {
             creature.carrying = None;
         }
         if let Some(to) = decision.blink {
-            let height = self.content.creatures.get(species_id).def.body.size;
-            let landing = (0..6).map(|dy| (to + Vec3::Y * 3.0 - Vec3::Y * dy as f32).floor()).find(|cell| {
-                let feet = cell.as_ivec3();
-                // On footing: never on a railing's narrow top.
-                self.is_solid(feet - IVec3::Y) && !Ground::of(self).railing(feet - IVec3::Y) && !Aabb::standing(cell.as_ivec3().as_vec3() + Vec3::new(0.5, 0.0, 0.5), height.0, height.1).intersects(|p| self.is_solid(p))
-            });
+            let landing = {
+                let def = &self.content.creatures.get(species_id).def;
+                let height = def.body.size;
+                let (movement, water) = (def.movement, def.habitat.water);
+                let body = self.creatures.live[&id].body;
+                let walker = path::Walker { height: body.size.1.ceil() as i32, climbs: movement.jump > 0.0, step: movement.step, wary: water == Water::Land, span: path::Walker::span_of(body.size.0), drop: motion::SAFE_DROP };
+                let ground = Ground::of(self);
+                let landing_at = |to: Vec3| (0..6).map(|dy| (to + Vec3::Y * 3.0 - Vec3::Y * dy as f32).floor()).find(|cell| {
+                    let feet = cell.as_ivec3();
+                    // On footing: never on a railing's narrow top.
+                    self.is_solid(feet - IVec3::Y) && !ground.railing(feet - IVec3::Y) && !Aabb::standing(cell.as_ivec3().as_vec3() + Vec3::new(0.5, 0.0, 0.5), height.0, height.1).intersects(|p| self.is_solid(p))
+                });
+                // Never through a wall or a fence: it lands only where it could have walked, by
+                // a way not much longer than the blink, so a kept one stays in its pen and a wild
+                // one blinks into no shut room. Too far that way, it tries a shorter blink.
+                let from = walker.corner(position + Vec3::Y * 0.01);
+                [1.0, 0.7, 0.45].into_iter().find_map(|k| {
+                    let cell = landing_at(position + (to - position) * k)?;
+                    let way = path::find(&ground, &walker, from, walker.corner(cell + Vec3::new(0.5, 0.01, 0.5)))?;
+                    (way.len() as f32 <= 2.0 * cell.with_y(0.0).distance(position.with_y(0.0).floor()) + 2.0).then_some(cell)
+                })
+            };
             if let Some(cell) = landing {
                 let creature = self.creatures.live.get_mut(&id).expect("listed");
                 creature.body.position = cell + Vec3::new(0.5, 0.0, 0.5);
                 creature.body.velocity = Vec3::ZERO;
                 creature.changed = true;
+                neighbours.moved(id, position, cell + Vec3::new(0.5, 0.0, 0.5));
             }
         }
         if let Some(at) = decision.leap {
@@ -1570,6 +1637,8 @@ impl Server {
     /// the style it is weak to), damage up to the weapon's max hit for their level, as the
     /// stroke raises them. Returns the damage, 0 for a miss, `None` if it is gone.
     pub(crate) fn land_blow(&mut self, player: PlayerId, id: u32, weapon: &voxmar_engine::combat::Weapon, stroke: voxmar_engine::combat::Stroke) -> Option<u16> {
+        // On one that has not noticed them, it cannot miss and hits harder.
+        let stroke = if self.unaware_of(id, player) { stroke.unaware(&self.content.combat.feel) } else { stroke };
         let calm = self.villager_struck(id, player);
         let creature = self.creatures.live.get(&id)?;
         let species = self.content.creatures.get(creature.species);
@@ -1591,6 +1660,7 @@ impl Server {
             let creature = self.creatures.live.get_mut(&id).expect("checked above");
             if !calm {
                 creature.mind.hurt_young(species, Some(player), creature.health as f32 / species.def.health as f32, creature.grows_up.is_some());
+                self.rouse_guardians(id, player);
             }
             self.struck(player, id, 0, false, stroke.blow);
             return Some(0);
@@ -1601,6 +1671,15 @@ impl Server {
         // A blow struck sooner than the buffer lands lighter (`combat`).
         let damage = voxmar_engine::combat::scaled(full, stroke.strength, unit_from(mix(amount.to_bits() as u64, 0x5e1f)));
         self.hurt_creature(player, id, damage, weapon.skill, stroke.blow)
+    }
+
+    /// Whether creature `id` has not noticed `player` (by the one sight rule, `brain::think`)
+    /// nor been hurt by them lately: asleep, looking away, or stalked from behind. A boss
+    /// is never caught unaware.
+    pub(crate) fn unaware_of(&self, id: u32, player: PlayerId) -> bool {
+        self.creatures.live.get(&id).is_some_and(|c| {
+            !self.content.creatures.get(c.species).def.boss && !c.mind.noticed.iter().any(|n| n.0 == player) && !c.mind.recalls(brain::Memory::HurtBy(player))
+        })
     }
 
     /// `damage` to a creature from a player's blow (or a bleed), with the experience it
@@ -1641,6 +1720,9 @@ impl Server {
                 }
             }
             target.changed(traits::SKILLS);
+        }
+        if !calm {
+            self.rouse_guardians(id, player);
         }
         let killed = self.creatures.live[&id].health == 0;
         if !killed {
@@ -2028,8 +2110,17 @@ impl Server {
             let (monster, of) = (def.kind == Kind::Monster, budget(def).expect("not a villager"));
             let (here, cap) = room_of(of);
             let room = cap.saturating_sub(here);
+            // A kind that guards its young (`creature::Guards`) comes now and then with them:
+            // all but the first are young, at least one.
+            let litter = def.guards.is_some_and(|g| unit_from(mix(seed, 5)) < g.young);
+            let count = if litter { count.max(2) } else { count };
             let count = count.min(room.max(1).min(self.wild_room()).min(u8::MAX as usize) as u8);
+            let mut mother = false;
             for i in 0..count.max(1) {
+                // No young left about with no one of theirs grown.
+                if litter && i > 0 && !mother {
+                    break;
+                }
                 let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
                 let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
                 if (monster && self.lit_near(cell)) || self.seen_by_a_player(cell, limits.spawn_unseen_angle) {
@@ -2039,7 +2130,12 @@ impl Server {
                 if !self.nearby_room(position, of, cap) {
                     continue;
                 }
-                self.spawn_unseen(species, position, seed ^ i as u64, limits.spawn_unseen_angle);
+                if let Some(id) = self.spawn_unseen(species, position, seed ^ i as u64, limits.spawn_unseen_angle) {
+                    if litter && i > 0 {
+                        self.make_young(id);
+                    }
+                    mother |= i == 0;
+                }
             }
         }
     }
@@ -2401,7 +2497,7 @@ mod neighbour_tests {
             creature.owner = Some("test".to_string());
             creature.ready_until = u64::from(i % 4 == 0);
         }
-        let neighbours = Neighbours::of(&server.creatures.live);
+        let mut neighbours = Neighbours::of(&server.creatures.live);
         let ids: Vec<u32> = server.creatures.live.keys().copied().collect();
         let (mut short, mut crossed) = (0, 0);
         for round in 0..2 {
@@ -2427,7 +2523,7 @@ mod neighbour_tests {
                     for c in server.creatures.live.values_mut() {
                         c.mind.fear = 0.0;
                     }
-                    server.carry_out(id, Decision { alarm: true, ..Default::default() }, &neighbours);
+                    server.carry_out(id, Decision { alarm: true, ..Default::default() }, &mut neighbours);
                     let alarmed: Vec<u32> = server.creatures.live.iter().filter(|(_, c)| c.mind.fear > 0.0).map(|(&other, _)| other).collect();
                     assert_eq!(alarmed, kin.iter().map(|&(other, _)| other).collect::<Vec<_>>(), "alarmed by {id} (round {round})");
                 }
@@ -2445,6 +2541,29 @@ mod neighbour_tests {
         }
         assert!(crossed > 0, "none crossed a cell's edge");
         assert!(short > 0, "every one of a kind was in reach of every other: the pen is too small to judge");
+    }
+
+    /// One that blinks over a cell's edge is found where it landed for the rest of that
+    /// pass: kin a block from the far side of its new cell count it among theirs and their
+    /// alarm frightens it. Before: it was still listed in the cell it left, two cells from
+    /// theirs, and so not looked at.
+    #[test]
+    fn one_that_blinks_over_a_cells_edge_is_kin_where_it_lands() {
+        let mut server = crate::test_server();
+        let c = super::cornered_tests::pen(&mut server, 24).as_vec3();
+        let edge = (c.x / CELL).floor() * CELL;
+        let species = server.content.creatures.id("base:moonhare").expect("species");
+        let at = |x: f32| Vec3::new(edge + x, c.y, c.z + 0.5);
+        let hare = server.spawn_creature(species, at(-1.5), 1).expect("room");
+        let kin = server.spawn_creature(species, at(16.5), 2).expect("room");
+        let mut neighbours = Neighbours::of(&server.creatures.live);
+        server.carry_out(hare, Decision { blink: Some(at(5.5)), ..Default::default() }, &mut neighbours);
+        let landed = server.creatures.live[&hare].body.position;
+        assert!(landed.distance(at(5.5)) < 0.1, "the blink went to {landed}, not {}", at(5.5));
+        assert_eq!(server.kin_of(kin, &neighbours), vec![landed], "its kin over the cell's edge missed it");
+        server.creatures.live.get_mut(&hare).unwrap().mind.fear = 0.0;
+        server.carry_out(kin, Decision { alarm: true, ..Default::default() }, &mut neighbours);
+        assert!(server.creatures.live[&hare].mind.fear > 0.0, "its kin's alarm missed it");
     }
 }
 
@@ -2623,6 +2742,9 @@ mod combat_tests {
                 .map(|_| {
                     let full = server.content.creatures.get(wolf).def.health;
                     server.creatures.live.get_mut(&a).unwrap().health = full;
+                    // It has seen them, in both runs alike: a blow on one unaware cannot miss
+                    // (`Server::unaware_of`), and the first run's blows leave it knowing them.
+                    server.creatures.live.get_mut(&a).unwrap().mind.noticed = vec![(player, 10.0, 5.0)];
                     server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
                     let struck = server.land_blow(player, a, &fist, plain);
                     let taken = server.creature_strikes(a, wolf, player, 1.0);
@@ -2989,6 +3111,39 @@ mod density_tests {
             draws.push(draw);
         }
         assert_eq!(draws[0], draws[1], "the same loaded world, count of rolls and players must draw the same creatures");
+    }
+
+    /// A kind that guards its young (`creature::Guards`) comes now and then with them, and
+    /// young never come about with no one grown of their kind by them.
+    #[test]
+    fn wild_young_come_with_their_mother() {
+        let mut server = crate::test_server();
+        let spot = find_biome(&server, "forest").expect("forest");
+        let height = server.overworld.site(spot.0, spot.1).height;
+        let at = Vec3::new(spot.0 as f32 + 0.5, height as f32 + 1.0, spot.1 as f32 + 0.5);
+        let (client, connection) = voxmar_protocol::local_pair();
+        let _keep = client;
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let cell = at.floor().as_ivec3();
+        server.load_area(cell - IVec3::new(80, 0, 80), cell + IVec3::new(80, 0, 80));
+        server.day = (LATER + 6_000) as f64;
+        let mut litters = 0;
+        for salt in 0..600u64 {
+            server.creatures.live.clear();
+            server.tick = 40 + salt * 7;
+            server.spawn_near(1, salt);
+            let live = &server.creatures.live;
+            let young: Vec<_> = live.values().filter(|c| c.grows_up.is_some()).collect();
+            for y in &young {
+                assert!(server.content.creatures.get(y.species).def.guards.is_some(), "young of a kind that guards none (salt {salt})");
+                let mother = live.values().any(|c| c.species == y.species && c.grows_up.is_none() && c.body.position.distance(y.body.position) < KIN_RANGE);
+                assert!(mother, "young with no one grown of its kind by it (salt {salt})");
+            }
+            litters += usize::from(!young.is_empty());
+        }
+        assert!(litters > 0, "no litter in 600 tries in a forest");
     }
 
     /// Where a creature comes near a player, and what it is like, is drawn by the world's
@@ -3677,6 +3832,30 @@ mod way_tests {
                 assert_eq!(came, double, "{name}, double gate {double}: came {came}, at {at:.2}");
                 assert!(double || at.x < 1.0, "{name} got through a gate one wide: at {at:.2}");
             }
+        }
+    }
+
+    /// A pen walled in dry stone with a stile in its wall keeps a grazer in: the stile is a
+    /// railing, so to all but a climber it stands two high, and the steps up it are no way
+    /// over. The same wall with a gap lets it out, so the ring is what holds it.
+    #[test]
+    fn a_stile_in_a_dry_stone_wall_keeps_a_pen_shut() {
+        let grazer = path::Walker { height: 1, climbs: true, step: voxmar_engine::creature::STEP, wary: true, span: 1, drop: motion::SAFE_DROP };
+        for (gap, out) in [(false, false), (true, true)] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            let blocks = server.content.blocks.clone();
+            let (along, across, stile) = (blocks.expect("base:dry_stone_wall"), blocks.expect("base:dry_stone_wall_east"), blocks.expect("base:dry_stone_stile"));
+            for i in -3..=3 {
+                server.world.set_block(c + IVec3::new(i, 0, -3), along);
+                server.world.set_block(c + IVec3::new(i, 0, 3), along);
+                server.world.set_block(c + IVec3::new(-3, 0, i), across);
+                server.world.set_block(c + IVec3::new(3, 0, i), across);
+            }
+            server.world.set_block(c + IVec3::new(0, 0, 3), if gap { BlockId::AIR } else { stile });
+            let ground = Ground::of(&server);
+            let way = path::find(&ground, &grazer, c, c + IVec3::new(0, 0, 7));
+            assert_eq!(way.is_some(), out, "a pen with {}: way out {way:?}", if gap { "a gap" } else { "a stile" });
         }
     }
 
@@ -4682,6 +4861,53 @@ mod boss_tests {
 mod fight_tests {
     use super::cornered_tests::{join, pen, put, wall};
     use super::*;
+
+    /// A moonhare struck blinks away (5 to 8 blocks at once), but never through a fence or
+    /// a wall: penned in a ring of fence seven across, struck again and again from beside
+    /// it, it blinks about inside and never lands outside; out in the open it still blinks
+    /// its full way off. Before: a blink went straight through anything and a kept moonhare
+    /// struck in its pen was gone over the fence, and the pen's stone walls too.
+    #[test]
+    fn a_struck_moonhare_blinks_only_where_it_could_walk() {
+        for fenced in [true, false] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            if fenced {
+                let ring = (-3..=3).flat_map(|i| [IVec3::new(i, 0, -3), IVec3::new(i, 0, 3)]);
+                set(&mut server, "base:oak_fence", ring.map(|d| c + d).collect::<Vec<_>>());
+                set(&mut server, "base:oak_fence_east", (-2..=2).flat_map(|i| [IVec3::new(-3, 0, i), IVec3::new(3, 0, i)]).map(|d| c + d).collect::<Vec<_>>());
+            }
+            let middle = c.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+            let player = join(&mut server, middle + Vec3::new(0.0, 0.0, 4.0));
+            let hare = put(&mut server, "base:moonhare", middle + Vec3::new(0.0, 0.0, 2.0), Vec3::Z);
+            server.creatures.live.get_mut(&hare).unwrap().owner = fenced.then(|| server.players[&player].name.clone());
+            let hale = server.creatures.live[&hare].health;
+            server.tick = 1000;
+            let (mut blinks, mut furthest) = (0, 0.0f32);
+            for t in 0..30 * TICKS_PER_SECOND as u64 {
+                let was = server.creatures.live[&hare].body.position;
+                if t % (2 * TICKS_PER_SECOND as u64) == 0 {
+                    // Beside it, across the fence: the player steps up and strikes again.
+                    server.players.get_mut(&player).unwrap().position = was + (middle - was).with_y(0.0).normalize_or(Vec3::X) * -1.5;
+                    server.hurt_creature(player, hare, 0, None, voxmar_engine::combat::Blow::Plain);
+                    server.creatures.live.get_mut(&hare).unwrap().health = hale;
+                }
+                server.tick += 1;
+                server.think_and_move();
+                server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
+                let at = server.creatures.live[&hare].body.position;
+                let jump = at.with_y(0.0).distance(was.with_y(0.0));
+                if jump > 2.0 {
+                    blinks += 1;
+                    furthest = furthest.max(jump);
+                }
+                let off = at - middle;
+                assert!(!fenced || off.x.abs() < 3.0 && off.z.abs() < 3.0, "the kept moonhare blinked out of its pen {t} ticks on: at {off:.2} from its middle");
+            }
+            assert!(blinks >= 3, "fenced {fenced}: the moonhare blinked only {blinks} times in 30 s");
+            assert!(fenced || furthest >= 5.0, "in the open the moonhare blinked only {furthest:.1} blocks at most");
+        }
+    }
 
     pub(super) const FIGHTERS: [&str; 6] = ["base:wolf", "base:brown_bear", "base:badger", "base:aurochs", "base:bison", "base:wild_boar"];
     /// The fighters wider than a block, which take no way through a doorway a block across.
@@ -6272,6 +6498,60 @@ mod fight_tests {
         }
     }
 
+    /// A wild sow with a piglet (`creature::Guards`): a player who gives the piglet room is
+    /// let be; one who steps within her `guards.near` of it she goes for, with no warning;
+    /// and one who strikes it she goes for from anywhere about. Kept, she guards nothing.
+    #[test]
+    fn a_sow_goes_for_one_too_near_her_piglet() {
+        let scene = |kept: bool| {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            let sow = put(&mut server, "base:wild_boar", c.as_vec3() + Vec3::new(-6.5, 0.0, 0.5), Vec3::X);
+            let piglet = put(&mut server, "base:wild_boar", c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5), Vec3::X);
+            server.make_young(piglet);
+            if kept {
+                server.creatures.live.get_mut(&sow).unwrap().owner = Some("someone".into());
+            }
+            let near = server.content.creatures.get(server.creatures.live[&sow].species).def.guards.expect("a boar guards its young").near;
+            let player = join(&mut server, c.as_vec3() + Vec3::new(-3.5 + near + 4.0, 0.0, 0.5));
+            (server, sow, piglet, player, near)
+        };
+        let run = |server: &mut Server, seconds: u64| {
+            for _ in 0..seconds * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+                server.tick_fights();
+            }
+        };
+        // Giving the piglet room: let be.
+        let (mut server, sow, piglet, player, near) = scene(false);
+        run(&mut server, 4);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "one giving the piglet room");
+        // A step within her near of it: she goes for them, though they are further from her.
+        let piglet_at = server.creatures.live[&piglet].body.position;
+        server.players.get_mut(&player).unwrap().position = piglet_at + Vec3::X * (near - 1.5);
+        run(&mut server, 2);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), Some(player), "one too near her piglet");
+        // A blow on the piglet from where the sow let them be: she goes for them at once.
+        let (mut server, sow, piglet, player, _) = scene(false);
+        server.hurt_creature(player, piglet, 0, None, voxmar_engine::combat::Blow::Plain);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), Some(player), "one who struck her piglet");
+        // Kept, she lets a player near the piglet be, struck or not.
+        let (mut server, sow, piglet, player, near) = scene(true);
+        server.players.get_mut(&player).unwrap().position = server.creatures.live[&piglet].body.position + Vec3::X * (near - 1.5);
+        server.hurt_creature(player, piglet, 0, None, voxmar_engine::combat::Blow::Plain);
+        run(&mut server, 2);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "a kept sow");
+        // A keeper's piglet is none of a wild sow's: a player beside it, or striking it, she lets be.
+        let (mut server, sow, piglet, player, near) = scene(false);
+        server.creatures.live.get_mut(&piglet).unwrap().owner = Some("someone".into());
+        server.players.get_mut(&player).unwrap().position = server.creatures.live[&piglet].body.position + Vec3::X * (near - 1.5);
+        run(&mut server, 3);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "a wild sow, one by a kept piglet");
+        server.hurt_creature(player, piglet, 0, None, voxmar_engine::combat::Blow::Plain);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "a wild sow, one who struck a kept piglet");
+    }
+
     /// A badger warns only one it sees: behind a wall three high and thirteen long it lets
     /// a player be, with the wall gone it warns them.
     #[test]
@@ -6299,6 +6579,60 @@ mod fight_tests {
     }
 
     /// Puts `item` in the player's hand.
+    /// A blow on a creature that has not noticed the striker (`Server::unaware_of`) cannot
+    /// miss: a bare fist on a bear lands every time while the bear has not seen them, and
+    /// often misses once it has. Facing away from a player out of its close, it stays
+    /// unaware; facing them, it notices them and is no longer. A boss never is.
+    #[test]
+    fn a_blow_on_one_unaware_cannot_miss() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 14);
+        let stand = c.as_vec3() + Vec3::new(4.5, 0.0, 0.5);
+        let player = join(&mut server, stand);
+        let bear = put(&mut server, "base:brown_bear", c.as_vec3() + Vec3::new(-2.5, 0.0, 0.5), Vec3::NEG_X);
+        let fist = server.content.combat.wielded(None, |_| 1);
+        let plain = voxmar_engine::combat::Stroke::of(voxmar_engine::combat::Blow::Plain, 1.0, false, false, false, false, &server.content.combat.feel);
+        // Fifty blows each, the bear's mind set afresh before each: unaware, or having seen them.
+        let blows = |server: &mut Server, seen: bool| {
+            (0..50)
+                .map(|_| {
+                    let species = server.creatures.live[&bear].species;
+                    let full = server.content.creatures.get(species).def.health;
+                    let temperament = server.content.creatures.get(species).def.temperament.clone();
+                    let creature = server.creatures.live.get_mut(&bear).unwrap();
+                    (creature.health, creature.mind) = (full, brain::Mind::new(&temperament, 3));
+                    if seen {
+                        creature.mind.noticed.push((player, 10.0, 5.0));
+                    }
+                    server.land_blow(player, bear, &fist, plain).expect("alive")
+                })
+                .collect::<Vec<u16>>()
+        };
+        let unaware = blows(&mut server, false);
+        assert!(unaware.iter().all(|&d| d > 0), "an unaware bear dodged a blow: {unaware:?}");
+        let seen = blows(&mut server, true);
+        assert!(seen.iter().filter(|&&d| d == 0).count() >= 10, "a bear that saw them was hit nearly every time: {seen:?}");
+        // Facing away, the player four blocks behind it and out of its close: unaware.
+        let fresh = brain::Mind::new(&server.content.creatures.get(server.creatures.live[&bear].species).def.temperament, 3);
+        server.creatures.live.get_mut(&bear).unwrap().mind = fresh.clone();
+        for _ in 0..3 * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.think_and_move();
+            server.creatures.live.get_mut(&bear).unwrap().body.yaw = motion::yaw_of(Vec3::NEG_X);
+        }
+        assert!(server.unaware_of(bear, player), "a bear facing away noticed one behind it");
+        // Turned to them, it notices them.
+        server.creatures.live.get_mut(&bear).unwrap().body.yaw = motion::yaw_of(Vec3::X);
+        for _ in 0..TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.think_and_move();
+        }
+        assert!(!server.unaware_of(bear, player), "a bear facing them never noticed them");
+        // A boss is never caught unaware.
+        let tusk = put(&mut server, "base:old_tusk", c.as_vec3() + Vec3::new(-6.5, 0.0, 6.5), Vec3::NEG_X);
+        assert!(!server.unaware_of(tusk, player), "a boss caught unaware");
+    }
+
     fn hold(server: &mut Server, player: PlayerId, item: &str) {
         let item = server.content.blocks.expect(item);
         let held = server.players.get_mut(&player).unwrap();
@@ -6968,8 +7302,8 @@ mod review_tests {
             for x in 0..24 {
                 let cell = at + IVec3::new(x, 0, 0);
                 server.set_block(cell, grass);
-                let neighbours = Neighbours::of(&server.creatures.live);
-                server.carry_out(id, Decision { eat: Some(cell), ..Default::default() }, &neighbours);
+                let mut neighbours = Neighbours::of(&server.creatures.live);
+                server.carry_out(id, Decision { eat: Some(cell), ..Default::default() }, &mut neighbours);
                 gone.push(server.block(cell) != Some(grass));
                 server.tick += 37;
             }

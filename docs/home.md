@@ -49,7 +49,7 @@ footstools, cushions and window seats; tables include desks and counters; storag
 keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
 shelves, plate racks, spice racks, candle boxes, bread bins, kindling boxes, bedside
 tables, stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves
-too), crate stacks, barrel racks, barrels, crates, jars, baskets and grain sacks, and a
+too), crate stacks, barrel racks, barrels, crates, jars, jugs, baskets and grain sacks, and a
 village's barrels, crates and sacks (every store a player opens counts but the feed
 trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
@@ -370,6 +370,24 @@ step sets midnight in the walled room by the hearth and waits on the Evening in 
 line seen at any point in the run, since the server tells an effect once a session and the
 motifs step can be where it first came on ("home: evening in"), then sets noon.
 
+## Home again
+
+Coming home is a moment of its own. Back within reach of the lit hearth after ten minutes
+or more away (half a game day out), the player is welcomed home in chat ("Home again: back
+by your own hearth after a long day out...") and is **Home again** for five minutes: heal
+x1.2 and 2° warmer (a home's warmth, so never Hot), wherever they go next. A short step out
+to the woodpile is no homecoming, nor is joining or waking at home.
+
+It is data (effects.ron `homecomings`, engine `HomecomingRule`): a rule gives an effect
+that has no `when` of its own for `seconds`, once the player comes home after `away`
+seconds or more away, if the effect `needs` names holds there (base: `hearthside`, so a
+lit hearth, not a bedroll alone). The server counts the time away (`Player::away`, not
+saved) only while the player has a home and is alive, and only at their own home, never a
+guest's; dying and waking at home starts it again. Loading refuses a rule whose effect has a
+`when`, a time of 0 or less, or a `needs` with no `when`. Tests: the engine's
+`coming_home_after_long_away_gives_its_effect`, the server's
+`coming_home_after_a_long_day_out_is_a_welcome_home` (guests.rs).
+
 ## Drying off
 
 Rain soaks you (Soaked, Drenched in a downpour), and a roof alone no longer dries you: wet
@@ -417,6 +435,13 @@ Sat with a footstool within 1, the player has their **Feet Up** (`feet_up`): the
 quarter faster (`heal` x1.25), and it stacks with Fireside. A footstool is a seat too, so sat
 on the footstool itself is none (`Not(SeatedOn("footstool"))`): it goes before a chair. Test:
 `a_footstool_before_a_seat_puts_your_feet_up`.
+
+Sat in a rocking chair the view rocks, gently forward and back from when the player sat
+down: a seat tagged `rocks` tips the camera by `rock` (engine `vitals.rs`: 2° each way and a
+dip of 0.04 blocks at either end, a rock every 3.2 s). Only the camera moves; where the eye
+looks from and aims stays still. The Screen shake setting off keeps the view still here too.
+Loading refuses `rocks` on a block that is no seat. Tests: `a_rocking_seat_rocks_the_view_gently`
+(engine), `a_rocking_chair_rocks` (every wood's chair).
 
 ## Numbers and tuning
 
@@ -763,6 +788,14 @@ torch a game day, a candle three, an oil lamp five on a fill of fat. A home's li
   The box shows its candles going down. Loading refuses `spare_lights` on a block that is no
   store. Test: `a_candle_box_at_home_keeps_its_candles_lit` (a barrel's candles are only
   kept; the box emptied, the candle burns out).
+- **Kindling by the fire.** A store tagged `relights_lights` (base's kindling box, which
+  keeps only what burns) lights again what burns out at home to something lit again: one
+  of what its `relight_with:` asks (fat for an oil lamp), else one bundle of `kindling` (a
+  torch), taken out, and the light burns on afresh in its facing (a guttering torch whole).
+  A spare in a candle box is set out first. Loading refuses `relights_lights` on a block
+  that is no store, or with nothing tagged `kindling`. Test:
+  `a_kindling_box_at_home_keeps_its_torches_and_lamps_lit` (the lard is kept for the lamp,
+  never spent on the torch; the box emptied, the torch goes out).
 - **Picked up burning** a light keeps what it has burnt as its item's wear (`WEAR_PER_DAY`,
   1200 a game day), shown as a wear bar and in its tooltip, and set down again burns on from
   there: carrying a light never refreshes it. A lamp picked up lit keeps its fat.

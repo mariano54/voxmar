@@ -807,6 +807,27 @@ mod tests {
         }
     }
 
+    /// A stile in a dry-stone wall is walked over without a jump, up its step, over its
+    /// low middle and down the step beyond, never inside it; the wall beside it stops a
+    /// walker as a railing does.
+    #[test]
+    fn a_stile_is_walked_over_and_its_wall_is_not() {
+        let content = content();
+        let blocks = &content.blocks;
+        for (name, passes) in [("base:dry_stone_stile_east", true), ("base:dry_stone_wall_east", false)] {
+            let mut cells = rustc_hash::FxHashMap::default();
+            for z in -3..=3 {
+                cells.insert(IVec3::new(3, 0, z), blocks.expect(name));
+            }
+            let field = Built { blocks, cells, floor: |_| 0 };
+            for fps in [30.0, 144.0] {
+                let (body, inside) = run(&field, Body { on_ground: true, ..at(0.5, 0.0, 0.5) }, walking(Vec3::X, false), 4.0, fps);
+                let past = body.position.x > 4.0;
+                assert!(!inside && past == passes, "walking east at {fps} fps into a row of {name}: past it {past}, inside it {inside}: {body:?}");
+            }
+        }
+    }
+
     /// A row of field fences, of fence corners or of shut gates across a field stops a
     /// walker at it, walked or sprinted, never inside and never over; a row of open gates
     /// lets it through.

@@ -947,6 +947,21 @@ fn a_village_log_bench_is_the_piece_a_player_makes() {
     assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the bench a village builds");
 }
 
+/// A village's signpost is a fingerpost and its top, the fingerpost a player makes at home.
+#[test]
+fn a_village_signpost_is_the_fingerpost_a_player_makes() {
+    use super::def::PropKind;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let sign = world_content.settlements.props.iter().find(|p| p.kind.label() == "signpost").expect("villages set signposts");
+    let PropKind::Blocks(_, blocks) = &sign.kind else { panic!("the signpost is a package's prop of blocks") };
+    let placed: Vec<(IVec3, &str)> = blocks.iter().map(|(at, name)| (*at, name.as_str())).collect();
+    assert_eq!(placed, [(IVec3::new(0, 1, 0), "base:oak_fingerpost"), (IVec3::new(0, 2, 0), "base:oak_fingerpost_top")]);
+    let piece = content.blocks.expect("base:oak_fingerpost");
+    assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the fingerpost a village sets");
+}
+
 /// What a village keeps its stores and nets in (its barrel, crates, sacks and nets) is what
 /// a player makes at home: a survival piece with a recipe, given back whole where a player
 /// set it and nothing where a village did (`furnishing`).
@@ -1818,7 +1833,13 @@ fn people_numbers_that_would_not_play_are_refused() {
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 17] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 23] = [
+        ("more than every stay at home sat at the table", |p| p.sit = 1.5),
+        ("less than none sat at the table", |p| p.sit = -0.1),
+        ("no wait between telling off a player who breaks a village's things", |p| p.react.scold_every = 0.0),
+        ("telling off from below nothing", |p| p.react.scold = -1.0),
+        ("no wait between treats", |p| p.react.treat_every = 0.0),
+        ("treats seen from below nothing", |p| p.react.treat = -1.0),
         ("a talk as long as the wait to talk again", |p| p.react.chat_for = p.react.chat_every),
         ("a talk from farther than a greeting", |p| p.react.chat = p.react.greet + 1.0),
         ("a talk for no time", |p| p.react.chat_for = 0.0),
@@ -4003,4 +4024,63 @@ fn every_flame_by_a_roof_is_planned() {
     }
     let reached = world.flames_reaching(&blocks);
     assert!(reached.is_empty(), "flames by Wenworth's roofs reach what catches: {:?}", &reached[..reached.len().min(4)]);
+}
+
+/// A gate through a stone wall is arched under its lintel: each arch piece stands over the
+/// way through, nothing solid under it, and springs (where its stone comes down to the foot
+/// of its cell) from the wall on that side, never from the open gate. Wenworth (0x5eed's
+/// walled town) and the places near spawn on a few seeds are looked at.
+#[test]
+fn a_stone_walls_gates_are_arched_from_their_posts() {
+    use voxmar_engine::coords::ColumnPos;
+    let registry = crate::full_content().0.blocks.clone();
+    let (mut arches, mut stone_walled, mut wrong) = (0, 0, Vec::new());
+    for (seed, also) in [(0x5eed_u64, Some(IVec2::new(-9680, 6416))), (42, None), (7, None), (1, None)] {
+        let world = crate::shared_full_world(seed);
+        let spawn = world.spawn_point();
+        let mut slots = world.settlements.near(&world, IVec2::new(spawn.x, spawn.z), 2500);
+        if let Some(c) = also {
+            slots.extend(world.settlements.near(&world, c, 64));
+        }
+        for slot in slots {
+            let Some(plan) = slot.0.as_ref() else { continue };
+            if !plan.wall_block.is_some_and(|b| registry.def(b).has_tag("stone")) {
+                continue;
+            }
+            stone_walled += 1;
+            let mut columns: rustc_hash::FxHashMap<ColumnPos, voxmar_engine::world::Column> = Default::default();
+            let mut at = |p: IVec3| -> BlockId {
+                let pos = ColumnPos::of_block(p);
+                let column = columns.entry(pos).or_insert_with(|| world.generate(pos));
+                let o = pos.origin();
+                column.block(IVec3::new(p.x - o.x, p.y, p.z - o.z))
+            };
+            let set = world.settlement_planned_on_ground(plan.centre, &|b| registry.def(b).has_tag("arch"));
+            for (pos, arch) in set {
+                arches += 1;
+                let name = &registry.def(arch).name;
+                if at(pos) != arch {
+                    wrong.push(format!("{}: the {name} planned at {pos} is not in the world", plan.name.0));
+                    continue;
+                }
+                if registry.info(at(pos - IVec3::Y)).solid {
+                    wrong.push(format!("{}: the {name} at {pos} stands on something, not over a way through", plan.name.0));
+                }
+                // The sides it comes down to the foot of its cell on.
+                let shape = registry.shape(arch).expect("an arch has a shape");
+                for &(min, max) in shape.bounds.iter().filter(|b| b.0.y <= 0.0) {
+                    let c = (min + max) / 2.0 - 0.5;
+                    let side = if c.x.abs() > c.z.abs() { IVec3::new(c.x.signum() as i32, 0, 0) } else { IVec3::new(0, 0, c.z.signum() as i32) };
+                    // The wall stands there all the way down, where the gate is open under.
+                    let (beside, under) = (at(pos + side), at(pos + side - IVec3::Y));
+                    if registry.def(beside).has_tag("arch") || !registry.info(beside).solid || !registry.info(under).solid {
+                        wrong.push(format!("{}: the {name} at {pos} springs from nothing at {}", plan.name.0, pos + side));
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("{arches} arch pieces over the gates of {stone_walled} stone-walled places");
+    assert!(stone_walled > 0 && arches >= 2, "{arches} arch pieces in {stone_walled} stone-walled places, so this test no longer looks at one");
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }

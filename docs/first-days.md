@@ -489,6 +489,44 @@ The test fails the Farm line past a minute with nothing new from the hearth (`PA
 as long as `PACING_STRETCH`). The longest single action there is the 30 to 35 s idle wait for
 the clamp.
 
+### Farm chapters (Oct 27)
+
+The Farm walk now also fails a chapter (from one milestone to the next, from the lit hearth
+on) that runs 30 s or longer with fewer new things than the 30 s stretches it began
+(`PACING_CHAPTER`). A Kiln Load failed it in three runs of four: firing forty clay over 71 to
+72 s brought only the bowls and the jar. Between loads the bot now also takes A Pot on the
+Chimney, once Earthenware is done (it opens with The Potter): two chimney pots of fired clay at the table, one set
+on the chimney, the spare put by with the crockery. A Kiln Load then runs 53 to 57 s with
+three new things.
+
+The book now says so too: A Kiln Load's text points to the chimney pot while a load fires,
+and its `meanwhile` list (Earthenware, A Pot on the Chimney, A Place to Pray) is load-checked
+against the text and the order of the book (docs/quests.md).
+
+### Farm waits, twenty walks (Oct 27)
+
+Twenty Farm walks on 592 showed three failing the single-action floor on the bed hunt
+(attacking rabbits for 66 to 69 s): a struck rabbit at the lane's far end slips past the
+player and, with the mouth open, out of the lane, so a walk ran down two dozen rabbits for
+two hides. The hunt now shuts the mouth behind the player (two stone, opened after): the bed
+hunt ran 21 to 69 s and now 13 to 35 s. In five walks of twenty A Kiln Load had only two
+loads after the clay fired before, so the jar took the last gap and the chimney pot was
+skipped (36 to 37 s, two new against the two needed); what is left between loads is now done
+once the last load is out, and all twenty bring three new (38 to 57 s). Brick by Brick's
+tempered loads ran 38 to 42 s with nothing new in every walk; A Table for Two now comes
+halfway through them. Its `meanwhile` names it, and Charcoal's names A Place to Pray, which
+the bot builds while the clamp chars. Over twenty walks after: all pass; from the lit hearth
+the longest wait with nothing new is 25 to 34 s (ended by the chopping block); Brick by Brick
+44 to 47 s with three new, Charcoal 48 to 52 s with six, A Kiln Load 38 to 57 s with three;
+the lit Crucible Kiln at 437 to 461 s (447 to 493 s before).
+
+The Potter's load firing was a wait with one new thing in 17 to 24 s, and Fuel to Hand's
+forty logs another 22 to 26 s with one. The Potter's `meanwhile` now names Fuel to Hand and
+its text says to fell trees while the clay fires; the bot (`fire_clay_while`) fells a trunk
+at a time while a load fires. Over twenty walks: The Potter 16 to 25 s with the same one new
+and a dozen logs felled, Fuel to Hand 10 to 16 s, the longest wait with nothing new from the
+lit hearth 24 to 25 s (25 to 34 s before), and the lit Crucible Kiln at 418 to 441 s.
+
 ### Nomad pacing (Oct 21)
 
 The Nomad walk now runs the same pacing check as the Farm walk, by the same floors. Two runs:
