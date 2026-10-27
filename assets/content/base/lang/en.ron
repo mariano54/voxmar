@@ -464,6 +464,7 @@
     "block.base.{name}_shuttered_window": "{name} Shuttered Window",
     "block.base.{name}_shuttered_window_shut": "{name} Shuttered Window",
     "block.base.stone_arrow_slit": "Stone Arrow Slit",
+    "block.base.stone_mullion_window": "Stone Mullioned Window",
     "block.base.{name}_railing": "{name} Railing",
     "block.base.{name}_railing_corner": "{name} Railing Corner",
     "block.base.{name}_fence": "{name} Fence",

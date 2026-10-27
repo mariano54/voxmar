@@ -89,6 +89,9 @@
         (pattern: [["{name}_lattice_window"], ["wooden_door"]], output: "balcony_door", skill: "core:construction", level: 4, xp: 3.0),
         // An arrow slit: two stone bricks either side of a gap and a slab over it.
         (pattern: [["", "stone_brick_slab", ""], ["stone_bricks", "", "stone_bricks"]], output: "stone_arrow_slit", count: 2, skill: "core:construction", level: 6, xp: 4.0),
+        // A mullioned window: stone bricks for the jambs either side, slabs up the middle
+        // for the mullion.
+        (pattern: [["stone_bricks", "stone_brick_slab", "stone_bricks"], ["stone_bricks", "stone_brick_slab", "stone_bricks"]], output: "stone_mullion_window", count: 2, skill: "core:construction", level: 6, xp: 4.0),
         // An arch: three slabs over two blocks either side of the gap; two arches side by
         // side make a wide one.
         (pattern: [["cobblestone_slab", "cobblestone_slab", "cobblestone_slab"], ["cobblestone", "", "cobblestone"]], output: "cobblestone_arch", count: 2, skill: "core:construction", level: 3, xp: 3.0),

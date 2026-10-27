@@ -214,6 +214,7 @@
     "block.base.{name}_shuttered_window": "{name}のあまどつきこうしまど",
     "block.base.{name}_shuttered_window_shut": "{name}のあまどつきこうしまど",
     "block.base.stone_arrow_slit": "いしのやざま",
+    "block.base.stone_mullion_window": "いしのたてじきりまど",
     "block.base.{name}_railing": "{name}のてすり",
     "block.base.{name}_railing_corner": "{name}のてすりのかど",
     "block.base.{name}_fence": "{name}のさく",

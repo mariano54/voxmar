@@ -81,6 +81,9 @@
             Paint(palette: "main", base: 0.25, mask: [Ridge(cells: (2, 3), width: 0.12, amount: 1.0), Noise(cells: (4, 4), amount: 0.8)], above: 0.85, light: 1),
         ]),
         "block/cobblestone": (base: "block/cobbled_andesite", palettes: {"main": "stone"}, seed: 11),
+        // A mullioned window's stone bricks: the wall's own drawing under a name of its own,
+        // since a window glows by the light through it and the wall must not.
+        "block/stone_window": (base: "block/stone_bricks"),
         "block/mossy_stone_bricks": (base: "block/stone_bricks", palettes: {"moss": "moss_overlay"}, layers: [
             Paint(palette: "moss", base: 0.45, shade: [Noise(cells: (8, 8), amount: 0.8), Grain(0.3)], mask: [Noise(cells: (3, 3), octaves: 2, amount: 1.4), Speckle(chance: 0.25, amount: 0.25)], above: 0.42, clean: true),
         ]),
