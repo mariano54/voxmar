@@ -90,6 +90,9 @@ pub struct Player {
     /// Whether they have been told this session why something of theirs smoulders
     /// (`blaze_hint`).
     pub told_fire: bool,
+    /// The kinds of tool they have been told this session they carry one of that breaks
+    /// what they broke much faster (`tool_wear::tell_faster_carried`).
+    pub told_faster: Vec<usize>,
     pub buried: bool,
     /// Everything the player has discovered (`journal`).
     pub journal: voxmar_engine::journal::Journal,
@@ -232,6 +235,7 @@ impl Player {
             bed: None,
             kindled: true,
             told_fire: false,
+            told_faster: Vec::new(),
             buried: false,
             journal: Default::default(),
             quests_done: Vec::new(),
