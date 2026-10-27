@@ -61,6 +61,10 @@
         (pattern: [["{name}_railing", "{name}_railing"]], output: "{name}_railing_corner", skill: "core:construction", level: 3, xp: 1.0),
         // Field fences of posts and sticks, a corner from two runs, a gate from a run and a slab.
         (pattern: [["{name}_post", "stick", "{name}_post"], ["{name}_post", "stick", "{name}_post"]], output: "{name}_fence", count: 6, skill: "core:construction", level: 2, xp: 3.0),
+        // A dry-stone wall: cobbles stacked two courses high make six; two walls side by side
+        // turn a corner.
+        (pattern: [["cobblestone", "cobblestone", "cobblestone"], ["cobblestone", "cobblestone", "cobblestone"]], output: "dry_stone_wall", count: 6, skill: "core:construction", level: 2, xp: 3.0),
+        (pattern: [["dry_stone_wall", "dry_stone_wall"]], output: "dry_stone_wall_corner", count: 2, skill: "core:construction", level: 2, xp: 1.0),
         (pattern: [["{name}_fence", "{name}_fence"]], output: "{name}_fence_corner", skill: "core:construction", level: 2, xp: 1.0),
         (pattern: [["{name}_fence", "{name}_slab", "{name}_fence"]], output: "{name}_fence_gate", skill: "core:construction", level: 2, xp: 2.0),
         (pattern: [["{name}_fence_gate", "{name}_fence_gate"]], output: "{name}_double_gate", skill: "core:construction", level: 2, xp: 3.0),

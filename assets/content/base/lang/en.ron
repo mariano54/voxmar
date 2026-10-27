@@ -425,6 +425,8 @@
     "block.base.{name}_shingle_ridge": "{name} Shingle Ridge",
     "block.base.thatch_roof": "Thatch Roof",
     "block.base.thatch_ridge": "Thatch Ridge",
+    "block.base.dry_stone_wall": "Dry-Stone Wall",
+    "block.base.dry_stone_wall_corner": "Dry-Stone Wall Corner",
     "block.base.hide_lean_to": "Hide Lean-to",
     "block.base.wattle_panel": "Wattle Panel",
     "block.base.daub": "Wattle and Daub",
