@@ -310,7 +310,7 @@
         (
             name: "the_scarecrows_pockets", age: "farm", branch: "farming", title: "The Scarecrow's Pockets",
             side: true,
-            why: "By night a scarecrow walks the fields of those with a home, keeping its distance. Get near enough to talk and it empties its pockets: seed mix for your animals, saved from the crows.",
+            why: "By night a scarecrow walks the fields of those with a home, keeping its distance, but it stands stock still while you watch it. Keep your eyes on it as you walk up, and once near enough to talk it empties its pockets: seed mix for your animals, saved from the crows.",
             tasks: [[Dealt("scarecrow", "pockets", 1)]],
             after: ["seed_mix"],
             rewards: [Xp("farming", 40.0)],
