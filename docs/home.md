@@ -139,6 +139,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Bright room | a roof, 2 windows (`window`: hide window, glass, lattice window, open shuttered window) | heal x1.05, learn x1.05 |
 | Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging or a curtain) | 1° warmer |
 | Hearth corner | a roof, the hearth, a settle (`settle`) and a woodpile (`woodpile`) | 1° warmer, heal x1.05 (test `a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner`) |
+| Lived-in hearth | a roof, the hearth, a mantel shelf (`mantel_shelf`) and a fireside bench (`fireside_bench`) | 1° warmer, learn x1.05 (test `a_mantel_shelf_and_a_fireside_bench_make_a_lived_in_hearth`) |
 | Bedchamber | a roof, a bed, a blanket chest (`blanket_chest`), a washstand (`washstand`) and a rug | 1° warmer, heal x1.1 (test `a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber`) |
 | Kitchen | a roof, the hearth, a dresser (`dresser`) and a pot crane (`pot_crane`) | 1° warmer, meals heal x1.05 (`meal_heal`; test `a_dresser_and_a_pot_crane_by_the_hearth_make_a_kitchen`) |
 | Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
