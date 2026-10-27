@@ -9109,7 +9109,17 @@ impl Fresh {
         while !done(&self.c) {
             swings += 1;
             assert!(swings <= 400, "hunting took over 400 swings: at {:?}, lane {:?}, blows {} damage {:?}", self.at, lane(&self.c, self.origin), self.c.blows, self.c.damage);
-            let (at, wanted) = (self.at, self.c.content.creatures.find(prefer(&self.c)));
+            let (at, kind) = (self.at, prefer(&self.c));
+            let wanted = self.c.content.creatures.find(kind);
+            // None of the kind wanted left in the lane (one fled out of its mouth): one more
+            // is brought in rather than the others run down for what they cannot give.
+            if !kind.is_empty() && wanted.is_some() && !lane(&self.c, self.origin).iter().any(|x| Some(x.2) == wanted) {
+                self.stock(kind, -10);
+                self.restocks += 1;
+                let origin = self.origin;
+                self.wait(5.0, &format!("a {kind} in the lane"), |c| lane(c, origin).iter().any(|x| Some(x.2) == wanted));
+                continue;
+            }
             let Some((id, p, _)) = lane(&self.c, self.origin).into_iter().min_by(|a, b| {
                 let key = |x: &(u32, Vec3, voxmar_engine::creature::CreatureId)| (Some(x.2) != wanted, (x.1.z - at.z).abs());
                 key(a).0.cmp(&key(b).0).then(key(a).1.total_cmp(&key(b).1))
