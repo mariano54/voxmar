@@ -1027,6 +1027,26 @@ fn a_nightjar_churrs_on_warm_open_nights_and_the_ice_sings() {
     assert_eq!(played("ice_sing", &frozen, &[("snowpack", 1.0), ("sun", -0.6), ("temperature", -12.0)]), 0, "snow but no ice");
 }
 
+/// An evening in by the player's own fire (effects.ron's `evening_in`, the server's room
+/// survey): the night outside, its crickets, owls, nightjar, frogs and a dog far off,
+/// drops away further, and the fire, its embers and the timbers settling keep on.
+#[test]
+fn the_night_drops_away_on_an_evening_in() {
+    let ambience = base();
+    let evening = ambience.held.iter().position(|e| e == "evening_in").map(|i| ambience.held_axis(i)).expect("an evening in is heard");
+    let ducks = |duck: &[(super::defs::DuckBy, f32)]| duck.iter().any(|&(by, amount)| by == super::defs::DuckBy::Axis(evening) && amount >= 0.4);
+    let bed = |name: &str| ducks(&ambience.beds.iter().find(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("{name}")).duck);
+    let sound = |name: &str| ducks(&ambience.sounds.iter().find(|s| s.name == format!("base:{name}")).unwrap_or_else(|| panic!("{name}")).duck);
+    assert!(bed("crickets"), "crickets keep on through an evening in");
+    for outside in ["owl", "cricket", "nightjar", "frog", "night_dog", "night_owl"] {
+        assert!(sound(outside), "{outside} keeps on through an evening in");
+    }
+    assert!(!bed("fire") && !bed("embers"), "the fire drops on an evening in");
+    for inside in ["rafters", "hearth_settle", "fire_snap"] {
+        assert!(!sound(inside), "{inside} drops on an evening in");
+    }
+}
+
 /// A kiln or a fire gone out ticks as it cools, the kiln longer by its group's seconds,
 /// and never while it burns or once cold; the client remembers when each went out.
 #[test]
