@@ -394,6 +394,7 @@ pub fn goal_words(locale: &Locale, content: &Content, quest: &QuestDef, goal: &G
         Goal::Met(kind, _) if kind == "Kinds" => locale.get("quest.goal.met_kinds").to_owned(),
         Goal::Met(kind, _) if kind == "any" => locale.get("quest.goal.met_any").to_owned(),
         Goal::Met(kind, _) => locale.format("quest.goal.met", &[("who", &locale.get_or(&format!("{}.title", def_key("wander", kind)), &title_from_id(kind)).to_owned())]),
+        Goal::Dealt(kind, _, _) => locale.format("quest.goal.dealt", &[("who", &locale.get_or(&format!("{}.title", def_key("wander", kind)), &title_from_id(kind)).to_owned())]),
         Goal::Prayed(prayer, _) => {
             let prayer = if prayer == "any" { locale.get("quest.any").to_owned() } else { locale.get_or(&def_key("prayer", prayer), &title_from_id(prayer)).to_owned() };
             locale.format("quest.goal.prayed", &[("prayer", &prayer)])

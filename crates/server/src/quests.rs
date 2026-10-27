@@ -500,6 +500,20 @@ mod tests {
     }
 
     #[test]
+    fn a_line_dealt_with_counts_for_that_line_only() {
+        let mut server = fixture();
+        let fishers = party(&mut server, "fisher_folk");
+        hold(&mut server, "base:raw_cod", 3);
+        assert!(server.meet(1, fishers));
+        assert_eq!(tally(&server, "dealt:base:fisher_folk/swap"), 0, "three fish buy nothing");
+        hold(&mut server, "base:raw_cod", 4);
+        assert!(server.meet(1, fishers));
+        assert_eq!(tally(&server, "dealt:base:fisher_folk/swap"), 1, "four fish for twine is the swap");
+        assert_eq!(tally(&server, "met:base:fisher_folk"), 1, "and a dealing with the kind");
+        assert_eq!(tally(&server, "dealt:base:fisher_folk/rod_tip"), 0, "not another line");
+    }
+
+    #[test]
     fn dealing_with_travellers_finishes_the_road_quests() {
         let mut server = fixture();
         for quest in ["base:look_it_up", "base:timber", "base:stone_in_hand", "base:where_to_settle"] {

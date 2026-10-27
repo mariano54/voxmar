@@ -75,6 +75,10 @@ pub enum Goal {
     /// share of a hunt, a captive's or a guided one's thanks, a lure followed to its end. A
     /// greeting alone is no dealing.
     Met(String, u32),
+    /// Had this many dealings with one line of a wandering kind, by the line's name in
+    /// wandering.ron (`Dealt("herb_gatherer", "roots", 1)`): as `Met` counts, but that line
+    /// only, for a lesson one line alone teaches. Load-checked: the kind has that line.
+    Dealt(String, String, u32),
     /// Turned a prayer (or `any`) on this many times.
     Prayed(String, u32),
     /// Offered this many of an item (or `any`, or a `tag:TAG`) at an altar.
@@ -379,6 +383,7 @@ impl Progress<'_> {
             Goal::Thriving(n, percent) => ((self.thriving)(*percent), *n),
             Goal::Met(kind, n) if kind == "Kinds" => (self.tallies.iter().filter(|&(key, &times)| times > 0 && key.starts_with("met:")).count() as u32, *n),
             Goal::Met(kind, n) => (tally("met", kind), *n),
+            Goal::Dealt(kind, line, n) => (tally("dealt", &format!("{kind}/{line}")), *n),
             Goal::Prayed(prayer, n) => (tally("prayed", prayer), *n),
             Goal::Offered(item, n) => (tally("offered", item), *n),
             Goal::Opened(chest, n) => (tally("opened", chest), *n),
@@ -673,7 +678,7 @@ impl QuestRegistry {
     /// quest that never finishes or a reward that never comes. Journal pages are checked as
     /// the file is read.
     pub fn resolve(&mut self, named: &Named) -> Result<(), RegistryError> {
-        let Named { blocks, skills, creatures, fishing, multiblocks, steps, events, prayers, effects, near, stores, trapped, harvests } = *named;
+        let Named { blocks, skills, creatures, fishing, multiblocks, steps, events, lines, prayers, effects, near, stores, trapped, harvests } = *named;
         let block_ids: Vec<BlockId> = blocks.ids().collect();
         let fish_ids: Vec<BlockId> = fishing.iter().map(|c| c.item).collect();
         let names = |ids: &[BlockId]| ids.iter().map(|&id| blocks.def(id).name.as_str()).collect::<Vec<_>>();
@@ -757,6 +762,12 @@ impl QuestRegistry {
                     Goal::Visit(_) | Goal::Discover(..) | Goal::Home => {}
                     Goal::Met(name, _) if name == "Kinds" => {}
                     Goal::Met(name, _) => find(name, &event)?,
+                    Goal::Dealt(name, line, _) => {
+                        find(name, &event)?;
+                        if !lines.contains(&format!("{name}/{line}")) {
+                            return Err(refuse(&format!("line of {name}"), line));
+                        }
+                    }
                     Goal::Prayed(name, _) => find(name, &prayer)?,
                     Goal::Offered(name, _) => find(name, &made)?,
                     Goal::Opened(name, _) => find(name, &rock)?,
@@ -1035,6 +1046,8 @@ pub struct Named<'a> {
     pub steps: &'a [String],
     /// The wandering kinds' full names, which `Met` names.
     pub events: &'a [String],
+    /// Each wandering kind's lines, `kind/line` by full kind name, which `Dealt` names.
+    pub lines: &'a [String],
     /// The prayers' full names, which `Prayed` names.
     pub prayers: &'a [String],
     /// The effects' full names, which `Felt` names.
@@ -1322,7 +1335,7 @@ mod tests {
     fn wanderers_prayers_and_offerings_count_from_their_tallies() {
         let journal = Journal::default();
         let mut tallies = FxHashMap::default();
-        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1), ("placed:base:hide_window", 2), ("stocked:base:feed_trough:base:wheat", 8), ("stocked:base:oak_crate_stack:base:oak_planks", 20), ("stocked:base:barrel:base:oak_planks", 12), ("put_away:base:oak_planks", 20), ("crafted_near:chopping_block:base:oak_planks", 6), ("trapped:base:rabbit", 1), ("mended:base:bone", 2)] {
+        for (key, n) in [("met:base:pedlar", 2), ("met:base:smith", 1), ("met:base:hermit", 0), ("prayed:base:bark_skin", 3), ("offered:base:bone", 4), ("crafted:base:bone", 9), ("opened:base:nomad_treasure_chest", 2), ("ate:base:honey", 3), ("felt:base:smoky", 5), ("fertilised:base:compost", 5), ("laid:base:oak_planks", 2), ("lured:base:rabbit", 2), ("watering:base:well", 1), ("placed:base:hide_window", 2), ("stocked:base:feed_trough:base:wheat", 8), ("stocked:base:oak_crate_stack:base:oak_planks", 20), ("stocked:base:barrel:base:oak_planks", 12), ("put_away:base:oak_planks", 20), ("crafted_near:chopping_block:base:oak_planks", 6), ("trapped:base:rabbit", 1), ("mended:base:bone", 2), ("dealt:base:pedlar/swap", 1)] {
             tallies.insert(key.to_owned(), n);
         }
         let level = |_: &str| 1u8;
@@ -1337,6 +1350,9 @@ mod tests {
         assert_eq!(goal(Goal::Met("pedlar".into(), 3)), (2, 3), "a short name is the kind's own");
         assert_eq!(goal(Goal::Met("any".into(), 4)), (3, 4));
         assert_eq!(goal(Goal::Met("Kinds".into(), 3)), (2, 3), "a kind never dealt with is no kind");
+        assert_eq!(goal(Goal::Dealt("base:pedlar".into(), "swap".into(), 1)), (1, 1), "that line only");
+        assert_eq!(goal(Goal::Dealt("pedlar".into(), "swap".into(), 1)), (1, 1), "a short name is the kind's own");
+        assert_eq!(goal(Goal::Dealt("base:pedlar".into(), "haggle".into(), 1)), (0, 1), "another line of the kind is not this one");
         assert_eq!(goal(Goal::Prayed("base:bark_skin".into(), 1)), (3, 1));
         assert_eq!(goal(Goal::Prayed("base:ember_arm".into(), 1)), (0, 1));
         assert_eq!(goal(Goal::Offered("base:bone".into(), 3)), (4, 3), "only what was offered, not what was made");
@@ -1484,7 +1500,7 @@ mod tests {
         let multiblocks = MultiblockRegistry::new(vec![MultiblockRegistry::read("base", kiln).unwrap()], &blocks).unwrap();
         let source = format!("(quests: [{quest}])");
         let mut quests = QuestRegistry::new(vec![QuestRegistry::read(namespace, &source).unwrap()])?;
-        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[], events: &["base:pedlar".to_owned()], prayers: &["base:bark_skin".to_owned()], effects: &["base:smoky".to_owned()], near: &["chopping_block".to_owned()], stores: &["base:brick".to_owned()], trapped: &["base:rabbit".to_owned()], harvests: &[] })?;
+        quests.resolve(&Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &[], events: &["base:pedlar".to_owned()], lines: &["base:pedlar/swap".to_owned()], prayers: &["base:bark_skin".to_owned()], effects: &["base:smoky".to_owned()], near: &["chopping_block".to_owned()], stores: &["base:brick".to_owned()], trapped: &["base:rabbit".to_owned()], harvests: &[] })?;
         Ok(quests)
     }
 
@@ -1595,6 +1611,9 @@ mod tests {
         assert_eq!(refused(r#"Mine("tag:ores", 1)"#, ""), Some("quest base:dig names the tag `ores`, which no package has".to_owned()));
         assert_eq!(refused(r#"Built("kil", 1)"#, ""), Some("quest base:dig names the multiblock or ladder step `kil`, which no package has".to_owned()));
         assert_eq!(refused(r#"Met("pedler", 1)"#, ""), Some("quest base:dig names the wandering kind `pedler`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Dealt("pedler", "swap", 1)"#, ""), Some("quest base:dig names the wandering kind `pedler`, which no package has".to_owned()));
+        assert_eq!(refused(r#"Dealt("pedlar", "swop", 1)"#, ""), Some("quest base:dig names the line of base:pedlar `swop`, which no package has".to_owned()));
+        assert!(refused(r#"Dealt("pedlar", "swap", 1)"#, "").is_none());
         assert_eq!(refused(r#"Prayed("bark_skn", 1)"#, ""), Some("quest base:dig names the prayer `bark_skn`, which no package has".to_owned()));
         assert_eq!(refused(r#"Offered("bon", 1)"#, ""), Some("quest base:dig names the item `bon`, which no package has".to_owned()));
         assert_eq!(refused(r#"Opened("nomad_chest", 1)"#, ""), Some("quest base:dig names the block `nomad_chest`, which no package has".to_owned()));
