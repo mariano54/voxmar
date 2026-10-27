@@ -613,25 +613,103 @@ fn shortfalls(content: &Content) -> Vec<String> {
     short
 }
 
-/// A `Level` goal the player surely has already when its quest opens asks nothing: each one
-/// is above what the books surely give by then (`Books::sure`, the gap check's count).
-#[test]
-fn no_early_level_goal_is_met_as_its_quest_opens() {
-    let content = content();
-    let books = Books { content: &content };
+/// A counted goal as what it counts and how many: `Craft("hanging_herbs", 2)` is
+/// (`Craft("hanging_herbs"`, 2). Goals on what a player keeps now (`Have`, `Thriving`), a
+/// `Level` (`Books::sure` judges those) and goals with no count are not tallies.
+fn tally(goal: &Goal) -> Option<(String, u32)> {
+    if matches!(goal, Goal::Have(..) | Goal::Thriving(..) | Goal::Level(..)) {
+        return None;
+    }
+    let text = format!("{goal:?}");
+    let inner = text.strip_suffix(')')?;
+    let at = inner.rfind([',', '('])?;
+    let count = inner[at + 1..].trim().parse().ok()?;
+    Some((inner[..at].to_owned(), count))
+}
+
+/// A goal the player surely meets already when its quest opens asks nothing, and a task of
+/// such goals opens done. A `Level` goal is above what the books surely give by then
+/// (`Books::sure`, the gap check's count); a tally goal (things made, picked, met, dealt
+/// with, all counted over a life) asks more than any quest surely done before it: a quest of
+/// its sure chain whose every task asks the same thing at least as often has already had it
+/// done (First Ore's coal after Coal and Cinders' was one).
+fn met_on_opening(content: &Content) -> Vec<String> {
+    let books = Books { content };
     let mut met = Vec::new();
     for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        let chain = books.chain(&quest.name);
         for goal in quest.tasks.iter().flatten() {
-            let Goal::Level(skill, level) = goal else { continue };
-            let skill = Books::local(skill);
-            let (sure, _) = books.sure(&quest.name, &skill);
-            if sure >= books.xp_for(*level) {
-                let first = (*level..=99).find(|&n| books.xp_for(n) > sure).unwrap_or(99);
-                met.push(format!("{}: {skill} {level} ({:.0} xp) is surely had on opening ({sure:.0}); {skill} {first} is not", quest.name, books.xp_for(*level)));
+            if let Goal::Level(skill, level) = goal {
+                let skill = Books::local(skill);
+                let (sure, _) = books.sure(&quest.name, &skill);
+                if sure >= books.xp_for(*level) {
+                    let first = (*level..=99).find(|&n| books.xp_for(n) > sure).unwrap_or(99);
+                    met.push(format!("{}: {skill} {level} ({:.0} xp) is surely had on opening ({sure:.0}); {skill} {first} is not", quest.name, books.xp_for(*level)));
+                }
+            } else if let Some((what, n)) = tally(goal) {
+                // The most any sure-done quest before it surely did: its least-asking task's count.
+                let done = chain
+                    .iter()
+                    .map(|c| content.quests.get(c).unwrap())
+                    .filter_map(|c| c.tasks.iter().map(|t| t.iter().filter_map(tally).filter(|(w, _)| *w == what).map(|(_, m)| m).max().unwrap_or(0)).min().map(|m| (m, &c.name)))
+                    .max_by_key(|(m, _)| *m);
+                if let Some((done, by)) = done.filter(|(m, _)| *m >= n) {
+                    met.push(format!("{}: {goal:?} is already done by {by} ({done}), which comes before it", quest.name));
+                }
             }
         }
     }
+    met
+}
+
+#[test]
+fn no_early_goal_is_met_as_its_quest_opens() {
+    let met = met_on_opening(&content());
     assert!(met.is_empty(), "{met:#?}");
+}
+
+/// The check catches a tally asked again: Where Roots Grow asking for six healing herbs
+/// picked, as Simples before it did.
+#[test]
+fn a_tally_goal_its_chain_already_did_is_caught() {
+    use voxmar_engine::quest::QuestRegistry;
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+    let source = std::fs::read_to_string(base.join("quests.ron")).unwrap();
+    let nomad = QuestRegistry::read_named("base", "quests_nomad.ron", &std::fs::read_to_string(base.join("quests_nomad.ron")).unwrap()).unwrap();
+    let at = source.find(r#"name: "where_roots_grow""#).expect("Where Roots Grow");
+    let tasks = at + source[at..].find("tasks: ").unwrap();
+    let end = tasks + source[tasks..].find('\n').unwrap();
+    let again = format!("{}tasks: [[Pick(\"tag:alchemy:healing\", 6)]],{}", &source[..tasks], &source[end..]);
+    let mut content = content();
+    let core = QuestRegistry::read("core", &std::fs::read_to_string(base.join("../core/quests.ron")).unwrap()).unwrap();
+    content.quests = std::sync::Arc::new(QuestRegistry::new(vec![core, QuestRegistry::read("base", &again).unwrap(), nomad]).unwrap());
+    let met = met_on_opening(&content);
+    assert!(met.iter().any(|m| m.starts_with("base:where_roots_grow") && m.contains("base:simples")), "{met:#?}");
+}
+
+/// What a task teaches: the tallies it asks, by what they count, with how many (a `Level`
+/// is training, not a lesson; `Have` and `Home` go with many lessons).
+fn lesson(task: &[Goal]) -> Vec<(String, u32)> {
+    let mut lesson: Vec<(String, u32)> = task.iter().filter_map(tally).collect();
+    lesson.sort();
+    lesson
+}
+
+/// Each Nomad and Farm quest teaches its own lesson (one quest per lesson, a design call):
+/// a quest's lesson is its first way (the tracker's First), and no two ask the same one. A
+/// quest's other ways may take a later quest's lesson as done (Make Camp takes any better
+/// home), so only first ways are owned.
+#[test]
+fn no_two_early_quests_teach_the_same_lesson() {
+    let content = content();
+    let mut first: rustc_hash::FxHashMap<Vec<(String, u32)>, Vec<&str>> = rustc_hash::FxHashMap::default();
+    for q in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        if let Some(way) = q.tasks.first().map(|t| lesson(t)).filter(|l| !l.is_empty()) {
+            first.entry(way).or_default().push(&q.name);
+        }
+    }
+    let same: Vec<_> = first.iter().filter(|(_, qs)| qs.len() > 1).map(|(way, qs)| format!("{qs:?} all first ask {way:?}")).collect();
+    assert!(same.is_empty(), "{same:#?}");
 }
 
 #[test]
@@ -667,7 +745,7 @@ const BOOK_TRAINED: [&str; 1] = ["alchemy"];
 
 /// A wanderer's line gated on a book-trained skill is out of reach unless a quest takes the
 /// player there: for the lowest level any line asks, some Nomad or Farm quest sends the player
-/// to deal with a party of that kind once its chain surely gives that level (`Books::sure`,
+/// to deal with a party of that kind (or with its gated line, `Dealt`) once its chain surely gives that level (`Books::sure`,
 /// rewards through the book's scale).
 #[test]
 fn the_books_bring_a_book_trained_skill_to_the_first_wanderer_line_it_opens() {
@@ -676,24 +754,35 @@ fn the_books_bring_a_book_trained_skill_to_the_first_wanderer_line_it_opens() {
     let books = Books { content: &content };
     for name in BOOK_TRAINED {
         let id = books.skill(name).expect("a book-trained skill");
-        // The lowest level a line asks, and the kinds whose lines ask it.
-        let gated: Vec<(u8, String)> = content
+        // The lowest level a line asks, and the kinds and lines that ask it.
+        let gated: Vec<(u8, String, String)> = content
             .wandering
             .iter()
             .flat_map(|(_, e)| {
-                e.meetings.iter().flat_map(|m| m.lines.iter()).flat_map(|l| l.needs.iter()).filter_map(move |n| match n {
-                    ResolvedNeed::Skill(s, level) if *s == id => Some((*level, Books::local(&e.def.name))),
-                    _ => None,
+                e.meetings.iter().flat_map(|m| m.lines.iter()).flat_map(move |l| {
+                    l.needs.iter().filter_map(move |n| match n {
+                        ResolvedNeed::Skill(s, level) if *s == id => Some((*level, Books::local(&e.def.name), l.name.clone())),
+                        _ => None,
+                    })
                 })
             })
             .collect();
-        let Some(gate) = gated.iter().map(|(level, _)| *level).min() else { continue };
-        let kinds: Vec<&str> = gated.iter().filter(|(level, _)| *level == gate).map(|(_, kind)| kind.as_str()).collect();
+        let Some(gate) = gated.iter().map(|(level, _, _)| *level).min() else { continue };
+        let kinds: Vec<&str> = gated.iter().filter(|(level, _, _)| *level == gate).map(|(_, kind, _)| kind.as_str()).collect();
         let need = books.xp_for(gate);
         let sent: Vec<(String, f32)> = content
             .quests
             .iter()
-            .filter(|q| (q.age == "nomad" || q.age == "farm") && q.tasks.iter().all(|t| t.iter().any(|g| matches!(g, Goal::Met(kind, _) if kinds.contains(&Books::local(kind).as_str())))))
+            .filter(|q| {
+                (q.age == "nomad" || q.age == "farm")
+                    && q.tasks.iter().all(|t| {
+                        t.iter().any(|g| match g {
+                            Goal::Met(kind, _) => gated.iter().any(|(level, k, _)| *level == gate && *k == Books::local(kind)),
+                            Goal::Dealt(kind, line, _) => gated.iter().any(|(level, k, l)| *level == gate && *k == Books::local(kind) && l == line),
+                            _ => false,
+                        })
+                    })
+            })
             .map(|q| (q.name.clone(), books.sure(&q.name, name).0))
             .collect();
         assert!(

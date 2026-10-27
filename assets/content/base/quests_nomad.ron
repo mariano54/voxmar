@@ -303,8 +303,8 @@
         (
             name: "a_varied_table", age: "nomad", branch: "cooking", title: "A Varied Table",
             capstone: true,
-            why: "One food grows dull and heals little. Cook six meat at a fire, cook four fish, and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
-            tasks: [[Cook("tag:meat", 6), Cook("tag:fish", 4), Craft("bread", 3)], [Cook("tag:meat", 6), Cook("tag:fish", 4), Cook("bread", 3)]],
+            why: "One food grows dull and heals little. Beside the meat you cook at the fire, cook four fish and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
+            tasks: [[Cook("tag:fish", 4), Craft("bread", 3)], [Cook("tag:fish", 4), Cook("bread", 3)]],
             after: ["a_fish_supper", "daily_bread", "trail_rations", "wild_harvest", "break_ground"],
             rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
         ),
@@ -398,8 +398,8 @@
         ),
         (
             name: "a_stones_throw", age: "nomad", branch: "combat", title: "A Stone's Throw",
-            why: "A sling hits from twelve blocks away, where a blade must be close: birds, runners, or something you would rather not stand next to. Lay a hide between two twine in a row at the crafting table. Hold it and click a creature in clear sight: each shot throws one cobblestone from your pack, hit or miss, so carry a stack. It hits softer than a stone sword (2 at most), and every hit trains Ranged. A sling stone that hits is left lying where the creature stood about one time in four; one that misses, or hits for nothing, is gone. Walk over and pick up what lies there before you throw again, and a stack of cobblestone lasts. Bring down five creatures and reach Ranged 4.",
-            tasks: [[Craft("sling", 1), Kill("any", 5), Level("ranged", 4)]],
+            why: "A sling hits from twelve blocks away, where a blade must be close: birds, runners, or something you would rather not stand next to. Lay a hide between two twine in a row at the crafting table. Hold it and click a creature in clear sight: each shot throws one cobblestone from your pack, hit or miss, so carry a stack. It hits softer than a stone sword (2 at most), and every hit trains Ranged. A sling stone that hits is left lying where the creature stood about one time in four; one that misses, or hits for nothing, is gone. Walk over and pick up what lies there before you throw again, and a stack of cobblestone lasts. Reach Ranged 4.",
+            tasks: [[Craft("sling", 1), Level("ranged", 4)]],
             after: ["twine_and_thong", "something_hostile", "hung_to_dry"],
             rewards: [Xp("ranged", 100.0), Xp("crafting", 30.0)],
         ),

@@ -610,7 +610,7 @@ impl Content {
             })
             .collect();
         let mut quests = crate::quest::QuestRegistry::new(quests)?;
-        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), near: &recipes.iter().filter_map(|r| r.near.clone()).collect::<Vec<_>>(), stores: &machines.iter().filter(|m| m.is_store()).map(|m| blocks.def(m.block).name.clone()).collect::<Vec<_>>(), trapped: &traps.traps.iter().flat_map(|t| &t.catches).map(|&c| creatures.get(c).def.name.clone()).collect::<Vec<_>>(), harvests: &harvests })?;
+        quests.resolve(&crate::quest::Named { blocks: &blocks, skills: &skills, creatures: &creatures, fishing: &fishing, multiblocks: &multiblocks, steps: &effects.steps(), events: &wandering.iter().map(|(_, e)| e.def.name.clone()).collect::<Vec<_>>(), lines: &wandering.iter().flat_map(|(_, e)| e.meetings.iter().flat_map(|m| m.lines.iter()).map(|l| format!("{}/{}", e.def.name, l.name))).collect::<Vec<_>>(), prayers: &prayers.all().map(|(_, p)| p.name.clone()).collect::<Vec<_>>(), effects: &effects.ids().map(|id| effects.get(id).name.clone()).collect::<Vec<_>>(), near: &recipes.iter().filter_map(|r| r.near.clone()).collect::<Vec<_>>(), stores: &machines.iter().filter(|m| m.is_store()).map(|m| blocks.def(m.block).name.clone()).collect::<Vec<_>>(), trapped: &traps.traps.iter().flat_map(|t| &t.catches).map(|&c| creatures.get(c).def.name.clone()).collect::<Vec<_>>(), harvests: &harvests })?;
         // A recipe of a later age needs that age's rite, or it could never be made.
         if let Some(recipe) = recipes.iter().find(|r| r.age.as_ref().is_some_and(|age| quests.rite(age).is_none())) {
             let age = recipe.age.as_deref().unwrap_or_default();
@@ -1449,7 +1449,7 @@ mod tests {
                         Goal::Visit(_) | Goal::LookUp(_) => {}
                         // A rite asks for quests done, on whatever paths: nothing made.
                         Goal::QuestsDone(..) | Goal::Capstones(..) => {}
-                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Mended(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
+                        Goal::Catch(..) | Goal::Pick(..) | Goal::Tame(..) | Goal::Lured(..) | Goal::Kill(..) | Goal::Discover(..) | Goal::Kinds(..) | Goal::Thriving(..) | Goal::Met(..) | Goal::Dealt(..) | Goal::Prayed(..) | Goal::Offered(..) | Goal::Opened(..) | Goal::Ate(..) | Goal::Fertilised(..) | Goal::Laid(..) | Goal::Mended(..) | Goal::Watering(..) | Goal::Stocked(..) | Goal::CraftNear(..) | Goal::Trapped(..) => panic!("{}: the walk doesn't model {goal:?} yet", quest.name),
                     }
                 }
                 if route.walls.len() == walk.walls.len() {
