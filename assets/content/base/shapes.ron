@@ -121,6 +121,17 @@
             (from: (2, 0, 5), to: (5, 5, 11)),
             (from: (11, 0, 5), to: (14, 5, 11)),
         ]),
+        // A fingerpost: a post the width of a fence's, and over it its top, capped, with an
+        // arm out east and one out west below it.
+        "fingerpost": (boxes: [
+            (from: (7, 0, 7), to: (9, 16, 9)),
+        ]),
+        "fingerpost_top": (boxes: [
+            (from: (7, 0, 7), to: (9, 10, 9)),
+            (from: (6.5, 10, 6.5), to: (9.5, 11, 9.5)),
+            (from: (9, 6, 7.5), to: (15.5, 8.5, 8.5)),
+            (from: (0.5, 3, 7.5), to: (7, 5.5, 8.5)),
+        ]),
         // Foot end north, head end south: a frame, a mattress and a pillow, a board at each end.
         "bed": (boxes: [
             (from: (1, 0, 2), to: (15, 5, 14)),

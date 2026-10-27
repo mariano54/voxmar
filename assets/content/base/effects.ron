@@ -207,6 +207,10 @@
         (name: "evening_in", kind: Buff, title: "Evening in", description: "Home by the fire after dark: you heal a fifth faster here, and are 2° warmer.", announce: true, ladder: "night",
             when: Some(All([Night, AtHome, Indoors, HomeHas("campfire", 1), Near("campfire", 4)])),
             replaces: [], modifiers: (heal: 1.2, home_warmth: 2.0)),
+        // Home again: back by the lit hearth after a long day out (the `homecomings` below),
+        // for a while. Told each time in chat, as the welcome home.
+        (name: "home_again", kind: Buff, title: "Home again", description: "Back by your own hearth after a long day out: for a while you heal a fifth faster, and are 2° warmer.",
+            replaces: [], modifiers: (heal: 1.2, home_warmth: 2.0)),
         (name: "kitchen_garden", kind: Buff, title: "Kitchen garden", description: "Greens growing by the door: meals heal a tenth more here.", announce: true,
             when: Some(All([AtHome, HomeHas("crop", 4)])),
             replaces: [], modifiers: (meal_heal: 1.1)),
@@ -309,5 +313,10 @@
         (effect: "well_rested", seconds: 900.0, needs: "snug", night: true),
         (effect: "well_rested", seconds: 900.0, needs: "bedside", night: true),
         (effect: "deep_rest", seconds: 1200.0, needs: "cosy", night: true),
+    ],
+    // Coming home to the lit hearth (`needs: "hearthside"`, so not to a bedroll alone) after
+    // ten minutes or more away, half a game day out, is a welcome home for five.
+    homecomings: [
+        (effect: "home_again", away: 600.0, seconds: 300.0, needs: "hearthside"),
     ],
 )

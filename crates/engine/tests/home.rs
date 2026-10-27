@@ -591,7 +591,8 @@ fn a_proper_bed_rests_well_and_every_sleep_mends_slower_than_food() {
 
 /// Whatever a home keeps things in, or on, counts as its storage: every store a player opens
 /// (a chest, a cupboard, a crate stack, a jar), and every shelf and cupboard Shelves and
-/// Cupboards asks for. A feed trough is the pen's, not the home's.
+/// Cupboards asks for. A feed trough is the pen's, not the home's, and what is kept for show
+/// (`display`: a sill's pot or candle) is no storage either.
 #[test]
 fn every_store_shelf_and_cupboard_counts_as_storage() {
     let content = content();
@@ -600,11 +601,12 @@ fn every_store_shelf_and_cupboard_counts_as_storage() {
     let furniture = blocks.ids().filter(|&id| blocks.def(id).has_tag("shelf") || blocks.def(id).has_tag("cupboard"));
     let missing: Vec<&str> = stores
         .chain(furniture)
-        .filter(|&id| !blocks.def(id).has_tag("trough") && !blocks.def(id).has_tag("storage"))
+        .filter(|&id| !blocks.def(id).has_tag("trough") && !blocks.def(id).has_tag("display") && !blocks.def(id).has_tag("storage"))
         .map(|id| blocks.def(id).name.as_str())
         .collect();
     assert!(missing.is_empty(), "kept things in, yet not storage: {missing:?}");
     assert!(blocks.ids().filter(|&id| blocks.def(id).has_tag("trough")).all(|id| !blocks.def(id).has_tag("storage")), "a trough counted as a home's storage");
+    assert!(blocks.ids().filter(|&id| blocks.def(id).has_tag("display")).all(|id| !blocks.def(id).has_tag("storage")), "a thing kept for show counted as a home's storage");
 }
 
 /// A package whose sleep rule asks for a kind of bed no bed is (a feather bed nobody made) is

@@ -79,8 +79,8 @@ pub(crate) const SEEN_WITHIN: f32 = 96.0;
 const KIN_RANGE: f32 = 14.0;
 /// The width of a `Neighbours` cell, in blocks: the widest search (kin) and a block more for
 /// how far a creature moves in a pass, so the three by three cells around one hold every
-/// creature in range. This holds while no creature moves more than a block in a pass: a
-/// species that blinks (5 to 8 blocks at once) would need a wider margin. None does today.
+/// creature in range. This holds while no creature walks more than a block in a pass; one
+/// that blinks (5 to 8 blocks at once) is moved to its new cell then (`Neighbours::moved`).
 const CELL: f32 = 16.0;
 const _: () = assert!(KIN_RANGE + 1.0 <= CELL && voxmar_engine::creature::husbandry::MATE_RANGE + 1.0 <= CELL);
 /// How far creatures look for food.
@@ -336,6 +336,8 @@ pub struct Creatures {
 /// id and species never change once it is spawned.
 pub(crate) struct Neighbours {
     cells: FxHashMap<(i32, i32), Vec<(u32, CreatureId)>>,
+    /// The cell each is listed in, which its body may have walked out of since.
+    listed: FxHashMap<u32, (i32, i32)>,
     /// Those of a kind in the nine cells around a cell, in id order, for each cell and kind
     /// asked about so far: in a full pen every one of a kind asks for the same cell at each
     /// think, so a pass gathers and sorts them once.
@@ -345,14 +347,29 @@ pub(crate) struct Neighbours {
 impl Neighbours {
     pub(crate) fn of(live: &BTreeMap<u32, Live>) -> Self {
         let mut cells: FxHashMap<(i32, i32), Vec<(u32, CreatureId)>> = FxHashMap::default();
+        let mut listed = FxHashMap::default();
         for (&id, creature) in live {
-            cells.entry(Self::cell(creature.body.position)).or_default().push((id, creature.species));
+            let cell = Self::cell(creature.body.position);
+            cells.entry(cell).or_default().push((id, creature.species));
+            listed.insert(id, cell);
         }
-        Self { cells, kinds: Default::default() }
+        Self { cells, listed, kinds: Default::default() }
     }
 
     fn cell(at: Vec3) -> (i32, i32) {
         ((at.x / CELL).floor() as i32, (at.z / CELL).floor() as i32)
+    }
+
+    /// Creature `id` went to `to` in a pass further than a walk takes it (a blink): it is
+    /// looked for in its new cell from then on, whichever cell it was listed in (it may have
+    /// walked over a cell's edge earlier in the pass).
+    pub(crate) fn moved(&mut self, id: u32, to: Vec3) {
+        let new = Self::cell(to);
+        let Some(old) = self.listed.get(&id).copied().filter(|&old| old != new) else { return };
+        let Some(at) = self.cells.get_mut(&old).and_then(|ids| ids.iter().position(|&(other, _)| other == id).map(|i| ids.remove(i))) else { return };
+        self.cells.entry(new).or_default().push(at);
+        self.listed.insert(id, new);
+        self.kinds.get_mut().clear();
     }
 
     /// The creatures of `species` but `id` that stood in the cells around `at`, in id order
@@ -914,7 +931,7 @@ impl Server {
         self.find_wards();
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ids: Vec<u32> = self.creatures.live.keys().copied().collect();
-        let neighbours = Neighbours::of(&self.creatures.live);
+        let mut neighbours = Neighbours::of(&self.creatures.live);
         let daylight = self.daylight();
         let handoff = self.overworld.settlement_people().live.handoff;
         let mut actions: Vec<(u32, Decision)> = Vec::new();
@@ -1027,7 +1044,7 @@ impl Server {
         }
         self.push_apart();
         for (id, decision) in actions {
-            self.carry_out(id, decision, &neighbours);
+            self.carry_out(id, decision, &mut neighbours);
         }
     }
 
@@ -1429,7 +1446,7 @@ impl Server {
     }
 
     /// Acts on what a creature decided.
-    fn carry_out(&mut self, id: u32, decision: Decision, neighbours: &Neighbours) {
+    fn carry_out(&mut self, id: u32, decision: Decision, neighbours: &mut Neighbours) {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species_id = creature.species;
         let position = creature.body.position;
@@ -1494,6 +1511,7 @@ impl Server {
                 creature.body.position = cell + Vec3::new(0.5, 0.0, 0.5);
                 creature.body.velocity = Vec3::ZERO;
                 creature.changed = true;
+                neighbours.moved(id, cell + Vec3::new(0.5, 0.0, 0.5));
             }
         }
         if let Some(at) = decision.leap {
@@ -1624,6 +1642,8 @@ impl Server {
     /// the style it is weak to), damage up to the weapon's max hit for their level, as the
     /// stroke raises them. Returns the damage, 0 for a miss, `None` if it is gone.
     pub(crate) fn land_blow(&mut self, player: PlayerId, id: u32, weapon: &voxmar_engine::combat::Weapon, stroke: voxmar_engine::combat::Stroke) -> Option<u16> {
+        // On one that has not noticed them, it cannot miss and hits harder.
+        let stroke = if self.unaware_of(id, player) { stroke.unaware(&self.content.combat.feel) } else { stroke };
         let calm = self.villager_struck(id, player);
         let creature = self.creatures.live.get(&id)?;
         let species = self.content.creatures.get(creature.species);
@@ -1656,6 +1676,15 @@ impl Server {
         // A blow struck sooner than the buffer lands lighter (`combat`).
         let damage = voxmar_engine::combat::scaled(full, stroke.strength, unit_from(mix(amount.to_bits() as u64, 0x5e1f)));
         self.hurt_creature(player, id, damage, weapon.skill, stroke.blow)
+    }
+
+    /// Whether creature `id` has not noticed `player` (by the one sight rule, `brain::think`)
+    /// nor been hurt by them lately: asleep, looking away, or stalked from behind. A boss
+    /// is never caught unaware.
+    pub(crate) fn unaware_of(&self, id: u32, player: PlayerId) -> bool {
+        self.creatures.live.get(&id).is_some_and(|c| {
+            !self.content.creatures.get(c.species).def.boss && !c.mind.noticed.iter().any(|n| n.0 == player) && !c.mind.recalls(brain::Memory::HurtBy(player))
+        })
     }
 
     /// `damage` to a creature from a player's blow (or a bleed), with the experience it
@@ -2473,7 +2502,7 @@ mod neighbour_tests {
             creature.owner = Some("test".to_string());
             creature.ready_until = u64::from(i % 4 == 0);
         }
-        let neighbours = Neighbours::of(&server.creatures.live);
+        let mut neighbours = Neighbours::of(&server.creatures.live);
         let ids: Vec<u32> = server.creatures.live.keys().copied().collect();
         let (mut short, mut crossed) = (0, 0);
         for round in 0..2 {
@@ -2499,7 +2528,7 @@ mod neighbour_tests {
                     for c in server.creatures.live.values_mut() {
                         c.mind.fear = 0.0;
                     }
-                    server.carry_out(id, Decision { alarm: true, ..Default::default() }, &neighbours);
+                    server.carry_out(id, Decision { alarm: true, ..Default::default() }, &mut neighbours);
                     let alarmed: Vec<u32> = server.creatures.live.iter().filter(|(_, c)| c.mind.fear > 0.0).map(|(&other, _)| other).collect();
                     assert_eq!(alarmed, kin.iter().map(|&(other, _)| other).collect::<Vec<_>>(), "alarmed by {id} (round {round})");
                 }
@@ -2517,6 +2546,36 @@ mod neighbour_tests {
         }
         assert!(crossed > 0, "none crossed a cell's edge");
         assert!(short > 0, "every one of a kind was in reach of every other: the pen is too small to judge");
+    }
+
+    /// One that blinks over a cell's edge is found where it landed for the rest of that
+    /// pass: kin a block from the far side of its new cell count it among theirs and their
+    /// alarm frightens it. So too one that walked over the edge earlier in the pass and then
+    /// blinked on inside its new cell. Before: it was still listed in the cell it left, two
+    /// cells from theirs, and so not looked at.
+    #[test]
+    fn one_that_blinks_over_a_cells_edge_is_kin_where_it_lands() {
+        for walked in [false, true] {
+            let mut server = crate::test_server();
+            let c = super::cornered_tests::pen(&mut server, 24).as_vec3();
+            let edge = (c.x / CELL).floor() * CELL;
+            let species = server.content.creatures.id("base:moonhare").expect("species");
+            let at = |x: f32| Vec3::new(edge + x, c.y, c.z + 0.5);
+            let hare = server.spawn_creature(species, at(-1.5), 1).expect("room");
+            let kin = server.spawn_creature(species, at(16.5), 2).expect("room");
+            let mut neighbours = Neighbours::of(&server.creatures.live);
+            if walked {
+                // Over the edge on foot after the pass began, as bodies move between thinks.
+                server.creatures.live.get_mut(&hare).unwrap().body.position = at(0.5);
+            }
+            server.carry_out(hare, Decision { blink: Some(at(6.5)), ..Default::default() }, &mut neighbours);
+            let landed = server.creatures.live[&hare].body.position;
+            assert!(landed.distance(at(6.5)) < 0.1, "walked {walked}: the blink went to {landed}, not {}", at(6.5));
+            assert_eq!(server.kin_of(kin, &neighbours), vec![landed], "walked {walked}: its kin over the cell's edge missed it");
+            server.creatures.live.get_mut(&hare).unwrap().mind.fear = 0.0;
+            server.carry_out(kin, Decision { alarm: true, ..Default::default() }, &mut neighbours);
+            assert!(server.creatures.live[&hare].mind.fear > 0.0, "walked {walked}: its kin's alarm missed it");
+        }
     }
 }
 
@@ -2695,6 +2754,9 @@ mod combat_tests {
                 .map(|_| {
                     let full = server.content.creatures.get(wolf).def.health;
                     server.creatures.live.get_mut(&a).unwrap().health = full;
+                    // It has seen them, in both runs alike: a blow on one unaware cannot miss
+                    // (`Server::unaware_of`), and the first run's blows leave it knowing them.
+                    server.creatures.live.get_mut(&a).unwrap().mind.noticed = vec![(player, 10.0, 5.0)];
                     server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
                     let struck = server.land_blow(player, a, &fist, plain);
                     let taken = server.creature_strikes(a, wolf, player, 1.0);
@@ -6529,6 +6591,60 @@ mod fight_tests {
     }
 
     /// Puts `item` in the player's hand.
+    /// A blow on a creature that has not noticed the striker (`Server::unaware_of`) cannot
+    /// miss: a bare fist on a bear lands every time while the bear has not seen them, and
+    /// often misses once it has. Facing away from a player out of its close, it stays
+    /// unaware; facing them, it notices them and is no longer. A boss never is.
+    #[test]
+    fn a_blow_on_one_unaware_cannot_miss() {
+        let mut server = crate::test_server();
+        let c = pen(&mut server, 14);
+        let stand = c.as_vec3() + Vec3::new(4.5, 0.0, 0.5);
+        let player = join(&mut server, stand);
+        let bear = put(&mut server, "base:brown_bear", c.as_vec3() + Vec3::new(-2.5, 0.0, 0.5), Vec3::NEG_X);
+        let fist = server.content.combat.wielded(None, |_| 1);
+        let plain = voxmar_engine::combat::Stroke::of(voxmar_engine::combat::Blow::Plain, 1.0, false, false, false, false, &server.content.combat.feel);
+        // Fifty blows each, the bear's mind set afresh before each: unaware, or having seen them.
+        let blows = |server: &mut Server, seen: bool| {
+            (0..50)
+                .map(|_| {
+                    let species = server.creatures.live[&bear].species;
+                    let full = server.content.creatures.get(species).def.health;
+                    let temperament = server.content.creatures.get(species).def.temperament.clone();
+                    let creature = server.creatures.live.get_mut(&bear).unwrap();
+                    (creature.health, creature.mind) = (full, brain::Mind::new(&temperament, 3));
+                    if seen {
+                        creature.mind.noticed.push((player, 10.0, 5.0));
+                    }
+                    server.land_blow(player, bear, &fist, plain).expect("alive")
+                })
+                .collect::<Vec<u16>>()
+        };
+        let unaware = blows(&mut server, false);
+        assert!(unaware.iter().all(|&d| d > 0), "an unaware bear dodged a blow: {unaware:?}");
+        let seen = blows(&mut server, true);
+        assert!(seen.iter().filter(|&&d| d == 0).count() >= 10, "a bear that saw them was hit nearly every time: {seen:?}");
+        // Facing away, the player four blocks behind it and out of its close: unaware.
+        let fresh = brain::Mind::new(&server.content.creatures.get(server.creatures.live[&bear].species).def.temperament, 3);
+        server.creatures.live.get_mut(&bear).unwrap().mind = fresh.clone();
+        for _ in 0..3 * TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.think_and_move();
+            server.creatures.live.get_mut(&bear).unwrap().body.yaw = motion::yaw_of(Vec3::NEG_X);
+        }
+        assert!(server.unaware_of(bear, player), "a bear facing away noticed one behind it");
+        // Turned to them, it notices them.
+        server.creatures.live.get_mut(&bear).unwrap().body.yaw = motion::yaw_of(Vec3::X);
+        for _ in 0..TICKS_PER_SECOND as u64 {
+            server.tick += 1;
+            server.think_and_move();
+        }
+        assert!(!server.unaware_of(bear, player), "a bear facing them never noticed them");
+        // A boss is never caught unaware.
+        let tusk = put(&mut server, "base:old_tusk", c.as_vec3() + Vec3::new(-6.5, 0.0, 6.5), Vec3::NEG_X);
+        assert!(!server.unaware_of(tusk, player), "a boss caught unaware");
+    }
+
     fn hold(server: &mut Server, player: PlayerId, item: &str) {
         let item = server.content.blocks.expect(item);
         let held = server.players.get_mut(&player).unwrap();
@@ -7198,8 +7314,8 @@ mod review_tests {
             for x in 0..24 {
                 let cell = at + IVec3::new(x, 0, 0);
                 server.set_block(cell, grass);
-                let neighbours = Neighbours::of(&server.creatures.live);
-                server.carry_out(id, Decision { eat: Some(cell), ..Default::default() }, &neighbours);
+                let mut neighbours = Neighbours::of(&server.creatures.live);
+                server.carry_out(id, Decision { eat: Some(cell), ..Default::default() }, &mut neighbours);
                 gone.push(server.block(cell) != Some(grass));
                 server.tick += 37;
             }

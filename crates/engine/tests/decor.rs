@@ -12,8 +12,9 @@ fn content() -> Content {
 }
 
 /// The decor blocks the templates made with a baked colour, not the facings they are
-/// placed in, nor the state one swaps into and comes back as (a curtain drawn back), and not
-/// the singles and the metal lanterns (see [`the_singles_load_and_can_be_made`]).
+/// placed in, nor the state one swaps into and comes back as (a curtain drawn back), nor the
+/// part set with another (a fingerpost's top, its `upper`), and not the singles and the metal
+/// lanterns (see [`the_singles_load_and_can_be_made`]).
 fn made(content: &Content) -> Vec<BlockId> {
     content
         .blocks
@@ -21,7 +22,8 @@ fn made(content: &Content) -> Vec<BlockId> {
         .filter(|&id| {
             let def = content.blocks.def(id);
             let state = def.swaps.is_some() && def.drops == def.swaps;
-            def.has_tag("decor") && def.family.is_some() && def.form_of().is_none() && !state && !def.has_tag("metal") && matches!(def.tint, BlockTint::Fixed(..))
+            let part = content.blocks.ids().any(|other| content.blocks.def(other).upper.as_deref() == Some(def.name.as_str()));
+            def.has_tag("decor") && def.family.is_some() && def.form_of().is_none() && !state && !part && !def.has_tag("metal") && matches!(def.tint, BlockTint::Fixed(..))
         })
         .collect()
 }
@@ -54,7 +56,7 @@ fn a_swap_state_keeps_its_partners_colour_and_tags() {
 fn the_templates_make_every_family_in_full() {
     let content = content();
     let names: BTreeSet<String> = made(&content).into_iter().map(|id| content.blocks.def(id).name.clone()).collect();
-    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight", "dresser", "pot_crane", "rocking_chair", "cradle", "mantel_shelf", "fireside_bench", "plate_rack", "bedside_table", "footstool", "spice_rack", "candle_box", "bread_bin", "kindling_box", "log_bench"];
+    let furniture = ["stool", "chair", "bench", "table", "bed", "shelf", "bookshelf", "cupboard", "wardrobe", "desk", "counter", "barrel_rack", "crate_stack", "pot_shelf", "window_seat", "sill", "pantry_shelf", "settle", "woodpile", "peg_rail", "blanket_chest", "washstand", "rushlight", "dresser", "pot_crane", "rocking_chair", "cradle", "mantel_shelf", "fireside_bench", "plate_rack", "bedside_table", "footstool", "spice_rack", "candle_box", "bread_bin", "kindling_box", "log_bench", "fingerpost"];
     let cloth = ["cloth", "rug", "banner", "wall_hanging", "curtain", "paper_lantern", "cushion", "bunting", "awning"];
     let crockery = ["plate", "bowl", "jar", "jug", "basket"];
     let woods = ["birch", "oak", "dark_oak"];
@@ -68,7 +70,7 @@ fn the_templates_make_every_family_in_full() {
             }
         }
     }
-    assert_eq!(expected.len(), 3 * 37 + 12 * 9 + 3 * 5);
+    assert_eq!(expected.len(), 3 * 38 + 12 * 9 + 3 * 5);
     let missing: Vec<_> = expected.difference(&names).collect();
     let extra: Vec<_> = names.difference(&expected).collect();
     assert!(missing.is_empty() && extra.is_empty(), "missing {missing:?}, unexpected {extra:?}");
@@ -249,6 +251,46 @@ fn a_jug_keeps_flowers_standing_in_it() {
     }
 }
 
+/// The plain wall shelf and the sill under a window keep what is put on them, anything,
+/// and show it: two things on each of the shelf's lower boards, two on the sill's board in
+/// front of the window over it. The shelf is a home's storage; the sill, kept for show, is not.
+#[test]
+fn a_shelf_and_a_sill_show_what_is_put_on_them() {
+    let content = content();
+    let blocks = &content.blocks;
+    for (name, shown, storage) in [("base:oak_shelf", 4, true), ("base:birch_shelf_east", 4, true), ("base:oak_sill", 2, false), ("base:dark_oak_sill_west", 2, false)] {
+        let id = blocks.expect(name);
+        assert_eq!(blocks.def(id).shows.len(), shown, "{name} shows {shown}");
+        assert!(content.machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() == shown && m.holds.is_none()), "{name} keeps what it shows, anything");
+        // A sill, half a slab and a stick, is kept for show: no home's storage for a room.
+        assert_eq!(blocks.def(id).has_tag("storage"), storage, "{name} a home's storage: {}", !storage);
+    }
+    // An oak mantel shelf is oak's mantel shelf, not `oak_mantel`'s shelf.
+    let mantel = blocks.expect("base:oak_mantel_shelf");
+    assert!(content.machines.get(mantel).is_some_and(|m| m.bin_slots() == 3), "a mantel shelf taken for a plain shelf");
+}
+
+/// Whatever counts as a home's storage keeps things: every block tagged `storage` is a store
+/// (a machine of machines.ron), so a family entry that stops fitting a block (an oak stair
+/// cupboard is no `oak_stair` cupboard, `{name}_cupboard` is each wood's own) is caught here,
+/// before a save's cupboard loses what was kept in it. The only others are the pieces whose
+/// model is full already: a bookshelf of books, a pantry shelf of crocks, a pot shelf of
+/// pots, a window seat's box under its cushion.
+#[test]
+fn every_storage_block_is_a_store() {
+    let content = content();
+    let blocks = &content.blocks;
+    let full = ["_bookshelf", "_pantry_shelf", "_pot_shelf", "_window_seat"];
+    let missed: Vec<&str> = blocks
+        .ids()
+        .filter(|&id| blocks.def(id).has_tag("storage") && content.machines.get(id).is_none())
+        .map(|id| blocks.def(id).name.as_str())
+        .filter(|name| !full.iter().any(|kind| ["", "_east", "_south", "_west"].iter().any(|facing| name.ends_with(&format!("{kind}{facing}")))))
+        .collect();
+    assert!(missed.is_empty(), "a home's storage, yet no store: {missed:?}");
+    assert!(content.machines.get(blocks.expect("base:dark_oak_stair_cupboard_west")).is_some_and(|m| m.is_store() && m.bin_slots() == 9), "a stair cupboard keeps nine");
+}
+
 /// The sack of grain a village's farmers and millers keep is one a player can weave and
 /// fill at home: a store of grain alone, home storage, given back whole where a player set
 /// it and nothing where a village did (`furnishing`).
@@ -285,6 +327,30 @@ fn a_log_bench_is_made_at_home_as_the_villages_set_it() {
     let logs = blocks.expect("base:stripped_oak_log");
     let recipe = content.recipes.iter().find(|r| r.output == bench).expect("a log bench is made");
     assert_eq!(recipe.cells().iter().flatten().filter(|&&cell| cell == logs).count(), 2, "made of two stripped logs");
+}
+
+/// The fingerpost a village sets on a post by its lanes is one a player makes at home of a
+/// post and planks: decor (so no shelter tag), given back whole where a player set it and
+/// nothing where a village did (`furnishing`).
+#[test]
+fn a_fingerpost_is_made_at_home_as_the_villages_set_it() {
+    let content = content();
+    let blocks = &content.blocks;
+    let sign = blocks.expect("base:oak_fingerpost");
+    let (def, info) = (blocks.def(sign), blocks.info(sign));
+    assert!(!def.has_tag(voxmar_engine::recipe_book::CREATIVE_ONLY), "a fingerpost is a survival piece");
+    assert!(def.has_tag("furnishing") && def.has_tag("decor") && def.solid, "a fingerpost is decor that stands in the way");
+    assert!(!def.tags.iter().any(|tag| tag.starts_with("shelter:")), "furniture keeps no shelter tag");
+    assert_eq!((info.drops, info.drop_count), (sign, 1), "a fingerpost set at home comes back whole");
+    let top = blocks.expect("base:oak_fingerpost_top");
+    assert_eq!(blocks.def(sign).upper.as_deref(), Some("base:oak_fingerpost_top"), "a fingerpost is set with its top");
+    assert_eq!(blocks.info(top).drops, blocks.expect("core:air"), "a fingerpost's top comes back as well as the fingerpost");
+    let top_def = blocks.def(top);
+    assert!(top_def.has_tag("decor") && top_def.solid && !top_def.has_tag("furnishing"), "a fingerpost's top is decor, as its post, that drops nothing");
+    assert!(!top_def.has_tag("yard") && !top_def.tags.iter().any(|tag| tag.starts_with("shelter:")), "a fingerpost's top dresses no dooryard a second time and keeps no shelter tag");
+    let post = blocks.expect("base:oak_post");
+    let recipe = content.recipes.iter().find(|r| r.output == sign).expect("a fingerpost is made");
+    assert!(recipe.cells().iter().flatten().any(|&cell| cell == post), "made on a post");
 }
 
 /// The fishing net a village hangs to dry on a frame by the water is one a player can knot

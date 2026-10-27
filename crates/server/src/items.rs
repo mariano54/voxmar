@@ -202,6 +202,10 @@ impl Server {
         for (i, &cell) in cells.iter().enumerate() {
             let Some(block) = self.block(cell) else { continue };
             let wild = !placed.contains(&cell);
+            // A furnishing the world placed (a village's barrel or bed): whose it is may see.
+            if wild && self.content.blocks.def(block).has_tag("furnishing") {
+                self.furnishing_broken(agent, cell);
+            }
             // Sown or not, it is gone from the farm.
             let sown = self.farm.take_sown(cell);
             // A ripe crop above the player's level (one standing on broken ground) gives

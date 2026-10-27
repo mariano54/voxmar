@@ -34,7 +34,8 @@
 //
 // `faster_carried`: a block broken while a tool carried would break it this many times as
 // fast (cobblestone by hand with a stone pickaxe in the pack) tells the player so, once a
-// kind of tool each time they join; 0 never tells.
+// kind of tool each time they join; 0 never tells, 1 tells of any faster at all (never one
+// only as fast), and of tools as fast as each other the first carried is named.
 (
     break_wait: 0.25,
     faster_carried: 2.0,
