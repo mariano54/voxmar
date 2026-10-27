@@ -530,7 +530,7 @@ lit hearth 24 to 25 s (25 to 34 s before), and the lit Crucible Kiln at 418 to 4
 The flint tools took 49 s in every walk, 39 s of it digging about fifty gravel by hand, the
 longest single action of both walks: the plot's levelling cleared away the spawn kit's loose
 flint (spawn_kit.ron lays four to six by every spawn), which Timber's text sends a new player
-to first. The plot now lays the kit's least, four (`FRESH_KIT_FLINT`), and the bot picks them
+to first. The plot now lays the kit's least, four (read from spawn_kit.ron by `SpawnKit::least`), and the bot picks them
 up before digging gravel for the last two. Over twenty Farm walks: the flint tools in 21 to 25
 s, the longest single action 16 to 17 s (stone mined), the lit hearth at 124 to 148 s (148 to
 178 s before), the lit Crucible Kiln at 382 to 416 s.

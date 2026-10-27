@@ -46,7 +46,7 @@ mod stores;
 mod treasure;
 mod troughs;
 pub mod save;
-mod spawn_kit;
+pub mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
