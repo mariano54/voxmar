@@ -109,6 +109,7 @@
     "station.needs.sky": "It wants the open sky over it: nothing dries under a roof.",
     "station.needs.water": "It wants water within {reach} blocks.",
     "station.needs.spot": "This spot will not do for it.",
+    "station.needs.near": "It wants {block} within {reach} blocks.",
     "station.unloaded": "The land around it is still loading: try again in a moment.",
     "station.spoilt": "Not yet: {why}",
     "station.nothing_grows": "Nothing here is growing that it would help: spread it on a sown crop still growing.",

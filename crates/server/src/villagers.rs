@@ -918,9 +918,16 @@ impl Server {
         use voxmar_engine::lang::Words;
         let tick = self.tick;
         let (Some(p), Some(c)) = (self.players.get(&player), self.creatures.live.get(&id)) else { return };
-        let held = p.held().filter(|item| self.content.creatures.get(c.species).favourite.contains(item));
+        let favourite = &self.content.creatures.get(c.species).favourite;
+        let held = p.held().filter(|item| favourite.contains(item));
         let (Some(item), Some(&(town, i))) = (held, self.villagers.by_creature.get(&id)) else {
-            self.refuse(player, Words::key("treat.unwanted"));
+            // What they would take instead, when they are someone a treat is for.
+            let likes = favourite.first().filter(|_| self.villagers.by_creature.contains_key(&id));
+            let why = match likes {
+                Some(&like) => Words::key("treat.likes").with("item", Words::Block(self.content.blocks.def(like).name.clone())),
+                None => Words::key("treat.unwanted"),
+            };
+            self.refuse(player, why);
             return;
         };
         if tick < self.villagers.towns[&town].people[i].treated_after {
@@ -1768,9 +1775,14 @@ mod tests {
         hold(&mut server, bread);
         step(&mut server);
         assert_eq!(server.villagers.towns[&1].people[0].coaxed, Some(1), "did not come again");
-        // Offered a stick: nothing taken.
+        // Offered a stick: nothing taken, and told what they like.
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
         hold(&mut server, stick);
         server.treat(1, id);
+        let refused: Vec<voxmar_engine::lang::Words> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { voxmar_protocol::ServerMessage::Refused { why } => Some(why), _ => None }).collect();
+        let likes = server.content.blocks.def(server.content.creatures.get(server.creatures.live[&id].species).favourite[0]).name.clone();
+        assert_eq!(refused, [voxmar_engine::lang::Words::key("treat.likes").with("item", voxmar_engine::lang::Words::Block(likes))]);
         assert_eq!(server.players[&1].inventory.count(stick), 3, "took a stick");
         // Given bread: one taken, and back to their day.
         hold(&mut server, bread);

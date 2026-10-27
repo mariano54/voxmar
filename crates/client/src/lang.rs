@@ -680,6 +680,31 @@ mod tests {
         assert!(wrong.is_empty(), "{} language keys out of step:\n{}", wrong.len(), wrong.join("\n"));
     }
 
+    /// Every refusal that names what would work (`refusals.ron`'s `hint`) is one the client
+    /// fills (`interact::HINTS`), and says what it is filled with in every language: a hint
+    /// with no client code, or a language that drops `{item}`, would refuse without naming
+    /// what to do next.
+    #[test]
+    fn every_refusal_hint_names_what_would_work() {
+        let loaded = voxmar_server::load_content(&assets()).unwrap();
+        let shipped: Vec<Lang> = languages(&content()).iter().map(|language| Lang::load(&content(), &language.code)).collect();
+        let mut wrong = Vec::new();
+        for need in voxmar_engine::action::Requirement::ALL {
+            let Some(key) = loaded.refusals.hint(need) else { continue };
+            let Some((_, arg)) = crate::interact::HINTS.iter().find(|(n, _)| *n == need) else {
+                wrong.push(format!("{need:?} hints `{key}`, which the client never fills"));
+                continue;
+            };
+            for lang in &shipped {
+                if !lang.find(key).is_some_and(|text| text.contains(&format!("{{{arg}}}"))) {
+                    wrong.push(format!("`{key}` in {}.ron does not say {{{arg}}}", lang.code()));
+                }
+            }
+        }
+        assert!(!crate::interact::HINTS.iter().all(|(need, _)| loaded.refusals.hint(*need).is_none()), "the base game hints");
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    }
+
     /// Every English name of a block, item or multiblock reads in Title Case ("HV Battery
     /// Bank"): each word begins with a capital, but for the small words (of, and, the, a,
     /// with) after the first.

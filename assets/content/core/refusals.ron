@@ -1,7 +1,8 @@
 // Why a refused action failed, said near the crosshair with the soft "no" sound
 // (engine/src/refusal.rs). Under `unmet`, every requirement an action can ask for says
 // why with a lang key, or is `silent: true` when it only decides which action a click
-// meant (holding a block, aiming at a bed), which has nothing to teach. `sent` lists
+// meant (holding a block, aiming at a bed), which has nothing to teach. A `hint` is what it
+// says instead when the data names what would work (the soil, the station, the item). `sent` lists
 // every key the server refuses with itself. The game refuses to start on a requirement
 // left out, or on a key some language has no words for.
 (
@@ -38,20 +39,20 @@
         "Replaceable": (say: "refusal.in_the_way"),
         "Unobstructed": (say: "refusal.someone_there"),
         "Supported": (say: "refusal.needs_support"),
-        "Plantable": (say: "refusal.wont_grow"),
+        "Plantable": (say: "refusal.wont_grow", hint: "refusal.wont_grow.on"),
         "Tillable": (say: "refusal.not_soil"),
         "Fishable": (say: "refusal.no_water"),
-        "Cookable": (say: "refusal.wont_cook"),
+        "Cookable": (say: "refusal.wont_cook", hint: "refusal.wont_cook.at"),
         "Hurt": (say: "skills.full"),
         "CreatureAccepts": (say: "refusal.not_wanted"),
         "CreatureIsMine": (say: "refusal.not_yours"),
         "Fertilisable": (say: "refusal.not_growing"),
-        "Bees": (say: "refusal.bees"),
-        "Station": (say: "refusal.station"),
+        "Bees": (say: "refusal.bees", hint: "refusal.bees.with"),
+        "Station": (say: "refusal.station", hint: "refusal.station.works"),
         "Swaps": (say: "refusal.doorway"),
         // Daubing a panel someone leans on: the same words as placing a block on them.
         "CoatClear": (say: "refusal.someone_there"),
-        "Relights": (say: "refusal.needs_flame"),
+        "Relights": (say: "refusal.needs_flame", hint: "refusal.needs_flame.with"),
     },
     sent: [
         // Sowing where a crop cannot grow (crop.rs `Unsuited`).
@@ -65,7 +66,7 @@
         // A later age's recipe, crafted or laid before its rite.
         "craft.age",
         // Home stations.
-        "station.level", "station.too_few", "station.nothing_grows", "station.needs.sky", "station.needs.spot", "station.needs.water",
+        "station.level", "station.too_few", "station.nothing_grows", "station.needs.sky", "station.needs.spot", "station.needs.near", "station.needs.water",
         // The land around a station or structure still loading: judged once it is there.
         "station.unloaded",
         // A catch in a trap taken below its skill's level.
@@ -78,6 +79,6 @@
         // A station recipe's tool not carried (an axe to split a log on a chopping block).
         "cooking.needs_tool",
         // A trade at a market stall: none away from it, once a day, today's want in hand.
-        "trade.no_stall", "trade.done_today", "trade.wants", "treat.unwanted", "treat.not_now",
+        "trade.no_stall", "trade.done_today", "trade.wants", "treat.unwanted", "treat.likes", "treat.not_now",
     ],
 )

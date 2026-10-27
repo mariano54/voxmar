@@ -109,7 +109,15 @@ impl Server {
     fn lacks(&self, pos: IVec3, station: &Station) -> Option<Words> {
         station.needs.iter().find(|spot| !self.spot_holds(pos, spot)).map(|spot| match spot {
             Spot::OpenSky => Words::key("station.needs.sky"),
-            Spot::Near(..) => Words::key("station.needs.spot"),
+            // The block it wants near, by a block of its tag (a station a player can have
+            // first): where none has it, the spot only.
+            Spot::Near(tag, reach) => match self.content.blocks.tagged(tag).min_by_key(|&b| {
+                let def = self.content.blocks.def(b);
+                (def.has_tag("creative_only"), !def.has_tag("station"))
+            }) {
+                Some(near) => Words::key("station.needs.near").with("block", Words::Block(self.content.blocks.def(near).name.clone())).with("reach", Words::text(*reach)),
+                None => Words::key("station.needs.spot"),
+            },
             Spot::Water(reach) => Words::key("station.needs.water").with("reach", Words::text(*reach)),
         })
     }
@@ -440,6 +448,28 @@ mod tests {
         server.world.insert(west, held);
         server.use_station(1, rack);
         assert_eq!(at(&server, rack), "base:drying_rack_hung");
+    }
+
+    /// A station wanting a block near says which: a cooking pot with no fire under it names
+    /// a block that heats it, and how near.
+    #[test]
+    fn a_station_wanting_a_block_near_names_it() {
+        let mut server = fixture(1);
+        let (client, connection) = voxmar_protocol::local_pair();
+        server.players.get_mut(&1).unwrap().connection = connection;
+        server.set_block(AT, block(&server, "base:cooking_pot"));
+        let cooking = server.content.skills.id("core:cooking").unwrap();
+        let more = server.content.skills.xp_for(3);
+        server.players.get_mut(&1).unwrap().skills.grant(cooking, more);
+        hold(&mut server, "base:wheat", 4);
+        server.use_station(1, AT);
+        let refused: Vec<Words> = std::iter::from_fn(|| client.try_recv().ok().flatten()).filter_map(|m| match m { ServerMessage::Refused { why } => Some(why), _ => None }).collect();
+        let [Words::Key(key, args)] = refused.as_slice() else { panic!("one refusal: {refused:?}") };
+        assert_eq!(key, "station.needs.near");
+        let Some((_, Words::Block(near))) = args.iter().find(|(name, _)| name == "block") else { panic!("names a block: {args:?}") };
+        assert!(server.content.blocks.def(block(&server, near)).has_tag("hob"), "{near} heats a pot");
+        assert!(args.contains(&("reach".into(), Words::text(1))), "{args:?}");
+        assert_eq!(carried(&server, "base:wheat"), 4, "nothing taken");
     }
 
     /// The rack: raw meat in hand loads it (up to eight), it hangs while the clock runs,

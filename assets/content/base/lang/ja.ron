@@ -106,6 +106,7 @@
     "station.needs.sky": "上が開けた空でなければならない。屋根の下では何も乾かない。",
     "station.needs.water": "{reach}ブロック以内に水が必要だ。",
     "station.needs.spot": "この場所ではうまくいかない。",
+    "station.needs.near": "{reach}ブロック以内に{block}が要る。",
     "station.unloaded": "周りの土地をまだ読み込んでいる。少し待ってからもう一度。",
     "station.spoilt": "まだだ。{why}",
     "station.nothing_grows": "ここには効く育ち途中の作物がない。まいた作物で、まだ育っているものに使おう。",

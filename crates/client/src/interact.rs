@@ -789,7 +789,57 @@ fn refusal(context: &ClientContext, locale: &Locale, block: Option<IVec3>, need:
             let recipe = content.cooking.for_item(context.actor_held()?, &station)?;
             level(recipe.skill?, recipe.def.level)
         }
-        _ => Some(locale.get(key).to_owned()),
+        _ => Some(hint(context, locale, block, need).unwrap_or_else(|| locale.get(key).to_owned())),
+    }
+}
+
+/// The requirements whose refusal can name what would work, each with the argument its
+/// hint fills (`refusals.ron`'s `hint`).
+pub(crate) const HINTS: [(Requirement, &str); 5] =
+    [(Requirement::Plantable, "ground"), (Requirement::Cookable, "station"), (Requirement::Relights, "item"), (Requirement::Station, "item"), (Requirement::Bees, "item")];
+
+/// What would have worked, in the words of `need`'s hint (`refusals.ron`): the soil the
+/// held seed is sown on, the station that cooks the held food, what lights the flame aimed
+/// at, what the station or the bees aimed at take. None when the data names nothing.
+fn hint(context: &ClientContext, locale: &Locale, block: Option<IVec3>, need: Requirement) -> Option<String> {
+    let (world, content) = (context.world, context.content);
+    let key = content.refusals.hint(need)?;
+    let at = block.and_then(|b| world.block(b));
+    // A block of the tag: first one a player can have that is a station (a campfire, not
+    // an ember carrying the fire tag), then one they can have, then any.
+    let of_tag = |tag: &str| {
+        let rank = |b: &BlockId| {
+            let def = content.blocks.def(*b);
+            (def.has_tag("creative_only"), !def.has_tag("station"))
+        };
+        content.blocks.tagged(tag).min_by_key(rank)
+    };
+    let arg = HINTS.iter().find(|(n, _)| *n == need).map(|(_, arg)| *arg)?;
+    let say = |b: BlockId| Some(locale.format(key, &[(arg, &locale.block(world.registry.def(b)))]));
+    match need {
+        Requirement::Plantable => {
+            let crop = context.actor_seed().and_then(|seed| content.crops.planted_by(seed)).map(|id| content.crops.get(id))?;
+            say(crop.def.ground.iter().find_map(|tag| of_tag(tag))?)
+        }
+        Requirement::Cookable => {
+            let held = context.actor_held()?;
+            let (_, recipe) = content.cooking.iter().find(|&(input, _)| input == held)?;
+            say(of_tag(&recipe.def.station)?)
+        }
+        Requirement::Relights => {
+            let at = at?;
+            content.flames.relit(&content.blocks, at)?;
+            say(of_tag(content.flames.relit_with(at).unwrap_or(voxmar_engine::flame::KINDLING))?)
+        }
+        Requirement::Station => {
+            let (station, _) = context.stations()?.of(at?)?;
+            say(*station.works.iter().find_map(|work| work.accepts.first())?)
+        }
+        Requirement::Bees => {
+            let at = at?;
+            say(context.bees()?.takes.iter().filter(|take| take.block == at).find_map(|take| take.holding)?)
+        }
+        _ => None,
     }
 }
 
@@ -1208,6 +1258,36 @@ mod tests {
             app.update();
         }
         assert_eq!(proposed(&server_side), [], "held on past the split, the log is not laid");
+    }
+
+    /// A refusal names what would work, from the data: wheat seed held to grass names the
+    /// farmland it is sown on, raw meat held to a block that does not cook it names a station
+    /// that does, and a station aimed at with what it does not take names something it does.
+    #[test]
+    fn a_refusal_names_what_would_work() {
+        let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+        let locale = Locale::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content"), "en");
+        let id = |name: &str| content.blocks.expect(name);
+        let mut world = ClientWorld::new(content.blocks.clone(), 2, Terrain::detached());
+        world.insert_column(ColumnPos::of_block(IVec3::ZERO), Arc::new(Column::default()));
+        let block = IVec3::new(1, 100, 0);
+        let says = |world: &ClientWorld, held: &str, need: Requirement| {
+            let mut player = LocalPlayer { position: Vec3::new(0.5, 100.0, 0.5), ..default() };
+            player.inventory.slots[0] = Some(voxmar_engine::inventory::ItemStack::new(id(held), 1));
+            player.selected = 0;
+            refusal(&ClientContext { world, player: &player, content: &content }, &locale, Some(block), need).unwrap()
+        };
+        let name = |b: &str| locale.block(content.blocks.def(id(b)));
+        world.set_block(block, id("base:grass_block"));
+        assert_eq!(says(&world, "base:wheat_seeds", Requirement::Plantable), locale.format("refusal.wont_grow.on", &[("ground", &name("base:farmland"))]));
+        let cooks = |station: &str| locale.format("refusal.wont_cook.at", &[("station", &name(station))]);
+        let at = says(&world, "base:raw_small_game", Requirement::Cookable);
+        assert!(content.blocks.tagged("campfire").any(|b| at == cooks(&content.blocks.def(b).name)), "{at}");
+        world.set_block(block, id("base:drying_rack"));
+        let works = says(&world, "base:stick", Requirement::Station);
+        assert_ne!(works, locale.get("refusal.station"), "names what the rack takes");
+        // Held where the data names nothing: the plain words.
+        assert_eq!(says(&world, "base:flint", Requirement::Cookable), locale.get("refusal.wont_cook"));
     }
 
     /// A log held on the chopping block with no axe about says it needs one and is not laid

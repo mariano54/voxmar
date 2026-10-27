@@ -2,7 +2,10 @@
 //! requirement an action can ask for ([`Requirement`]) either names the lang key that says
 //! why it failed or is `silent`: a requirement that only decides which action a click
 //! meant (holding a block, aiming at a bed) has nothing to teach. Every key the server
-//! refuses with itself (`Server::refuse`) is listed under `sent`. Loading refuses a file
+//! refuses with itself (`Server::refuse`) is listed under `sent`. A requirement that says
+//! why may also name a `hint`: the key the client says instead when the data shows what
+//! would work (the soil a seed takes, the station that cooks the held food), with that
+//! thing filled in. Loading refuses a file
 //! that leaves a requirement out, names one twice or one that does not exist, or a key
 //! some language lacks, so no refusal ever reaches a player as silence or a raw key.
 
@@ -25,12 +28,15 @@ struct RefusalFile {
     sent: Vec<String>,
 }
 
-/// What a requirement that failed says: a lang key, or nothing.
+/// What a requirement that failed says: a lang key, or nothing; and what it says instead
+/// when the client can name what would work.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Say {
     #[serde(default)]
     say: Option<String>,
+    #[serde(default)]
+    hint: Option<String>,
     #[serde(default)]
     silent: bool,
 }
@@ -40,6 +46,8 @@ struct Say {
 pub struct Refusals {
     /// By [`Requirement::index`]: the key that says why, or none for a silent one.
     unmet: Vec<Option<String>>,
+    /// By [`Requirement::index`]: the key naming what would work, if there is one.
+    hints: Vec<Option<String>>,
     sent: BTreeSet<String>,
 }
 
@@ -49,6 +57,7 @@ impl Refusals {
     /// both said and silent (or neither), and a key no file gives.
     pub fn load(files: &[ContentFile]) -> Result<Self, RegistryError> {
         let mut said: Vec<Option<Option<String>>> = vec![None; Requirement::ALL.len()];
+        let mut hints: Vec<Option<String>> = vec![None; Requirement::ALL.len()];
         let mut sent = BTreeSet::new();
         let mut any = false;
         for file in files.iter().filter(|f| f.name == FILE) {
@@ -62,6 +71,10 @@ impl Refusals {
                     (Some(key), false) if !key.is_empty() => Some(key),
                     (None, true) => None,
                     _ => return Err(at(format!("`{name}` must either say a key or be silent"))),
+                };
+                hints[need.index()] = match say.hint {
+                    Some(hint) if hint.is_empty() || key.is_none() => return Err(at(format!("`{name}`: a hint goes with a key it says"))),
+                    hint => hint,
                 };
                 said[need.index()] = Some(key);
             }
@@ -78,7 +91,7 @@ impl Refusals {
         if !missing.is_empty() {
             return Err(RegistryError(format!("{FILE}: say why, or `silent: true`, for {}", missing.join(", "))));
         }
-        Ok(Self { unmet: said.into_iter().map(Option::unwrap_or_default).collect(), sent })
+        Ok(Self { unmet: said.into_iter().map(Option::unwrap_or_default).collect(), hints, sent })
     }
 
     /// The key that says why `need` failed, if it says anything.
@@ -86,15 +99,21 @@ impl Refusals {
         self.unmet.get(need.index()).and_then(|key| key.as_deref())
     }
 
+    /// The key that says what would have worked when `need` failed, if it has one.
+    pub fn hint(&self, need: Requirement) -> Option<&str> {
+        self.hints.get(need.index()).and_then(|key| key.as_deref())
+    }
+
     /// Whether the server may refuse with `key`.
     pub fn sent(&self, key: &str) -> bool {
         self.sent.contains(key)
     }
 
-    /// Every key a refusal may say.
+    /// Every key a refusal may say, its hints too.
     pub fn keys(&self) -> impl Iterator<Item = &str> {
-        let unmet: BTreeSet<&str> = self.unmet.iter().flatten().map(String::as_str).collect();
-        unmet.into_iter().chain(self.sent.iter().map(String::as_str).filter(move |k| !self.unmet.iter().flatten().any(|u| u == k)))
+        let said: BTreeSet<&str> = self.unmet.iter().chain(&self.hints).flatten().map(String::as_str).collect();
+        let sent: Vec<&str> = self.sent.iter().map(String::as_str).filter(|k| !said.contains(k)).collect();
+        said.into_iter().chain(sent)
     }
 
     /// Refuses a key that `defines` (a language's code, a key) is false for in any of
@@ -147,8 +166,15 @@ mod tests {
         assert!(Refusals::load(&[file("core", &full), file("base", "(unmet: { \"Alive\": () })")]).unwrap_err().0.contains("either"));
         assert!(Refusals::load(&[file("core", &full), file("base", "(sent: [\"a.b\"])")]).unwrap_err().0.contains("twice"));
         assert!(Refusals::load(&[]).unwrap_err().0.contains("no package"));
-        // Words in every language.
+        // A hint, only beside a key it says.
+        let hinted = Refusals::load(&[file("core", &full), file("base", "(unmet: { \"ToolGood\": (say: \"tools.needs\", hint: \"tools.try\") })")]).unwrap();
+        assert_eq!(hinted.hint(Requirement::ToolGood), Some("tools.try"));
+        assert_eq!(refusals.hint(Requirement::ToolGood), None);
+        assert!(Refusals::load(&[file("core", &full), file("base", "(unmet: { \"Alive\": (silent: true, hint: \"x\") })")]).unwrap_err().0.contains("hint"));
+        // Words in every language, a hint's too.
         assert!(refusals.check_words(&["en", "ja"], |_, _| true).is_ok());
         assert!(refusals.check_words(&["en", "ja"], |code, key| code == "en" || key != "a.b").unwrap_err().0.contains("lang/ja.ron"));
+        assert_eq!(hinted.keys().collect::<Vec<_>>(), ["tools.needs", "tools.try", "a.b"]);
+        assert!(hinted.check_words(&["en", "ja"], |code, key| code == "en" || key != "tools.try").unwrap_err().0.contains("`tools.try` has no words in lang/ja.ron"));
     }
 }
