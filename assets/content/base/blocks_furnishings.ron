@@ -86,7 +86,7 @@
             (name: "{name}_pot_crane", render: Model, shape: "pot_crane", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "pot_crane", "decor", "wood"]),
             // By the fire: a rocking chair, a chair on two curved rockers with arms (a `seat`);
             // a cradle, a crib of boards on rockers with a rush bed and a pillow in it.
-            (name: "{name}_rocking_chair", render: Model, shape: "rocking_chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "rocking_chair", "decor", "wood"]),
+            (name: "{name}_rocking_chair", render: Model, shape: "rocking_chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "rocking_chair", "rocks", "decor", "wood"]),
             (name: "{name}_cradle", render: Model, shape: "cradle", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "cradle", "decor", "wood"]),
             // Lived in: a mantel shelf, a deep board on two brackets on the wall over the hearth,
             // that shows the three things put on it (`shows`, its store's three slots, a

@@ -562,6 +562,10 @@ impl Content {
                 }
             }
         }
+        // A seat that rocks the view is sat on.
+        if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag(crate::vitals::ROCKS) && !blocks.def(id).has_tag(crate::action::SEAT_TAG)) {
+            return Err(RegistryError(format!("blocks: `{}` rocks (`{}`) but is no seat", blocks.def(id).name, crate::vitals::ROCKS)));
+        }
         // What keeps spare lights for a home keeps them in its store.
         if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag(crate::flame::SPARE_LIGHTS) && !machines.get(id).is_some_and(|m| m.is_store())) {
             return Err(RegistryError(format!("blocks: `{}` keeps spare lights (`{}`) but is no store (machines.ron)", blocks.def(id).name, crate::flame::SPARE_LIGHTS)));
