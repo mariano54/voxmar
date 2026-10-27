@@ -51,7 +51,7 @@ shelves, plate racks, spice racks, candle boxes, bread bins, kindling boxes, bed
 tables, stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves
 too), crate stacks, barrel racks, barrels, crates, jars, jugs, baskets and grain sacks, and a
 village's barrels, crates and sacks (every store a player opens counts but the feed
-trough, which is the pen's: test
+trough, which is the pen's, and a sill, whose two things are kept for show, `display`: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
 of a chest and a barrel by a campfire, "home: storage"); crockery is plates, bowls, jars,
 jugs, baskets and a dresser's plates on show; rugs include a rush mat (4 rushes, Crafting 1,
