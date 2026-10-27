@@ -459,7 +459,7 @@
             why: "Fists are slow. A stone sword (two cobblestone over a stick) or a bone club (two bones over a stick) hits much harder; field mice in the grass, aurochs and wolves drop bones. Make one at the crafting table.",
             tasks: [[Craft("stone_sword", 1)], [Craft("bone_club", 1)]],
             after: ["stone_in_hand"],
-            rewards: [Xp("crafting", 40.0)],
+            rewards: [Xp("crafting", 40.0), Xp("attack", 130.0)],
         ),
         (
             name: "the_fox_and_the_hens", age: "nomad", branch: "combat", title: "The Fox and the Hens",

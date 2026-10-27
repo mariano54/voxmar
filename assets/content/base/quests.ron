@@ -262,7 +262,7 @@
             why: "Herbs cannot be sown, but a herb planter (planks round dirt, Construction 3) lets a picked herb grow back at home. Make a planter, set a herb in it, and pick it again when it returns. Pick six wild plants on your rounds as well. While a herb grows back, sow four crops by the house (A Kitchen Garden).",
             tasks: [[Craft("herb_planter", 1), Pick("any", 6)]],
             after: ["a_field_of_gold"],
-            rewards: [Xp("construction", 80.0), Xp("farming", 60.0)],
+            rewards: [Xp("construction", 80.0), Xp("farming", 80.0)],
         ),
         (
             name: "simples", age: "farm", branch: "farming", title: "Simples",
@@ -327,8 +327,8 @@
         ),
         (
             name: "a_side_of_beef", age: "farm", branch: "cooking", title: "A Side of Beef",
-            why: "Aurochs beef is the richest meat the plains give, and it wants a practised cook. Roast four mutton (Cooking 5) and four pork (Cooking 8) from your hunting on the way up to Cooking 12, then roast two beef from an aurochs (Bigger Game) at the campfire or the stove.",
-            tasks: [[Cook("cooked_mutton", 4), Cook("cooked_pork", 4), Level("cooking", 12), Cook("cooked_beef", 2)]],
+            why: "Aurochs beef is the richest meat the plains give, and it wants a practised cook. Roast eight mutton (Cooking 5) and eight pork (Cooking 8) from your hunting on the way up to Cooking 12, then roast two beef from an aurochs (Bigger Game) at the campfire or the stove.",
+            tasks: [[Cook("cooked_mutton", 8), Cook("cooked_pork", 8), Level("cooking", 12), Cook("cooked_beef", 2)]],
             after: ["a_haunch_for_the_pot", "camp_cook"],
             rewards: [Xp("cooking", 200.0)],
         ),
@@ -358,7 +358,7 @@
             why: "A fried egg is the quickest cooking there is: hold an egg and right-click a campfire. Fry three.",
             tasks: [[Cook("fried_egg", 3)]],
             after: ["a_full_house"],
-            rewards: [Xp("cooking", 100.0)],
+            rewards: [Xp("cooking", 115.0)],
         ),
         (
             name: "a_woolly_flock", age: "farm", branch: "husbandry", title: "A Woolly Flock",
@@ -445,8 +445,8 @@
             side: true,
             why: "A short bow reaches twenty blocks and hits twice as hard as a sling. At the crafting table, three sticks bent down one side and three twine down the other make it (Crafting 3). An arrow is a flint or a cobblestone over a stick over a feather, four at a time (Crafting 3): flint comes one gravel in eight, and feathers from junglefowl. The bow needs Ranged 3 to shoot (below it, it strikes as a fist), so keep slinging stones until then: a sling is a hide between two twine in a row at the crafting table. Make the bow and eight arrows, and reach Ranged 5.",
             tasks: [[Craft("short_bow", 1), Craft("arrow", 8), Level("ranged", 5)]],
-            after: ["full_hide_wraps"],
-            rewards: [Xp("ranged", 120.0), Xp("crafting", 60.0)],
+            after: ["full_hide_wraps", "a_stones_throw"],
+            rewards: [Xp("ranged", 210.0), Xp("crafting", 60.0)],
         ),
         (
             name: "every_arrow_counts", age: "farm", branch: "combat", title: "Every Arrow Counts",
@@ -466,8 +466,8 @@
         ),
         (
             name: "seasoned_fighter", age: "farm", branch: "combat", title: "Seasoned Fighter",
-            why: "Bigger animals and tougher monsters teach Attack faster. Keep fighting until you reach Attack 6; your health grows with Hitpoints as you go.",
-            tasks: [[Level("attack", 6)]],
+            why: "Bigger animals and tougher monsters teach Attack faster. Keep fighting until you reach Attack 6, putting down six shamblers on the way; your health grows with Hitpoints as you go.",
+            tasks: [[Level("attack", 6), Kill("shambler", 6)]],
             after: ["bigger_game", "full_hide_wraps"],
             rewards: [Xp("hitpoints", 200.0)],
         ),
@@ -502,10 +502,10 @@
         ),
         (
             name: "patient_angler", age: "farm", branch: "fishing", title: "Patient Angler",
-            why: "Every catch trains Fishing, and the bigger fish bite only at higher levels, in the seas and lakes your travels found (Far Horizons). A rod is three sticks on a diagonal at the crafting table, with two twine hanging from its tip. Fish until you reach Fishing 5, when sardines start biting in the sea.",
-            tasks: [[Level("fishing", 5)]],
+            why: "Every catch trains Fishing, and the bigger fish bite only at higher levels, in the seas and lakes your travels found (Far Horizons). A rod is three sticks on a diagonal at the crafting table, with two twine hanging from its tip. Land ten fish and reach Fishing 5, when sardines start biting in the sea.",
+            tasks: [[Level("fishing", 5), Catch("any", 10)]],
             after: ["far_horizons"],
-            rewards: [Xp("cooking", 100.0)],
+            rewards: [Xp("fishing", 250.0), Xp("cooking", 100.0)],
         ),
         (
             name: "many_kinds", age: "farm", branch: "fishing", title: "Many Kinds of Fish",
@@ -526,8 +526,8 @@
         ),
         (
             name: "still_water_perch", age: "farm", branch: "fishing", title: "Still Water Perch",
-            why: "Perch keep to fresh water, rivers, lakes and ponds, and bite from Fishing 10. Reach Fishing 10 and land three. The fishers send bread home with you for your trouble.",
-            tasks: [[Level("fishing", 10), Catch("raw_perch", 3)]],
+            why: "Perch keep to fresh water, rivers, lakes and ponds, and bite from Fishing 10. Land twenty-one sardines in the sea on the way to Fishing 10, then three perch. The fishers send bread home with you for your trouble.",
+            tasks: [[Level("fishing", 10), Catch("raw_sardine", 21), Catch("raw_perch", 3)]],
             after: ["patient_angler"],
             side: true,
             rewards: [Xp("cooking", 60.0), Item("bread", 2)],
@@ -764,8 +764,8 @@
         ),
         (
             name: "bones_for_the_altar", age: "farm", branch: "prayer", title: "Bones for the Altar",
-            why: "Each bone offered at the altar is 16 Magic experience. At Magic 4 Ember Arm opens, a little more melee damage; at Magic 10, Mending, which brings your health back twice as fast. Offer bones until you reach Magic 6.",
-            tasks: [[Level("magic", 6)]],
+            why: "Each bone offered at the altar is 16 Magic experience. At Magic 4 Ember Arm opens, a little more melee damage; at Magic 10, Mending, which brings your health back twice as fast. Offer five bones, and more until you reach Magic 6.",
+            tasks: [[Level("magic", 6), Offered("bone", 5)]],
             after: ["altar_rites"],
             rewards: [Xp("magic", 100.0)],
         ),

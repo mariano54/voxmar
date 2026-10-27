@@ -8245,6 +8245,9 @@ struct Mark {
     acts: [f32; 4],
     /// The player's levels then, by skill, as the client last heard.
     levels: Vec<(&'static str, u8)>,
+    /// Every skill's experience (in tenths) once the quests done by then are claimed, by
+    /// skill id.
+    xp: Vec<u32>,
     /// Side quests the way finished by then, claimed with it.
     side: Vec<String>,
 }
@@ -8413,7 +8416,7 @@ impl Fresh {
         let (at, acts) = (self.secs(), self.acts.map(|t| t as f32 / TICKS_PER_SECOND as f32));
         let c = &self.c;
         let levels = PACED_SKILLS.iter().map(|&skill| (skill, c.content.skills.id(&format!("core:{skill}")).map_or(0, |id| c.content.skills.level(c.skills.xp(id))))).collect();
-        self.marks.push(Mark { name, at, acts, levels, side: Vec::new() });
+        self.marks.push(Mark { name, at, acts, levels, xp: Vec::new(), side: Vec::new() });
         if let Some(&(_, quest)) = FRESH_QUESTS.iter().find(|(mark, _)| *mark == name) {
             self.claim(quest);
         }
@@ -8424,6 +8427,9 @@ impl Fresh {
             self.claim(&quest);
             self.marks.last_mut().expect("marked").side.push(quest);
         }
+        // Every level once what it brought is claimed: what a quest opening here finds.
+        let c = &self.c;
+        self.marks.last_mut().expect("marked").xp = c.content.skills.ids().map(|id| c.skills.xp(id)).collect();
     }
 
     fn rel(&self, x: i32, y: i32, z: i32) -> IVec3 {
@@ -9737,8 +9743,19 @@ impl Fresh {
         let tasks = self.c.quests.iter().find(|q| q.name == format!("base:{quest}")).map(|q| q.tasks.clone());
         self.wait(5.0, &format!("the quest book showing {quest} done (done, a task holding: {:?}; tasks {tasks:?})", quest_status(&self.c, quest)), |c| quest_status(c, quest).0);
         let name = format!("base:{quest}");
+        // The experience it pays (at whatever rate the player learns now), heard of once claimed.
+        let content = &self.c.content;
+        let before: Vec<(voxmar_engine::skill::SkillId, u32)> = content
+            .quests
+            .get(&name)
+            .map(|q| q.rewards.iter().filter_map(|r| match r {
+                voxmar_engine::quest::Reward::Xp(skill, xp) => content.skills.id(skill).filter(|_| *xp > 0.0).map(|id| (id, self.c.skills.xp(id))),
+                _ => None,
+            }).collect())
+            .unwrap_or_default();
         self.c.connection.send_at(ClientMessage::ClaimQuest { name: name.clone() }, self.now());
         self.wait(5.0, &format!("claiming {quest}"), |c| c.quests.iter().any(|q| q.name == name && q.claimed));
+        self.wait(5.0, &format!("the experience {quest} pays"), |c| before.iter().all(|&(id, xp)| c.skills.xp(id) > xp));
     }
 
     /// Fires clay in the pit kiln until `need` fired clay are in hand: loads it (up to twelve)
@@ -10285,6 +10302,15 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let missed: Vec<&str> = QUEST_BOOK_ORDER.iter().copied().filter(|q| !quest_status(&f.c, q).0).collect();
     assert!(missed.is_empty(), "quests of the line not done: {missed:?}");
     eprintln!("{}", timeline(&f));
+    eprintln!("{}", skill_table(&f));
+    // No ages 1-2 quest asks a level only grinding reaches on the way the book leads; and
+    // the check sees one that does: Bones for the Altar without its five bones.
+    let short = walk_shortfalls(&f, &f.c.content);
+    assert!(short.is_empty(), "levels the book does not surely bring: {short:#?}");
+    let mut ground = f.c.content.clone();
+    ground.quests = std::sync::Arc::new(quests_with(&[("tasks: [[Level(\"magic\", 6), Offered(\"bone\", 5)]]", "tasks: [[Level(\"magic\", 6)]]")]));
+    let short = walk_shortfalls(&f, &ground);
+    assert!(short.iter().any(|s| s.starts_with("bones_for_the_altar: magic 6")), "the check misses a grind: {short:#?}");
     eprintln!("a new player to the lit Crucible Kiln in {:.1} s of wall time", wall.elapsed().as_secs_f32());
     check_pacing(&mut f);
     // From the lit hearth on, the Farm line never goes longer with nothing new than one
@@ -10391,6 +10417,187 @@ fn timeline(f: &Fresh) -> String {
         before = (m.at, m.acts);
     }
     out
+}
+
+/// Each skill's level at each chapter of the walk, for the skills it trains.
+fn skill_table(f: &Fresh) -> String {
+    let skills = &f.c.content.skills;
+    let trained: Vec<_> = skills.ids().filter(|&id| f.marks.iter().any(|m| m.xp[id.0 as usize] > skills.xp_for(skills.get(id).start))).collect();
+    let mut out = format!("{:<18} {}\n", "chapter", trained.iter().map(|&id| format!("{:>5.5}", skills.get(id).name.rsplit(':').next().unwrap_or(""))).collect::<Vec<_>>().join(" "));
+    for m in &f.marks {
+        out += &format!("{:<18} {}\n", m.name, trained.iter().map(|&id| format!("{:>5}", skills.level(m.xp[id.0 as usize]))).collect::<Vec<_>>().join(" "));
+    }
+    out
+}
+
+/// The ages 1-2 quests whose every way asks a skill level (a recipe's, a cook's or a
+/// block's) a player following the book has not surely reached when the quest opens: a
+/// level only grinding reaches. What such a player surely has is what the walk had when the
+/// last of the quest's chain on the walk was done, plus what the chain's quests off the walk
+/// surely pay (their rewards, and the makes of their least-paying way), or a `Level` goal of
+/// the chain if higher. A way's own `Level` goal asks the training itself, and the makes of
+/// its own way below the gate come first; Seed Mix and Under Lock and Key name in their words
+/// the level to train to first (design calls).
+fn walk_shortfalls(f: &Fresh, content: &Content) -> Vec<String> {
+    use voxmar_engine::quest::{Goal, Reward};
+    let skills = &content.skills;
+    let local = |name: &str| name.rsplit(':').next().unwrap_or(name).to_owned();
+    let item = |name: &str| content.blocks.id(name).or_else(|| content.blocks.id(&format!("base:{name}")));
+    let skill_id = |name: &str| skills.ids().find(|&id| local(&skills.get(id).name) == local(name));
+    // The mark at which a quest is done on the walk.
+    let done_at = |quest: &str| {
+        let quest = local(quest);
+        FRESH_QUESTS.iter().find(|(_, q)| *q == quest).and_then(|(mark, _)| f.marks.iter().position(|m| m.name == *mark))
+    };
+    // A goal's cheapest way: its skill (by local name), the level it needs, and the
+    // experience the goal's count pays.
+    let make = |goal: &Goal| -> Option<(String, u8, f32)> {
+        let paid = |xp: f32, each: u8, n: u32| xp * n.div_ceil(u32::from(each.max(1))) as f32;
+        match goal {
+            Goal::Craft(name, n) if !name.starts_with("tag:") && name != "any" => {
+                let recipe = content.recipes.iter().filter(|r| Some(r.output) == item(name)).min_by_key(|r| r.level)?;
+                Some((local(&skills.get(recipe.skill?).name), recipe.level, paid(recipe.xp, recipe.count, *n)))
+            }
+            Goal::Cook(name, n) | Goal::CookAt(name, _, n) if !name.starts_with("tag:") && name != "any" => {
+                let recipe = content.cooking.iter().map(|(_, r)| r).filter(|r| Some(r.output) == item(name)).min_by_key(|r| r.def.level)?;
+                Some((recipe.def.skill.as_deref().map_or("cooking".to_owned(), local), recipe.def.level, paid(recipe.def.xp, recipe.def.count, *n)))
+            }
+            Goal::Mine(name, n) => {
+                let rule = content.tools.rule(item(name)?)?;
+                Some((local(&skills.get(rule.skill?).name), rule.level, rule.xp * *n as f32))
+            }
+            _ => None,
+        }
+    };
+    // The experience a goal of a way surely pays in `skill`: its make's, or a kill's blows
+    // (the weakest it may be, at the usual combat experience for each point of damage, in
+    // Attack), a catch's or a ripe crop's.
+    let trains = |goal: &Goal, skill: &str| -> f32 {
+        let named = |name: &str, wanted: &str| wanted == "any" || local(name) == local(wanted);
+        match goal {
+            Goal::Kill(c, n) if skill == "attack" => {
+                let each = content.creatures.iter().map(|(_, k)| &k.def).filter(|d| named(&d.name, c) && d.xp.combat > 0.0).map(|d| 4.0 * f32::from(d.health) * d.xp.combat).reduce(f32::min);
+                each.unwrap_or(0.0) * *n as f32
+            }
+            Goal::Offered(offering, n) if content.prayers.skill.is_some_and(|id| local(&skills.get(id).name) == skill) => {
+                let worth = item(offering).and_then(|id| content.prayers.offering(id)).unwrap_or(0.0);
+                content.prayers.rules.offer_xp * worth * *n as f32
+            }
+            Goal::Cook(tag, n) if tag.starts_with("tag:") && skill == "cooking" => {
+                let tag = &tag["tag:".len()..];
+                let each = content.cooking.iter().map(|(_, r)| r).filter(|r| content.blocks.def(r.output).has_tag(tag) && r.def.skill.is_none()).map(|r| r.def.xp / f32::from(r.def.count.max(1))).reduce(f32::min);
+                each.unwrap_or(0.0) * *n as f32
+            }
+            Goal::Catch(fish, n) if skill == "fishing" => content.fishing.iter().filter(|c| named(&c.def.item, fish)).map(|c| c.def.xp).reduce(f32::min).unwrap_or(0.0) * *n as f32,
+            Goal::Pick(plant, n) => {
+                let crop = content.crops.iter().map(|(_, c)| c).find(|c| c.stages.last().is_some_and(|&ripe| local(&content.blocks.def(ripe).name) == local(plant)));
+                crop.filter(|c| local(&skills.get(c.skill).name) == skill).map_or(0.0, |c| c.def.xp.harvest * *n as f32)
+            }
+            _ => make(goal).filter(|m| m.0 == skill).map_or(0.0, |m| m.2),
+        }
+    };
+    // Every quest surely before `of`: the walk's one where an either-or has one on it.
+    let chain = |of: &str| -> Option<Vec<String>> {
+        let mut before: Vec<String> = Vec::new();
+        let mut todo = vec![of.to_owned()];
+        while let Some(name) = todo.pop() {
+            for after in &content.quests.get(&name)?.after {
+                let one = match after.split('|').collect::<Vec<_>>()[..] {
+                    [one] => one.to_owned(),
+                    ref many => many.iter().find(|a| done_at(a).is_some())?.to_string(),
+                };
+                let one = content.quests.get(&one).or_else(|| content.quests.get(&format!("base:{one}")))?.name.clone();
+                if !before.contains(&one) {
+                    before.push(one.clone());
+                    todo.push(one);
+                }
+            }
+        }
+        Some(before)
+    };
+    let mut short = Vec::new();
+    for quest in content.quests.iter().filter(|q| (q.age == "nomad" || q.age == "farm") && !["seed_mix", "under_lock_and_key"].contains(&local(&q.name).as_str())) {
+        let Some(before) = chain(&quest.name) else { continue };
+        let opens = before.iter().filter_map(|q| done_at(q)).max();
+        // The experience (in tenths, as the server counts) a player surely has in `skill`.
+        let sure = |skill: &str| -> f32 {
+            let Some(id) = skill_id(skill) else { return 0.0 };
+            let walked = opens.map_or(skills.xp_for(skills.get(id).start), |m| f.marks[m].xp[id.0 as usize]) as f32;
+            let rewards = |q: &str| -> f32 {
+                content.quests.get(q).map_or(0.0, |q| q.rewards.iter().map(|r| match r {
+                    Reward::Xp(s, xp) if local(s) == skill => *xp * 10.0,
+                    _ => 0.0,
+                }).sum())
+            };
+            // What a quest off the walk surely pays: its rewards, and its least-paying way.
+            let pays = |q: &str| -> f32 {
+                let least = content.quests.get(q).map_or(0.0, |q| q.tasks.iter().map(|t| t.iter().map(|g| trains(g, skill)).sum::<f32>()).reduce(f32::min).unwrap_or(0.0));
+                rewards(q) + least * 10.0
+            };
+            let off: f32 = before.iter().filter(|q| done_at(q).is_none()).map(|q| pays(q)).sum();
+            // Or a `Level` goal of the chain, with its quest's rewards and what the quests off
+            // the walk after it pay.
+            let floor = before
+                .iter()
+                .filter_map(|q| content.quests.get(q))
+                .flat_map(|q| q.tasks.iter().flatten().map(move |g| (q, g)))
+                .filter_map(|(q, g)| match g {
+                    Goal::Level(s, n) if local(s) == skill => {
+                        let after: f32 = before.iter().filter(|b| done_at(b).is_none() && chain(b).is_some_and(|c| c.contains(&q.name))).map(|b| pays(b)).sum();
+                        Some(skills.xp_for(*n) as f32 + rewards(&q.name) + after)
+                    }
+                    _ => None,
+                })
+                .fold(0.0, f32::max);
+            (walked + off).max(floor)
+        };
+        let ways: Vec<Vec<String>> = quest
+            .tasks
+            .iter()
+            .map(|task| {
+                // A `Level` goal the way's own other goals do not surely bring it to.
+                let levels = task.iter().filter_map(|g| match g {
+                    Goal::Level(skill, n) => {
+                        let skill = local(skill);
+                        let have = sure(&skill) + task.iter().map(|g| trains(g, &skill) * 10.0).sum::<f32>();
+                        (have < skills.xp_for(*n) as f32).then(|| format!("{skill} {n} asked, its way surely brings {} ({:.0} of {:.0} xp)", skills.level(have as u32), have / 10.0, skills.xp_for(*n) as f32 / 10.0))
+                    }
+                    _ => None,
+                });
+                levels.chain(task.iter()
+                    .filter_map(&make)
+                    .filter(|(skill, level, _)| !task.iter().any(|g| matches!(g, Goal::Level(s, n) if local(s) == *skill && n >= level)))
+                    .filter_map(|(skill, level, _)| {
+                        let own: f32 = task.iter().filter_map(&make).filter(|m| m.0 == skill && m.1 < level).map(|m| m.2 * 10.0).sum();
+                        let have = sure(&skill) + own;
+                        (have < skills.xp_for(level) as f32).then(|| format!("{skill} {level} (surely {} by {})", skills.level(have as u32), opens.map_or("the start", |m| f.marks[m].name)))
+                    }))
+                    .collect()
+            })
+            .collect();
+        if !ways.is_empty() && ways.iter().all(|w| !w.is_empty()) {
+            short.push(format!("{}: {}", local(&quest.name), ways.iter().map(|w| w.join(", ")).collect::<Vec<_>>().join(" | ")));
+        }
+    }
+    short
+}
+
+/// The base quest books as loaded, with each `(from, to)` changed in the Farm book's text.
+fn quests_with(changes: &[(&str, &str)]) -> voxmar_engine::quest::QuestRegistry {
+    use voxmar_engine::quest::QuestRegistry;
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+    let read = |path: std::path::PathBuf| std::fs::read_to_string(path).unwrap();
+    let mut farm = read(base.join("quests.ron"));
+    for (from, to) in changes {
+        assert_eq!(farm.matches(from).count(), 1, "{from}");
+        farm = farm.replace(from, to);
+    }
+    QuestRegistry::new(vec![
+        QuestRegistry::read("core", &read(base.join("../core/quests.ron"))).unwrap(),
+        QuestRegistry::read("base", &farm).unwrap(),
+        QuestRegistry::read_named("base", "quests_nomad.ron", &read(base.join("quests_nomad.ron"))).unwrap(),
+    ])
+    .unwrap()
 }
 
 /// What the server says of a quest: whether it is done, and whether one of its tasks holds.
