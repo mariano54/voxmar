@@ -1039,14 +1039,15 @@ impl Server {
             .collect()
     }
 
-    /// Where creature `id`'s young kin are: young of its kind within `KIN_RANGE`.
+    /// Where creature `id`'s young kin are: wild young of its kind within `KIN_RANGE` (a
+    /// keeper's young are none of a wild mother's).
     fn young_kin_of(&self, id: u32, neighbours: &Neighbours) -> Vec<Vec3> {
         let Some(creature) = self.creatures.live.get(&id) else { return Vec::new() };
         let (species, at) = (creature.species, creature.body.position);
         neighbours
             .kind_around(at, species, id)
             .filter_map(|other| self.creatures.live.get(&other))
-            .filter(|c| c.species == species && c.grows_up.is_some() && c.body.position.distance(at) < KIN_RANGE)
+            .filter(|c| c.species == species && c.grows_up.is_some() && c.owner.is_none() && c.body.position.distance(at) < KIN_RANGE)
             .map(|c| c.body.position)
             .collect()
     }
@@ -6400,6 +6401,14 @@ mod fight_tests {
         server.hurt_creature(player, piglet, 0, None, voxmar_engine::combat::Blow::Plain);
         run(&mut server, 2);
         assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "a kept sow");
+        // A keeper's piglet is none of a wild sow's: a player beside it, or striking it, she lets be.
+        let (mut server, sow, piglet, player, near) = scene(false);
+        server.creatures.live.get_mut(&piglet).unwrap().owner = Some("someone".into());
+        server.players.get_mut(&player).unwrap().position = server.creatures.live[&piglet].body.position + Vec3::X * (near - 1.5);
+        run(&mut server, 3);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "a wild sow, one by a kept piglet");
+        server.hurt_creature(player, piglet, 0, None, voxmar_engine::combat::Blow::Plain);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "a wild sow, one who struck a kept piglet");
     }
 
     /// A badger warns only one it sees: behind a wall three high and thirteen long it lets
