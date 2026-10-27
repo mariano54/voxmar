@@ -985,6 +985,20 @@ fn house(spec: &Spec, frame: &Frame, mats: &Mats, fixed: &Fixed, canvas: &mut Ca
             }
         }
     }
+    // The way into the wing behind: whatever was set before its opening (a table, an oven,
+    // bins along the back wall) is cleared from one of its columns, unless one is open
+    // already, so no one is shut out of the wing. Not a stair's: that is a way up.
+    if let Some((ww, _)) = spec.wing {
+        let stair = |x: i32| flights.first().and_then(|f| f.as_ref()).is_some_and(|f| f[1..].contains(&(x, d - 2)));
+        let open = |pen: &Pen, x: i32| !stair(x) && pen.highest(x, d - 2, lift + 1, lift + 2).is_none();
+        let columns = w - ww + 1..w - 1;
+        if !columns.clone().any(|x| open(&pen, x))
+            && let Some(x) = columns.clone().find(|&x| !stair(x))
+        {
+            pen.clear(x, lift + 1, d - 2);
+            pen.clear(x, lift + 2, d - 2);
+        }
+    }
     // The chimney: a hearth on the floor (or the oven), and one block of the style's
     // chimney stone up through the floors and the roof, one or two over the roof there.
     if let Some(((x, z), _)) = chimney
@@ -1308,10 +1322,13 @@ pub(super) fn stairs(spec: &Spec, door: i32, hearth: Option<(i32, i32)>) -> Vec<
             let ground = storey == 0 && z <= 2 && ((x >= door && x <= door + wide) || spec.form == Form::ShopFront);
             ground || Some((x, z)) == hearth || below.contains(&(x, z))
         };
+        // On the ground floor, no step goes up before the wing's opening: that is the way
+        // into it. The foot of the flight, on the floor, may stand there.
+        let wing_way = |&(x, z): &(i32, i32)| storey == 0 && z == d - 2 && spec.wing.is_some_and(|(ww, _)| x > w - ww && x < w - 1);
         let n = ring.len();
         let found = (0..n).flat_map(|start| [1isize, -1].map(|dir| (start, dir))).find_map(|(start, dir)| {
             let at = |k| ring[(start as isize + dir * k as isize).rem_euclid(n as isize) as usize];
-            (0..run).all(|k| !banned(&at(k))).then(|| (0..run).map(at).collect::<Vec<_>>())
+            (0..run).all(|k| !banned(&at(k)) && !(k > 0 && wing_way(&at(k)))).then(|| (0..run).map(at).collect::<Vec<_>>())
         });
         below = found.as_ref().map_or_else(Vec::new, |f| f[..(STAIRWELL + 1).min(f.len())].to_vec());
         flights.push(found);

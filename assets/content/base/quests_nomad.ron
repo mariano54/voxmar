@@ -67,8 +67,8 @@
         ),
         (
             name: "a_mended_edge", age: "nomad", branch: "start", title: "A Mended Edge",
-            why: "Every tool wears as you work it: a flint one lasts fifty uses, a stone one three times that, and worn out it breaks. Mend it first at a chopping block: put the worn tool in the grid within reach of the block with one piece of what it is made of (a flint for a flint tool or a flint spear, a stone head for a stone tool, a stick for a digging stick). A tool made of a single such piece, such as a flint knife or a stone shovel, comes back whole; any other comes back half new. Mend a flint or stone tool, a flint spear or a digging stick by your chopping block.",
-            tasks: [[Mended("tag:mend:flint", 1)], [Mended("tag:mend:stone_head", 1)], [Mended("tag:mend:stick", 1)]],
+            why: "Every tool wears as you work it: a flint one lasts fifty uses, a stone one three times that, and worn out it breaks. Mend it first at a chopping block: put the worn tool in the grid within reach of the block with one piece of what it is made of (a flint for a flint tool or a flint spear, a stone head for a stone tool, a stick for a digging stick). A tool made of a single such piece, such as a flint knife or a stone shovel, comes back whole; any other comes back half new. A stone head is ground from hard rock at a grindstone (sand beside cobblestone over two sticks in the 2×2 grid), so to mend a stone tool, set a grindstone down too. Mend a flint or stone tool, a flint spear or a digging stick by your chopping block.",
+            tasks: [[Mended("tag:mend:flint", 1)], [Placed("grindstone", 1), Mended("tag:mend:stone_head", 1)], [Mended("tag:mend:stick", 1)]],
             after: ["a_chopping_block"],
             side: true,
             rewards: [Xp("engineering", 30.0)],

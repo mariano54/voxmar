@@ -201,6 +201,32 @@ fn a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner() {
     }
 }
 
+/// The lived-in hearth: under a roof, the hearth with a mantel shelf over it and a fireside
+/// bench before it; any of them missing, or out under the sky, it is not one. Every wood
+/// makes both pieces, the shelf keeps things and the bench is sat on.
+#[test]
+fn a_mantel_shelf_and_a_fireside_bench_make_a_lived_in_hearth() {
+    let content = content();
+    let effects = &content.effects;
+    let room = [("hearth", 1), ("mantel_shelf", 1), ("fireside_bench", 1)];
+    assert_eq!(rooms(&room), ["base:lived_in_hearth"]);
+    for missing in 0..room.len() {
+        let short: Vec<_> = room.iter().enumerate().filter(|&(i, _)| i != missing).map(|(_, &c)| c).collect();
+        assert!(!rooms(&short).contains(&"base:lived_in_hearth".to_owned()), "no {}, no lived-in hearth", room[missing].0);
+    }
+    assert!(rooms(&[("hearth", 1), ("mantel_shelf", 1), ("seat", 1)]).is_empty(), "a stool is no fireside bench");
+    assert!(rooms_in(&room, &Weather::NONE, true).is_empty(), "no roof, no lived-in hearth");
+    let hearth = effects.get(effects.id("base:lived_in_hearth").unwrap());
+    assert_eq!((hearth.modifiers.home_warmth, hearth.modifiers.xp), (1.0, 1.05));
+    for wood in ["birch", "oak", "dark_oak"] {
+        let shelf = content.blocks.expect(&format!("base:{wood}_mantel_shelf"));
+        assert!(content.blocks.def(shelf).has_tag("mantel_shelf") && content.recipes.iter().any(|r| r.output == shelf), "{wood} mantel shelf");
+        assert!(content.machines.iter().any(|m| m.block == shelf && m.is_store()), "the {wood} mantel shelf keeps things");
+        let bench = content.blocks.def(content.blocks.expect(&format!("base:{wood}_fireside_bench")));
+        assert!(bench.has_tag("fireside_bench") && bench.has_tag("seat"), "{wood} fireside bench");
+    }
+}
+
 /// The bedchamber: under a roof, the bed with a blanket chest, a washstand and a rug; any
 /// of them missing, or out under the sky, it is not one. Every wood makes both pieces, and
 /// the chest is storage.
@@ -269,8 +295,8 @@ fn two_windows_at_home_make_a_bright_room() {
 
 /// Things set out in the yard count at home: an awning and two yard pieces out under the
 /// sky make a dooryard; fewer do not, nor no awning, nor the same under the roof. The yard
-/// pieces are a bench, bunting and a hay bale (`yard`), counted only in the open
-/// (`outdoors`); an awning is not one, nor anything sat on indoors only.
+/// pieces are a bench, bunting, a hay bale and a dry-stone wall (`yard`), counted only in
+/// the open (`outdoors`); an awning is not one, nor anything sat on indoors only.
 #[test]
 fn an_awning_and_yard_pieces_out_of_doors_make_a_dooryard() {
     let content = content();
@@ -283,7 +309,7 @@ fn an_awning_and_yard_pieces_out_of_doors_make_a_dooryard() {
     let yard = effects.get(effects.id("base:dooryard").unwrap());
     assert_eq!((yard.modifiers.heal, yard.modifiers.xp), (1.05, 1.0), "one small multiplier");
     assert!(effects.outdoor("yard") && !effects.outdoor("awning"), "yard pieces count only in the open");
-    for name in ["base:oak_bench", "base:red_bunting", "base:hay_bale"] {
+    for name in ["base:oak_bench", "base:red_bunting", "base:hay_bale", "base:dry_stone_wall"] {
         assert!(content.blocks.def(content.blocks.expect(name)).has_tag("yard"), "{name} is a yard piece");
     }
     for name in ["base:red_awning", "base:oak_chair", "base:red_rug"] {

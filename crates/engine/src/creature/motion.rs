@@ -851,6 +851,36 @@ mod tests {
         assert!(body.against_wall);
     }
 
+    /// A gate beside a fence's corner: a fence along x = 1 but for a gap at z = -1, and a
+    /// fence run out west from it along z = -2, both two high.
+    struct CornerGate;
+
+    impl Surroundings for CornerGate {
+        fn solid(&self, cell: IVec3) -> bool {
+            cell.y < 0 || (0..2).contains(&cell.y) && (cell.x == 1 && cell.z != -1 || cell.x <= 0 && cell.z == -2)
+        }
+        fn water(&self, _: IVec3) -> bool {
+            false
+        }
+    }
+
+    /// Facing the gap in the corner, a long head going on south toward the cell before it
+    /// finds its way open only edging (`open_way_edging`): turned south its head would meet
+    /// the fence across the corner, but `step` holds its facing there and it edges on.
+    #[test]
+    fn a_long_head_edges_into_a_gap_beside_a_fence_corner_only_edging() {
+        let mut body = Body::new(Vec3::new(0.5, 0.0, 0.55), yaw_of(Vec3::X), (0.84, 1.4));
+        body.reach = 0.9;
+        let movement = Movement { jump: 0.0, ..Movement::default() };
+        let open = |edging: bool| open_way_edging(&body, &CornerGate, &movement, Water::Land, -Vec3::Z, 2.0, 0.05, edging);
+        assert!(!open(false), "its head turned south is not in the fence");
+        assert!(open(true), "edging, facing the gap, it found no way on");
+        assert_eq!(open(false), open_way(&body, &CornerGate, &movement, Water::Land, -Vec3::Z, 2.0, 0.05));
+        // Facing away from where it goes, it does not edge: `step` would turn it.
+        let back = Body { yaw: yaw_of(Vec3::Z), ..body };
+        assert!(!open_way_edging(&back, &CornerGate, &movement, Water::Land, -Vec3::Z, 2.0, 0.05, true));
+    }
+
     /// A wall `high` blocks tall from x = 3 on, over flat ground.
     struct Ledge {
         high: i32,

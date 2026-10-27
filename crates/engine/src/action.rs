@@ -255,6 +255,9 @@ pub enum Effect {
     Tend,
     /// Look closely at the target creature: what the actor learns grows with Farming.
     Inspect,
+    /// Trade with the target, one of a settlement's people at their market stall: what the
+    /// actor holds for what they give (`Server::trade`).
+    Trade,
     /// Let the target creature, one the actor keeps, go wild again (asked twice).
     Release,
     /// Restore the actor's health and return it to spawn.

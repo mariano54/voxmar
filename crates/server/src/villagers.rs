@@ -821,6 +821,74 @@ impl Server {
         self.bark(id, Bark::Alarm);
     }
 
+    /// The trade creature `id` offers today, if they are one of a settlement's people who
+    /// keeps a market stall and stands at it at work (within a block of its lot): one of
+    /// their kind's trades (`CreatureDef::trades`), by the day and who they are.
+    pub(crate) fn trade_today(&self, id: u32) -> Option<&voxmar_engine::creature::Trade> {
+        let &(town, i) = self.villagers.by_creature.get(&id)?;
+        let t = &self.villagers.towns[&town];
+        let resident = &t.info.people[i];
+        let stall = &t.info.buildings[resident.work?];
+        if resident.guard || !is(stall, "stall") || t.people[i].trip.as_ref().is_none_or(|trip| trip.place != Place::Work) {
+            return None;
+        }
+        let c = self.creatures.live.get(&id)?;
+        let at = c.body.position.floor().as_ivec3().xz();
+        if at.cmplt(stall.min - IVec2::ONE).any() || at.cmpgt(stall.max + IVec2::ONE).any() {
+            return None;
+        }
+        let trades = &self.content.creatures.get(c.species).trades;
+        let day = days(self.day) as u64;
+        (!trades.is_empty()).then(|| &trades[(mix(resident.seed, day) % trades.len() as u64) as usize])
+    }
+
+    /// Whether `player` has had their trade today, at any stall.
+    pub(crate) fn traded_today(&self, player: voxmar_protocol::PlayerId) -> bool {
+        self.players.get(&player).is_some_and(|p| p.traded_on == Some(days(self.day) as u64))
+    }
+
+    /// `base:trade`: the player trades what they hold with creature `id` at their stall,
+    /// today's want for what they give (`trade_today`), once a day; refused, with why,
+    /// away from the stall, with the wrong thing or too few in hand, or traded today at any
+    /// stall (`Player::traded_on`, saved with the player, so no reload or town let go
+    /// trades again).
+    pub(crate) fn trade(&mut self, player: voxmar_protocol::PlayerId, id: u32) {
+        use voxmar_engine::lang::Words;
+        let Some(p) = self.players.get(&player) else { return };
+        let held = p.held();
+        let Some(trade) = self.trade_today(id).cloned() else {
+            self.refuse(player, Words::key("trade.no_stall"));
+            return;
+        };
+        let today = days(self.day) as u64;
+        if self.traded_today(player) {
+            self.refuse(player, Words::key("trade.done_today"));
+            return;
+        }
+        let (want, count) = trade.wants;
+        let wants = || Words::key("trade.wants").with("count", Words::text(count)).with("item", Words::Block(self.content.blocks.def(want).name.clone()));
+        let p = self.players.get_mut(&player).expect("checked");
+        let first = p.selected;
+        if held != Some(want) || !p.inventory.take_all(&[(want, count)], first) {
+            let why = wants();
+            self.refuse(player, why);
+            return;
+        }
+        for &(item, n) in &trade.gives {
+            let left = p.inventory.add(item, n);
+            if left > 0 {
+                let body = voxmar_engine::dropped::thrown(p.eye(), p.look());
+                self.items.spawn(voxmar_engine::inventory::ItemStack::new(item, left), body, voxmar_engine::dropped::PICKUP_DELAY);
+            }
+        }
+        p.changed(voxmar_engine::traits::INVENTORY);
+        p.traded_on = Some(today);
+        if let (Some(p), Some(who)) = (self.players.get(&player), self.speaker_name(id)) {
+            p.connection.send(voxmar_protocol::ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key("trade.thanks")) });
+        }
+        self.bark(id, Bark::Content);
+    }
+
     /// Person `i` (creature `id`, at `at`), `free` (not afraid, abed nor a guard) and
     /// greeting no player, stops to pass the time of day with a neighbour of the town: one
     /// as free within `people.react.chat` they see, neither having talked within
@@ -1202,8 +1270,11 @@ impl Server {
                 if n.x < min.x || n.x > max.x || n.z < min.y || n.z > max.y {
                     continue;
                 }
-                // Up one if there is room overhead to jump, else level, else down.
-                let Some(next) = [n, n + IVec3::Y, n - IVec3::Y, n - IVec3::Y * 2].into_iter().find(|&m| self.stands(m) && (m.y <= c.y || self.passable(c + IVec3::Y * 2))) else { continue };
+                // Up one if there is room overhead to jump, else level, else down: down only
+                // where it walks across at its own height first, its head clear (not off a
+                // table under a doorway's lintel).
+                let across = || self.passable(n) && self.passable(n + IVec3::Y);
+                let Some(next) = [n, n + IVec3::Y, n - IVec3::Y, n - IVec3::Y * 2].into_iter().find(|&m| self.stands(m) && if m.y > c.y { self.passable(c + IVec3::Y * 2) } else { m.y == c.y || across() }) else { continue };
                 // No cutting corners past walls.
                 if dx != 0 && dz != 0 && !(self.passable(c + IVec3::new(dx, 0, 0)) && self.passable(c + IVec3::new(0, 0, dz)) && self.passable(c + IVec3::new(dx, 1, 0)) && self.passable(c + IVec3::new(0, 1, dz))) {
                     continue;
@@ -1366,6 +1437,35 @@ mod tests {
             }
         }
         panic!("never out of doors in a day");
+    }
+
+    /// A way down off a block (a table) into a doorway whose lintel is too low to walk
+    /// under at the block's height is no way: there is none here, in a lane a block wide
+    /// the block stops. Before: the way went over the table and down under the lintel, and
+    /// whoever took it stood on the table for good. Without the lintel, it is a way.
+    #[test]
+    fn no_way_goes_down_off_a_block_under_a_lintel() {
+        let mut server = fixture("base:villager", 1);
+        let stone = server.content.blocks.expect("base:stone");
+        // A lane a block wide along z = 20, walled to its head and shut at both ends, from
+        // x = 18 to 24; a stone (the table) at x = 21 in it; a doorway at x = 20, two high
+        // under a lintel.
+        for x in 18..=24 {
+            for y in 200..=202 {
+                server.world.set_block(IVec3::new(x, y, 19), stone);
+                server.world.set_block(IVec3::new(x, y, 21), stone);
+            }
+        }
+        for y in 200..=202 {
+            server.world.set_block(IVec3::new(17, y, 20), stone);
+            server.world.set_block(IVec3::new(25, y, 20), stone);
+        }
+        server.world.set_block(IVec3::new(21, 200, 20), stone);
+        server.world.set_block(IVec3::new(20, 202, 20), stone);
+        let (from, to) = (IVec3::new(23, 200, 20), IVec3::new(18, 200, 20));
+        assert!(server.way(from, to, 1, 8000).0.is_none(), "a way down off the stone under the lintel");
+        server.world.set_block(IVec3::new(20, 202, 20), BlockId::AIR);
+        assert!(server.way(from, to, 1, 8000).0.is_some(), "no way over the stone with no lintel");
     }
 
     /// Someone out of doors with a player stepping up to them stops where they stand, turns
@@ -1763,17 +1863,15 @@ mod tests {
             server.day = day;
             !server.night() && server.place_now(1, 0, seed).0 == Place::Sleep
         });
-        if let Some(dawn) = dawn {
-            server.day = dawn;
-            server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
-            server.creatures.live.get_mut(&id).unwrap().body.position = Vec3::new(7.5, 200.0, 7.5);
-            for _ in 0..2 {
-                server.tick += ticks(react.intruder_every);
-                server.follow_day(id, 1, 0, &live);
-            }
-            assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().map(|t| t.place), Some(Place::Sleep), "not abed at dawn");
-            assert_eq!(told(&client, "villager.leave"), 0, "told to leave at dawn, by day");
+        server.day = dawn.expect("no one abed after sunrise: the dawn case tests nothing");
+        server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
+        server.creatures.live.get_mut(&id).unwrap().body.position = Vec3::new(7.5, 200.0, 7.5);
+        for _ in 0..2 {
+            server.tick += ticks(react.intruder_every);
+            server.follow_day(id, 1, 0, &live);
         }
+        assert_eq!(server.villagers.towns[&1].people[0].trip.as_ref().map(|t| t.place), Some(Place::Sleep), "not abed at dawn");
+        assert_eq!(told(&client, "villager.leave"), 0, "told to leave at dawn, by day");
         // By day a visitor in the house is let be.
         out_in_the_open(&mut server);
         server.villagers.towns.get_mut(&1).unwrap().people[0].trip = None;
@@ -1979,6 +2077,185 @@ mod tests {
         assert_eq!(server.creatures.live[&resident].health, 1);
         assert_eq!(server.villagers.by_creature.get(&resident), Some(&(1, 0)));
         assert!(server.villagers.saved().is_empty(), "dispersal must not mark a resident dead");
+    }
+
+    /// Settlement 1's person 0 keeps a market stall (at 14..=16, 4..=6) and stands at it,
+    /// at work.
+    fn at_their_stall(server: &mut Server) -> u32 {
+        keeping_a_stall(server, 0, IVec3::new(15, 200, 5))
+    }
+
+    /// Settlement 1's person `i` keeps the market stall (at 14..=16, 4..=6, built the first
+    /// time) and stands at `stand` by it, at work.
+    fn keeping_a_stall(server: &mut Server, i: usize, stand: IVec3) -> u32 {
+        use voxmar_worldgen::{SettlementBuilding, SettlementFacing};
+        let town = server.villagers.towns.get_mut(&1).unwrap();
+        let stall = match town.info.buildings.iter().position(|b| b.kind == BuildingKind::Stall) {
+            Some(stall) => stall,
+            None => {
+                town.info.buildings.push(SettlementBuilding { kind: BuildingKind::Stall, min: IVec2::new(14, 4), max: IVec2::new(16, 6), floor: 199,
+                    room: Vec::new(), byre: Vec::new(), door: None, facing: SettlementFacing::South, what: "stall".into(), work: None, beds: Vec::new(), seats: Vec::new() });
+                town.info.buildings.len() - 1
+            }
+        };
+        town.info.people[i].work = Some(stall);
+        server.bring_out(1, i);
+        let id = server.villagers.towns[&1].people[i].creature.expect("out");
+        server.creatures.live.get_mut(&id).unwrap().body.position = stand.as_vec3() + Vec3::new(0.5, 0.0, 0.5);
+        let day = days(server.day) as u64;
+        server.villagers.towns.get_mut(&1).unwrap().people[i].trip = Some(Trip { place: Place::Work, slot: 0, day, path: vec![stand], step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, 0), retry: 0, pursuit: None });
+        id
+    }
+
+    /// One keeping a market stall trades at it, one of their kind's trades a day (by the day
+    /// and who they are): the player's held want for what they give, once a day each player.
+    /// Away from their stall, or with the wrong thing in hand, there is no trade.
+    #[test]
+    fn a_stallholder_at_their_stall_trades_once_a_day() {
+        let mut server = fixture("base:villager", 1);
+        player(&mut server);
+        let id = at_their_stall(&mut server);
+        let trade = server.trade_today(id).cloned().expect("no trade at the stall");
+        let (want, count) = trade.wants;
+        let gave = |server: &Server| trade.gives.iter().map(|&(item, _)| server.players[&1].inventory.count(item)).sum::<u32>();
+        // The wrong thing in hand: nothing changes hands.
+        let other = server.content.blocks.expect("base:stick");
+        assert_ne!(other, want);
+        server.players.get_mut(&1).unwrap().inventory.add(other, 8);
+        server.trade(1, id);
+        assert_eq!(gave(&server), 0, "traded for the wrong thing");
+        // One short of the want: none.
+        let p = server.players.get_mut(&1).unwrap();
+        p.inventory = Default::default();
+        p.inventory.add(want, count - 1);
+        server.trade(1, id);
+        assert_eq!((server.players[&1].inventory.count(want), gave(&server)), (count as u32 - 1, 0), "traded for too few");
+        // Enough: the want for what they give.
+        server.players.get_mut(&1).unwrap().inventory.add(want, 1);
+        server.trade(1, id);
+        assert_eq!(server.players[&1].inventory.count(want), 0, "the want not taken");
+        assert_eq!(gave(&server), trade.gives.iter().map(|g| g.1 as u32).sum::<u32>(), "not given what they give");
+        // Again the same day: no.
+        let p = server.players.get_mut(&1).unwrap();
+        p.inventory = Default::default();
+        p.inventory.add(want, count);
+        server.trade(1, id);
+        assert_eq!(server.players[&1].inventory.count(want), count as u32, "traded twice in a day");
+        // Off their stall: no trade, and none offered.
+        server.creatures.live.get_mut(&id).unwrap().body.position = Vec3::new(8.5, 200.0, 8.5);
+        assert!(server.trade_today(id).is_none(), "trading away from the stall");
+        server.creatures.live.get_mut(&id).unwrap().body.position = Vec3::new(15.5, 200.0, 5.5);
+        // Days on, a trade again (perhaps another of their trades).
+        server.day += TICKS_PER_DAY as f64;
+        let next = server.trade_today(id).cloned().expect("no trade the next day");
+        let p = server.players.get_mut(&1).unwrap();
+        p.inventory = Default::default();
+        p.inventory.add(next.wants.0, next.wants.1);
+        server.trade(1, id);
+        assert_eq!(server.players[&1].inventory.count(next.wants.0), 0, "no trade the next day");
+        // Over the days, more than one of their trades comes up.
+        let kinds: std::collections::BTreeSet<_> = (0..20)
+            .map(|d| {
+                server.day += TICKS_PER_DAY as f64 * d as f64;
+                server.trade_today(id).map(|t| format!("{:?}", t.wants))
+            })
+            .collect();
+        let offered = server.content.creatures.get(server.creatures.live[&id].species).trades.len();
+        assert!(kinds.len() > 1 || offered == 1, "the same trade every day: {kinds:?}");
+    }
+
+    /// A player trades once a day at all the stalls of the world together, and that holds
+    /// through what the town forgets and the player's leaving and coming back: their trade
+    /// day is saved with them. Once traded, a stallholder shows no want for today.
+    #[test]
+    fn one_trade_a_day_holds_across_stalls_forgotten_towns_and_rejoining() {
+        let mut server = fixture("base:villager", 2);
+        let dir = std::env::temp_dir().join(format!("voxmar-trade-day-{}", std::process::id()));
+        let save = crate::save::WorldSave::new(&dir);
+        save.create(&server.meta).unwrap();
+        server.save = Some(save);
+        let join = |server: &mut Server, id: voxmar_protocol::PlayerId| {
+            let (client, connection) = voxmar_protocol::local_pair();
+            let player = crate::player::Player::new(id, connection, Vec3::new(8.0, 200.0, 8.0), 2, server.tick, server.survival.max_health, &server.config.limits);
+            server.players.insert(id, player);
+            server.hello(id, "Ada".into(), voxmar_protocol::PROTOCOL_VERSION, server.content.fingerprint(), None);
+            assert!(server.players[&id].joined);
+            client
+        };
+        let client = join(&mut server, 1);
+        let first = at_their_stall(&mut server);
+        // Holding a stallholder's want for today, a trade goes through if they may trade.
+        let tries = |server: &mut Server, player: voxmar_protocol::PlayerId, keeper: u32| {
+            let trade = server.trade_today(keeper).cloned().expect("no trade at the stall");
+            let p = server.players.get_mut(&player).unwrap();
+            p.inventory = Default::default();
+            p.inventory.add(trade.wants.0, trade.wants.1);
+            p.selected = 0;
+            server.trade(player, keeper);
+            server.players[&player].inventory.count(trade.wants.0) == 0
+        };
+        // What the player is shown inspecting them, from now.
+        let shown = |server: &mut Server| {
+            while let Ok(Some(_)) = client.try_recv() {}
+            server.inspect(1, first);
+            std::iter::from_fn(|| client.try_recv().ok().flatten()).map(|m| format!("{m:?}")).collect::<String>()
+        };
+        let lines = shown(&mut server);
+        assert!(lines.contains("\"inspect.trade\""), "today's want not shown: {lines}");
+        assert!(tries(&mut server, 1, first), "no first trade");
+        let lines = shown(&mut server);
+        assert!(lines.contains("\"inspect.traded\"") && !lines.contains("\"inspect.trade\""), "today's want still shown once traded: {lines}");
+        // Another keeper of a stall: not today either.
+        let second = keeping_a_stall(&mut server, 1, IVec3::new(14, 200, 4));
+        assert!(!tries(&mut server, 1, second), "traded again at another stall");
+        // The town let go of altogether and remembered: not today.
+        let info = server.villagers.towns[&1].info.clone();
+        server.release_town(1);
+        server.villagers.towns.remove(&1);
+        server.villagers.remember_town(info, 12);
+        let first = at_their_stall(&mut server);
+        assert!(!tries(&mut server, 1, first), "forgetting the town let them trade again");
+        // Gone and back (their file read again): not today.
+        server.leave(1);
+        let _client = join(&mut server, 2);
+        assert_eq!(server.players[&2].traded_on, Some(days(server.day) as u64), "the trade day was not saved");
+        assert!(!tries(&mut server, 2, first), "leaving and coming back let them trade again");
+        // The next day, once again.
+        server.day += TICKS_PER_DAY as f64;
+        assert!(tries(&mut server, 2, first), "no trade the next day");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Every stall trade wants something the first two ages teach a player to make (a Craft,
+    /// Cook or Pick goal of a nomad or farm quest names it), and gives nothing any quest asks
+    /// a player to hold or hand over (a Have or Offered goal), so a trade skips no lesson.
+    #[test]
+    fn stall_trades_want_what_the_first_ages_teach_and_skip_no_lesson() {
+        use voxmar_engine::quest::Goal;
+        let server = crate::test_server();
+        let content = &server.content;
+        let blocks = &content.blocks;
+        let named = |name: &str| -> Vec<BlockId> {
+            match name.strip_prefix("tag:") {
+                Some(tag) => blocks.tagged(tag).collect(),
+                None => blocks.id(name).or_else(|| blocks.id(&format!("base:{name}"))).into_iter().collect(),
+            }
+        };
+        let goals = |early: bool| content.quests.iter().filter(move |q| !early || q.age == "nomad" || q.age == "farm").flat_map(|q| q.tasks.iter().flatten());
+        let taught: Vec<BlockId> = goals(true).filter(|g| matches!(g, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::Pick(..))).filter_map(Goal::item).flat_map(named).collect();
+        let asked: Vec<BlockId> = goals(false).filter(|g| matches!(g, Goal::Have(..) | Goal::Offered(..))).filter_map(Goal::item).flat_map(named).collect();
+        let mut trades = 0;
+        for (_, species) in content.creatures.iter() {
+            for trade in &species.trades {
+                trades += 1;
+                let want = &blocks.def(trade.wants.0).name;
+                assert!(taught.contains(&trade.wants.0), "{} wants {want}, which no nomad or farm quest teaches a player to make", species.def.name);
+                for &(item, _) in &trade.gives {
+                    assert!(!asked.contains(&item), "{} gives {} for {want}, which a quest asks a player to hold or hand over", species.def.name, blocks.def(item).name);
+                }
+            }
+        }
+        assert!(trades > 0, "no stall trades to check");
     }
 
     /// A villager a player kills in one blow calls the guards as one wounded does: they

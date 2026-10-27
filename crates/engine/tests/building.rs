@@ -113,6 +113,43 @@ fn a_ridge_ends_and_peaks_in_the_slopes_of_its_sides() {
     }
 }
 
+/// A dry-stone wall for a yard or a pen: courses of cobbles narrowing to a cap, a block
+/// high (a railing: nothing steps over it), running east to west; its corner is the run's
+/// west part and the run turned east's north part, so a corner joins a wall on either side
+/// with no step. Laid without mortar, it shelters a room as a draughty wall, once; it is
+/// made of cobbles and is none (no `cobbled`, so it is no sling's stone).
+#[test]
+fn a_dry_stone_wall_turns_its_corner_in_its_own_courses() {
+    let content = content();
+    let blocks = &content.blocks;
+    let inside = |name: &str, at: glam::Vec3| {
+        let shape = blocks.shape(blocks.expect(name)).unwrap_or_else(|| panic!("{name} has no shape"));
+        shape.bounds.iter().any(|&(min, max)| at.cmpgt(min).all() && at.cmplt(max).all())
+    };
+    let (wall, corner) = ("base:dry_stone_wall", "base:dry_stone_wall_corner");
+    let across = format!("{wall}_east");
+    let mut wrong = Vec::new();
+    for i in 0..32 * 32 * 32 {
+        let at = (glam::Vec3::new((i % 32) as f32, (i / 32 % 32) as f32, (i / 1024) as f32) + 0.5) / 32.0;
+        let want = (inside(wall, at) && at.x < 13.0 / 16.0) || (inside(&across, at) && at.z < 13.0 / 16.0);
+        if inside(corner, at) != want {
+            wrong.push(at);
+        }
+    }
+    assert!(wrong.is_empty(), "{corner} is not {wall}'s west part and its turned run's north part at {} points, first {:?}", wrong.len(), wrong.first());
+    let cobbles = blocks.expect("base:cobblestone");
+    for name in [wall, corner] {
+        let id = blocks.expect(name);
+        let def = blocks.def(id);
+        let shelter: Vec<_> = def.tags.iter().filter(|t| t.starts_with("shelter:")).collect();
+        assert_eq!(shelter, ["shelter:draughty"], "{name} walls a room as a gappy wall does, once");
+        assert!(def.solid && def.has_tag("railing") && !def.has_tag("cobbled"), "{name} is a block-high wall and no cobble");
+        assert!(content.recipes.iter().any(|r| r.output == id), "a player cannot make {name}");
+    }
+    let recipe = content.recipes.iter().find(|r| r.output == blocks.expect(wall)).unwrap();
+    assert!(recipe.cells().iter().flatten().all(|&cell| cell == cobbles), "a dry-stone wall is laid of cobbles");
+}
+
 /// A block set down takes a cell from air, a grass tuft or a flower, but not from water or a
 /// solid block (`BlockInfo::gives_room`, which planting, tilling and the test bot read).
 #[test]
