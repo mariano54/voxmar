@@ -820,7 +820,8 @@ impl ActionDef {
                 let Some(machines) = ctx.machines() else { return Ok(false) };
                 let Some(machine) = ctx.block(block).and_then(|b| machines.get(b)) else { return Ok(false) };
                 match ctx.actor_held() {
-                    None => true,
+                    // A store that is a seat too (a window seat) is sat on with nothing in hand.
+                    None => !(machine.is_store() && ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag(SEAT_TAG))),
                     Some(item) => {
                         let fuel = machine.burns() && machines.burns_in(machine, item).is_some();
                         let input = machine.is_processor() && machines.takes(machine, item);
@@ -834,7 +835,9 @@ impl ActionDef {
                 let (block, _) = block_target()?;
                 let Some(machines) = ctx.machines() else { return Ok(false) };
                 let store = ctx.block(block).and_then(|b| machines.get(b)).is_some_and(|m| m.is_store());
-                store && !ctx.actor_held().is_some_and(|item| ctx.blocks().def(item).has_tag(&machines.rules.machine_tag))
+                // A store that is a seat too (a window seat) is sat on with nothing in hand.
+                let seat = ctx.actor_held().is_none() && ctx.block(block).is_some_and(|b| ctx.blocks().def(b).has_tag(SEAT_TAG));
+                store && !seat && !ctx.actor_held().is_some_and(|item| ctx.blocks().def(item).has_tag(&machines.rules.machine_tag))
             }
             Requirement::Altar => {
                 let (block, _) = block_target()?;

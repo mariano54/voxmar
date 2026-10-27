@@ -271,22 +271,26 @@ fn a_shelf_and_a_sill_show_what_is_put_on_them() {
 /// Whatever counts as a home's storage keeps things: every block tagged `storage` is a store
 /// (a machine of machines.ron), so a family entry that stops fitting a block (an oak stair
 /// cupboard is no `oak_stair` cupboard, `{name}_cupboard` is each wood's own) is caught here,
-/// before a save's cupboard loses what was kept in it. The only others are the pieces whose
-/// model is full already: a bookshelf of books, a pantry shelf of crocks, a pot shelf of
-/// pots, a window seat's box under its cushion.
+/// before a save's cupboard loses what was kept in it. The pieces whose model is full already
+/// keep things too: a window seat nine of anything in its box, a bookshelf six, a pantry
+/// shelf six of food, a pot shelf six pieces of crockery.
 #[test]
 fn every_storage_block_is_a_store() {
     let content = content();
     let blocks = &content.blocks;
-    let full = ["_bookshelf", "_pantry_shelf", "_pot_shelf", "_window_seat"];
     let missed: Vec<&str> = blocks
         .ids()
         .filter(|&id| blocks.def(id).has_tag("storage") && content.machines.get(id).is_none())
         .map(|id| blocks.def(id).name.as_str())
-        .filter(|name| !full.iter().any(|kind| ["", "_east", "_south", "_west"].iter().any(|facing| name.ends_with(&format!("{kind}{facing}")))))
         .collect();
     assert!(missed.is_empty(), "a home's storage, yet no store: {missed:?}");
     assert!(content.machines.get(blocks.expect("base:dark_oak_stair_cupboard_west")).is_some_and(|m| m.is_store() && m.bin_slots() == 9), "a stair cupboard keeps nine");
+    let (bread, plate, stick) = (blocks.expect("base:bread"), blocks.expect("base:earthen_plate"), blocks.expect("base:stick"));
+    for (name, slots, keeps, not) in [("base:oak_window_seat_east", 9, stick, None), ("base:birch_bookshelf", 6, stick, None), ("base:dark_oak_pantry_shelf_south", 6, bread, Some(plate)), ("base:oak_pot_shelf_west", 6, plate, Some(bread))] {
+        let store = content.machines.get(blocks.expect(name)).expect(name);
+        assert!(store.is_store() && store.bin_slots() == slots, "{name} keeps {slots}");
+        assert!(store.bin_takes(keeps) && not.is_none_or(|other| !store.bin_takes(other)), "{name} keeps the wrong things");
+    }
 }
 
 /// The sack of grain a village's farmers and millers keep is one a player can weave and
