@@ -842,7 +842,7 @@ impl Server {
     /// Once a second: a wild creature within `LURED_WITHIN` blocks of a player holding its
     /// favourite food was drawn there by it, and the player's `lured` tally counts it, once
     /// for each creature.
-    fn note_lured(&mut self) {
+    pub(crate) fn note_lured(&mut self) {
         if !self.tick.is_multiple_of(TICKS_PER_SECOND as u64) {
             return;
         }
@@ -852,6 +852,10 @@ impl Server {
                 continue;
             }
             let species = self.content.creatures.get(creature.species);
+            // A settlement's child coming to food held out is no creature lured.
+            if species.def.kind == voxmar_engine::creature::Kind::Villager {
+                continue;
+            }
             let at = creature.body.position;
             let drawn = |p: &&crate::player::Player| p.joined && p.health.alive() && p.position.distance(at) < LURED_WITHIN && p.held().is_some_and(|item| species.favourite.contains(&item));
             if let Some(player) = self.players.values().find(drawn) {
@@ -3677,6 +3681,30 @@ mod way_tests {
                 assert_eq!(came, double, "{name}, double gate {double}: came {came}, at {at:.2}");
                 assert!(double || at.x < 1.0, "{name} got through a gate one wide: at {at:.2}");
             }
+        }
+    }
+
+    /// A pen walled in dry stone with a stile in its wall keeps a grazer in: the stile is a
+    /// railing, so to all but a climber it stands two high, and the steps up it are no way
+    /// over. The same wall with a gap lets it out, so the ring is what holds it.
+    #[test]
+    fn a_stile_in_a_dry_stone_wall_keeps_a_pen_shut() {
+        let grazer = path::Walker { height: 1, climbs: true, step: voxmar_engine::creature::STEP, wary: true, span: 1, drop: motion::SAFE_DROP };
+        for (gap, out) in [(false, false), (true, true)] {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 9);
+            let blocks = server.content.blocks.clone();
+            let (along, across, stile) = (blocks.expect("base:dry_stone_wall"), blocks.expect("base:dry_stone_wall_east"), blocks.expect("base:dry_stone_stile"));
+            for i in -3..=3 {
+                server.world.set_block(c + IVec3::new(i, 0, -3), along);
+                server.world.set_block(c + IVec3::new(i, 0, 3), along);
+                server.world.set_block(c + IVec3::new(-3, 0, i), across);
+                server.world.set_block(c + IVec3::new(3, 0, i), across);
+            }
+            server.world.set_block(c + IVec3::new(0, 0, 3), if gap { BlockId::AIR } else { stile });
+            let ground = Ground::of(&server);
+            let way = path::find(&ground, &grazer, c, c + IVec3::new(0, 0, 7));
+            assert_eq!(way.is_some(), out, "a pen with {}: way out {way:?}", if gap { "a gap" } else { "a stile" });
         }
     }
 

@@ -258,6 +258,9 @@ pub enum Effect {
     /// Trade with the target, one of a settlement's people at their market stall: what the
     /// actor holds for what they give (`Server::trade`).
     Trade,
+    /// Give the target, one of a settlement's people who likes what the actor holds (their
+    /// kind's `diet.favourite`: a child), one of it as a treat (`Server::treat`).
+    Treat,
     /// Let the target creature, one the actor keeps, go wild again (asked twice).
     Release,
     /// Restore the actor's health and return it to spawn.

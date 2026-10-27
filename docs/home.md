@@ -763,6 +763,14 @@ torch a game day, a candle three, an oil lamp five on a fill of fat. A home's li
   The box shows its candles going down. Loading refuses `spare_lights` on a block that is no
   store. Test: `a_candle_box_at_home_keeps_its_candles_lit` (a barrel's candles are only
   kept; the box emptied, the candle burns out).
+- **Kindling by the fire.** A store tagged `relights_lights` (base's kindling box, which
+  keeps only what burns) lights again what burns out at home to something lit again: one
+  of what its `relight_with:` asks (fat for an oil lamp), else one bundle of `kindling` (a
+  torch), taken out, and the light burns on afresh in its facing (a guttering torch whole).
+  A spare in a candle box is set out first. Loading refuses `relights_lights` on a block
+  that is no store, or with nothing tagged `kindling`. Test:
+  `a_kindling_box_at_home_keeps_its_torches_and_lamps_lit` (the lard is kept for the lamp,
+  never spent on the torch; the box emptied, the torch goes out).
 - **Picked up burning** a light keeps what it has burnt as its item's wear (`WEAR_PER_DAY`,
   1200 a game day), shown as a wear bar and in its tooltip, and set down again burns on from
   there: carrying a light never refreshes it. A lamp picked up lit keeps its fat.

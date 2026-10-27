@@ -367,6 +367,8 @@
         "base:release": (silent: true),
         // The stallholder answers a trade with a contented hum (their bark).
         "base:trade": (silent: true),
+        // A child given a treat answers with a contented hum (their bark).
+        "base:treat": (silent: true),
         "core:respawn": (silent: true),
     },
     // What the interface sounds like, by what happens in it: the player's chosen set's
