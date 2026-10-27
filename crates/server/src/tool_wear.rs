@@ -107,6 +107,27 @@ impl Server {
         }
     }
 
+    /// Tells `agent`, breaking the block at `pos` with `held`, that a tool they carry breaks
+    /// it much faster (`tools.ron`'s `faster_carried`): a stone pickaxe in the pack while
+    /// cobblestone is broken by hand. Once a kind of tool each time they join, so it teaches
+    /// without nagging.
+    pub(crate) fn tell_faster_carried(&mut self, agent: PlayerId, pos: voxmar_engine::glam::IVec3, held: Option<voxmar_engine::block::BlockId>) {
+        let Some(block) = self.block(pos) else { return };
+        let (tools, blocks) = (&self.content.tools, &self.content.blocks);
+        let Some(player) = self.players.get_mut(&agent) else { return };
+        let carried = player.inventory.slots.iter().flatten().map(|s| s.item);
+        let Some((faster, times)) = tools.faster_carried(held, block, blocks.info(block).hardness, carried) else { return };
+        let Some(kind) = tools.tool(Some(faster)).kind else { return };
+        if player.told_faster.contains(&kind) {
+            return;
+        }
+        player.told_faster.push(kind);
+        let named = |b: voxmar_engine::block::BlockId| voxmar_engine::lang::Words::Block(blocks.def(b).name.clone());
+        let times = format!("{}", (times * 10.0).floor() / 10.0);
+        let text = voxmar_engine::lang::Words::key("tool.faster_carried").with("tool", named(faster)).with("block", named(block)).with("times", times);
+        player.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text });
+    }
+
     /// Uses breaking or tilling the block at `pos` takes from the tool it was done with:
     /// `tool` is the hotbar slot in hand, what was in it and how worn (`Timed::tool`). One
     /// switched to since is not worn. Moved out of that slot since, the wear goes to the
@@ -357,6 +378,54 @@ mod tests {
                 assert_eq!(key, "tool.broke");
             }
         }
+    }
+
+    /// Breaking cobblestone by hand with a stone pickaxe in the pack tells the player it
+    /// breaks it so many times as fast, once a kind of tool: the next break says nothing.
+    /// With that pickaxe in hand, or a tool no faster by the share, nothing is said.
+    #[test]
+    fn a_faster_tool_carried_is_told_of_once() {
+        use voxmar_engine::lang::Words;
+        let said = |client: &ClientConnection| {
+            std::iter::from_fn(|| client.try_recv().ok().flatten())
+                .filter_map(|m| match m {
+                    ServerMessage::Chat { text: Words::Key(key, args), .. } if key == "tool.faster_carried" => Some(args),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let mine = |server: &mut Server| {
+            let pos = put(server, "base:cobblestone");
+            let target = voxmar_engine::action::ActionTarget::Block { block: pos, face: voxmar_engine::coords::Face::PosY };
+            let at = std::time::Instant::now();
+            server.propose(1, server.content.actions.expect("core:mine"), target, at);
+            // Long enough for any break by hand.
+            server.complete_actions(at + std::time::Duration::from_secs(30));
+            assert_eq!(server.block(pos), Some(voxmar_engine::block::BlockId::AIR), "broken");
+        };
+        let (mut server, client) = holding("base:stone_pickaxe", 0);
+        let pick = server.content.blocks.expect("base:stone_pickaxe");
+        server.players.get_mut(&1).unwrap().selected = 1;
+        mine(&mut server);
+        let told = said(&client);
+        let [args] = &told[..] else { panic!("told {told:?}") };
+        let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+        let tools = &server.content.tools;
+        let (stone, hardness) = (server.content.blocks.expect("base:cobblestone"), server.content.blocks.info(server.content.blocks.expect("base:cobblestone")).hardness);
+        let times = tools.break_seconds(None, stone, hardness) / tools.break_seconds(Some(pick), stone, hardness);
+        assert_eq!((arg("tool"), arg("block")), (Some(Words::Block("base:stone_pickaxe".into())), Some(Words::Block("base:cobblestone".into()))));
+        assert_eq!(arg("times"), Some(Words::Text(format!("{}", (times * 10.0).floor() / 10.0))));
+        mine(&mut server);
+        assert!(said(&client).is_empty(), "once a kind of tool");
+
+        // In hand, nothing; nor a stone pickaxe carried over a flint one held.
+        let (mut server, client) = holding("base:stone_pickaxe", 0);
+        mine(&mut server);
+        let flint = server.content.blocks.expect("base:flint_pickaxe");
+        server.players.get_mut(&1).unwrap().inventory.slots[1] = Some(ItemStack::new(flint, 1));
+        server.players.get_mut(&1).unwrap().selected = 1;
+        mine(&mut server);
+        assert!(said(&client).is_empty());
     }
 
     /// Nearly worn out, a tool says in words how it is mended, by what and where, as its
