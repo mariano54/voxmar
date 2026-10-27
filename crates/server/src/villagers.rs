@@ -1265,6 +1265,13 @@ impl Server {
                 trip.pose = if place == Place::Sleep { Pose::Resting } else { Pose::Idle };
                 if place == Place::Home {
                     stay(trip, 1);
+                    if unit_from(mix(seed, 0x5ea7)) < people.sit
+                        && let Some((seat, face)) = self.own_seat(t, i)
+                    {
+                        trip.pose = Pose::Resting;
+                        trip.face = Some(face);
+                        return Some(seat);
+                    }
                 }
                 self.spot_inside(resident.home, t, seed)
             }
@@ -1351,12 +1358,37 @@ impl Server {
     }
 
     /// A cell a body can stand in inside building `b`, by `seed`.
+    /// Where person `i` sits at home: the seat of their own (`Building::seats`, one for each
+    /// of the home's people in the order they live there), if it is there to sit on, and
+    /// where they look, at the table beside it (or the room's middle with none).
+    fn own_seat(&self, town: &Town, i: usize) -> Option<(IVec3, Vec3)> {
+        let home = town.info.people[i].home;
+        let b = &town.info.buildings[home];
+        let k = town.info.people[..i].iter().filter(|p| p.home == home).count();
+        let seat = *b.seats.get(k)?;
+        let block = self.block(seat)?;
+        let info = self.content.blocks.info(block);
+        let feet = voxmar_engine::vitals::seated_feet(seat, info.solid).floor().as_ivec3();
+        if !self.content.blocks.def(block).has_tag("seat") || !self.stands(feet) {
+            return None;
+        }
+        let table = [IVec3::X, IVec3::NEG_X, IVec3::Z, IVec3::NEG_Z].into_iter().map(|d| seat + d).find(|&c| self.block(c).is_some_and(|t| self.content.blocks.def(t).has_tag("table")));
+        let middle = || {
+            let (lo, hi) = b.room.iter().fold((IVec2::MAX, IVec2::MIN), |(lo, hi), &c| (lo.min(c), hi.max(c)));
+            IVec3::new((lo.x + hi.x) / 2, seat.y, (lo.y + hi.y) / 2)
+        };
+        let at = table.unwrap_or_else(middle);
+        Some((feet, at.as_vec3() + Vec3::new(0.5, 1.0, 0.5)))
+    }
+
     fn spot_inside(&self, b: usize, town: &Town, seed: u64) -> Option<IVec3> {
         let b = &town.info.buildings[b];
         let cells: Vec<IVec3> = b.room.iter()
             // Building::floor is the solid floor block; feet stand one above it.
             .map(|p| IVec3::new(p.x, b.floor + 1, p.y))
-            .filter(|&c| self.stands(c))
+            // Not in a chair or on a stool: one stands about the room, and sits only on a
+            // seat of their own (`own_seat`).
+            .filter(|&c| self.stands(c) && !b.seats.contains(&c) && !b.seats.contains(&(c - IVec3::Y)))
             .collect();
         if cells.is_empty() {
             return None;
@@ -1885,6 +1917,51 @@ mod tests {
         while let Ok(Some(_)) = client.try_recv() {}
         server.drop_loot(1, &[other], &[]);
         assert!(!std::iter::from_fn(|| client.try_recv().ok().flatten()).any(|m| format!("{m:?}").contains("\"villager.scold\"")), "scolded for another's barrel");
+    }
+
+    /// About the house, some stays (`people.sit` of them) are spent sitting at the table:
+    /// each of a home's people on a seat of their own (in the order they live there), turned
+    /// to the table, resting; the rest about the room as before. A home with no seat for
+    /// them keeps them on their feet.
+    #[test]
+    fn at_home_they_sit_at_their_own_seats_by_the_table() {
+        let mut server = fixture("base:villager", 3);
+        let sit = server.overworld.settlement_people().sit;
+        assert!(sit > 0.0 && sit < 1.0, "no share of stays at home spent sitting: {sit}");
+        let stool = server.content.blocks.expect("base:oak_stool");
+        let table = server.content.blocks.expect("base:oak_table");
+        // Two seats either side of a table: the third person has none.
+        let seats = [IVec3::new(7, 200, 8), IVec3::new(9, 200, 8)];
+        seats.iter().for_each(|&s| server.set_block(s, stool));
+        server.set_block(IVec3::new(8, 200, 8), table);
+        server.villagers.towns.get_mut(&1).unwrap().info.buildings[0].seats = seats.to_vec();
+        let live = server.live();
+        for i in 0..3 {
+            let mut sat = 0;
+            for pick in 0..200u64 {
+                let mut trip = Trip { place: Place::Home, slot: 0, day: 0, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, 0), retry: 0, pursuit: None };
+                let Some(spot) = server.target(1, i, mix(100 + i as u64, pick), &mut trip, &live) else { panic!("nowhere at home") };
+                if trip.pose == Pose::Resting {
+                    sat += 1;
+                    assert!(i < 2, "person {i} sat with no seat of their own");
+                    assert_eq!(spot, seats[i], "person {i} sat on another's seat");
+                    let face = trip.face.expect("not turned to the table");
+                    assert!((face.x - 8.5).abs() < 0.01 && (face.z - 8.5).abs() < 0.01, "person {i} not turned to the table: {face}");
+                } else {
+                    assert!(!seats.contains(&spot), "person {i} stood on a seat: {spot}");
+                }
+            }
+            if i < 2 {
+                let share = sat as f32 / 200.0;
+                assert!((share - sit).abs() < 0.15, "person {i} sat {share} of stays, not about {sit}");
+            }
+        }
+        // Bedtime never sends them to their seat.
+        for pick in 0..50u64 {
+            let mut trip = Trip { place: Place::Sleep, slot: 0, day: 0, path: Vec::new(), step: 0, pose: Pose::Idle, face: None, next_spot: None, leg: 0, best: (f32::MAX, 0), retry: 0, pursuit: None };
+            let spot = server.target(1, 0, mix(100, pick), &mut trip, &live);
+            assert!(spot.is_none_or(|s| !seats.contains(&s)), "went to sleep on a seat");
+        }
     }
 
     /// The wait to greet again is each player's own; and one struck stops greeting the
