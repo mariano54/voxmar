@@ -23,9 +23,10 @@
         // The Farm age: fired clay, copper and tin, and the Crucible Kiln that opens bronze.
         (
             name: "the_potter", age: "farm", branch: "main", title: "The Potter",
-            why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2).",
+            why: "Pots hold stews, and the pot is the heart of the kiln you are working toward. Shape six clay pots from fired clay at the crafting table: five fired clay in a cup shape make two (Crafting 2). While the clay fires, fell trees for the clamp's fuel (Fuel to Hand).",
             tasks: [[Craft("clay_pot", 6)]],
             after: ["the_farm_age", "fire_the_clay"],
+            meanwhile: ["fuel_to_hand"],
             rewards: [Xp("crafting", 305.0), Item("firewood", 4)],
         ),
         (
