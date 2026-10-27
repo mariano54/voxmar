@@ -136,7 +136,7 @@ one active at any hour, `quiet` 1..6, `wakes` 4..24 and above `quiet`), out of i
 with nothing on its mind, it lies down and notices only a friend, someone who hurt it, a player
 within `quiet` blocks, or a loud one (moving faster than a walk) within `wakes`. A player who
 creeps up can pass a sleeping bear or pick a sleeping deer; one who sprints past wakes it with a
-start: a fighter wakes angry at them, prey bolts. Its food held within `wakes` wakes it calmly, so a
+start: a fighter wakes angry at them, prey bolts. Its food held within `wakes` (or its hearing, if that is less, as awake) wakes it calmly, so a
 lure still works on a sleeper. A held creature drops any blow it was winding
 up, so a hold means it stands still.
 
@@ -261,6 +261,19 @@ up, so a hold means it stands still.
   `a_hurt_rabbit_limps` (at a third of its health, from the same seed and spot, it covers
   0.63 of an unhurt one's ground in its sprint, the data saying 0.67; 1.00 without the
   limp).
+
+## Young
+
+A kind that guards its young (`guards: (near, young, huff)` in its data, checked at load: for
+an animal that fights back, `near` 2 to 12 blocks, `young` a chance above 0 up to 0.6, `huff`
+0.3 to 2 seconds) comes now and then, by `young`, as a mother with her young: the first of the
+group grown, the rest young, never young alone. A grown, wild one that notices a player (by the
+one sight rule, "Senses", so not one out of her view or while she sleeps) within `near` blocks
+of a young one of its kind about, though further from her, huffs at them for `huff` seconds,
+facing them in her warning stance; still there after it, she goes for them. Backed off, they
+are let be. One who strikes a young one she goes for at once, from anywhere about. A player who
+gives the young room gets her usual warning if they come near her instead. A kept one guards
+nothing. A wild boar guards within 6 blocks and huffs 1 second, a brown bear 8 and 1.2.
 
 ## Roaming
 

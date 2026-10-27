@@ -831,6 +831,7 @@ impl Server {
                     in_view: d < senses.sight && self.in_view(body, senses.field, p.eye()),
                     fire: p.held().is_some_and(|item| self.content.blocks.def(item).has_tag(creature::HELD_FIRE)),
                     warded: false,
+                    by_young: false,
                     loud: self.creatures.paces.get(&p.id).is_some_and(|&(_, _, pace)| pace > self.content.movement.walk_speed * LOUD_OVER_WALK),
                 }
             })
@@ -941,6 +942,11 @@ impl Server {
                 if warded {
                     players.iter_mut().for_each(|p| p.warded = self.creatures.ward_at(p.position).is_some());
                 }
+                // A grown, wild one that guards its young: who is too near one.
+                if let Some(guards) = species.def.guards.filter(|_| creature.owner.is_none() && creature.grows_up.is_none()) {
+                    let young = self.young_kin_of(id, &neighbours);
+                    players.iter_mut().for_each(|p| p.by_young = young.iter().any(|y| y.distance(p.position) < guards.near));
+                }
                 let mate = self.mate_for(id, &neighbours);
                 let kin = self.kin_of(id, &neighbours);
                 // What it grazes, else, kept and hungry, a trough of its food by home.
@@ -1035,6 +1041,34 @@ impl Server {
             .filter(|c| c.species == species && c.body.position.distance(at) < KIN_RANGE)
             .map(|c| c.body.position)
             .collect()
+    }
+
+    /// Where creature `id`'s young kin are: wild young of its kind within `KIN_RANGE` (a
+    /// keeper's young are none of a wild mother's).
+    fn young_kin_of(&self, id: u32, neighbours: &Neighbours) -> Vec<Vec3> {
+        let Some(creature) = self.creatures.live.get(&id) else { return Vec::new() };
+        let (species, at) = (creature.species, creature.body.position);
+        neighbours
+            .kind_around(at, species, id)
+            .filter_map(|other| self.creatures.live.get(&other))
+            .filter(|c| c.species == species && c.grows_up.is_some() && c.owner.is_none() && c.body.position.distance(at) < KIN_RANGE)
+            .map(|c| c.body.position)
+            .collect()
+    }
+
+    /// `player` struck young creature `id`: the grown, wild ones of its kind about that
+    /// guard their young (`creature::Guards`) go for them.
+    fn rouse_guardians(&mut self, id: u32, player: PlayerId) {
+        let Some(young) = self.creatures.live.get(&id).filter(|c| c.grows_up.is_some() && c.owner.is_none()) else { return };
+        let (species, at) = (young.species, young.body.position);
+        if self.content.creatures.get(species).def.guards.is_none() {
+            return;
+        }
+        for c in self.creatures.live.values_mut() {
+            if c.species == species && c.grows_up.is_none() && c.owner.is_none() && c.body.position.distance(at) < KIN_RANGE {
+                c.mind.provoked(player);
+            }
+        }
     }
 
     /// Creatures that touch push each other apart, as Minecraft's mobs do: they may brush
@@ -1595,6 +1629,7 @@ impl Server {
             let creature = self.creatures.live.get_mut(&id).expect("checked above");
             if !calm {
                 creature.mind.hurt_young(species, Some(player), creature.health as f32 / species.def.health as f32, creature.grows_up.is_some());
+                self.rouse_guardians(id, player);
             }
             self.struck(player, id, 0, false, stroke.blow);
             return Some(0);
@@ -1645,6 +1680,9 @@ impl Server {
                 }
             }
             target.changed(traits::SKILLS);
+        }
+        if !calm {
+            self.rouse_guardians(id, player);
         }
         let killed = self.creatures.live[&id].health == 0;
         if !killed {
@@ -2032,8 +2070,17 @@ impl Server {
             let (monster, of) = (def.kind == Kind::Monster, budget(def).expect("not a villager"));
             let (here, cap) = room_of(of);
             let room = cap.saturating_sub(here);
+            // A kind that guards its young (`creature::Guards`) comes now and then with them:
+            // all but the first are young, at least one.
+            let litter = def.guards.is_some_and(|g| unit_from(mix(seed, 5)) < g.young);
+            let count = if litter { count.max(2) } else { count };
             let count = count.min(room.max(1).min(self.wild_room()).min(u8::MAX as usize) as u8);
+            let mut mother = false;
             for i in 0..count.max(1) {
+                // No young left about with no one of theirs grown.
+                if litter && i > 0 && !mother {
+                    break;
+                }
                 let offset = if i == 0 { IVec3::ZERO } else { IVec3::new((mix(seed, 10 + i as u64) % 7) as i32 - 3, 0, (mix(seed, 20 + i as u64) % 7) as i32 - 3) };
                 let Some(cell) = self.standing_spot(spot.x + offset.x, spot.z + offset.z, spot.y) else { continue };
                 if (monster && self.lit_near(cell)) || self.seen_by_a_player(cell, limits.spawn_unseen_angle) {
@@ -2043,7 +2090,12 @@ impl Server {
                 if !self.nearby_room(position, of, cap) {
                     continue;
                 }
-                self.spawn_unseen(species, position, seed ^ i as u64, limits.spawn_unseen_angle);
+                if let Some(id) = self.spawn_unseen(species, position, seed ^ i as u64, limits.spawn_unseen_angle) {
+                    if litter && i > 0 {
+                        self.make_young(id);
+                    }
+                    mother |= i == 0;
+                }
             }
         }
     }
@@ -2993,6 +3045,39 @@ mod density_tests {
             draws.push(draw);
         }
         assert_eq!(draws[0], draws[1], "the same loaded world, count of rolls and players must draw the same creatures");
+    }
+
+    /// A kind that guards its young (`creature::Guards`) comes now and then with them, and
+    /// young never come about with no one grown of their kind by them.
+    #[test]
+    fn wild_young_come_with_their_mother() {
+        let mut server = crate::test_server();
+        let spot = find_biome(&server, "forest").expect("forest");
+        let height = server.overworld.site(spot.0, spot.1).height;
+        let at = Vec3::new(spot.0 as f32 + 0.5, height as f32 + 1.0, spot.1 as f32 + 0.5);
+        let (client, connection) = voxmar_protocol::local_pair();
+        let _keep = client;
+        let mut player = crate::player::Player::new(1, connection, at, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let cell = at.floor().as_ivec3();
+        server.load_area(cell - IVec3::new(80, 0, 80), cell + IVec3::new(80, 0, 80));
+        server.day = (LATER + 6_000) as f64;
+        let mut litters = 0;
+        for salt in 0..600u64 {
+            server.creatures.live.clear();
+            server.tick = 40 + salt * 7;
+            server.spawn_near(1, salt);
+            let live = &server.creatures.live;
+            let young: Vec<_> = live.values().filter(|c| c.grows_up.is_some()).collect();
+            for y in &young {
+                assert!(server.content.creatures.get(y.species).def.guards.is_some(), "young of a kind that guards none (salt {salt})");
+                let mother = live.values().any(|c| c.species == y.species && c.grows_up.is_none() && c.body.position.distance(y.body.position) < KIN_RANGE);
+                assert!(mother, "young with no one grown of its kind by it (salt {salt})");
+            }
+            litters += usize::from(!young.is_empty());
+        }
+        assert!(litters > 0, "no litter in 600 tries in a forest");
     }
 
     /// Where a creature comes near a player, and what it is like, is drawn by the world's
@@ -6298,6 +6383,60 @@ mod fight_tests {
             let (was, now) = (from.distance(stand), live.body.position.distance(stand));
             assert!(now < was - 1.0, "{name} never came for its food: from {was:.2} to {now:.2} blocks off");
         }
+    }
+
+    /// A wild sow with a piglet (`creature::Guards`): a player who gives the piglet room is
+    /// let be; one who steps within her `guards.near` of it she goes for, with no warning;
+    /// and one who strikes it she goes for from anywhere about. Kept, she guards nothing.
+    #[test]
+    fn a_sow_goes_for_one_too_near_her_piglet() {
+        let scene = |kept: bool| {
+            let mut server = crate::test_server();
+            let c = pen(&mut server, 14);
+            let sow = put(&mut server, "base:wild_boar", c.as_vec3() + Vec3::new(-6.5, 0.0, 0.5), Vec3::X);
+            let piglet = put(&mut server, "base:wild_boar", c.as_vec3() + Vec3::new(-3.5, 0.0, 0.5), Vec3::X);
+            server.make_young(piglet);
+            if kept {
+                server.creatures.live.get_mut(&sow).unwrap().owner = Some("someone".into());
+            }
+            let near = server.content.creatures.get(server.creatures.live[&sow].species).def.guards.expect("a boar guards its young").near;
+            let player = join(&mut server, c.as_vec3() + Vec3::new(-3.5 + near + 4.0, 0.0, 0.5));
+            (server, sow, piglet, player, near)
+        };
+        let run = |server: &mut Server, seconds: u64| {
+            for _ in 0..seconds * TICKS_PER_SECOND as u64 {
+                server.tick += 1;
+                server.think_and_move();
+                server.tick_fights();
+            }
+        };
+        // Giving the piglet room: let be.
+        let (mut server, sow, piglet, player, near) = scene(false);
+        run(&mut server, 4);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "one giving the piglet room");
+        // A step within her near of it: she goes for them, though they are further from her.
+        let piglet_at = server.creatures.live[&piglet].body.position;
+        server.players.get_mut(&player).unwrap().position = piglet_at + Vec3::X * (near - 1.5);
+        run(&mut server, 2);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), Some(player), "one too near her piglet");
+        // A blow on the piglet from where the sow let them be: she goes for them at once.
+        let (mut server, sow, piglet, player, _) = scene(false);
+        server.hurt_creature(player, piglet, 0, None, voxmar_engine::combat::Blow::Plain);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), Some(player), "one who struck her piglet");
+        // Kept, she lets a player near the piglet be, struck or not.
+        let (mut server, sow, piglet, player, near) = scene(true);
+        server.players.get_mut(&player).unwrap().position = server.creatures.live[&piglet].body.position + Vec3::X * (near - 1.5);
+        server.hurt_creature(player, piglet, 0, None, voxmar_engine::combat::Blow::Plain);
+        run(&mut server, 2);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "a kept sow");
+        // A keeper's piglet is none of a wild sow's: a player beside it, or striking it, she lets be.
+        let (mut server, sow, piglet, player, near) = scene(false);
+        server.creatures.live.get_mut(&piglet).unwrap().owner = Some("someone".into());
+        server.players.get_mut(&player).unwrap().position = server.creatures.live[&piglet].body.position + Vec3::X * (near - 1.5);
+        run(&mut server, 3);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "a wild sow, one by a kept piglet");
+        server.hurt_creature(player, piglet, 0, None, voxmar_engine::combat::Blow::Plain);
+        assert_eq!(server.creatures.live[&sow].mind.attacker(), None, "a wild sow, one who struck a kept piglet");
     }
 
     /// A badger warns only one it sees: behind a wall three high and thirteen long it lets
