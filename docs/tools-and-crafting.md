@@ -9,7 +9,12 @@ grow faster. Everything is content a mod adds the same way.
 A tool is an item (`base/blocks_tools.ron`) tagged `tool`, its kind (`pickaxe`, `axe`,
 `shovel`, `hoe`, `knife`, `shears`), a `tier:N`, a `speed:X` and maybe a `yield:Y`. Five
 kinds come in four tiers: flint (1), stone (2), copper (3) and iron (4), speed 2, 4, 7
-and 14, yield 0 to 0.15. The tooltip says it ("Works 7× as fast as a bare hand"). Tier 1
+and 14, yield 0 to 0.15. The tooltip says it ("Works 7× as fast as a bare hand"), and
+what it breaks that a lesser one of its kind cannot, one block per `tools.ron` rule asking
+for a tier above the next lower tool's and up to its own (a rule at a tier no tool has shows
+on the first past it), nearest level first ("Breaks what a lesser one cannot: Coal Ore,
+Copper Ore, Tin Ore and 3 more" on a stone pickaxe; `ToolRegistry::opens`, found at load).
+A second tool at a tier (bronze beside copper) says nothing there. Tier 1
 has a flint pickaxe, axe and knife and a digging stick (a shovel), but no hoe: tilling waits for a stone edge. There are no wooden tools (Oct 15:
 a plank's edge cuts nothing); an older save's come back as the flint tool, the digging
 stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`).

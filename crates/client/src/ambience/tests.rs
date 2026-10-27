@@ -1027,6 +1027,32 @@ fn a_nightjar_churrs_on_warm_open_nights_and_the_ice_sings() {
     assert_eq!(played("ice_sing", &frozen, &[("snowpack", 1.0), ("sun", -0.6), ("temperature", -12.0)]), 0, "snow but no ice");
 }
 
+/// Indoors in the rain, it taps at the window: from a window near (glass, oiled hide, a
+/// lattice, open shutters), never with the shutters shut, nor out in it, nor once it stops.
+#[test]
+fn the_rain_taps_at_the_window() {
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let groups = ambience.block_groups(blocks);
+    let window = ambience.groups.iter().position(|g| g.name == "window").expect("a group of windows");
+    let group_of = |name: &str| groups[blocks.id(name).unwrap_or_else(|| panic!("{name}")).0 as usize].map(|g| g as usize);
+    for pane in ["base:glass", "base:hide_window", "base:oak_lattice_window", "base:oak_shuttered_window"] {
+        assert_eq!(group_of(pane), Some(window), "{pane}");
+    }
+    assert_ne!(group_of("base:oak_shuttered_window_shut"), Some(window), "shutters shut");
+    let sound = ambience.sounds.iter().position(|s| s.name == "base:window_rain").expect("rain at the window");
+    assert_eq!(ambience.sounds[sound].at, super::defs::Placement::Block(window), "from the window");
+    let played = |set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "farm", &["plains", "temperate"], set), 300.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound)).count()
+    };
+    assert!(played(&[("window", 1.0), ("shelter", 1.0), ("raining", 0.6)]) > 0, "rain at the window");
+    assert_eq!(played(&[("window", 1.0), ("shelter", 1.0)]), 0, "dry");
+    assert_eq!(played(&[("window", 1.0), ("raining", 0.6)]), 0, "out in it");
+    assert_eq!(played(&[("shelter", 1.0), ("raining", 0.6)]), 0, "no window near");
+}
+
 /// A kiln or a fire gone out ticks as it cools, the kiln longer by its group's seconds,
 /// and never while it burns or once cold; the client remembers when each went out.
 #[test]

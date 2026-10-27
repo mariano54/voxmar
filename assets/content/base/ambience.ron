@@ -114,6 +114,9 @@
         (name: "lava", tags: ["lava"], range: (4, 80)),
         // A pot on the boil (`simmering`): one within five blocks is full.
         (name: "pot", tags: ["simmering"], range: (2, 10)),
+        // A window in the wall (`window`: glass, oiled hide, a lattice, shutters open); shut
+        // shutters are none. A window or two near counts fully.
+        (name: "window", tags: ["window"], range: (0, 2)),
         (name: "falls", materials: [Water], falling: true, range: (6, 90)),
         (name: "water", materials: [Water], range: (20, 300)),
         // Bees at a skep or a wild nest (`bees`): one close by is heard fully.
@@ -504,6 +507,13 @@
             name: "rafters", sound: Creak, volume: 0.16, at: Block("timber"), per_minute: 0.8, cooldown: 25,
             pitch: (0.55, 0.8), reach: 8,
             when: {"shelter": (min: 0.6, fade: 0.3), "timber": (min: 0.35, fade: 0.3), "sun": (max: 0.0, fade: 0.15)},
+        ),
+        // Indoors in the rain: drops tapping at the window, from the window, a little busier
+        // the harder it rains. Shut the shutters and it stops.
+        (
+            name: "window_rain", sound: Drip, volume: 0.14, at: Block("window"), per_minute: 14, cooldown: 0.8,
+            pitch: (1.6, 2.1), reach: 5,
+            when: {"window": (min: 0.3, fade: 0.25), "shelter": (min: 0.6, fade: 0.3), "raining": (min: 0.25, fade: 0.2)},
         ),
         // After the rain, under a roof: the last of it running off the eaves, a drop now
         // and then on the sill or the step, thinning as the ground dries.
