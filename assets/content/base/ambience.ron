@@ -103,6 +103,9 @@
         // A kiln or a hearth just gone out (the server no longer says it burns): its bricks
         // or stones ticking as they cool, the kiln's for two minutes, a hearth's for one. They
         // select no blocks of their own: the cores of the lit group named, cooling.
+        // A small flame burning down (`tended`: a candle, an oil lamp, a rushlight, a torch),
+        // a lit room's light; spent, it has no tag and no sound. Fully within two blocks.
+        (name: "flame", tags: ["tended"], range: (0, 2)),
         (name: "kiln_cooling", cools: ("kiln", 120), range: (1, 4)),
         (name: "fire_cooling", cools: ("fire", 60), range: (1, 4)),
         // Lava and falling water sound like water to the step, so they come first.
@@ -561,6 +564,13 @@
             name: "fire_snap", sound: Snap, volume: 0.3, at: Block("fire"), per_minute: 6, cooldown: 3,
             pitch: (0.85, 1.2), reach: 5,
             when: {"fire": (min: 0.25, fade: 0.2)},
+        ),
+        // A small flame's wick spitting now and then, faint and close: a candle on the table,
+        // the lamp by the bed, a torch on the wall.
+        (
+            name: "wick_spit", sound: Snap, volume: 0.12, at: Block("flame"), per_minute: 3, cooldown: 6,
+            pitch: (1.5, 1.9), reach: 3,
+            when: {"flame": (min: 0.3, fade: 0.25)},
         ),
         // Rain falling into a fire with the sky over it: drops hissing on the embers, from
         // that fire, wherever the player stands; a hearth under its roof never.
