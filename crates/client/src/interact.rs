@@ -338,8 +338,8 @@ fn break_and_place(
                 if progress >= 1.0 {
                     // The server commits at the same moment by the time the proposal reached
                     // it; predict it, tell the server it shows done here (it completes or
-                    // undoes it, whatever comes next), and wait Minecraft's five ticks.
-                    target.mine_cooldown = 0.25;
+                    // undoes it, whatever comes next), and wait (`tools.ron`'s `break_wait`).
+                    target.mine_cooldown = launch.content.tools.break_wait();
                     net.finished(target.mining.take().unwrap_or(action_target));
                     predict_break(&mut world, &player, &launch.content, hit.block, &mut broken);
                     target.breaking = None;
@@ -375,7 +375,7 @@ fn break_and_place(
                 // whose word would otherwise arrive before a predicted break.
                 if target.mining_seconds <= 0.0 {
                     predict_break(&mut world, &player, &launch.content, hit.block, &mut broken);
-                    target.mine_cooldown = 0.25;
+                    target.mine_cooldown = launch.content.tools.break_wait();
                 } else {
                     target.breaking = Some((hit.block, 0.0));
                 }

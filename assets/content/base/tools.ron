@@ -26,7 +26,13 @@
 // `spare`, a tool that breaks in the hand brings up a spare of its kind from the pack (its
 // like first, else the one with most uses left; a weapon, only its like), so the spare axe
 // An Axe to It asks for is in hand when the first one goes.
+//
+// `break_wait`: seconds the hand waits after each block it breaks before it starts on the
+// next (Minecraft's five ticks). On soft blocks it is most of a break, so past a stone
+// shovel a faster one is felt less there than in its uses (engine's
+// `every_tool_tier_is_felt` works out which steps it leaves room for).
 (
+    break_wait: 0.25,
     wear: (suited: 1, unsuited: 2, hit: 1, till: 1, save_per_level: 0.005, weapon_skill: "core:attack", warn: 0.1, warn_uses: 10, mend: 0.5, mend_near: "chopping_block", spare: true),
     kinds: [
         (name: "pickaxe", mines: ["stone", "ore", "cobbled", "bricks", "crystal", "ice"], skill: "core:mining"),

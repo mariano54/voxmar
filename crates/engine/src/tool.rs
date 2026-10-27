@@ -102,7 +102,7 @@ impl Default for Wear {
 pub enum Worn {
     /// Worn a little, or not at all.
     Fine,
-    /// Worn down past the share where it warns (`Wear::warn`), this use.
+    /// Worn down past the uses left where it warns (`Wear::warn_at`), this use.
     Warned,
     /// Worn out: it broke.
     Broke,
@@ -176,6 +176,10 @@ pub struct ToolFile {
     pub blocks: Vec<RuleDef>,
     #[serde(default)]
     pub wear: Option<WearDef>,
+    /// Seconds the hand waits after each block it breaks before it starts on the next
+    /// (Minecraft's five ticks); the last package to give one decides, none for none.
+    #[serde(default)]
+    pub break_wait: Option<f32>,
 }
 
 /// What breaking a block takes and teaches.
@@ -224,6 +228,8 @@ pub struct ToolRegistry {
     /// Each block id: the kinds made for it.
     suited: Vec<Vec<usize>>,
     wear: Wear,
+    /// Seconds the hand waits after a break (`ToolFile::break_wait`).
+    break_wait: f32,
     /// Each kind's skill that saves its wear.
     savers: Vec<Option<SkillId>>,
     /// Each item: what is left of it when it breaks, what mends it, and the tag of the
@@ -259,11 +265,16 @@ impl ToolRegistry {
     }
 
     pub fn new(files: Vec<ToolFile>, blocks: &BlockRegistry, skills: &SkillRegistry) -> Result<Self, RegistryError> {
-        let (mut kinds, mut defs, mut wear_def) = (Vec::new(), Vec::new(), None);
+        let (mut kinds, mut defs, mut wear_def, mut break_wait) = (Vec::new(), Vec::new(), None, None);
         for file in files {
             kinds.extend(file.kinds);
             defs.extend(file.blocks);
             wear_def = file.wear.or(wear_def);
+            break_wait = file.break_wait.or(break_wait);
+        }
+        let break_wait = break_wait.unwrap_or(0.0);
+        if !(0.0..=2.0).contains(&break_wait) {
+            return Err(RegistryError(format!("tools.ron: `break_wait` {break_wait} is not from 0 to 2 seconds")));
         }
         let skill_named = |name: &str| skills.id(name).ok_or_else(|| RegistryError(format!("tools.ron: no skill `{name}`")));
         let wear = match wear_def {
@@ -408,12 +419,17 @@ impl ToolRegistry {
             covered.push(rules.iter().position(|rule| rule.tags.iter().all(has)));
             suited.push(kinds.iter().enumerate().filter(|(_, k)| k.mines.iter().any(has)).map(|(i, _)| i).collect());
         }
-        Ok(Self { kinds, rules, tools, covered, suited, wear, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag, burnt })
+        Ok(Self { kinds, rules, tools, covered, suited, wear, break_wait, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag, burnt })
     }
 
     /// How tools and weapons wear.
     pub fn wear(&self) -> &Wear {
         &self.wear
+    }
+
+    /// Seconds the hand waits after each block it breaks before it starts on the next.
+    pub fn break_wait(&self) -> f32 {
+        self.break_wait
     }
 
     /// The slot of `slots` (other than `hand`) holding the spare to bring up for `broken`, a
@@ -778,9 +794,9 @@ mod tests {
     fn wear_warns_once_then_breaks() {
         let mut stack = crate::inventory::ItemStack::new(BlockId(1), 1);
         assert_eq!(wear_down(&mut stack, 5, 20, 2), Worn::Fine);
-        assert_eq!(wear_down(&mut stack, 12, 20, 2), Worn::Fine, "3 left of 20, still over a tenth");
+        assert_eq!(wear_down(&mut stack, 12, 20, 2), Worn::Fine, "3 left of 20, still over the 2 it warns at");
         assert_eq!(stack.wear, 17);
-        assert_eq!(wear_down(&mut stack, 1, 20, 2), Worn::Warned, "2 left: a tenth of 20");
+        assert_eq!(wear_down(&mut stack, 1, 20, 2), Worn::Warned, "2 left: where it warns");
         assert_eq!(wear_down(&mut stack, 1, 20, 2), Worn::Fine, "warned already");
         assert_eq!(wear_down(&mut stack, 5, 20, 2), Worn::Broke);
         assert_eq!(stack.wear, 20, "never past its uses");
@@ -1120,24 +1136,39 @@ mod tests {
     }
 
     /// Each tier of each kind is felt (Oct 14 tier audit, docs/tools-and-crafting.md): on
-    /// the blocks tools are for (a log, cobblestone, an ore), a block with the next tier
-    /// takes at most 1/1.35 of the time with the one before, counting the quarter second the
-    /// hand waits after each break (the client's `mine_cooldown`). Bare hands to flint, flint to
-    /// stone, stone to copper, copper to iron.
+    /// the blocks tools are for (a log, cobblestone, an ore, soil), a block with the next
+    /// tier takes at most 1/1.35 of the time with the one before, counting the wait after
+    /// each break (`tools.ron`'s `break_wait`). Bare hands to flint (a digging stick for a
+    /// shovel), flint to stone, stone to copper, copper to iron, for the axe, the pickaxe and
+    /// the shovel: every step the wait leaves room for, that is, every one the fastest tool
+    /// of the kind would make felt from the tier before.
     #[test]
     fn every_tool_tier_is_felt() {
-        const BREAK_WAIT: f32 = 0.25;
+        const FELT: f32 = 1.35;
         let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
         let content = crate::content::Content::load(&assets).unwrap();
         let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
-        for (kind, blocks) in [("axe", ["oak_log"].as_slice()), ("pickaxe", ["cobblestone", "coal_ore"].as_slice())] {
+        let wait = content.tools.break_wait();
+        assert!(wait > 0.0, "the base package gives a break_wait");
+        let tiers = |kind: &str| ["flint", "stone", "copper", "iron"].map(|tier| format!("{tier}_{kind}"));
+        let mut shovels = tiers("shovel");
+        shovels[0] = "digging_stick".into();
+        for (kind, held, blocks) in [("axe", tiers("axe"), ["oak_log"].as_slice()), ("pickaxe", tiers("pickaxe"), ["cobblestone", "coal_ore"].as_slice()), ("shovel", shovels, ["dirt", "sand", "gravel"].as_slice())] {
             for block in blocks {
                 let hardness = content.blocks.info(id(block)).hardness;
-                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(["flint", "stone", "copper", "iron"].iter().map(|tier| Some(id(&format!("{tier}_{kind}"))))).collect();
-                let seconds: Vec<f32> = held.iter().map(|&item| hardness / content.tools.speed(item, id(block)) + BREAK_WAIT).collect();
-                for (step, pair) in seconds.windows(2).enumerate() {
-                    assert!(pair[0] / pair[1] >= 1.35, "{block}: tier {step} to {} with a {kind} is only {:.2}x ({seconds:?})", step + 1, pair[0] / pair[1]);
+                let seconds = |item: Option<BlockId>| hardness / content.tools.speed(item, id(block)) + wait;
+                let held: Vec<Option<BlockId>> = std::iter::once(None).chain(held.iter().map(|item| Some(id(item)))).collect();
+                let times: Vec<f32> = held.iter().map(|&item| seconds(item)).collect();
+                let fastest = content.blocks.ids().filter(|&t| content.tools.tool(Some(t)).kind == content.tools.tool(held[1]).kind).map(|t| seconds(Some(t))).fold(f32::MAX, f32::min);
+                let mut reached = 0;
+                for (step, pair) in times.windows(2).enumerate() {
+                    if pair[0] / fastest < FELT {
+                        continue;
+                    }
+                    reached += 1;
+                    assert!(pair[0] / pair[1] >= FELT, "{block}: tier {step} to {} with a {kind} is only {:.2}x ({times:?}, waiting {wait} s)", step + 1, pair[0] / pair[1]);
                 }
+                assert!(reached >= 2, "{block}: the wait leaves room for only {reached} {kind} steps ({times:?})");
             }
         }
     }
