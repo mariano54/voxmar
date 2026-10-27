@@ -668,6 +668,8 @@
     "effect.base.kitchen": ("Kitchen", "台所"),
     "effect.base.kitchen.description": ("A dresser and a pot crane by the hearth: 1° warmer here, and meals heal a twentieth more.", "炉のそばに食器棚と鍋掛け。ここでは1°暖かく、食事の回復が20分の1増える。"),
     "effect.base.hearth_corner.description": ("A settle by the hearth and wood stacked to hand: 1° warmer here, and you heal a twentieth faster.", "炉のそばに背もたれ長椅子、手の届くところに薪。ここでは1°暖かく、回復が20分の1速い。"),
+    "effect.base.lived_in_hearth": ("Lived-in hearth", "住み慣れた炉端"),
+    "effect.base.lived_in_hearth.description": ("A mantel shelf over the hearth and a fireside bench before it: 1° warmer here, and you learn a twentieth more.", "炉の上に炉棚、その前に炉端の腰掛け。ここでは1°暖かく、経験が20分の1増える。"),
     "effect.base.herb_nook.description": ("Herbs drying overhead: you farm and brew as if a level higher here, and a meal's good lasts a tenth longer.", "頭上で薬草が乾いている。ここでは農作と調合が1レベル上のように行え、食事の良い効果が1割長く続く。"),
     "quest.base.a_herb_nook": ("A Herb Nook", "薬草の隅"),
     "quest.base.a_herb_nook.why": ("Tie two herbs with twine and they hang to dry (Crafting 4); a drying rack hung with meat counts as a bunch. Two bunches and a jar, basket or crate at home make a herb nook: there you farm and brew as if a level higher, so a kitchen garden at the door takes seed a level early, and a meal's good lasts a tenth longer.", "薬草2つを撚り糸で束ねれば、吊るして乾かせる（工作4）。肉を吊るした干し台もひと束に数える。束2つと壺、かご、木箱のどれかを家に置けば薬草の隅になる。そこでは農作と調合が1レベル上のように行え、戸口の家庭菜園に1レベル早く種をまけ、食事の良い効果も1割長く続く。"),
