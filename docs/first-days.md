@@ -489,6 +489,16 @@ The test fails the Farm line past a minute with nothing new from the hearth (`PA
 as long as `PACING_STRETCH`). The longest single action there is the 30 to 35 s idle wait for
 the clamp.
 
+### Farm chapters (Oct 27)
+
+The Farm walk now also fails a chapter (from one milestone to the next, from the lit hearth
+on) that runs 30 s or longer with fewer new things than the 30 s stretches it began
+(`PACING_CHAPTER`). A Kiln Load failed it in three runs of four: firing forty clay over 71 to
+72 s brought only the bowls and the jar. Between loads the bot now also takes A Pot on the
+Chimney, open once Earthenware is done: two chimney pots of fired clay at the table, one set
+on the chimney, the spare put by with the crockery. A Kiln Load then runs 53 to 57 s with
+three new things.
+
 ### Nomad pacing (Oct 21)
 
 The Nomad walk now runs the same pacing check as the Farm walk, by the same floors. Two runs:

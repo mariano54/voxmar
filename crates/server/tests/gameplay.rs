@@ -9971,6 +9971,14 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
                 } else if f.have("base:earthen_jar") == 0 {
                     jar(f);
                 }
+            } else if quest_status(&f.c, "earthenware").0 && !quest_status(&f.c, "a_pot_on_the_chimney").0 && f.have(fired) >= 4 {
+                // A Pot on the Chimney, open once the crockery is made: two chimney pots of
+                // four fired clay at the table (Construction 3), one set on the chimney.
+                f.at_table(table);
+                f.craft(&[(0, fired, 1), (2, fired, 1), (3, fired, 1), (5, fired, 1)], "base:chimney_pot", 2);
+                f.walk_toward(Fresh::middle(f.rel(3, 0, 4)), 0.3);
+                f.place("base:chimney_pot", f.rel(3, 2, 6));
+                f.wait(5.0, "the server counting the chimney pot", |c| quest_status(c, "a_pot_on_the_chimney").0);
             }
             if quest_status(&f.c, "a_kiln_load").0 {
                 f.mark("a_kiln_load");
@@ -10016,10 +10024,11 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
             for (x, item) in [(3, "base:oak_stool"), (4, "base:oak_table"), (5, "base:oak_stool")] {
                 f.place(item, f.rel(x, -1, 5));
             }
-            // The crockery put by in the chest beside them, for room in the pack.
+            // The crockery and the spare chimney pot put by in the chest beside them, for
+            // room in the pack.
             f.propose("base:open_store", ActionTarget::Block { block: chest, face: Face::PosY });
             f.wait(5.0, "the chest opening", |c| c.inventory.store.is_some());
-            for item in ["base:earthen_bowl", "base:earthen_jar", "base:earthen_plate", "base:earthen_jug"] {
+            for item in ["base:earthen_bowl", "base:earthen_jar", "base:earthen_plate", "base:earthen_jug", "base:chimney_pot"] {
                 let id = f.c.content.blocks.expect(item);
                 while let Some(from) = (0..voxmar_engine::inventory::SLOTS).find(|&s| f.c.inventory.get(s).is_some_and(|x| x.item == id)) {
                     let count = f.c.inventory.get(from).map_or(0, |x| x.count);
@@ -10223,7 +10232,26 @@ fn a_new_player_follows_the_quest_book_to_the_lit_crucible_kiln() {
     let pacing = f.pacing.borrow();
     let (gap, from, ended) = pacing.longest_gap(hearth, end);
     assert!(gap <= PACING_WAIT, "{gap:.1} s with nothing new from {from:.1} s on the Farm line (the hearth lit at {hearth:.1} s), ended by {}", ended.unwrap_or("the end of the run"));
+    // And each of its chapters (from one milestone to the next) that runs PACING_CHAPTER or
+    // longer brings something new for every PACING_CHAPTER it began: no chapter is all one
+    // chore, however short its waits.
+    let mut thin = Vec::new();
+    for pair in f.marks.windows(2).filter(|m| m[0].at >= hearth) {
+        let (from, to) = (pair[0].at, pair[1].at);
+        let new = pacing.new.iter().filter(|(at, _, _)| *at > from && *at <= to).count();
+        let wanted = ((to - from) / PACING_CHAPTER).ceil() as usize;
+        eprintln!("chapter {}: {:.1} s, {new} new", pair[1].name, to - from);
+        if to - from >= PACING_CHAPTER && new < wanted {
+            thin.push(format!("{} ({:.1} s, {new} new of {wanted})", pair[1].name, to - from));
+        }
+    }
+    assert!(thin.is_empty(), "Farm chapters with too little new: {thin:?}");
 }
+
+/// The pacing check's chapter: a Farm milestone's stretch brings at least one new thing for
+/// each this many server seconds it began (A Kiln Load fired forty clay over 68 to 74 s with
+/// two new things, Oct 27).
+const PACING_CHAPTER: f32 = 30.0;
 
 /// Something new comes every three minutes of the line, several things, and no one action
 /// is done over and over for long (docs/first-days.md, "Pacing"): the report printed, and
