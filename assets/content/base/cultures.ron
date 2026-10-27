@@ -548,7 +548,7 @@
         (name: "red_roofs", title: ("Red roofs", "赤い屋根"), tilt: ()),
         (name: "ruin_in_its_heart", title: ("Ruin in its heart", "廃墟のある町"), lean: {"age": 1.0}, tilt: (centrepieces: {"WatchtowerRuin": 3.0, "StoneCircle": 1.5})),
         (name: "fishing_town", title: ("Fishing town", "漁の町"), need: Water, tilt: (props: {"Nets": 4.0, "Boat": 3.0}, houses: {"boathouse": 2.5})),
-        (name: "pilgrim_town", title: ("Pilgrim town", "巡礼の町"), lean: {"piety": 1.0, "trade": 0.4}, tilt: (houses: {"chapel": 2.5}, props: {"Signpost": 2.0})),
+        (name: "pilgrim_town", title: ("Pilgrim town", "巡礼の町"), lean: {"piety": 1.0, "trade": 0.4}, tilt: (houses: {"chapel": 2.5}, props: {"signpost": 2.0})),
         (name: "twin_towns", title: ("Twin towns", "双子の町"), tilt: (layouts: {"crossroads": 1.5})),
         (name: "walled_garden_town", title: ("Walled garden town", "囲い庭の町"), lean: {"hierarchy": 0.6}, tilt: (extras: {"Hedge": 2.0}, houses: {"hall": 1.8})),
         (name: "carved_posts", title: ("Carved posts", "彫り柱"), lean: {"craft": 0.8}, tilt: (extras: {"SignBoard": 2.0})),

@@ -33,6 +33,11 @@
         // colour (the family line below). Broken, a placed piece gives itself back. Seats
         // are not solid: a player sits in one, feet on the floor, so a chair under a roof
         // two blocks up is sat on as one in the open is.
+        // A fingerpost's top, set and broken with it: no furnishing, as it drops nothing of
+        // its own (the fingerpost gives itself back, or nothing where a village set it).
+        "fingerpost_top": [
+            (name: "{name}_fingerpost_top", render: Model, shape: "fingerpost_top", facing: true, support: Below, drops: "core:air", sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["fingerpost", "wood", "yard"]),
+        ],
         "furniture": [
             (name: "{name}_stool", render: Model, shape: "stool", solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
             (name: "{name}_chair", render: Model, shape: "chair", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "seat", "decor", "wood"]),
@@ -40,6 +45,11 @@
             // A log bench: a split log, its flat face up, on two stumps, as a village sets two
             // end to end along a lane (settlements.ron's `log_bench`); a seat.
             (name: "{name}_log_bench", render: Model, shape: "log_bench", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "seat", "log_bench", "decor", "wood", "yard"]),
+            // A fingerpost: a post two high with an arm out either way at the height of a
+            // passer's eyes, as a village sets one by its lanes (settlements.ron's
+            // `signpost`), the arms across the placer's view. Its top (`fingerpost_top`) is
+            // set and broken with it.
+            (name: "{name}_fingerpost", render: Model, shape: "fingerpost", facing: true, upper: "{name}_fingerpost_top", sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "fingerpost", "decor", "wood", "yard", "fuel"]),
             (name: "{name}_table", render: Model, shape: "table", sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
             (name: "{name}_bed", render: Model, shape: "bed", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "bed", "decor", "wood"]),
             (name: "{name}_shelf", render: Model, shape: "shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
@@ -349,6 +359,9 @@
         (template: "furniture", name: "birch", tags: ["furnishing"], all: (tint: Fixed(236, 212, 164), color: (200, 175, 125))),
         (template: "furniture", name: "oak", tags: ["furnishing"], all: (tint: Fixed(205, 150, 86), color: (160, 120, 70))),
         (template: "furniture", name: "dark_oak", tags: ["furnishing"], all: (tint: Fixed(130, 88, 58), color: (100, 70, 45))),
+        (template: "fingerpost_top", name: "birch", all: (tint: Fixed(236, 212, 164), color: (200, 175, 125))),
+        (template: "fingerpost_top", name: "oak", all: (tint: Fixed(205, 150, 86), color: (160, 120, 70))),
+        (template: "fingerpost_top", name: "dark_oak", all: (tint: Fixed(130, 88, 58), color: (100, 70, 45))),
         (template: "dyed", dyes: true, tags: ["furnishing"]),
         (template: "crockery", name: "earthen", tags: ["furnishing"], all: (tint: Fixed(196, 120, 82), color: (196, 120, 82))),
         (template: "crockery", name: "ivory", tags: ["furnishing"], all: (tint: Fixed(238, 230, 208), color: (238, 230, 208))),

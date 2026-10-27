@@ -501,11 +501,11 @@
         (name: "Washtub", weight: 0.5, lean: {"crowding": 0.3, "craft": 0.2}),
         (name: "Sacks", weight: 0.8, lean: {"wealth": 0.3, "trade": 0.8}),
         (name: "ChickenCoop", weight: 0.6, lean: {"green": 0.6, "crowding": -0.6}),
-        (name: "Signpost", weight: 0.4, lean: {"order": 0.6, "trade": 0.5, "outlook": 0.5}),
         // On the bank of the water near.
         (name: "Boat", weight: 1.0, lean: {"outlook": 0.5}, water: true),
         (name: "Nets", weight: 1.0, water: true, lean: {"wealth": -0.3, "craft": 0.3}),
         // Props of their own: blocks from the spot, y 1 on the ground.
+        (name: "signpost", weight: 0.4, lean: {"order": 0.6, "trade": 0.5, "outlook": 0.5}, blocks: [((0, 1, 0), "oak_fingerpost"), ((0, 2, 0), "oak_fingerpost_top")]),
         (name: "log_bench", weight: 0.8, lean: {"order": 0.4, "festivity": 0.4}, blocks: [((0, 1, 0), "oak_log_bench"), ((1, 1, 0), "oak_log_bench")]),
         (name: "stone_cairn", weight: 0.4, lean: {"age": 1.0, "order": -0.4, "lore": 0.7, "piety": 0.3}, blocks: [((0, 1, 0), "cobblestone"), ((0, 2, 0), "mossy_cobblestone"), ((0, 3, 0), "cobblestone")]),
         (name: "drying_rack", weight: 0.5, lean: {"wealth": -0.4, "green": 0.3, "craft": 0.4}, blocks: [((0, 1, 0), "spruce_log"), ((0, 2, 0), "spruce_log"), ((2, 1, 0), "spruce_log"), ((2, 2, 0), "spruce_log"), ((1, 2, 0), "spruce_planks")]),

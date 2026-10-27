@@ -989,6 +989,41 @@ mod tests {
         assert_eq!(broken(&mut server, false), 0, "a village's log bench gave itself");
     }
 
+    /// A fingerpost is a furnishing, as the log bench: a player's comes back, a village's
+    /// gives nothing. A town's gate arch is masonry, as its wall: it comes back whoever set it.
+    #[test]
+    fn a_villages_fingerpost_gives_nothing_and_its_arch_comes_back() {
+        let mut server = crate::test_server();
+        let (_client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, server.spawn, 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        server.players.insert(1, player);
+        let pos = server.spawn.floor().as_ivec3() + IVec3::new(2, 2, 0);
+        let broken = |server: &mut crate::Server, block: voxmar_engine::block::BlockId, players: bool| {
+            server.set_block(pos, block);
+            server.placed.remove(&pos);
+            if players && server.marks_placed(block, block) {
+                server.placed.insert(pos);
+            }
+            server.items.take_all().for_each(drop);
+            server.break_loot(1, pos, None);
+            server.items.take_all().filter(|d| d.stack.item == block).map(|d| u32::from(d.stack.count)).sum::<u32>()
+        };
+        let sign = server.content.blocks.expect("base:oak_fingerpost");
+        assert_eq!(broken(&mut server, sign, true), 1, "a player's fingerpost came not back");
+        assert_eq!(broken(&mut server, sign, false), 0, "a village's fingerpost gave itself");
+        for name in ["base:cobblestone_arch", "base:stone_brick_arch_east"] {
+            let arch = server.content.blocks.expect(name);
+            let item = server.content.blocks.info(arch).drops;
+            server.set_block(pos, arch);
+            server.placed.remove(&pos);
+            server.items.take_all().for_each(drop);
+            server.break_loot(1, pos, None);
+            let back: u32 = server.items.take_all().filter(|d| d.stack.item == item).map(|d| u32::from(d.stack.count)).sum();
+            assert_eq!(back, 1, "a town's {name} gave nothing back");
+        }
+    }
+
     /// A coal sample a player sets down where the world laid one, over its seam, and mines
     /// again teaches no prospecting: the place action marks the cell as theirs, and the mine
     /// action's break skips what a player put there.
