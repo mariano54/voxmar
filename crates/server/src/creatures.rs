@@ -79,8 +79,8 @@ pub(crate) const SEEN_WITHIN: f32 = 96.0;
 const KIN_RANGE: f32 = 14.0;
 /// The width of a `Neighbours` cell, in blocks: the widest search (kin) and a block more for
 /// how far a creature moves in a pass, so the three by three cells around one hold every
-/// creature in range. This holds while no creature moves more than a block in a pass: a
-/// species that blinks (5 to 8 blocks at once) would need a wider margin. None does today.
+/// creature in range. This holds while no creature walks more than a block in a pass; one
+/// that blinks (5 to 8 blocks at once) is moved to its new cell then (`Neighbours::moved`).
 const CELL: f32 = 16.0;
 const _: () = assert!(KIN_RANGE + 1.0 <= CELL && voxmar_engine::creature::husbandry::MATE_RANGE + 1.0 <= CELL);
 /// How far creatures look for food.
@@ -353,6 +353,18 @@ impl Neighbours {
 
     fn cell(at: Vec3) -> (i32, i32) {
         ((at.x / CELL).floor() as i32, (at.z / CELL).floor() as i32)
+    }
+
+    /// Creature `id` went from `from` to `to` in a pass further than a walk takes it (a
+    /// blink): it is looked for in its new cell from then on.
+    pub(crate) fn moved(&mut self, id: u32, from: Vec3, to: Vec3) {
+        let (old, new) = (Self::cell(from), Self::cell(to));
+        if old == new {
+            return;
+        }
+        let Some(at) = self.cells.get_mut(&old).and_then(|ids| ids.iter().position(|&(other, _)| other == id).map(|i| ids.remove(i))) else { return };
+        self.cells.entry(new).or_default().push(at);
+        self.kinds.get_mut().clear();
     }
 
     /// The creatures of `species` but `id` that stood in the cells around `at`, in id order
@@ -913,7 +925,7 @@ impl Server {
         self.find_wards();
         let dt = 1.0 / TICKS_PER_SECOND as f32;
         let ids: Vec<u32> = self.creatures.live.keys().copied().collect();
-        let neighbours = Neighbours::of(&self.creatures.live);
+        let mut neighbours = Neighbours::of(&self.creatures.live);
         let daylight = self.daylight();
         let handoff = self.overworld.settlement_people().live.handoff;
         let mut actions: Vec<(u32, Decision)> = Vec::new();
@@ -1021,7 +1033,7 @@ impl Server {
         }
         self.push_apart();
         for (id, decision) in actions {
-            self.carry_out(id, decision, &neighbours);
+            self.carry_out(id, decision, &mut neighbours);
         }
     }
 
@@ -1395,7 +1407,7 @@ impl Server {
     }
 
     /// Acts on what a creature decided.
-    fn carry_out(&mut self, id: u32, decision: Decision, neighbours: &Neighbours) {
+    fn carry_out(&mut self, id: u32, decision: Decision, neighbours: &mut Neighbours) {
         let Some(creature) = self.creatures.live.get(&id) else { return };
         let species_id = creature.species;
         let position = creature.body.position;
@@ -1460,6 +1472,7 @@ impl Server {
                 creature.body.position = cell + Vec3::new(0.5, 0.0, 0.5);
                 creature.body.velocity = Vec3::ZERO;
                 creature.changed = true;
+                neighbours.moved(id, position, cell + Vec3::new(0.5, 0.0, 0.5));
             }
         }
         if let Some(at) = decision.leap {
@@ -2421,7 +2434,7 @@ mod neighbour_tests {
             creature.owner = Some("test".to_string());
             creature.ready_until = u64::from(i % 4 == 0);
         }
-        let neighbours = Neighbours::of(&server.creatures.live);
+        let mut neighbours = Neighbours::of(&server.creatures.live);
         let ids: Vec<u32> = server.creatures.live.keys().copied().collect();
         let (mut short, mut crossed) = (0, 0);
         for round in 0..2 {
@@ -2447,7 +2460,7 @@ mod neighbour_tests {
                     for c in server.creatures.live.values_mut() {
                         c.mind.fear = 0.0;
                     }
-                    server.carry_out(id, Decision { alarm: true, ..Default::default() }, &neighbours);
+                    server.carry_out(id, Decision { alarm: true, ..Default::default() }, &mut neighbours);
                     let alarmed: Vec<u32> = server.creatures.live.iter().filter(|(_, c)| c.mind.fear > 0.0).map(|(&other, _)| other).collect();
                     assert_eq!(alarmed, kin.iter().map(|&(other, _)| other).collect::<Vec<_>>(), "alarmed by {id} (round {round})");
                 }
@@ -2465,6 +2478,29 @@ mod neighbour_tests {
         }
         assert!(crossed > 0, "none crossed a cell's edge");
         assert!(short > 0, "every one of a kind was in reach of every other: the pen is too small to judge");
+    }
+
+    /// One that blinks over a cell's edge is found where it landed for the rest of that
+    /// pass: kin a block from the far side of its new cell count it among theirs and their
+    /// alarm frightens it. Before: it was still listed in the cell it left, two cells from
+    /// theirs, and so not looked at.
+    #[test]
+    fn one_that_blinks_over_a_cells_edge_is_kin_where_it_lands() {
+        let mut server = crate::test_server();
+        let c = super::cornered_tests::pen(&mut server, 24).as_vec3();
+        let edge = (c.x / CELL).floor() * CELL;
+        let species = server.content.creatures.id("base:moonhare").expect("species");
+        let at = |x: f32| Vec3::new(edge + x, c.y, c.z + 0.5);
+        let hare = server.spawn_creature(species, at(-1.5), 1).expect("room");
+        let kin = server.spawn_creature(species, at(16.5), 2).expect("room");
+        let mut neighbours = Neighbours::of(&server.creatures.live);
+        server.carry_out(hare, Decision { blink: Some(at(5.5)), ..Default::default() }, &mut neighbours);
+        let landed = server.creatures.live[&hare].body.position;
+        assert!(landed.distance(at(5.5)) < 0.1, "the blink went to {landed}, not {}", at(5.5));
+        assert_eq!(server.kin_of(kin, &neighbours), vec![landed], "its kin over the cell's edge missed it");
+        server.creatures.live.get_mut(&hare).unwrap().mind.fear = 0.0;
+        server.carry_out(kin, Decision { alarm: true, ..Default::default() }, &mut neighbours);
+        assert!(server.creatures.live[&hare].mind.fear > 0.0, "its kin's alarm missed it");
     }
 }
 
@@ -7059,8 +7095,8 @@ mod review_tests {
             for x in 0..24 {
                 let cell = at + IVec3::new(x, 0, 0);
                 server.set_block(cell, grass);
-                let neighbours = Neighbours::of(&server.creatures.live);
-                server.carry_out(id, Decision { eat: Some(cell), ..Default::default() }, &neighbours);
+                let mut neighbours = Neighbours::of(&server.creatures.live);
+                server.carry_out(id, Decision { eat: Some(cell), ..Default::default() }, &mut neighbours);
                 gone.push(server.block(cell) != Some(grass));
                 server.tick += 37;
             }
