@@ -537,6 +537,10 @@ impl Content {
         if let Some(tag) = effects.near_asks().iter().map(|(tag, _)| tag).chain(effects.held_tags()).find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag))) {
             return Err(RegistryError(format!("effects.ron: an effect asks for a block or held item tagged `{tag}`, which no block carries")));
         }
+        // And those of the seat sat on: a seat must carry each.
+        if let Some(tag) = effects.seat_tags().iter().find(|tag| !blocks.ids().any(|id| blocks.def(id).has_tag(tag) && blocks.def(id).has_tag(crate::action::SEAT_TAG))) {
+            return Err(RegistryError(format!("effects.ron: an effect asks for a seat tagged `{tag}`, which no seat carries")));
+        }
         // Every kept animal needs water, met by a block tagged `drink` near its home.
         crate::creature::condition::check_drink(&blocks, !creatures.is_empty())?;
         let tools = ToolRegistry::new(tools, &blocks, &skills)?;

@@ -139,7 +139,7 @@ pub(super) fn finish_frame(frame: u64) -> Option<Profile> {
 }
 
 /// Nanoseconds spent by this thread, unavailable on an unsupported/failed clock.
-fn cpu_clock() -> Option<u128> {
+pub(crate) fn cpu_clock() -> Option<u128> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         let mut stamp = libc::timespec { tv_sec: 0, tv_nsec: 0 };

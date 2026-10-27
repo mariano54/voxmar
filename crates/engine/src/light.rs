@@ -11,6 +11,7 @@ use std::sync::Arc;
 use glam::IVec3;
 
 use crate::block::{BlockId, BlockRegistry};
+use crate::chunk::Chunk;
 use crate::coords::{CHUNK_SIZE, COLUMN_CHUNKS, WORLD_HEIGHT};
 use crate::world::Column;
 
@@ -51,7 +52,7 @@ impl LitRegion {
             static SCRATCH: RefCell<(Vec<u8>, Vec<u32>)> = const { RefCell::new((Vec::new(), Vec::new())) };
         }
         SCRATCH.with_borrow_mut(|(attenuation, queue)| {
-            attenuation.clear();
+            // Every cell's is copied in with its block.
             attenuation.resize(total, 1);
             queue.clear();
             region.copy_blocks(registry, columns, attenuation, queue);
@@ -98,54 +99,81 @@ impl LitRegion {
         attenuation: &mut [u8],
         queue: &mut Vec<u32>,
     ) {
-        // A palette's blocks with their attenuation and emission, and a row of indices.
-        let mut looks: Vec<(BlockId, u8, u8)> = Vec::new();
+        // Layer by layer of chunks, and in each the region's rows across all three
+        // neighbours along them: where those hold one block (the open sky, deep stone),
+        // whole layers are filled at once. Filled a neighbour's short row at a time, the
+        // fills cost more than everything else in lighting.
+        let mut chunks: [Source; 3] = Default::default();
         let mut indices = [0u16; CHUNK_SIZE as usize];
-        for (n, column) in columns.iter().enumerate() {
-            let (dx, dz) = (n as i32 % 3 - 1, n as i32 / 3 - 1);
-            // Overlap of this neighbour with the region, in neighbour-local coordinates.
-            let x_range = local_overlap(dx);
-            let z_range = local_overlap(dz);
-            let to_region = IVec3::new(dx * CHUNK_SIZE + LIGHT_PAD, 0, dz * CHUNK_SIZE + LIGHT_PAD);
-
-            for (cy, chunk) in column.chunks.iter().enumerate() {
-                let y0 = cy as i32 * CHUNK_SIZE;
-                if let Some(block) = chunk.as_uniform() {
-                    let att = registry.info(block).attenuation;
-                    let emits = registry.info(block).emission > 0;
-                    for y in y0..y0 + CHUNK_SIZE {
-                        for z in z_range.clone() {
-                            let row = index(x_range.start + to_region.x, y, z + to_region.z);
-                            let len = x_range.len();
-                            self.blocks[row..row + len].fill(block);
-                            attenuation[row..row + len].fill(att);
-                            if emits {
-                                for i in row..row + len {
-                                    self.light[i] = registry.info(block).emission;
-                                    queue.push(i as u32);
-                                }
-                            }
-                        }
+        for cy in 0..COLUMN_CHUNKS as usize {
+            let y0 = cy as i32 * CHUNK_SIZE;
+            // One block all round.
+            let block = columns[0].chunks[cy].as_uniform();
+            if let Some(block) = block
+                && columns.iter().all(|column| column.chunks[cy].as_uniform() == Some(block))
+            {
+                let cells = index(0, y0, 0)..index(0, y0 + CHUNK_SIZE, 0);
+                let info = registry.info(block);
+                self.blocks[cells.clone()].fill(block);
+                attenuation[cells.clone()].fill(info.attenuation);
+                if info.emission > 0 {
+                    for i in cells {
+                        self.light[i] = info.emission;
+                        queue.push(i as u32);
                     }
-                    continue;
                 }
-
-                // Only the rows the region needs, decoded straight from the packed indices,
-                // with each block of the palette looked up once.
-                looks.clear();
-                looks.extend(chunk.palette().iter().map(|&block| (block, registry.info(block).attenuation, registry.info(block).emission)));
-                let indices = &mut indices[..x_range.len()];
+                continue;
+            }
+            for dz in -1..=1 {
+                let z_range = local_overlap(dz);
+                for (dx, source) in (-1..=1).zip(&mut chunks) {
+                    source.read(registry, &columns[((dz + 1) * 3 + dx + 1) as usize].chunks[cy]);
+                }
+                // One block along the whole width: the rows of each layer at once.
+                let one = chunks[0].uniform.filter(|&(block, ..)| chunks.iter().all(|c| c.uniform.is_some_and(|(b, ..)| b == block)));
                 for y in 0..CHUNK_SIZE {
-                    for z in z_range.clone() {
-                        chunk.indices(((y * CHUNK_SIZE + z) * CHUNK_SIZE + x_range.start) as usize, indices);
-                        let row = index(x_range.start + to_region.x, y0 + y, z + to_region.z);
-                        for (i, &look) in (row..).zip(indices.iter()) {
-                            let (block, att, emission) = looks[look as usize];
-                            self.blocks[i] = block;
-                            attenuation[i] = att;
-                            if emission > 0 {
+                    if let Some((block, att, emission)) = one {
+                        let start = index(0, y0 + y, z_range.start + dz * CHUNK_SIZE + LIGHT_PAD);
+                        let cells = start..start + z_range.len() * W as usize;
+                        self.blocks[cells.clone()].fill(block);
+                        attenuation[cells.clone()].fill(att);
+                        if emission > 0 {
+                            for i in cells {
                                 self.light[i] = emission;
                                 queue.push(i as u32);
+                            }
+                        }
+                        continue;
+                    }
+                    for z in z_range.clone() {
+                        for (dx, source) in (-1..=1).zip(&chunks) {
+                            let x_range = local_overlap(dx);
+                            let len = x_range.len();
+                            let row = index(x_range.start + dx * CHUNK_SIZE + LIGHT_PAD, y0 + y, z + dz * CHUNK_SIZE + LIGHT_PAD);
+                            let (blocks, atts) = (&mut self.blocks[row..row + len], &mut attenuation[row..row + len]);
+                            let indices = &mut indices[..len];
+                            match source.uniform {
+                                Some((block, att, _)) => {
+                                    blocks.fill(block);
+                                    atts.fill(att);
+                                    indices.fill(0);
+                                }
+                                None => {
+                                    source.chunk_indices(((y * CHUNK_SIZE + z) * CHUNK_SIZE + x_range.start) as usize, indices);
+                                    for ((block, att), &look) in blocks.iter_mut().zip(atts.iter_mut()).zip(indices.iter()) {
+                                        (*block, *att, _) = source.looks[look as usize];
+                                    }
+                                }
+                            }
+                            // Most chunks hold no light source.
+                            if source.emits {
+                                for (i, &look) in (row..).zip(indices.iter()) {
+                                    let emission = source.looks[look as usize].2;
+                                    if emission > 0 {
+                                        self.light[i] = emission;
+                                        queue.push(i as u32);
+                                    }
+                                }
                             }
                         }
                     }
@@ -247,6 +275,31 @@ impl LitRegion {
             }
         }
         queue.clear();
+    }
+}
+
+/// A chunk being copied into a region: its palette's blocks with their attenuation and
+/// emission, and whether any emits light.
+#[derive(Default)]
+struct Source<'a> {
+    chunk: Option<&'a Chunk>,
+    looks: Vec<(BlockId, u8, u8)>,
+    /// The chunk's one block, when it holds no other (`looks[0]`).
+    uniform: Option<(BlockId, u8, u8)>,
+    emits: bool,
+}
+
+impl<'a> Source<'a> {
+    fn read(&mut self, registry: &BlockRegistry, chunk: &'a Chunk) {
+        self.chunk = Some(chunk);
+        self.looks.clear();
+        self.looks.extend(chunk.palette().iter().map(|&block| (block, registry.info(block).attenuation, registry.info(block).emission)));
+        self.uniform = chunk.as_uniform().map(|_| self.looks[0]);
+        self.emits = self.looks.iter().any(|&(_, _, emission)| emission > 0);
+    }
+
+    fn chunk_indices(&self, start: usize, out: &mut [u16]) {
+        self.chunk.expect("a chunk read").indices(start, out);
     }
 }
 
