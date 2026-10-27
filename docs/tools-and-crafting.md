@@ -22,7 +22,9 @@ stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`
 A block broken while a tool carried would break it at least `faster_carried` times as fast
 (2 in `base/tools.ron`, hardness / speed + `break_wait` each way) says so in chat ("Your
 Stone Pickaxe breaks Cobblestone 3× as fast: take it in hand"), once a kind of tool each time
-the player joins (`ToolRegistry::faster_carried`, server `tell_faster_carried`).
+the player joins (`ToolRegistry::faster_carried`, server `tell_faster_carried`). The middle
+button over a block the player carries none of picks the carried tool that breaks it fastest,
+by any share, into hand (`ToolRegistry::fastest_carried`, client `interact::picked`).
 
 **Why those speeds** (Oct 14 tier audit). A block takes its hardness over the speed, and
 after each break the hand waits a quarter second before the next (`break_wait` in

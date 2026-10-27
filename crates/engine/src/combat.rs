@@ -324,6 +324,9 @@ feel! {
     flourish_max_hit: f32 = 0.2,
     counter_max_hit: f32 = 0.25,
     falling_max_hit: f32 = 0.15,
+    /// What a blow on a creature that has not noticed the striker (asleep, looking away,
+    /// stalked from behind) adds to the max hit; such a blow cannot miss. Not on a boss.
+    unaware_max_hit: f32 = 0.5,
     /// Blocks below the top of a fall a player must be for a blow to be a falling one.
     falling_drop: f32 = 0.3,
     /// Guarding or dodging in your own wind-up cancels the swing, and the meter starts again
@@ -625,6 +628,12 @@ impl Stroke {
             certain: counter,
             blow: if flourish { Blow::Flourish } else if counter { Blow::Counter } else { kind },
         }
+    }
+
+    /// This stroke landing on a creature that has not noticed the striker: it cannot miss,
+    /// and hits up to `Feel::unaware_max_hit` harder.
+    pub fn unaware(self, feel: &Feel) -> Stroke {
+        Stroke { max_hit: self.max_hit + feel.unaware_max_hit, certain: true, ..self }
     }
 
     /// The most this stroke's blow does with a weapon whose max hit is `max_hit`, the bonus
@@ -1110,6 +1119,9 @@ impl CombatRegistry {
         if !(0.0..=1.0).contains(&feel.charge_fall) {
             return Err(RegistryError("combat.ron: `feel.charge_fall` must be from 0 to 1".into()));
         }
+        if !(0.0..=1.5).contains(&feel.unaware_max_hit) {
+            return Err(RegistryError("combat.ron: `feel.unaware_max_hit` must be from 0 to 1.5".into()));
+        }
         if let Some(class) = classes.iter().find(|c| c.windup < 0.0 || c.windup >= c.cooldown || c.buffer < 0.0 || c.beat < 0.0) {
             return Err(RegistryError(format!("combat.ron: class `{}`: its wind-up must be under its cooldown, and no time may be negative", class.name)));
         }
@@ -1493,6 +1505,24 @@ mod tests {
         let plain = Stroke::of(Blow::Plain, 0.7, false, false, false, true, &feel);
         assert_eq!((plain.strength, plain.accuracy, plain.max_hit), (0.7, 0.0, 0.0));
         assert_eq!(plain.max_hit(1, 0.0), 1);
+    }
+
+    /// A blow on a creature that has not noticed the striker cannot miss and adds the
+    /// feel's `unaware_max_hit` to what else it adds; out of range, the feel is refused.
+    #[test]
+    fn an_unaware_target_is_struck_surely_and_harder() {
+        let feel = Feel::default();
+        let plain = Stroke::of(Blow::Plain, 1.0, false, false, false, false, &feel).unaware(&feel);
+        assert_eq!((plain.certain, plain.max_hit, plain.blow), (true, 0.5, Blow::Plain));
+        let flourish = Stroke::of(Blow::Flourish, 1.0, false, false, false, false, &feel).unaware(&feel);
+        assert!((flourish.max_hit - 0.7).abs() < 1e-6 && flourish.certain, "{flourish:?}");
+        // With a sword's 9: 13.5 at most, on average.
+        let mean = (0..1000).map(|i| plain.max_hit(9, i as f32 / 1000.0) as f32).sum::<f32>() / 1000.0;
+        assert!((mean - 13.5).abs() < 0.01, "{mean}");
+        assert!(registry("(feel: (unaware_max_hit: 1.5))").is_ok());
+        for bad in ["-0.1", "1.6"] {
+            assert!(registry(&format!("(feel: (unaware_max_hit: {bad}))")).is_err_and(|e| e.to_string().contains("unaware_max_hit")), "{bad}");
+        }
     }
 
     #[test]
