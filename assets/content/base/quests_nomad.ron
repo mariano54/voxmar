@@ -252,7 +252,7 @@
         (
             name: "from_the_shelves", age: "nomad", branch: "home", title: "From the Shelves",
             capstone: true,
-            why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Put planks in a store and lay three recipes from it.",
+            why: "No need to carry it all: at home, open your pack, look a recipe up (U or R over an item) and press Lay. The grid fills from your pack and from every store in your home, nearest first, so a crate stack of planks by the bed is a woodshed to craft from. Shift lays as many as will go. Right-click a store to open it beside your pack, put planks in, and lay three recipes from it.",
             tasks: [[Laid("any", 3)]],
             after: ["pantry_shelves", "a_bench_to_work_at"],
             rewards: [Xp("crafting", 40.0), Xp("construction", 20.0)],

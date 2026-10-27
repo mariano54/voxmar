@@ -113,6 +113,13 @@ impl Compaction {
         start..self.len
     }
 
+    /// The copies gathered so far, in order: where each run of quads starts, where its
+    /// indices go, how many quads and indices each.
+    #[cfg(test)]
+    pub fn gathered(&self) -> impl Iterator<Item = [u32; 4]> + '_ {
+        self.copies.iter().map(|copy| [copy.first_vertex, copy.destination, copy.quads, copy.indices_per_quad])
+    }
+
     fn unchanged(&self, generation: u32, page_revision: impl Fn(&Batch) -> Option<u64>) -> bool {
         self.last.generation == generation
             && self.last.batches == self.batches

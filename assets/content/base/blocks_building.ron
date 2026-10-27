@@ -150,6 +150,13 @@
         "cut_stone": [
             (name: "{name}_slab", render: Model, shape: "slab", flips: true, textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["slab", "stone", "building"]),
             (name: "{name}_stairs", render: Model, shape: "stairs", facing: true, flips: true, textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["stairs", "stone", "building"]),
+            // An arch to stand over an opening in a stone wall, its underside curving from
+            // the jambs up to the crown, the way through running away from whoever sets it.
+            // The wide one spans two cells, set together (`beside`, as a double gate's leaves)
+            // and broken together, its second half dropping nothing of its own.
+            (name: "{name}_arch", render: Model, shape: "arch", facing: true, textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["arch", "stone", "building"]),
+            (name: "{name}_wide_arch", render: Model, shape: "wide_arch", facing: true, beside: "{name}_wide_arch_half", textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["arch", "stone", "building"]),
+            (name: "{name}_wide_arch_half", render: Model, shape: "wide_arch_half", facing: true, drops: "core:air", textures: All("{name}"), hardness: 2.0, color: (115, 115, 115), tags: ["arch", "stone", "building"]),
         ],
     },
     families: [
