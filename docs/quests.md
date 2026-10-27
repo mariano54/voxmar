@@ -48,6 +48,7 @@ Goals:
 | `LookUp(item)` | the recipe viewer was opened on the item (the client says so once, `ClientMessage::LookedUp`; tally `lookedup:<item>`) |
 | `Thriving(n, percent)` | the player keeps n animals right now at a condition of at least that percent (read live from the kept animals, not tallied; a newly tamed one starts at 60) |
 | `Met(kind, n)`, `Met("Kinds", n)` | dealings with wandering parties (docs/wandering.md), tallied `met:<kind>`: a line said that gave or took something, a show watched, a share of a hunt, a captive's or a guided one's thanks, a lure followed to its end; a greeting alone is none. `any` counts every kind; `Kinds` counts the kinds dealt with at least once |
+| `Dealt(kind, line, n)` | dealings with one line of a wandering kind (`dealt:<kind>/<line>`), counted as `Met` counts but that line only, for a lesson one line alone teaches (the herb gatherer's roots, the hedge witch's mote); load-checked against the kind's lines in wandering.ron |
 | `Prayed(prayer, n)` | prayers turned on (`prayed:<prayer>`); one already on is not turned on again |
 | `Offered(item, n)` | what was offered at an altar (`offered:<item>`), an item, `any` or a `tag:TAG` |
 | `Ate(food, n)` | food eaten (`ate:<item>`), an item, `any` or a `tag:TAG` |
@@ -128,9 +129,9 @@ then cook one), Hide and Seek (hides and bones), Rod and Line (craft, then land 
 A Fish Supper (catch three, cook three), Meat on the Fire (six cooked, Cooking 2), Sharpening
 Up (Attack 4 and five kills), First Harvest and Carrot Patch (harvest, keep the crop), A
 Field of Gold (24 harvests, Farming 4), Herb Garden (planter and six plants), Seed Mix (the
-mix and the wheat to make it from), Fresh Eggs (fry the first egg, then keep five), A Woolly Flock (tame,
-and shears made), The Milk Pail (the pail, then the milk), A Silvery Ore (tin and copper from
-one seam), Many Kinds (three kinds, six cooked). The main line of each age (the pacing
+mix; its wheat ask went with A Field of Gold before it, Oct 21), Fresh Eggs (fry the first egg, then keep five), A Woolly Flock (tame,
+and shears made), The Milk Pail (the pail, then the milk), A Silvery Ore (tin; its copper
+ask, already met by Red Metal, went Oct 21), Many Kinds (three kinds, six cooked). The main line of each age (the pacing
 test's milestones) stays as it was. Rewards are unchanged.
 
 ## Quests that meet the rest of the game
@@ -159,14 +160,15 @@ so that what the game already does is something the book points to:
 - **Wanderer quests in two parts** (the hooks in docs/wandering.md, Oct 13). Each pairs a
   wandering kind with what the player does next anyway, so meeting them is a side step,
   never a wait. Nomad: Coal by Road (the coal carters or the benighted miners, and sixteen
-  torches; pays four coal). Farm: Fired Whole (the clay diggers fire your clay, and
-  twenty-four fired in all; pays six gold coins), The Last Sheaf (the harvest home procession,
-  and twelve wheat brought in; pays eight wheat seed) and Mice in the Stores (follow the
-  piper to the end of his tune, and a pantry or larder at home; pays four seed mix).
+  torches; pays four coal). Farm: Fired Whole (the clay diggers fire your clay; pays six
+  gold coins), The Last Sheaf (the harvest home procession; pays eight wheat seed) and Mice in
+  the Stores (follow the piper to the end of his tune; pays four seed mix). Their clay, wheat
+  and larder asks went on Oct 21: A Kiln Load, A Field of Gold and A Larder before them had
+  always done them already.
 - **Wanderers that come back** (the Nomad thread's hooks, Oct 13): quests that ask for a
   kind and the kind that follows it, all Farm side branches. The Keepers' Word (the
   poacher, the gamekeepers on his trail and, days later, his gang), Catch Up the Shrine (the
-  shrine bearer and the stragglers asking after it), From Wedding to Christening, Those
+  stragglers asking after the shrine bearer Filled Again met), From Wedding to Christening, Those
   Taken In (refugees, then their kin), First Metal (the bloomery smelters before the
   Crucible Kiln, and four copper ore) and A Hen of Your Own (the henwife's hen, kept near
   home). Three more from batch 16: Master and Journeyman (Farm: the apprentice
@@ -245,8 +247,9 @@ early_quests still holds that a quest names only quests open beside it.
 ### Each path a chain (Oct 14)
 
 Ten starts still fanned out a few steps in: one column held 21 quests. Now each path runs
-as a chain, with a fork only where a quest's text sends the player two ways (A Kiln Load
-names Earthenware and Fired Whole; Herb Garden names Carrot Patch and A Kitchen Garden;
+as a chain, with a fork only where a quest's text sends the player two ways (The Potter
+opens A Kiln Load and Earthenware, which A Kiln Load's text sends the player to between
+loads, and A Kiln Load leads to Fired Whole; Herb Garden names Carrot Patch and A Kitchen Garden;
 Fresh Eggs names A Woolly Flock). Examples: the bees run Humming in the Meadow, A Bee
 Garden, then Smoke That Clings beside Sweet Relief and The Beekeeper Calls; the home runs A Table for
 Two, Shelves and Cupboards, A Proper Bed, Candlelight, Snug for Winter, then the door and
@@ -304,7 +307,7 @@ book lists each part with its own mark and count. Seven pairs became one:
 
 | Quest | Parts | Was |
 | --- | --- | --- |
-| A Stone's Throw (Nomad) | a sling, five creatures, Ranged 4 | A Stone's Throw, Stones Back |
+| A Stone's Throw (Nomad) | a sling, Ranged 4 (its five kills, Sharpening Up's already, went Oct 21) | A Stone's Throw, Stones Back |
 | Wild Harvest (Nomad) | five kinds of plant, five herbs | Wild Harvest, Herb Gatherer |
 | The Market Road (Nomad) | the market folk, the highwaymen | To Market, The Market Road |
 | A Compost Heap (Farm) | a heap, six crops grown with compost, one with a bone | A Compost Heap, Rich Soil |
@@ -411,7 +414,7 @@ only crafted.
 
 | Path | Quests to the kiln | Ways round |
 |---|---|---|
-| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | |
+| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
 | Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone); side quests Opened Too Soon (four part-burnt wood from a clamp opened early, after A Second Clamp) and, after A Table for Two on the Home path, A Woodpile (a woodpile set down by the hearth, half a Hearth corner) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
 | Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp; side quests A Lamp of Clay (two oil lamps made and set down) and A Pot on the Chimney (chimney pots made, one set down), both after Earthenware | |
 | Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln; side quests A Keen Edge (a copper tool mended at the grindstone, after Copper Kit) and A Bronze Edge (a bronze pickaxe, after First Bronze and A Keen Edge) | |
@@ -549,15 +552,52 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 | Defence | Hide Wraps, then **Hard to Put Down** (Nomad, new) | Hide armour at 1, copper armour 10 | Hide wraps, then a shield (Raise Your Guard) |
 | Hitpoints | **Hard to Put Down** (Nomad, new) | Twice your level in health; 12 is 24 | None: it grows with blows landed |
 | Magic | A Place to Pray (Farm) | Bark Skin at 1, Ember Arm 4, Mending 10 | The stone altar |
-| Alchemy | **Herb Lore** (Nomad, new) | A taste only: herb lore from three kinds of wanderer | None yet |
+| Alchemy | **Herb Lore** (Nomad, new), then Simples, Calming Herbs and Where Roots Grow (Farm) | Roots shown and an aether mote at 5 | None yet |
 | Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 3 | Sling to short bow |
 
 Two new side quests fill the skills that had nothing before:
-- **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 3 and Hitpoints 12. Both
+- **Hard to Put Down** (Nomad, combat, after Hide Wraps) asks for Defence 4 and Hitpoints 12. Both
   skills train only in a fight, and nothing had pointed at either of them.
 - **Herb Lore** (Nomad, farming, after Wild Harvest) asks the player to deal with a herb
   gatherer, a travelling alchemist or a wandering healer. These are the three wanderers that
   teach Alchemy for herbs, and they are the only Alchemy anything gives today.
+
+Alchemy trains on nothing made before brewing, a later age's, so only quests and a
+wanderer's once-only lesson raise it, and the lines it opens at Alchemy 5 (the herb gatherer
+shows where roots grow, the hedge witch trades a mote of aether) were out of every early
+player's reach (Oct 21). Three Farm side quests on the Fields path now take a player there,
+on the 2x book scale: **Simples** (after Herb Garden: six healing herbs and four sleeping
+ones picked, 200 Alchemy), **Calming Herbs** (six calming herbs picked, 200 Alchemy and two
+bread) and **Where Roots Grow** (`Dealt`: the herb gatherer's roots line or the hedge witch's
+mote, now at Alchemy 5). Each asks what no other quest does: meeting the healers is Herb
+Lore's lesson, hanging herbs A Herb Nook's, a herb pouch Pockets'. `early_quests.rs` holds
+it: the lowest Alchemy any wanderer's line asks is surely had by a quest that sends the
+player to that line.
+
+No goal opens done (Oct 21): goals count over a life, so a goal asking no more than a quest
+surely done before it already asked is met on opening, and a task of such goals opens done
+(Fuel to Hand's coal way after Coal and Cinders did). `no_early_goal_is_met_as_its_quest_opens`
+checks every counted goal kind, not only `Level`; Fuel to Hand now asks 18 coal in all (Charcoal's coal way asks 24), and
+ten goals the chain had always met went (Seed Mix's wheat, A Silvery Ore's copper, Food
+Enough's wheat, An Ore Run's coal, Fired Whole's clay, The Last Sheaf's wheat, Mice in the
+Stores' larder, Catch Up the Shrine's shrine bearer, A Varied Table's meat, A Stone's Throw's
+kills). `no_two_early_quests_teach_the_same_lesson` holds each quest's first way (its lesson)
+its own. The check reads each way of the chain too: no way opens done for a player
+who took a way before it asking all it asks (Charcoal's coal way after Fuel to Hand's at 24). A
+single goal goes only when every earlier way did it; one some ways did is the step for those
+who took another (Found and Thanked's lost child, after A Kind Turn's child or hunter). A chain way that builds another quest's first home (Snug for Winter
+taking a homely home) is that quest's lesson taken early, not a repeat; only `Built` ways
+are read so.
+
+Wanderers who trade a step of a craft had no quest to send a player to them (Oct 27). Four
+side quests now do, each by the one line that trades it (`Dealt`): **Four for Twine** (Nomad,
+after A Fish Supper: the fisher folk's four fish for three twine), **The Knappers' Trade**
+(Nomad mining, after Stone in Hand and Pockets: a hide for flint), **A Prospector's Eye** (Farm
+mining, after Charcoal: at Mining 5 the prospector points to an ore sample) and **Supper on the
+Road** (Farm cooking, after Camp Cook: the travelling cook roasts one of two raw at their
+fire). `every_early_dealt_line_is_open_to_the_player_it_sends` holds that a line a quest names
+has no `Below` gate (a player past it would never hear it) and its `Skill` gates are surely had
+when the quest opens, or asked beside it by a `Level` goal.
 
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).

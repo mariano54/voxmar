@@ -1574,3 +1574,29 @@ fn every_stage_of_a_smoulder_is_heard_as_it_burns() {
     }
     assert!(smoulders > 0, "the base game has a clamp");
 }
+
+/// A small flame close by, as a lit room has: a candle, an oil lamp, a rushlight or a torch
+/// spits now and then at its wick, from the flame, and once spent says nothing.
+#[test]
+fn a_small_flame_spits_at_its_wick() {
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let blocks = &content.blocks;
+    let ambience = Ambience::load(&content.files).unwrap();
+    let groups = ambience.block_groups(blocks);
+    let flame = ambience.groups.iter().position(|g| g.name == "flame").expect("a group of small flames");
+    let group_of = |name: &str| groups[blocks.id(name).unwrap_or_else(|| panic!("{name}")).0 as usize].map(|g| g as usize);
+    for lit in ["base:candle", "base:clay_oil_lamp", "base:oak_rushlight", "base:torch", "base:wall_torch", "base:torch_guttering"] {
+        assert_eq!(group_of(lit), Some(flame), "{lit}");
+    }
+    for spent in ["base:candle_end", "base:clay_oil_lamp_empty", "base:oak_rushlight_spent", "base:torch_stub", "base:wall_torch_stub"] {
+        assert_ne!(group_of(spent), Some(flame), "{spent}");
+    }
+    let sound = ambience.sounds.iter().position(|s| s.name == "base:wick_spit").expect("a wick spitting");
+    assert_eq!(ambience.sounds[sound].at, super::defs::Placement::Block(flame), "from the flame");
+    let played = |set: &[(&str, f32)]| {
+        let (timeline, _) = run(&ambience, &scene(&ambience, "farm", &["plains", "temperate"], set), 300.0);
+        timeline.iter().filter(|(_, c)| matches!(c, Cue::Sound { sound: s, .. } if *s == sound)).count()
+    };
+    assert!(played(&[("flame", 1.0), ("shelter", 1.0)]) > 0, "a candle lit indoors");
+    assert_eq!(played(&[("shelter", 1.0)]), 0, "no flame");
+}

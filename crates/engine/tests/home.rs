@@ -201,6 +201,32 @@ fn a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner() {
     }
 }
 
+/// The lived-in hearth: under a roof, the hearth with a mantel shelf over it and a fireside
+/// bench before it; any of them missing, or out under the sky, it is not one. Every wood
+/// makes both pieces, the shelf keeps things and the bench is sat on.
+#[test]
+fn a_mantel_shelf_and_a_fireside_bench_make_a_lived_in_hearth() {
+    let content = content();
+    let effects = &content.effects;
+    let room = [("hearth", 1), ("mantel_shelf", 1), ("fireside_bench", 1)];
+    assert_eq!(rooms(&room), ["base:lived_in_hearth"]);
+    for missing in 0..room.len() {
+        let short: Vec<_> = room.iter().enumerate().filter(|&(i, _)| i != missing).map(|(_, &c)| c).collect();
+        assert!(!rooms(&short).contains(&"base:lived_in_hearth".to_owned()), "no {}, no lived-in hearth", room[missing].0);
+    }
+    assert!(rooms(&[("hearth", 1), ("mantel_shelf", 1), ("seat", 1)]).is_empty(), "a stool is no fireside bench");
+    assert!(rooms_in(&room, &Weather::NONE, true).is_empty(), "no roof, no lived-in hearth");
+    let hearth = effects.get(effects.id("base:lived_in_hearth").unwrap());
+    assert_eq!((hearth.modifiers.home_warmth, hearth.modifiers.xp), (1.0, 1.05));
+    for wood in ["birch", "oak", "dark_oak"] {
+        let shelf = content.blocks.expect(&format!("base:{wood}_mantel_shelf"));
+        assert!(content.blocks.def(shelf).has_tag("mantel_shelf") && content.recipes.iter().any(|r| r.output == shelf), "{wood} mantel shelf");
+        assert!(content.machines.iter().any(|m| m.block == shelf && m.is_store()), "the {wood} mantel shelf keeps things");
+        let bench = content.blocks.def(content.blocks.expect(&format!("base:{wood}_fireside_bench")));
+        assert!(bench.has_tag("fireside_bench") && bench.has_tag("seat"), "{wood} fireside bench");
+    }
+}
+
 /// The bedchamber: under a roof, the bed with a blanket chest, a washstand and a rug; any
 /// of them missing, or out under the sky, it is not one. Every wood makes both pieces, and
 /// the chest is storage.
@@ -223,6 +249,31 @@ fn a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber() {
         assert!(content.machines.iter().any(|m| m.block == chest && m.is_store()), "the {wood} blanket chest opens to keep things in");
         let stand = content.blocks.expect(&format!("base:{wood}_washstand"));
         assert!(content.blocks.def(stand).has_tag("washstand") && content.recipes.iter().any(|r| r.output == stand), "{wood} washstand");
+    }
+}
+
+/// The kitchen: under a roof, the hearth with a dresser (its plates on show) and a pot crane
+/// to hang the pot over the fire; any of them missing, or out under the sky, it is not one.
+/// Every wood makes both pieces, and the dresser keeps things.
+#[test]
+fn a_dresser_and_a_pot_crane_by_the_hearth_make_a_kitchen() {
+    let content = content();
+    let effects = &content.effects;
+    let room = [("hearth", 1), ("dresser", 1), ("pot_crane", 1)];
+    assert_eq!(rooms(&room), ["base:kitchen"]);
+    for missing in 0..room.len() {
+        let short: Vec<_> = room.iter().enumerate().filter(|&(i, _)| i != missing).map(|(_, &c)| c).collect();
+        assert!(!rooms(&short).contains(&"base:kitchen".to_owned()), "no {}, no kitchen", room[missing].0);
+    }
+    assert!(rooms_in(&room, &Weather::NONE, true).is_empty(), "no roof, no kitchen");
+    let kitchen = effects.get(effects.id("base:kitchen").unwrap());
+    assert_eq!((kitchen.modifiers.home_warmth, kitchen.modifiers.meal_heal), (1.0, 1.05));
+    for wood in ["birch", "oak", "dark_oak"] {
+        let dresser = content.blocks.expect(&format!("base:{wood}_dresser"));
+        assert!(content.blocks.def(dresser).has_tag("dresser") && content.recipes.iter().any(|r| r.output == dresser), "{wood} dresser");
+        assert!(content.machines.iter().any(|m| m.block == dresser && m.is_store()), "the {wood} dresser opens to keep things in");
+        let crane = content.blocks.expect(&format!("base:{wood}_pot_crane"));
+        assert!(content.blocks.def(crane).has_tag("pot_crane") && content.recipes.iter().any(|r| r.output == crane), "{wood} pot crane");
     }
 }
 

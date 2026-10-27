@@ -2400,9 +2400,12 @@ impl Server {
         if let (Some(who), Some(p)) = (who, self.players.get(&player)) {
             p.connection.send(ServerMessage::Chat { kind: ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", words) });
         }
-        // A dealing with the kind, for quests (`Met`).
+        // A dealing with the kind, for quests (`Met`), and with that line (`Dealt`).
         if dealt {
             self.tally(player, "met", &event.def.name, 1);
+            if let Some((_, line)) = line {
+                self.tally(player, "dealt", &format!("{}/{}", event.def.name, line.name), 1);
+            }
         }
         self.hand_out(player, id, &gives);
         if gives.contains(&ResolvedReward::Free)
