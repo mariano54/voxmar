@@ -160,6 +160,9 @@ impl Server {
         }
         let (now, tick, day, wet, share) = (self.day.floor() as u64, self.tick, self.day, self.survival.douse_rain, self.survival.gutter_share);
         let (mut out, mut gone, mut gutter) = (Vec::new(), Vec::new(), Vec::new());
+        // Of those going out, the ones burnt down (not rained out): only these are made
+        // good from home's stores.
+        let mut burnt: Vec<IVec3> = Vec::new();
         // Rain is the same over a column of blocks: sampled once for each, and a roof looked
         // for only where it rains.
         let mut raining: FxHashMap<(i32, i32), bool> = FxHashMap::default();
@@ -172,6 +175,7 @@ impl Server {
             };
             if now >= flame.out {
                 out.push(pos);
+                burnt.push(pos);
                 continue;
             }
             if let Some(low) = self.content.flames.gutters(&self.content.blocks, here)
@@ -217,14 +221,15 @@ impl Server {
         for pos in out {
             let Some(here) = self.block(pos) else { continue };
             // A spare kept at home for it (a candle box's candles) is set out in its place.
-            if let Some(full) = self.full_burn(here)
+            let burnt = burnt.contains(&pos);
+            if let Some(full) = self.full_burn(here).filter(|_| burnt)
                 && self.take_spare(pos, here)
             {
                 self.burn_from(pos, here, full);
                 continue;
             }
             // Else one going out to what is lit again is lit again from a kindling box there.
-            if let Some(lit) = self.rekindle(pos, here) {
+            if let Some(lit) = burnt.then(|| self.rekindle(pos, here)).flatten() {
                 match self.full_burn(here).filter(|_| lit == here) {
                     Some(full) => self.burn_from(pos, here, full),
                     None => self.set_block(pos, lit),
@@ -846,6 +851,16 @@ mod tests {
         assert_eq!(at(&server, lamp), "base:clay_oil_lamp", "the lamp filled from the box");
         assert_eq!(at(&server, TORCH), "base:torch_stub", "nothing left to light the torch");
         assert!(held(&server).is_empty(), "the lard used");
+        // Rain putting a torch out under open sky is no burning down: the box keeps its
+        // kindling and the torch stays out.
+        let bin = &mut server.factory.state_mut(kindling).unwrap().bin;
+        bin[0] = Some(ItemStack::new(kindling_item, 2));
+        server.set_block(TORCH, id(&server, "base:torch"));
+        let rain = bring(&mut server, "rain");
+        assert!(rain.precipitation * (1.0 - rain.snow) >= server.survival.douse_rain, "raining: {rain:?}");
+        server.burn_flames();
+        assert_eq!(at(&server, TORCH), "base:torch_stub", "rained out");
+        assert_eq!(held(&server), vec![(kindling_item, 2)], "no kindling spent on the rain");
     }
 
     /// The keys of the lines player 1 was told since last asked.

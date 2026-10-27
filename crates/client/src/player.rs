@@ -584,14 +584,24 @@ impl Surroundings for Around<'_> {
 }
 
 pub(crate) fn follow_camera(
+    time: Res<Time>,
+    settings: Res<crate::settings::Settings>,
     player: Res<LocalPlayer>,
     world: Res<ClientWorld>,
     mut cycle: ResMut<DayCycle>,
     mut camera: Query<&mut Transform, With<Camera3d>>,
+    mut rocking: Local<Option<(IVec3, f32)>>,
 ) {
+    // Sat on a seat that rocks (a rocking chair), the view rocks gently from when they sat
+    // down, unless the view is kept still (`screen_shake` off).
+    let seat = player.vitals.seated.filter(|&seat| voxmar_engine::vitals::still_seated(player.position, seat));
+    let rocks = seat.filter(|&at| settings.screen_shake && world.block(at).is_some_and(|b| world.registry.def(b).has_tag(voxmar_engine::vitals::ROCKS)));
+    let now = time.elapsed_secs();
+    *rocking = rocks.map(|at| rocking.filter(|(was, _)| *was == at).unwrap_or((at, now)));
+    let (pitch, lift) = rocking.map_or((0.0, 0.0), |(_, since)| voxmar_engine::vitals::rock(now - since));
     if let Ok(mut transform) = camera.single_mut() {
-        transform.translation = player.eye();
-        transform.rotation = player.rotation();
+        transform.translation = player.eye() + Vec3::Y * lift;
+        transform.rotation = player.rotation() * Quat::from_rotation_x(pitch);
     }
     // Under water when the eye is below the surface of the water around it.
     let eye = player.eye();
