@@ -273,6 +273,8 @@
     "block.base.{name}_cradle": "{name}のゆりかご",
     "block.base.{name}_mantel_shelf": "{name}のろだな",
     "block.base.{name}_log_bench": "{name}のまるたべんち",
+    "block.base.{name}_fingerpost": "{name}のみちしるべ",
+    "block.base.{name}_fingerpost_top": "{name}のみちしるべ",
     "block.base.{name}_fireside_bench": "{name}のろばたのこしかけ",
     "block.base.{name}_plate_rack": "{name}のさらたて",
     "block.base.{name}_bedside_table": "{name}のまくらもとのこづくえ",
