@@ -46,6 +46,22 @@ pub const SEATED_EYE: f32 = 1.3;
 /// How far across from their seat's middle a player may be and still sit on it.
 pub const SEATED_WITHIN: f32 = 0.45;
 
+/// The tag of a seat that rocks the view of whoever sits in it (a rocking chair).
+pub const ROCKS: &str = "rocks";
+/// Seconds of one rock, forward and back.
+pub const ROCK_PERIOD: f32 = 3.2;
+/// How far the view tips forward and back on a rocking seat, radians (about 2°).
+pub const ROCK_PITCH: f32 = 0.035;
+/// How far the eye dips at either end of a rock, blocks.
+pub const ROCK_LIFT: f32 = 0.04;
+
+/// How a rocking seat moves the view `seconds` into sitting: the tip forward (positive)
+/// or back, and how far the eye dips, still at the start and round again each period.
+pub fn rock(seconds: f32) -> (f32, f32) {
+    let phase = std::f32::consts::TAU * seconds / ROCK_PERIOD;
+    (ROCK_PITCH * phase.sin(), -ROCK_LIFT * phase.sin().powi(2))
+}
+
 /// Where a player sitting on the seat at `seat` stands: in one that is not solid (base's
 /// stools, chairs, benches and cushions), on top of a solid one (a mod's), in its middle.
 pub fn seated_feet(seat: glam::IVec3, solid: bool) -> glam::Vec3 {
@@ -175,6 +191,23 @@ impl Recent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Sat in a rocking chair the view rocks gently: still at the start, back and forth
+    /// within its pitch and lift, and round again each period.
+    #[test]
+    fn a_rocking_seat_rocks_the_view_gently() {
+        assert_eq!(rock(0.0), (0.0, 0.0));
+        for step in 0..200 {
+            let t = step as f32 * 0.05;
+            let (pitch, lift) = rock(t);
+            assert!(pitch.abs() <= ROCK_PITCH + 1e-6 && lift.abs() <= ROCK_LIFT + 1e-6, "{t}: {pitch} {lift}");
+            let (again, _) = rock(t + ROCK_PERIOD);
+            assert!((again - pitch).abs() < 1e-4, "{t}: not round again");
+        }
+        let (forward, _) = rock(ROCK_PERIOD / 4.0);
+        let (back, _) = rock(ROCK_PERIOD * 3.0 / 4.0);
+        assert!(forward > 0.9 * ROCK_PITCH && back < -0.9 * ROCK_PITCH, "back and forth: {forward} {back}");
+    }
 
     #[test]
     fn rates_follow_modifiers() {
