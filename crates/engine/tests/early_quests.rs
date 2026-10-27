@@ -834,8 +834,8 @@ fn the_books_bring_a_book_trained_skill_to_the_first_wanderer_line_it_opens() {
     }
 }
 
-/// A `Dealt` goal sends the player to one line, so the line must be open to them: no
-/// `Below` gate (a player past it never hears the line again), and each `Skill` gate surely
+/// A `Dealt` goal sends the player to one line, so the line must be open to them: what it
+/// takes is something the player can come by, no `Below` gate (a player past it never hears the line again), and each `Skill` gate surely
 /// had when the quest opens (`Books::sure`) or asked by a `Level` goal beside it.
 #[test]
 fn every_early_dealt_line_is_open_to_the_player_it_sends() {
@@ -869,6 +869,7 @@ fn a_dealt_line_shut_to_its_player_is_caught() {
 fn shut_lines(content: &Content) -> Vec<String> {
     use voxmar_engine::wander::ResolvedNeed;
     let books = Books { content };
+    let ways = reachable(content);
     let mut shut = Vec::new();
     for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
         for task in &quest.tasks {
@@ -876,6 +877,12 @@ fn shut_lines(content: &Content) -> Vec<String> {
                 let Goal::Dealt(kind, name, _) = goal else { continue };
                 let event = content.wandering.iter().map(|(_, e)| e).find(|e| Books::local(&e.def.name) == Books::local(kind)).expect("load-checked kind");
                 let line = event.meetings.iter().flat_map(|m| m.lines.iter()).find(|l| l.name == *name).expect("load-checked line");
+                // What the line takes is something the land and recipes give.
+                if let Some(voxmar_engine::wander::Want::Item(item)) = &line.wants.as_ref().map(|(w, _)| w.clone())
+                    && !ways.contains_key(item)
+                {
+                    shut.push(format!("{}: {kind}/{name} wants {}, which nothing gives", quest.name, content.blocks.def(*item).name));
+                }
                 for need in &line.needs {
                     match need {
                         ResolvedNeed::Below(skill, level) => shut.push(format!("{}: {kind}/{name} is only for a player below {} {level}", quest.name, content.skills.get(*skill).name)),
