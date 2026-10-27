@@ -183,7 +183,8 @@ pub struct ToolFile {
     pub break_wait: Option<f32>,
     /// How many times as fast a tool carried must break a block than the one it is broken
     /// with for the player to be told so, once a kind of tool each time they join; 0 never
-    /// tells. The last package to give one decides, `DEFAULT_FASTER_CARRIED` if none does.
+    /// tells, and 1 tells of any tool faster at all (one only as fast is never told of). The
+    /// last package to give one decides, `DEFAULT_FASTER_CARRIED` if none does.
     #[serde(default)]
     pub faster_carried: Option<f32>,
 }
@@ -513,7 +514,8 @@ impl ToolRegistry {
     }
 
     /// Of `carried`, the tool good enough for `block` that breaks it fastest, if any is
-    /// faster at all than `held`, with how many times (the first of equals).
+    /// faster at all than `held` (one only as fast never is), with how many times; of tools
+    /// as fast as each other, the first carried.
     pub fn fastest_carried(&self, held: Option<BlockId>, block: BlockId, hardness: f32, carried: impl Iterator<Item = BlockId>) -> Option<(BlockId, f32)> {
         let now = self.break_seconds(held, block, hardness);
         let mut best: Option<(BlockId, f32)> = None;
@@ -1306,6 +1308,15 @@ mod tests {
         for bad in ["0.5", "101.0", "-1.0"] {
             assert!(with(bad).unwrap_err().0.contains("faster_carried"), "{bad}");
         }
+
+        // At 1, any faster tool is told of, never one only as fast; of two as fast as each
+        // other, the first carried is named.
+        let both = ToolRegistry::new(vec![ToolRegistry::read("t", r#"(faster_carried: 1.0, kinds: [(name: "pickaxe", mines: ["stone"]), (name: "axe", mines: ["stone"])])"#).unwrap()], &blocks, &skills).unwrap();
+        let [stone, pick, axe] = ["t:stone", "t:stone_pickaxe", "t:stone_axe"].map(|n| blocks.expect(n));
+        assert_eq!(both.faster_carried(Some(pick), stone, 1.0, [axe].into_iter()), None, "only as fast");
+        assert_eq!(both.faster_carried(None, stone, 1.0, [pick, axe].into_iter()).map(|(b, _)| b), Some(pick), "the first of equals");
+        assert_eq!(both.faster_carried(None, stone, 1.0, [axe, pick].into_iter()).map(|(b, _)| b), Some(axe), "the first of equals");
+        assert_eq!(both.faster_carried(Some(blocks.expect("t:flint_pickaxe")), stone, 1.0, [axe].into_iter()).map(|(b, _)| b), Some(axe), "any faster");
     }
 
     /// A better pickaxe names what it opens up, plain ore standing for its deepslate form and
