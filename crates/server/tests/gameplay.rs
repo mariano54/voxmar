@@ -9230,8 +9230,15 @@ impl Fresh {
         c.fill(origin, v(-9, 0, -10), v(-9, 1, 0), "air");
         // Wild wheat growing by the lane's mouth, for A Tempting Bite.
         c.fill(origin, v(-7, 0, 2), v(-7, 0, 2), "wild_wheat");
+        // The spawn kit's loose flint, the fewest spawn_kit.ron lays, which the level ground
+        // above cleared away: Timber's "flint lies loose on the ground near where you wake".
+        let kit = fresh_kit_spots(&c);
+        for &(x, z) in kit {
+            c.fill(origin, v(x, 0, z), v(x, 0, z), "loose_flint");
+        }
         let probes = [(v(7, 3, -5), "base:oak_log"), (v(17, 0, 4), "base:stone"), (v(-2, -1, 11), "base:water"), (v(-8, 1, 0), "base:stone"), (v(-7, 0, 2), "base:wild_wheat"), (v(9, 3, 12), "base:oak_leaves"), (v(11, 2, 12), "base:dead_log"), (v(24, 2, 17), "base:gravel"), (v(20, 0, -8), "base:granite"), (v(3, 0, 1), "base:sand")];
-        c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR));
+        let flint = c.content.blocks.id("base:loose_flint");
+        c.pump_until(|c| probes.iter().all(|&(at, name)| c.world.block(origin + at) == c.content.blocks.id(name)) && c.world.block(origin + v(-9, 1, 0)) == Some(BlockId::AIR) && kit.iter().all(|&(x, z)| c.world.block(origin + v(x, 0, z)) == flint));
         let (at, t0) = (c.position, c.ticks());
         let epoch = (t0, Instant::now());
         let mut plot = Self { c, origin, at, held: 0, t0, marks: Vec::new(), mined: 0, acts: [0; 4], restocks: 0, epoch, steps: 0, swung: Vec::new(), pacing: Default::default() };
@@ -9445,6 +9452,19 @@ fn a_fresh_survival_player_reaches_each_nomad_milestone() {
     finish(f)
 }
 
+/// Where the plot may lay the spawn kit's loose flint, from the player's cell: two to four
+/// blocks off on open ground, eight, the most spawn_kit.ron may ask for at the least.
+const FRESH_KIT_SPOTS: [(i32, i32); 8] = [(0, -3), (3, -2), (-3, -1), (-4, 2), (-2, -3), (2, -4), (-4, -3), (4, -1)];
+
+/// The spots of the loose flint every spawn is sure of: as many as the kit's least
+/// (`SpawnKit::least`), so the walks play the poorest kit a real spawn gets.
+fn fresh_kit_spots(c: &Client) -> &'static [(i32, i32)] {
+    let kit = voxmar_server::spawn_kit::SpawnKit::load(&c.content.files, &c.content.blocks).expect("the spawn kit loads");
+    let least = kit.least(c.content.blocks.expect("base:loose_flint")) as usize;
+    assert!((1..=FRESH_KIT_SPOTS.len()).contains(&least), "the spawn kit's least loose flint is {least}, not 1 to {}", FRESH_KIT_SPOTS.len());
+    &FRESH_KIT_SPOTS[..least]
+}
+
 /// What the first days leave standing on the plot, which the Farm age comes back to.
 #[derive(Clone)]
 struct Site {
@@ -9469,6 +9489,16 @@ fn the_first_days(f: &mut Fresh) -> Site {
     // (two kept for An Axe to It's spare), a flint axe and pickaxe made in the hand's grid.
     let leaves = (-12..=9).step_by(3).flat_map(|x| (0..=3).map(move |y| v(x, y, 12)));
     let (flint, sticks) = ("base:flint", rel(f, leaves.chain((0..=2).map(|y| v(11, y, 12))).collect()));
+    // The flint lying loose by the spawn first, as Timber says, picked by hand; the rest dug
+    // from gravel.
+    let kit = fresh_kit_spots(&f.c);
+    for &(x, z) in kit {
+        let at = f.rel(x, 0, z);
+        f.walk_toward(Fresh::middle(at), 1.3);
+        f.propose("core:mine", ActionTarget::Block { block: at, face: Face::PosY });
+        f.wait(5.0, "picking up the loose flint", |c| c.world.block(at) == Some(BlockId::AIR));
+    }
+    f.collect(flint, kit.len() as u32);
     f.gather_chance("", sticks, stick, 3);
     let gravel = rel(f, (10..=24).flat_map(|x| (0..=3).flat_map(move |y| [14, 17].map(move |z| v(x, y, z)))).collect());
     f.gather_chance("", gravel, flint, 6);

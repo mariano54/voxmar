@@ -303,6 +303,8 @@ pub enum Prop {
     Washtub,
     Sacks,
     ChickenCoop,
+    /// A post of frame and a board of trim. Base sets a fingerpost instead (its `signpost`
+    /// prop of blocks); kept for packages that name it.
     Signpost,
     /// A boat drawn up on the bank (by water only).
     Boat,

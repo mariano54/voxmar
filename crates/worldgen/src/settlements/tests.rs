@@ -947,6 +947,21 @@ fn a_village_log_bench_is_the_piece_a_player_makes() {
     assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the bench a village builds");
 }
 
+/// A village's signpost is a fingerpost and its top, the fingerpost a player makes at home.
+#[test]
+fn a_village_signpost_is_the_fingerpost_a_player_makes() {
+    use super::def::PropKind;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = voxmar_engine::content::Content::load(&dir).unwrap();
+    let world_content = crate::content::WorldContent::load(&content).unwrap();
+    let sign = world_content.settlements.props.iter().find(|p| p.kind.label() == "signpost").expect("villages set signposts");
+    let PropKind::Blocks(_, blocks) = &sign.kind else { panic!("the signpost is a package's prop of blocks") };
+    let placed: Vec<(IVec3, &str)> = blocks.iter().map(|(at, name)| (*at, name.as_str())).collect();
+    assert_eq!(placed, [(IVec3::new(0, 1, 0), "base:oak_fingerpost"), (IVec3::new(0, 2, 0), "base:oak_fingerpost_top")]);
+    let piece = content.blocks.expect("base:oak_fingerpost");
+    assert!(content.recipes.iter().any(|r| r.output == piece), "a player makes the fingerpost a village sets");
+}
+
 /// What a village keeps its stores and nets in (its barrel, crates, sacks and nets) is what
 /// a player makes at home: a survival piece with a recipe, given back whole where a player
 /// set it and nothing where a village did (`furnishing`).

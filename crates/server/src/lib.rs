@@ -46,7 +46,7 @@ mod stores;
 mod treasure;
 mod troughs;
 pub mod save;
-mod spawn_kit;
+pub mod spawn_kit;
 mod villagers;
 mod wandering;
 mod weather;
@@ -1820,7 +1820,11 @@ mod tests {
         quest.why = "Put clay in a chest.".into();
         quest.after = vec!["base:clay_banks".into()];
         quests.push(quest);
-        assert_eq!(store_untaught(&quests), ["base:a_shut_store"]);
+        let mut quest = quests.iter().find(|q| q.name == "base:put_it_away").expect("a Nomad quest").clone();
+        quest.name = "base:a_shut_pack".into();
+        quest.after = vec!["base:pantry_shelves".into()];
+        quests.push(quest);
+        assert_eq!(store_untaught(&quests), ["base:a_shut_store", "base:a_shut_pack"]);
     }
 
     /// A structure is built of what its cells take: a route raising one whose pieces no

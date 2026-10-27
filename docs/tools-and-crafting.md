@@ -14,7 +14,9 @@ what it breaks that a lesser one of its kind cannot, one block per `tools.ron` r
 for a tier above the next lower tool's and up to its own (a rule at a tier no tool has shows
 on the first past it), nearest level first ("Breaks what a lesser one cannot: Coal Ore,
 Copper Ore, Tin Ore and 3 more" on a stone pickaxe; `ToolRegistry::opens`, found at load).
-A second tool at a tier (bronze beside copper) says nothing there. Tier 1
+A second tool at a tier (bronze beside copper) says nothing there. The first one a player makes
+says the same in chat ("Your first Stone Pickaxe: it breaks what a lesser one cannot, Coal
+Ore, Copper Ore, ..."; server `tell_first_tool`). Tier 1
 has a flint pickaxe, axe and knife and a digging stick (a shovel), but no hoe: tilling waits for a stone edge. There are no wooden tools (Oct 15:
 a plank's edge cuts nothing); an older save's come back as the flint tool, the digging
 stick or the stone hoe that does their work now (`renamed` in `blocks_tools.ron`).
