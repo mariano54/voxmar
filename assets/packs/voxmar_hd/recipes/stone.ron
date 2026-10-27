@@ -71,6 +71,9 @@
         // Two more drawings of stone for Voxmar HD's variants.ron, from seeds of their own.
         "block/stone_4": (base: "block/stone", seed: 303),
         "block/stone_5": (base: "block/stone", seed: 404),
+        // A mullioned window's stone is the wall's, under a name of its own so only the
+        // window glows (the default pack's stone.ron).
+        "block/stone_window": (base: "block/stone_bricks"),
         // Ores in vanilla's design language, our own drawing: eight irregular clumps of
         // mineral four to eight texels across in four speckled shades with dark edge
         // texels, drawn over the rock they lie in (their block's `host`). The ores keep

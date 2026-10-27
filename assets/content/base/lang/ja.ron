@@ -457,6 +457,7 @@
     "block.base.{name}_shuttered_window": "{name}の雨戸付き格子窓",
     "block.base.{name}_shuttered_window_shut": "{name}の雨戸付き格子窓",
     "block.base.stone_arrow_slit": "石の矢狭間",
+    "block.base.stone_mullion_window": "石の縦仕切り窓",
     "block.base.{name}_railing": "{name}の手すり",
     "block.base.{name}_railing_corner": "{name}の手すりの角",
     "block.base.{name}_fence": "{name}の柵",

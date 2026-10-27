@@ -60,7 +60,7 @@ fn a_lattice_window_lets_the_light_out_and_counts_as_a_window() {
     let content = Content::load(&dir).unwrap();
     let blocks = &content.blocks;
     let id = |name: &str| blocks.id(name).unwrap_or_else(|| panic!("{name}"));
-    for name in ["base:oak_lattice_window", "base:oak_shuttered_window", "base:birch_lattice_window_east"] {
+    for name in ["base:oak_lattice_window", "base:oak_shuttered_window", "base:birch_lattice_window_east", "base:stone_mullion_window", "base:stone_mullion_window_west"] {
         let def = blocks.def(id(name));
         assert!(def.has_tag("window") && def.lit_through, "{name} is a window, lit through");
     }
@@ -97,6 +97,24 @@ fn a_lattice_window_lets_the_light_out_and_counts_as_a_window() {
     assert_eq!(outside(id("base:oak_lattice_window")), light - 2, "out through the lattice");
     assert_eq!(outside(id("base:oak_shuttered_window")), light - 2, "out through the open shutters");
     assert_eq!(outside(id("base:oak_shuttered_window_shut")), 0, "the shut shutters keep it in");
+    assert_eq!(outside(id("base:stone_mullion_window")), light - 2, "out through the mullioned window's lights");
+}
+
+/// A stone house has a window of its own: a mullioned window of dressed stone, made from
+/// stone bricks and their slabs, a draughty wall to a home's rooms, as a lattice is.
+#[test]
+fn a_stone_house_has_a_mullioned_window() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+    let content = Content::load(&dir).unwrap();
+    let blocks = &content.blocks;
+    let window = blocks.def(blocks.id("base:stone_mullion_window").unwrap());
+    assert!(window.has_tag("masonry") && window.has_tag("shelter:draughty") && window.has_tag("draught"), "{:?}", window.tags);
+    let id = blocks.id("base:stone_mullion_window").unwrap();
+    let recipe = content.recipes.iter().find(|r| r.output == id).expect("a recipe for the mullioned window");
+    let inputs: Vec<BlockId> = recipe.alternatives().into_iter().flatten().flatten().copied().collect();
+    let count = |name: &str| inputs.iter().filter(|&&b| b == blocks.id(name).unwrap()).count();
+    assert_eq!((count("base:stone_bricks"), count("base:stone_brick_slab"), inputs.len()), (4, 2, 6), "stone bricks either side of the slabs");
+    assert_eq!((recipe.count, recipe.level), (2, 6), "made two at a time at the arrow slit's level");
 }
 
 /// A window's drawing glows by the light through it, so only windows draw with it: the

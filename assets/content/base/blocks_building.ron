@@ -23,12 +23,12 @@
             (name: "{name}_beam", render: Model, shape: "beam", facing: true, flips: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "beam", "wood", "building", "fuel", "shelter:sound"]),
             (name: "{name}_lattice_window", render: Model, shape: "lattice_window", facing: true, sound: Wood, textures: All("lattice_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "lattice", "window", "wood", "building", "shelter:draughty", "draught"], lit_through: true),
             (name: "{name}_shingles", render: Model, shape: "roof", facing: true, light_filter: 14, sound: Wood, textures: All("shingles_grey"), hardness: 1.5, color: (160, 120, 70), tags: ["roof", "shingle", "wood", "building", "fuel", "shelter:sound"]),
-            // A jetty: a joist run out past the wall below to carry a floor over the street,
-            // a brace under it back to the wall. Its overhang faces whoever set it.
             // A door hood: a little pitched roof of boards on two brackets, set on a wall over
             // a door to keep the rain off the step; an awning for the dooryard, made of wood
             // and sticks where cloth would need a dye. Walked under, as a cloth awning is.
             (name: "{name}_door_hood", render: Model, shape: "door_hood", facing: true, solid: false, sound: Wood, textures: All("furniture_grain"), hardness: 1.0, color: (160, 120, 70), tags: ["timber", "awning", "door_hood", "wood", "building", "fuel", "shelter:draughty"]),
+            // A jetty: a joist run out past the wall below to carry a floor over the street,
+            // a brace under it back to the wall. Its overhang faces whoever set it.
             (name: "{name}_jetty_beam", render: Model, shape: "jetty_beam", facing: true, sound: Wood, textures: All("furniture_grain"), hardness: 2.0, color: (160, 120, 70), tags: ["timber", "jetty", "wood", "building", "fuel", "shelter:sound"]),
             // A knee brace from a post up to the beam it carries, corner to corner across the
             // cell; turned over, it braces a beam from below.
@@ -222,6 +222,12 @@
         // A stone arrow slit: a block of dressed stone with a narrow upright slit through
         // it, the window of a stone wall. Light and a draught come through it, nobody does.
         (name: "stone_arrow_slit", render: Model, shape: "arrow_slit", facing: true, sound: Stone, material: "stone_brick", textures: All("stone_bricks"), hardness: 2.0, color: (120, 120, 120), tags: ["slit", "masonry", "building", "shelter:draughty", "draught"]),
+        // A mullioned window: dressed stone round four lights, a mullion up the middle and a
+        // transom across, the window a stone house has where a timber one has a lattice.
+        // Light and a draught come through its lights, nobody does, and it counts as a
+        // window for a bright room. It glows by a lit room's light as a lattice does, so it
+        // is drawn with a stone of its own (`stone_window`), never the stone bricks a wall is.
+        (name: "stone_mullion_window", render: Model, shape: "mullion_window", facing: true, sound: Stone, material: "stone_brick", textures: All("stone_window"), hardness: 2.0, color: (120, 120, 120), tags: ["window", "mullion", "masonry", "stone", "building", "shelter:draughty", "draught"], lit_through: true),
         // Chimney pieces, to carry a hearth's chimney up through a roof: a flue of brick
         // narrower than a block, so roof courses meet it, and a clay pot to top it.
         (name: "chimney_stack", render: Model, shape: "chimney_stack", sound: Stone, textures: All("chimney_side"), hardness: 2.0, color: (130, 100, 90), tags: ["chimney_piece", "stone", "bricks", "building", "shelter:fine"]),
