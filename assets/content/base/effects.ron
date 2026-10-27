@@ -47,6 +47,10 @@
         // lived-in home (no home needed: a shelf and a window by a seat make the nook).
         (name: "reading_nook", kind: Buff, title: "Reading Nook", description: "Sat by a window with books to hand: you learn a tenth more.",
             when: Some(All([Seated, Near("books", 2), Near("window", 3)])), modifiers: (xp: 1.1)),
+        // Sat with a footstool before the seat: feet up after a day on them. On the footstool
+        // itself is no feet up (it is a seat too, and would be near itself).
+        (name: "feet_up", kind: Buff, title: "Feet Up", description: "Sat with your feet on a footstool: you heal a quarter faster.",
+            when: Some(All([Seated, Not(SeatedOn("footstool")), Near("footstool", 1)])), modifiers: (heal: 1.25)),
         // Taking from bees without smoke (bees.ron).
         (name: "stung", kind: Debuff, title: "Stung", description: "Bee stings: slower to heal for a while. Smoke them calm first.",
             modifiers: (heal: 0.75)),

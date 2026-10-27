@@ -301,12 +301,25 @@ fn mesh_with(scratch: &mut Scratch, registry: &BlockRegistry, region: &LitRegion
     let mut grids: Vec<LodGrid> =
         LEVELS.into_iter().filter(|&level| level > 1).map(|level| LodGrid::new(looks, region, origin, level)).collect();
     let (mut occluding, mut grass) = (0, false);
+    // A row of nothing but air, in full detail, leaves only its light: no face, and no
+    // bit in the tables (half of a chunk at the surface).
+    let air = looks[BlockId::AIR.0 as usize];
+    let plain_air = detail == 1 && !air.occludes && air.render == RenderKind::Invisible && air.fluid == 0 && !air.wall && !air.grass_top;
     for y in 0..P {
         let world_y = origin.y + y as i32;
         for z in 0..P {
             // A row of the region; below the world is an invisible wall that hides bottom
             // faces, and above it, open sky.
             let row = (0..WORLD_HEIGHT).contains(&world_y).then(|| region.row(origin.x, world_y, origin.z + z as i32, P));
+            if plain_air
+                && let Some((blocks, lights)) = row
+                && blocks.iter().all(|block| block.is_air())
+            {
+                for (x, &light) in lights.iter().enumerate() {
+                    cells[pidx(x, y, z)] = Cell { block: BlockId::AIR, occludes: false, shades: false, light, fluid: 0 };
+                }
+                continue;
+            }
             for x in 0..P {
                 let pos = origin + IVec3::new(x as i32, y as i32, z as i32);
                 let (block, light) = match row {

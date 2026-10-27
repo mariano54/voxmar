@@ -119,7 +119,7 @@
             guide: [
                 (level: 1, text: "Planks and sticks from logs; bricks and sandstone", icon: "oak_planks"),
                 (level: 1, text: "Mossy stonework", icon: "mossy_cobblestone"),
-                (level: 2, text: "Grain sacks and baskets woven of twine", icon: "sack"),
+                (level: 2, text: "Grain sacks woven of twine", icon: "sack"),
                 (level: 5, text: "Rope and twine from fibre (to come)"),
                 (level: 15, text: "Wool cloth and beds (to come)", icon: "wool"),
                 (level: 20, text: "Leather from hides (to come)", icon: "hide"),
