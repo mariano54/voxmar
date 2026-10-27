@@ -268,6 +268,7 @@
     "item.plants": "{crop}を植える・{skill} {level}",
     "item.reaps": "実った作物を{side}×{side}でまとめて刈る",
     "item.tool_speed": "素手の{speed}倍の速さで作業できる",
+    "item.tool_opens": "格下の道具では壊せないもの：{list}",
     "item.weapon": "{class}・{style}・{skill} {level}",
     "item.weapon_hit": "最大ダメージ {hit}・{seconds}秒ごとに一撃",
     "item.weapon_reach": "{reach}ブロック先まで届く",
