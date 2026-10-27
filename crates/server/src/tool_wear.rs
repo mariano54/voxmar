@@ -3,7 +3,7 @@
 //! player holds, the skill its kind trains saves one now and then, and worn to nothing it
 //! breaks (leaving nothing, or a head a pack names), a spare of its kind coming up into the
 //! hand where `Wear::spare` says. The player hears it warn once it is nearly worn
-//! out, and hears and sees it break (`ServerMessage::ToolWore`). Creative play wears nothing.
+//! out, and hears and sees it break (`ServerMessage::ToolWore`), told in words both times. Creative play wears nothing.
 
 use voxmar_engine::inventory::{CURSOR, ItemStack};
 use voxmar_engine::tool::{Worn, wear_down};
@@ -55,9 +55,11 @@ impl Server {
         }
         // Broken in the hand with nothing left there, a spare of its kind comes up from the
         // pack: its like first, else the one of its kind with most uses left.
+        let mut brought_up = None;
         if worn == Worn::Broke && now.is_none() && slot == player.selected && tools.wear().spare {
             if let Some(i) = tools.spare(&blocks, item, &player.inventory.slots, slot) {
                 player.inventory.slots[slot] = player.inventory.slots[i].take();
+                brought_up = player.inventory.slots[slot].map(|s| s.item);
             }
         }
         let mut left = Vec::new();
@@ -70,6 +72,17 @@ impl Server {
         player.changed(voxmar_engine::traits::INVENTORY);
         if worn != Worn::Fine {
             player.connection.send(ServerMessage::ToolWore { item, broke: worn == Worn::Broke });
+        }
+        // Broken, it says so in words as its warning did, and what is in hand now if a spare
+        // came up.
+        if worn == Worn::Broke {
+            use voxmar_engine::lang::Words;
+            let named = |item| Words::Block(blocks.def(item).name.clone());
+            let text = match brought_up {
+                Some(spare) => Words::key("tool.broke_spare").with("item", named(item)).with("spare", named(spare)),
+                None => Words::key("tool.broke").with("item", named(item)),
+            };
+            player.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text });
         }
         // Nearly worn out, it says how it is mended, as its tooltip does: what with, and at
         // what, the first time that matters being before it breaks.
@@ -307,6 +320,42 @@ mod tests {
             let stone = put(&mut server, "base:stone");
             server.wear_on_block(1, stone, false, server.tool_in_hand(1));
             assert_eq!(told(&client), (1, 0), "{tool}: warned crossing {left} of {uses} left");
+        }
+    }
+
+    /// A tool that breaks says so in words, as its warning did: with a spare brought up,
+    /// what is in hand now; with none, that it broke.
+    #[test]
+    fn a_tool_that_breaks_says_so_and_what_is_in_hand() {
+        use voxmar_engine::lang::Words;
+        let said = |client: &voxmar_protocol::ClientConnection| {
+            let mut said = Vec::new();
+            while let Ok(Some(message)) = client.try_recv() {
+                if let ServerMessage::Chat { text: Words::Key(key, args), .. } = message {
+                    said.push((key, args));
+                }
+            }
+            said
+        };
+        for spare in [true, false] {
+            let (mut server, client) = holding("base:flint_axe", 0);
+            let [axe, stone_axe] = ["base:flint_axe", "base:stone_axe"].map(|n| server.content.blocks.expect(n));
+            let player = server.players.get_mut(&1).unwrap();
+            player.inventory.slots[0].as_mut().unwrap().wear = server.content.tools.uses(axe) - 1;
+            if spare {
+                player.inventory.slots[9] = Some(ItemStack::new(stone_axe, 1));
+            }
+            let log = put(&mut server, "base:oak_log");
+            server.wear_on_block(1, log, false, server.tool_in_hand(1));
+            let said = said(&client);
+            let [(key, args)] = &said[..] else { panic!("spare {spare}: told {said:?}") };
+            let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+            assert_eq!(arg("item"), Some(Words::Block("base:flint_axe".into())));
+            if spare {
+                assert_eq!((key.as_str(), arg("spare")), ("tool.broke_spare", Some(Words::Block("base:stone_axe".into()))));
+            } else {
+                assert_eq!(key, "tool.broke");
+            }
         }
     }
 
