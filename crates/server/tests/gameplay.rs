@@ -4173,6 +4173,9 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     client.ok(&format!("/tp {} {} {}", at.x, at.y, at.z));
     client.ok(&format!("/tp bystander {} {} {}", at.x, at.y, at.z));
     bystander.pump_until(|c| c.teleported.is_some() && c.health > 0);
+    // A second for the villager to notice us beside it: a blow on one caught unaware is
+    // sure and half again as hard (`feel.unaware_max_hit`), and would kill it in one.
+    client.pump_ticks(TICKS_PER_SECOND as u64, |_| false);
     let (blows_before, refused_before, started) = (client.damage.len(), client.refused.len(), client.server_tick);
     let landed = move |c: &Client| c.creatures.get(&villager.id).is_some_and(|v| v.health < villager.health);
     strike_until(&mut client, villager.id, 10, landed);
@@ -5797,6 +5800,11 @@ fn blows_on_the_beat_build_to_a_flourish() {
     // Creative, so the bear's blows pass us by; held still, so every swing reaches it.
     client.ok("/gamemode creative");
     let (id, slot) = beside_a_bear(&mut client);
+    // A second for the bear to look about and notice us beside it before it is held: a
+    // first blow on one caught unaware is a kind of its own (`Blow::Unaware`), and this
+    // counts the beat's.
+    face(&mut client, id, slot, true);
+    client.pump_ticks(TICKS_PER_SECOND as u64, |_| false);
     client.ok("/creatures hold");
     face(&mut client, id, slot, true);
     client.pump_until(|c| c.creatures[&id].position.with_y(0.0).distance(c.position.with_y(0.0)) < 2.0);
