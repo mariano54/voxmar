@@ -482,6 +482,8 @@ impl Server {
                     let spawn = player.home_spot(&self.lit).unwrap_or(self.spawn);
                     player.buried = false;
                     player.health.heal(u8::MAX);
+                    // Woken at home is no homecoming.
+                    player.away = 0.0;
                     // Where they wake is where a grave goes until they stand elsewhere,
                     // not where they last stood in the life before.
                     player.last_ground = Some(spawn);

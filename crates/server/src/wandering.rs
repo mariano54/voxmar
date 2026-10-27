@@ -4843,6 +4843,34 @@ mod tests {
         assert_eq!(count_of(&server, "base:seed_mix"), seed, "once");
     }
 
+    #[test]
+    fn a_player_who_keeps_the_scarecrow_in_sight_can_walk_up_and_be_given_its_seed() {
+        let mut server = fixture();
+        let id = start(&mut server, "scarecrow", (128, 80));
+        let scarecrow = members_of(&server, id, 0)[0];
+        server.players.get_mut(&1).unwrap().inventory.clear(|_| true);
+        // Looked away from, it comes to its distance and keeps it.
+        server.players.get_mut(&1).unwrap().yaw = std::f32::consts::PI;
+        run(&mut server, 400);
+        let at = leader_at(&server, id).unwrap();
+        assert!(!server.within_speech(1, scarecrow), "it keeps off: {:.1} blocks", flat(at, server.players[&1].position));
+        // Watched the whole way, it stands still, and a walk brings the player within speech.
+        for _ in 0..400 {
+            if server.within_speech(1, scarecrow) {
+                break;
+            }
+            let at = leader_at(&server, id).unwrap();
+            let p = server.players.get_mut(&1).unwrap();
+            let to = (xz(at) - xz(p.position)).normalize_or_zero();
+            (p.yaw, p.pitch) = ((-to.x).atan2(-to.y), 0.0);
+            p.position = Vec3::new(p.position.x + to.x * 0.4, at.y, p.position.z + to.y * 0.4);
+            run(&mut server, 5);
+        }
+        assert!(server.within_speech(1, scarecrow), "walked up to it: {:.1} blocks", flat(leader_at(&server, id).unwrap(), server.players[&1].position));
+        server.inspect(1, scarecrow);
+        assert!((3..=5).contains(&count_of(&server, "base:seed_mix")), "its pockets emptied");
+    }
+
     /// A wild creature of `name` at `at`.
     fn wild(server: &mut Server, name: &str, at: Vec3, salt: u64) -> u32 {
         let species = server.content.creatures.id(name).unwrap();

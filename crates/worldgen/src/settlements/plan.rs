@@ -2047,6 +2047,32 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
     let mut walls_out: Vec<(IVec2, i32)> = Vec::with_capacity(wall.len());
     if let Some(block) = wall_block {
         let tower = wall_height + wall_rules.towers.1 as i32;
+        // A gate through a stone wall is arched under its lintel: one a block wide by an
+        // arch between its posts, a wider one by a springer from each post.
+        let arch = wall_rules.arches.iter().find(|a| a.walls.is_empty() || a.walls.iter().any(|n| ctx.resolved.get(n) == Some(block))).filter(|_| stone);
+        let lintels: rustc_hash::FxHashSet<IVec2> = wall.iter().filter(|w| w.part == WallPart::Lintel).map(|w| w.at).collect();
+        let arched = |at: IVec2| -> Option<BlockId> {
+            use super::roofs::{SIDES, SUFFIXES};
+            let arch = arch?;
+            let piece = |name: &str, facing: usize| ctx.resolved.get(&format!("{name}{}", SUFFIXES[facing]));
+            let post = |k: usize| walled_at.contains(&(at + SIDES[k % 4]));
+            let gate = |k: usize| lintels.contains(&(at + SIDES[k % 4]));
+            (0..4).filter(|&k| post(k)).find_map(|k| {
+                if post(k + 2) {
+                    // The bare arch runs east to west, between posts east and west of it.
+                    piece(&arch.arch, usize::from(k % 2 == 0))
+                } else if !gate(k + 2) {
+                    None
+                } else if k == 1 || k == 2 {
+                    // The springer facing `f` springs from the side `SIDES[f + 1]`, its
+                    // mirror from `SIDES[f + 3]`: the post east or south takes the one, the
+                    // other the mirror, so the two ends of a gate face alike.
+                    piece(&arch.wide, (k + 3) % 4)
+                } else {
+                    piece(&arch.wide_half, (k + 1) % 4)
+                }
+            })
+        };
         for w in &wall {
             let (from, to) = match w.part {
                 WallPart::Wall => (1, wall_height),
@@ -2059,6 +2085,7 @@ fn layout(ctx: &Ctx, cell: IVec2, centre: IVec2, fresh: bool, mut rng: Rng, smal
                 WallPart::TowerCorner => (1, tower + 1),
             };
             for up in from..=to {
+                let block = if up == from && w.part == WallPart::Lintel { arched(w.at).unwrap_or(block) } else { block };
                 canvas.on_ground(w.at.x, w.at.y, up, Put::Set(block));
             }
             if w.part != WallPart::Lintel {

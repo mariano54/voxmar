@@ -407,7 +407,8 @@ The Farm quests that followed Homestead Hearth follow The Farm Age.
   Place to Pray). Loading refuses one done before it, one not open while it is (each
   `after` a quest it waits on), or one its `why` does not name in brackets; a client test
   checks each language's text names the translated title. A Pot on the Chimney now opens
-  with The Potter, beside Earthenware, so it is open during the first load. Brick by Brick's names A Table for Two, and Charcoal's A Place to Pray.
+  with The Potter, beside Earthenware, so it is open during the first load. Brick by Brick's names A Table for Two, Charcoal's A Place to Pray, and The Potter's Fuel
+  to Hand.
 - `/quest <name>` (admin) marks a quest done, its rewards left to claim. The kiln bot uses
   it for The Farm Age until piece 12 has it earn the rite.
 
@@ -626,6 +627,16 @@ procession for their prayer), **Join the Dance** (Nomad, after Hard to Put Down:
 a dance circle) and **The Scarecrow's Pockets** (Farm, after Seed Mix: the seed a scarecrow
 carries). The Dealt-line check now also reports, without failing, an alternative way whose
 skill gate the books never surely reach, the same way the gap check reports one.
+
+Four more: **A Bone for the Dog** (Nomad, after Small Game: a bone for a dog out walking, for
+twine), **Moths to the Flame** (Nomad, after Torchlight: a torch held up for the moth
+netters), **A Sweep's Luck** (Nomad, after Homestead Hearth: shake a chimney sweep's hand)
+and **A Tale by Night** (Farm, after A Place to Pray: a storyteller's tale of something
+strange near). The Scarecrow's Pockets now says how to reach it (it stands still while
+watched), and a server test walks a watching player up to it until the trade fires The Dealt-line check
+now also holds a line or party that comes only to a player with a home (or without one) to
+quests whose books surely leave the player so, and a line wanting something held to a tag
+something given carries.
 
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).

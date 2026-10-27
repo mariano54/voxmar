@@ -90,6 +90,9 @@
         flourish_max_hit: 0.2,
         counter_max_hit: 0.25,
         falling_max_hit: 0.15,
+        // A blow on a creature that has not noticed you (asleep, looking away, stalked from
+        // behind; never a boss) cannot miss and hits up to half again as hard (0 to 1.5).
+        unaware_max_hit: 0.5,
         falling_drop: 0.3,
         cancel_to: 0.5,
         crush_through: 0.5,
