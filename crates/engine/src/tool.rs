@@ -302,6 +302,10 @@ fn opened(blocks: &BlockRegistry, rules: &[Rule], tools: &[Tool], covered: &[Opt
         .collect()
 }
 
+/// How many of what a tool opens (`ToolRegistry::opens`) its tooltip and its first-made line
+/// name before "and N more".
+pub const OPENS_SHOWN: usize = 3;
+
 /// How many times as fast a carried tool must break a block to be told of where no package
 /// says.
 pub const DEFAULT_FASTER_CARRIED: f32 = 2.0;

@@ -118,7 +118,13 @@ impl Server {
         }
         let blocks = &self.content.blocks;
         let named = |b: voxmar_engine::block::BlockId| voxmar_engine::lang::Words::Block(blocks.def(b).name.clone());
-        let text = voxmar_engine::lang::Words::key("tool.first_opens").with("tool", named(made)).with("list", voxmar_engine::lang::Words::List(opens.iter().map(|&b| named(b)).collect()));
+        // The first few and how many more, as the tooltip lists them.
+        let shown = voxmar_engine::lang::Words::List(opens.iter().take(voxmar_engine::tool::OPENS_SHOWN).map(|&b| named(b)).collect());
+        let list = match opens.len().checked_sub(voxmar_engine::tool::OPENS_SHOWN).filter(|&more| more > 0) {
+            Some(more) => voxmar_engine::lang::Words::key("tooltip.more").with("list", shown).with("count", more.to_string()),
+            None => shown,
+        };
+        let text = voxmar_engine::lang::Words::key("tool.first_opens").with("tool", named(made)).with("list", list);
         if let Some(player) = self.players.get(&agent) {
             player.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text });
         }
@@ -478,8 +484,11 @@ mod tests {
         let said = told(&client);
         let [args] = &said[..] else { panic!("told {said:?}") };
         let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
-        let opens = server.content.tools.opens(pick).iter().map(|&b| Words::Block(server.content.blocks.def(b).name.clone())).collect();
-        assert_eq!((arg("tool"), arg("list")), (Some(Words::Block("base:stone_pickaxe".into())), Some(Words::List(opens))));
+        // Six it opens: the first three, and three more, as the tooltip has it.
+        let opens: Vec<Words> = server.content.tools.opens(pick).iter().map(|&b| Words::Block(server.content.blocks.def(b).name.clone())).collect();
+        assert!(opens.len() > voxmar_engine::tool::OPENS_SHOWN, "{opens:?}");
+        let list = Words::key("tooltip.more").with("list", Words::List(opens[..voxmar_engine::tool::OPENS_SHOWN].to_vec())).with("count", (opens.len() - voxmar_engine::tool::OPENS_SHOWN).to_string());
+        assert_eq!((arg("tool"), arg("list")), (Some(Words::Block("base:stone_pickaxe".into())), Some(list)));
         make(&mut server, &stone);
         assert_eq!(server.players[&1].tallies.get("crafted:base:stone_pickaxe"), Some(&2), "made again");
         assert!(told(&client).is_empty(), "only the first");

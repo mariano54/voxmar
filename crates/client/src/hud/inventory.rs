@@ -1084,7 +1084,7 @@ pub(crate) fn tool_line(locale: &Locale, content: &voxmar_engine::content::Conte
 /// pickaxe names coal and copper, so making it says where it leads.
 pub(crate) fn opens_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
     let names: Vec<String> = content.tools.opens(item).iter().map(|&b| locale.block(content.blocks.def(b))).collect();
-    (!names.is_empty()).then(|| (locale.format("item.tool_opens", &[("list", &listed(locale, names, 3))]), SOFT))
+    (!names.is_empty()).then(|| (locale.format("item.tool_opens", &[("list", &listed(locale, names, voxmar_engine::tool::OPENS_SHOWN))]), SOFT))
 }
 
 /// How a weapon fights: its class, style and the level that wields it (red while the
