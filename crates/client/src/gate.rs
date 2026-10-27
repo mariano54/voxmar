@@ -10262,7 +10262,10 @@ fn door(world: &mut World, gate: &mut Gate, now: f32, in_phase: f32) {
         // again: one the server refused (something in the way) is tried until it goes in.
         2 => match door_cells(world, at) {
             Some((true, false)) => {
-                gate.check("door: placed", Ok("a wooden door went in whole, both halves shut".into()));
+                // A pass that needed more than the first ask says so, and what was refused
+                // on the way: with nothing in the cells, the first ask should go in.
+                let refusals: Vec<String> = world.resource::<crate::hud::skills::SkillToasts>().refusals().map(str::to_owned).collect();
+                gate.check("door: placed", Ok(format!("a wooden door went in whole, both halves shut ({} asks; refused {refusals:?})", gate.taps)));
                 aim_at(world, at.as_vec3() + Vec3::new(0.5, 1.0, 0.5));
                 use_door(world);
                 gate.advance(now);
