@@ -154,7 +154,7 @@
     "effect.base.bee_garden": "ミツバチの庭",
     "effect.base.bee_garden.description": "花の間でミツバチが働いている。ここでは回復が1割速く、巣箱の近くの作物は4分の1速く育つ。",
     "effect.base.dooryard": "戸口の庭",
-    "effect.base.dooryard.description": "戸口に日よけ、そのまわりの外に長椅子や旗飾りや干し草。庭にいると回復が20分の1速い。",
+    "effect.base.dooryard.description": "戸口に日よけ、そのまわりの外に長椅子や旗飾りや干し草や石垣。庭にいると回復が20分の1速い。",
     "effect.base.sheltered": "雨宿り",
     "effect.base.sheltered.description": "外が荒れていても暖かく乾いている。回復が2割早まり、学びが20分の1増える。",
     "effect.base.company": "にぎやかな家",

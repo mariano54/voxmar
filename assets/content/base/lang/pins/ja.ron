@@ -674,7 +674,7 @@
     "effect.base.bee_garden": ("Bee garden", "ミツバチの庭"),
     "effect.base.bee_garden.description": ("Bees at work among your flowers: you heal a tenth faster here, and crops near the hive grow a quarter faster.", "花の間でミツバチが働いている。ここでは回復が1割速く、巣箱の近くの作物は4分の1速く育つ。"),
     "effect.base.dooryard": ("Dooryard", "戸口の庭"),
-    "effect.base.dooryard.description": ("An awning at your door, a bench, bunting or bales out in the open about it: in the yard you heal a twentieth faster.", "戸口に日よけ、そのまわりの外に長椅子や旗飾りや干し草。庭にいると回復が20分の1速い。"),
+    "effect.base.dooryard.description": ("An awning at your door, a bench, bunting, bales or a dry-stone wall out in the open about it: in the yard you heal a twentieth faster.", "戸口に日よけ、そのまわりの外に長椅子や旗飾りや干し草や石垣。庭にいると回復が20分の1速い。"),
     "effect.base.smoky": ("Smoky", "煙たい"),
     "effect.base.smoky.description": ("Smoke clings to you: bees take you for a fire and stay calm.", "煙が体にまとわりついている。ハチは火と思っておとなしくしている。"),
     "effect.base.tusk_stride": ("Tusk Stride", "牙の足取り"),
