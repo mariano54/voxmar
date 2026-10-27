@@ -203,8 +203,10 @@ struct Person {
     /// Each player found in their home at night, by `player_key`, is told to leave again
     /// no sooner than this tick.
     shooed: BTreeMap<String, u64>,
-    /// Come to stand by a player holding out food they like (`coax`).
+    /// Come to stand by a player holding out food they like (`coax`), and the cell their
+    /// way there was found to.
     coaxed: Option<u32>,
+    coax_to: Option<IVec3>,
     /// Given a treat, they want another no sooner than this tick.
     treated_after: u64,
     /// Each player seen breaking their things, by `player_key`, is told off again no
@@ -636,7 +638,7 @@ impl Server {
         }
         self.villagers.towns.get_mut(&town).expect("listed").people[i].quarry = None;
         let react = self.overworld.settlement_people().react.clone();
-        if self.react(id, town, i, at, &react) {
+        if self.react(id, town, i, at, &react, live) {
             return;
         }
         let (place, slot, day) = self.place_now(town, i, seed);
@@ -702,7 +704,7 @@ impl Server {
     /// nothing hiding it): a monster or a hunter seen near frightens anyone but a guard home
     /// crying out, and a player near they have noticed and see is greeted: they stop where
     /// they stand, turn to them and hum. Whether they stand greeting, their day waiting.
-    fn react(&mut self, id: u32, town: u64, i: usize, at: Vec3, react: &ReactDef) -> bool {
+    fn react(&mut self, id: u32, town: u64, i: usize, at: Vec3, react: &ReactDef, live: &LiveDef) -> bool {
         let tick = self.tick;
         let guard = self.villagers.towns[&town].info.people[i].guard;
         let Some(me) = self.creatures.live.get(&id) else { return false };
@@ -738,7 +740,7 @@ impl Server {
         // One struck, running from whoever struck them, greets no one.
         let afraid = person.afraid_until > tick || self.creatures.live.get(&id).is_some_and(|c| c.mind.attacker().is_some());
         let asleep = person.trip.as_ref().is_none_or(|t| t.place == Place::Sleep || t.pursuit.is_some());
-        if self.coax(id, town, i, at, react, !afraid && !asleep && !guard) {
+        if self.coax(id, town, i, at, react, live, !afraid && !asleep && !guard) {
             return true;
         }
         let person = &self.villagers.towns[&town].people[i];
@@ -793,7 +795,7 @@ impl Server {
     /// walk up to stand by them, turned to them, with a contented hum, and keep by them while
     /// it is held and they stay within half as far again; given one, they want another no
     /// sooner than `treat_every` (`treat`). Whether they are coming, their day waiting.
-    fn coax(&mut self, id: u32, town: u64, i: usize, at: Vec3, react: &ReactDef, free: bool) -> bool {
+    fn coax(&mut self, id: u32, town: u64, i: usize, at: Vec3, react: &ReactDef, live: &LiveDef, free: bool) -> bool {
         let tick = self.tick;
         let Some(me) = self.creatures.live.get(&id) else { return false };
         let species = self.content.creatures.get(me.species);
@@ -810,8 +812,31 @@ impl Server {
             .filter(|_| wants)
             .map(|p| (p.id, p.position));
         let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
-        let Some((player, eyes)) = target else {
-            // Put away or gone: back to their day from where they stand.
+        // A step and a half short of the player, on their side of them, by a way round
+        // what stands between (found again once the player has moved on a block).
+        let start = at.floor().as_ivec3();
+        let (coaxed, coax_to) = (person.coaxed, person.coax_to);
+        let way = match target {
+            Some((player, eyes)) => {
+                let keep = 1.5;
+                let stand = if at.with_y(0.0).distance(eyes.with_y(0.0)) <= keep + 0.5 { at } else { eyes + (at - eyes).with_y(0.0).normalize_or(Vec3::X) * keep };
+                let goal = IVec3::new(stand.x.floor() as i32, eyes.y.floor() as i32, stand.z.floor() as i32);
+                let planned = coaxed == Some(player) && coax_to.is_some_and(|to| (to - goal).abs().max_element() <= 1);
+                let way = if goal.xz() == start.xz() {
+                    Way::Found(vec![start])
+                } else if planned {
+                    Way::Later
+                } else {
+                    self.find_way(start, goal, town, live)
+                };
+                Some((player, eyes, goal, way))
+            }
+            None => None,
+        };
+        let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+        let Some((player, eyes, goal, way)) = way.filter(|w| !matches!(w.3, Way::Unreached)) else {
+            // Put away, gone, or out of reach: back to their day from where they stand.
+            person.coax_to = None;
             if person.coaxed.take().is_some()
                 && let Some(trip) = person.trip.as_mut()
             {
@@ -823,11 +848,14 @@ impl Server {
         let new = person.coaxed != Some(player);
         (person.coaxed, person.greeting, person.chat) = (Some(player), None, None);
         let Some(trip) = person.trip.as_mut() else { return false };
-        // A step and a half short of the player, on their side of them.
-        let keep = 1.5;
-        let stand = if at.with_y(0.0).distance(eyes.with_y(0.0)) <= keep + 0.5 { at } else { eyes + (at - eyes).with_y(0.0).normalize_or(Vec3::X) * keep };
-        trip.path = vec![IVec3::new(stand.x.floor() as i32, at.y.floor() as i32, stand.z.floor() as i32)];
-        trip.step = 0;
+        match way {
+            Way::Found(path) => {
+                (trip.path, trip.step, person.coax_to) = (path, 0, Some(goal));
+            }
+            // This tick's search spent: a new comer waits where they stand; one coming keeps on.
+            _ if new => (trip.path, trip.step, person.coax_to) = (vec![start], 0, None),
+            _ => {}
+        }
         trip.pose = Pose::Idle;
         trip.face = Some(eyes + Vec3::new(0.0, 1.6, 0.0));
         if new {
@@ -1039,6 +1067,7 @@ impl Server {
             let p = &t.people[j];
             !t.info.people[j].guard
                 && p.greeting.is_none()
+                && p.coaxed.is_none()
                 && p.afraid_until <= tick
                 && p.trip.as_ref().is_some_and(|t| t.place != Place::Sleep && t.pursuit.is_none())
                 && p.creature.and_then(|c| self.creatures.live.get(&c)).is_some_and(|c| c.mind.attacker().is_none())
@@ -1713,6 +1742,18 @@ mod tests {
         let to = trip.path.last().expect("nowhere to go").as_vec3() + Vec3::new(0.5, 0.0, 0.5);
         assert!(to.with_y(0.0).distance(stand.with_y(0.0)) <= 2.5, "not coming to stand by the player: {to}");
         assert!(trip.face.is_some_and(|f| f.x > at.x), "not turned to the player: {:?}", trip.face);
+        // A wall between, once coming: they go round it, not into it.
+        let wall: Vec<IVec3> = (-3..=3).flat_map(|z| (0..3).map(move |y| at.floor().as_ivec3() + IVec3::new(3, y, z))).collect();
+        wall.iter().for_each(|&cell| server.set_block(cell, stone));
+        server.players.get_mut(&1).unwrap().position = stand + Vec3::X * 2.0;
+        step(&mut server);
+        let person = &server.villagers.towns[&1].people[0];
+        assert_eq!(person.coaxed, Some(1), "gave up for a wall that has a way round");
+        let path = &person.trip.as_ref().unwrap().path;
+        assert!(path.iter().all(|c| !wall.contains(c)), "walks into the wall: {path:?}");
+        assert!(path.iter().any(|c| (c.z - at.z.floor() as i32).abs() > 3), "no way round the wall: {path:?}");
+        wall.iter().for_each(|&cell| server.set_block(cell, BlockId::AIR));
+        server.players.get_mut(&1).unwrap().position = stand;
         // Put away: back to their day; held out again, they come again.
         hold(&mut server, stick);
         step(&mut server);
@@ -1926,7 +1967,7 @@ mod tests {
             let until = people[0].chat.unwrap().1;
             server.tick = until - 1;
             for i in 0..2 {
-                assert!(server.react(ids[i], 1, i, server.creatures.live[&ids[i]].body.position, &react), "stopped talking early");
+                assert!(server.react(ids[i], 1, i, server.creatures.live[&ids[i]].body.position, &react, &server.live()), "stopped talking early");
             }
             server.tick = until;
             for i in 0..2 {
