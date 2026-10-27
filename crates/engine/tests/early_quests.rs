@@ -630,16 +630,29 @@ fn tally(goal: &Goal) -> Option<(String, u32)> {
 /// A goal the player surely meets already when its quest opens asks nothing, and a task of
 /// such goals opens done. A `Level` goal is above what the books surely give by then
 /// (`Books::sure`, the gap check's count); a tally goal (things made, picked, met, dealt
-/// with, all counted over a life) asks more than any quest surely done before it: a player
-/// who took a way of its sure chain asking the same thing at least as often has already done
-/// it (First Ore's coal after Coal and Cinders' was one).
+/// with, all counted over a life) asks more than every way of a quest surely done before it
+/// asked (First Ore's coal after Coal and Cinders' was one); and no way of it is all done by a
+/// way a player may have taken before it. A goal one earlier way did but another did not
+/// stays: it is the step for the player who took the other (Found and Thanked's lost child,
+/// after A Kind Turn's child or hunter).
 fn met_on_opening(content: &Content) -> Vec<String> {
     let books = Books { content };
     let early = || content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm");
     let firsts: Vec<(&str, Vec<(String, u32)>)> = early().filter_map(|q| Some((q.name.as_str(), lesson(q.tasks.first()?)))).collect();
+    // The ways of a chain quest a player may have taken. A better home built early is a later
+    // home quest's lesson taken early (Snug for Winter taking a homely home), not a repeat of
+    // it: a `Built` way that is another quest's first way, and only that, is left out.
+    let ways = |c: &voxmar_engine::quest::QuestDef| -> Vec<Vec<(String, u32)>> {
+        c.tasks
+            .iter()
+            .filter(|t| !(t.iter().all(|g| matches!(g, Goal::Built(..))) && firsts.iter().any(|(q, first)| *q != c.name && *first == lesson(t))))
+            .map(|t| t.iter().filter_map(tally).collect())
+            .collect()
+    };
+    let covers = |way: &[(String, u32)], (what, n): &(String, u32)| way.iter().any(|(w, m)| w == what && m >= n);
     let mut met = Vec::new();
     for quest in early() {
-        let chain = books.chain(&quest.name);
+        let chain: Vec<_> = books.chain(&quest.name).iter().map(|c| content.quests.get(c).unwrap()).collect();
         for goal in quest.tasks.iter().flatten() {
             if let Goal::Level(skill, level) = goal {
                 let skill = Books::local(skill);
@@ -648,29 +661,25 @@ fn met_on_opening(content: &Content) -> Vec<String> {
                     let first = (*level..=99).find(|&n| books.xp_for(n) > sure).unwrap_or(99);
                     met.push(format!("{}: {skill} {level} ({:.0} xp) is surely had on opening ({sure:.0}); {skill} {first} is not", quest.name, books.xp_for(*level)));
                 }
-            } else if let Some((what, n)) = tally(goal) {
-                // The most any way of a sure-done quest before it asked: a player who took that
-                // way has done it (Charcoal's coal way after Fuel to Hand's, both 24, was one).
-                // A way that is another quest's first way is that quest's lesson taken early
-                // (Snug for Winter taking a homely home), not a repeat of it.
-                let done = chain
-                    .iter()
-                    .map(|c| content.quests.get(c).unwrap())
-                    .filter_map(|c| {
-                        c.tasks
-                            .iter()
-                            .filter(|t| !firsts.iter().any(|(q, first)| *q != c.name && *first == lesson(t)))
-                            .flatten()
-                            .filter_map(tally)
-                            .filter(|(w, _)| *w == what)
-                            .map(|(_, m)| m)
-                            .max()
-                            .map(|m| (m, &c.name))
-                    })
-                    .max_by_key(|(m, _)| *m);
-                if let Some((done, by)) = done.filter(|(m, _)| *m >= n) {
-                    met.push(format!("{}: {goal:?} is already done by {by} ({done}), which comes before it", quest.name));
+            } else if let Some(asked) = tally(goal) {
+                // Surely done: every way of a quest before it asked at least as much.
+                if let Some(by) = chain.iter().find(|c| {
+                    let ways = ways(c);
+                    !ways.is_empty() && ways.iter().all(|w| covers(w, &asked))
+                }) {
+                    met.push(format!("{}: {goal:?} is already done by every way of {}, which comes before it", quest.name, by.name));
                 }
+            }
+        }
+        // A way opens done for a player who took a way before it asking all it asks
+        // (Charcoal's coal way after Fuel to Hand's, both 24, was one).
+        for task in &quest.tasks {
+            let asks: Vec<_> = task.iter().filter_map(tally).collect();
+            if asks.is_empty() || task.iter().any(|g| matches!(g, Goal::Level(..)) || tally(g).is_none()) {
+                continue;
+            }
+            if let Some(by) = chain.iter().find(|c| ways(c).iter().any(|w| asks.iter().all(|a| covers(w, a)))) {
+                met.push(format!("{}: the way {task:?} opens done for one who took a way of {}", quest.name, by.name));
             }
         }
     }
@@ -823,4 +832,66 @@ fn the_books_bring_a_book_trained_skill_to_the_first_wanderer_line_it_opens() {
             "{name} {gate} opens a line of {kinds:?}, but no Nomad or Farm quest sends the player to one with {need:.0} xp surely had: {sent:?}"
         );
     }
+}
+
+/// A `Dealt` goal sends the player to one line, so the line must be open to them: no
+/// `Below` gate (a player past it never hears the line again), and each `Skill` gate surely
+/// had when the quest opens (`Books::sure`) or asked by a `Level` goal beside it.
+#[test]
+fn every_early_dealt_line_is_open_to_the_player_it_sends() {
+    let shut = shut_lines(&content());
+    assert!(shut.is_empty(), "{shut:#?}");
+}
+
+/// The check catches both gates: A Prospector's Eye sent to the prospector's beginner lesson
+/// (Below Mining 10), or to the hedge witch's mote (Alchemy 5) straight after the Farm rite.
+#[test]
+fn a_dealt_line_shut_to_its_player_is_caught() {
+    use voxmar_engine::quest::QuestRegistry;
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+    let source = std::fs::read_to_string(base.join("quests.ron")).unwrap();
+    let core = std::fs::read_to_string(base.join("../core/quests.ron")).unwrap();
+    let nomad = std::fs::read_to_string(base.join("quests_nomad.ron")).unwrap();
+    let eye = "tasks: [[Dealt(\"prospector\", \"vein\", 1)]],\n            after: [\"charcoal\"],";
+    assert!(source.contains(eye), "A Prospector's Eye");
+    for (changed, caught) in [(eye.replace("vein", "lesson"), "below"), (eye.replace("Dealt(\"prospector\", \"vein\"", "Dealt(\"hedge_witch\", \"mote\"").replace("charcoal", "the_farm_age"), "wants")] {
+        let mut content = content();
+        content.quests = std::sync::Arc::new(QuestRegistry::new(vec![
+            QuestRegistry::read("core", &core).unwrap(),
+            QuestRegistry::read("base", &source.replace(eye, &changed)).unwrap(),
+            QuestRegistry::read_named("base", "quests_nomad.ron", &nomad).unwrap(),
+        ]).unwrap());
+        let shut = shut_lines(&content);
+        assert!(shut.iter().any(|s| s.starts_with("base:a_prospectors_eye") && s.contains(caught)), "{caught}: {shut:#?}");
+    }
+}
+
+fn shut_lines(content: &Content) -> Vec<String> {
+    use voxmar_engine::wander::ResolvedNeed;
+    let books = Books { content };
+    let mut shut = Vec::new();
+    for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+        for task in &quest.tasks {
+            for goal in task {
+                let Goal::Dealt(kind, name, _) = goal else { continue };
+                let event = content.wandering.iter().map(|(_, e)| e).find(|e| Books::local(&e.def.name) == Books::local(kind)).expect("load-checked kind");
+                let line = event.meetings.iter().flat_map(|m| m.lines.iter()).find(|l| l.name == *name).expect("load-checked line");
+                for need in &line.needs {
+                    match need {
+                        ResolvedNeed::Below(skill, level) => shut.push(format!("{}: {kind}/{name} is only for a player below {} {level}", quest.name, content.skills.get(*skill).name)),
+                        ResolvedNeed::Skill(skill, level) => {
+                            let skill = Books::local(&content.skills.get(*skill).name);
+                            let asked = task.iter().any(|g| matches!(g, Goal::Level(s, n) if Books::local(s) == skill && n >= level));
+                            let (sure, _) = books.sure(&quest.name, &skill);
+                            if !asked && sure < books.xp_for(*level) {
+                                shut.push(format!("{}: {kind}/{name} wants {skill} {level}, the books surely give {sure:.0} of {:.0} xp", quest.name, books.xp_for(*level)));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    shut
 }

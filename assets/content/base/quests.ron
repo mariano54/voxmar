@@ -84,6 +84,14 @@
             rewards: [Xp("engineering", 325.0), Xp("mining", 300.0)],
         ),
         (
+            name: "a_prospectors_eye", age: "farm", branch: "mining", title: "A Prospector's Eye",
+            side: true,
+            why: "A prospector walks the hills with a pick and a sharp eye. Once you have Mining 5 (Charcoal's reward brings it), they point you to the nearest ore sample, the small stone lying over a vein. Find one on high or open ground and hear where to dig.",
+            tasks: [[Dealt("prospector", "vein", 1)]],
+            after: ["charcoal"],
+            rewards: [Xp("mining", 60.0)],
+        ),
+        (
             name: "the_kiln_charge", age: "farm", branch: "fuel", title: "A Full Charge",
             capstone: true,
             why: "The Crucible Kiln burns a whole charge when it is lit: thirty-two charcoal, or twenty-four coal ore. Keep a clamp charring logs while you fire clay, or bring coal up from the seam, and hold a full charge in your pack.",
@@ -274,6 +282,14 @@
             tasks: [[Cook("cooked_small_game", 6), Level("cooking", 5)]],
             after: ["the_farm_age"],
             rewards: [Item("bread", 6)],
+        ),
+        (
+            name: "supper_on_the_road", age: "farm", branch: "cooking", title: "Supper on the Road",
+            side: true,
+            why: "A travelling cook keeps a fire going on the road toward evening. Hand them two raw meat or fish and they cook one for you at their fire, a meal for a long walk. Find them on open ground as night comes on.",
+            tasks: [[Dealt("travelling_cook", "cook", 1)]],
+            after: ["camp_cook"],
+            rewards: [Xp("cooking", 40.0)],
         ),
         (
             name: "seed_mix", age: "farm", branch: "farming", title: "Seed Mix",

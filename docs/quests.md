@@ -551,7 +551,7 @@ levels open (core's `skills.ron` guide), and its first tool or station upgrade.
 | Defence | Hide Wraps, then **Hard to Put Down** (Nomad, new) | Hide armour at 1, copper armour 10 | Hide wraps, then a shield (Raise Your Guard) |
 | Hitpoints | **Hard to Put Down** (Nomad, new) | Twice your level in health; 12 is 24 | None: it grows with blows landed |
 | Magic | A Place to Pray (Farm) | Bark Skin at 1, Ember Arm 4, Mending 10 | The stone altar |
-| Alchemy | **Herb Lore** (Nomad, new), then Simples, The Healer's Bag and Where Roots Grow (Farm) | Roots shown and an aether mote at 5 | None yet |
+| Alchemy | **Herb Lore** (Nomad, new), then Simples, Calming Herbs and Where Roots Grow (Farm) | Roots shown and an aether mote at 5 | None yet |
 | Ranged | **A Stone's Throw** (Nomad, new), then **Bow and Arrow** (Farm, new) | Sling at 1, short bow 3 | Sling to short bow |
 
 Two new side quests fill the skills that had nothing before:
@@ -581,11 +581,22 @@ ten goals the chain had always met went (Seed Mix's wheat, A Silvery Ore's coppe
 Enough's wheat, An Ore Run's coal, Fired Whole's clay, The Last Sheaf's wheat, Mice in the
 Stores' larder, Catch Up the Shrine's shrine bearer, A Varied Table's meat, A Stone's Throw's
 kills). `no_two_early_quests_teach_the_same_lesson` holds each quest's first way (its lesson)
-its own. The check reads each way of the chain: a player who took Fuel to Hand's
-coal way has done what any way asking that much coal asks, so A Varied Table's bread is eight
-in all (Daily Bread bakes four) and Found and Thanked asks only the parents (A Kind Turn brings
-the child home). A chain way that is another quest's first way (Snug for Winter taking a
-homely home) is that quest's lesson taken early, not a repeat.
+its own. The check reads each way of the chain too: no way opens done for a player
+who took a way before it asking all it asks (Charcoal's coal way after Fuel to Hand's at 24). A
+single goal goes only when every earlier way did it; one some ways did is the step for those
+who took another (Found and Thanked's lost child, after A Kind Turn's child or hunter). A chain way that builds another quest's first home (Snug for Winter
+taking a homely home) is that quest's lesson taken early, not a repeat; only `Built` ways
+are read so.
+
+Wanderers who trade a step of a craft had no quest to send a player to them (Oct 27). Four
+side quests now do, each by the one line that trades it (`Dealt`): **Four for Twine** (Nomad,
+after A Fish Supper: the fisher folk's four fish for three twine), **The Knappers' Trade**
+(Nomad mining, after Stone in Hand and Pockets: a hide for flint), **A Prospector's Eye** (Farm
+mining, after Charcoal: at Mining 5 the prospector points to an ore sample) and **Supper on the
+Road** (Farm cooking, after Camp Cook: the travelling cook roasts one of two raw at their
+fire). `every_early_dealt_line_is_open_to_the_player_it_sends` holds that a line a quest names
+has no `Below` gate (a player past it would never hear it) and its `Skill` gates are surely had
+when the quest opens, or asked beside it by a `Level` goal.
 
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).
