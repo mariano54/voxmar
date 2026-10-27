@@ -1080,6 +1080,13 @@ pub(crate) fn tool_line(locale: &Locale, content: &voxmar_engine::content::Conte
     (tool.kind.is_some() && tool.speed > 1.0).then(|| (locale.format("item.tool_speed", &[("speed", &speed)]), SOFT))
 }
 
+/// What a tool breaks that a lesser one of its kind cannot (`ToolRegistry::opens`): a stone
+/// pickaxe names coal and copper, so making it says where it leads.
+pub(crate) fn opens_line(locale: &Locale, content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId) -> Option<(String, Color)> {
+    let names: Vec<String> = content.tools.opens(item).iter().map(|&b| locale.block(content.blocks.def(b))).collect();
+    (!names.is_empty()).then(|| (locale.format("item.tool_opens", &[("list", &listed(locale, names, 3))]), SOFT))
+}
+
 /// How a weapon fights: its class, style and the level that wields it (red while the
 /// player's is short of it), then its max hit at their level and how often it strikes, and
 /// its reach if it is not the usual.
@@ -1397,6 +1404,7 @@ fn tooltip(
             let lines_after = seed_line(&locale, &launch.content, &player, item)
                 .into_iter()
                 .chain(tool_line(&locale, &launch.content, item))
+                .chain(opens_line(&locale, &launch.content, item))
                 .chain(wear_lines(&locale, &launch.content, item, wear))
                 .chain(weapon_lines(&locale, &launch.content, &player, item))
                 .chain(armour_lines(&locale, &launch.content, &player, item))
@@ -1599,6 +1607,24 @@ mod tests {
             assert_eq!(line("base:flint_axe"), Some(locale.format("item.tool_speed", &[("speed", &"2")])), "{code}");
             assert_eq!(line("base:oak_log"), None, "{code}: a log is no tool");
             assert_eq!(line("base:fishing_rod"), None, "{code}: a rod mines nothing, so claims no speed");
+        }
+    }
+
+    /// A stone pickaxe names the first three things a flint one cannot break, nearest level
+    /// first, and how many more; a flint one, the first of its kind, names nothing.
+    #[test]
+    fn a_better_tool_says_what_it_opens() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let content = voxmar_server::load_content(&assets).unwrap();
+        for code in ["en", "ja"] {
+            let locale = Locale::load(&assets.join("content"), code);
+            let line = |name: &str| opens_line(&locale, &content, content.blocks.id(name).unwrap()).map(|(line, _)| line);
+            let block = |name: &str| locale.block(content.blocks.def(content.blocks.id(name).unwrap()));
+            let more = content.tools.opens(content.blocks.id("base:stone_pickaxe").unwrap()).len() - 3;
+            let list = locale.format("tooltip.more", &[("list", &[block("base:coal_ore"), block("base:copper_ore"), block("base:tin_ore")].join(locale.get("language.comma"))), ("count", &more)]);
+            assert_eq!(line("base:stone_pickaxe"), Some(locale.format("item.tool_opens", &[("list", &list)])), "{code}");
+            assert_eq!(line("base:flint_pickaxe"), None, "{code}");
+            assert_eq!(line("base:oak_log"), None, "{code}");
         }
     }
 

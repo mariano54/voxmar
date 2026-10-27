@@ -1732,7 +1732,9 @@ mod tests {
     /// that a later block shares a tag with) only while another route of its quest is taught
     /// in its own age, and those routes are named. Goals that set down, stock, spread, eat or
     /// offer an item ask for it as `Have` and `Placed` do, a store stocked is set down, and so
-    /// is an altar offered at. A full hive comes of keeping bees. The main-line
+    /// is an altar offered at. A full hive comes of keeping bees. A structure built or lit
+    /// asks for each of its pieces (and, lit, a fuel), and a tool mended for the tool, what
+    /// mends it and the block it is mended by. The main-line
     /// walk puts down any station a recipe needs and walks only the main line, so a side path
     /// asking for fired clay before the kiln got through (A Stove and a Quern's workshop
     /// half, once 451 made its pieces take kiln output).
@@ -1766,6 +1768,23 @@ mod tests {
         let found = station_walls(&content, &quests);
         assert!(found.half_taught.iter().any(|line| line.starts_with("base:a_cold_camp: route 2 walled by CookAt")), "a campfire no quest before teaches is a gap: {:?}", found.half_taught);
         assert!(!found.later_age.iter().any(|route| route.starts_with("base:a_cold_camp")), "not a wait on the Farm age: {:?}", found.later_age);
+    }
+
+    /// A structure is built of what its cells take: a route raising one whose pieces no
+    /// quest before has the player come by is walled, as a route crafting them would be.
+    #[test]
+    fn a_structure_asks_for_pieces_its_quests_teach() {
+        use voxmar_engine::quest::Goal;
+        let content = test_content();
+        let mut quests: Vec<_> = content.quests.iter().cloned().collect();
+        let mut quest = quests.iter().find(|q| q.name == "base:daily_bread").expect("a Nomad quest").clone();
+        quest.name = "base:a_cold_hearth".into();
+        quest.capstone = true;
+        quest.after.clear();
+        quest.tasks = vec![vec![Goal::Craft("stick".into(), 1)], vec![Goal::Built("homestead_hearth".into(), 1)]];
+        quests.push(quest);
+        let found = station_walls(&content, &quests);
+        assert!(found.half_taught.iter().any(|line| line.starts_with("base:a_cold_hearth: route 2 walled by Built")), "a hearth whose pieces no quest before teaches is walled: {:?}", found.half_taught);
     }
 
     /// What the station check finds: quests with no taught route (`walled`), routes untaught
@@ -1890,7 +1909,7 @@ mod tests {
             let worked_own = |method: &Method| worked_with(&own, method);
             let worked_later = |method: &Method| worked_with(&later, method);
             // Each route's goals that no way counting for them can be worked to, here.
-            let walls = |worked: &dyn Fn(&Method) -> bool| -> Vec<Vec<String>> {
+            let walls = |worked: &dyn Fn(&Method) -> bool, stations: &[BlockId]| -> Vec<Vec<String>> {
                 quest
                     .tasks
                     .iter()
@@ -1913,16 +1932,50 @@ mod tests {
                                 item.as_str() != "any" && !accepts.iter().any(|&b| book.making(b).into_iter().any(|e| counts(&content, way, e) && works(&book, &content, e, worked, &mut vec![e.output])))
                             })
                             .map(|(goal, way, item)| if goal == &way { format!("{goal:?}") } else { format!("{goal:?} ({item})") })
+                            // A structure built or lit is built of what its cells take, and lit
+                            // with one of its fuels: each piece, and the fuel, got as anything held.
+                            .chain(task.iter().flat_map(|goal| {
+                                let structure = match goal {
+                                    Goal::Built(name, _) | Goal::Lit(name, _) => [name.clone(), format!("{}:{name}", quest.name.split(':').next().unwrap_or("base"))].into_iter().find_map(|name| content.multiblocks.get(&name)),
+                                    _ => None,
+                                };
+                                let got = |accepts: &mut dyn Iterator<Item = BlockId>| {
+                                    accepts.map(|b| blocks.item_of(b)).any(|b| book.making(b).into_iter().any(|e| counts(&content, &Goal::Have(String::new(), 1), e) && works(&book, &content, e, worked, &mut vec![e.output])))
+                                };
+                                let mut walls: Vec<String> = Vec::new();
+                                if let Some(structure) = structure {
+                                    for (accepts, _) in structure.pieces() {
+                                        if !got(&mut accepts.iter().copied()) {
+                                            walls.push(format!("{goal:?} ({})", blocks.def(accepts[0]).name));
+                                        }
+                                    }
+                                    if matches!(goal, Goal::Lit(..)) && !structure.fuels.is_empty() && !got(&mut structure.fuels.iter().map(|&(fuel, _)| fuel)) {
+                                        walls.push(format!("{goal:?} (its fuel)"));
+                                    }
+                                }
+                                // A tool mended is got, with what mends it, at the block it is
+                                // mended by, which a quest before has the player make.
+                                if let Goal::Mended(item, _) = goal
+                                    && item != "any"
+                                    && !named(item).into_iter().any(|tool| {
+                                        let near = content.tools.mend_near(tool);
+                                        got(&mut std::iter::once(tool)) && got(&mut content.tools.mends(tool).iter().copied()) && stations.iter().any(|&b| blocks.def(b).has_tag(near))
+                                    })
+                                {
+                                    walls.push(format!("{goal:?}"));
+                                }
+                                walls
+                            }))
                             .collect()
                     })
                     .collect()
             };
-            let routes = walls(&worked);
+            let routes = walls(&worked, &taught);
             if age_books.contains(&quest.name.as_str()) && routes.iter().any(|w| !w.is_empty()) {
                 // Skipped only where a later age's station is all it waits on and another
                 // route of the quest is taught in its own age.
-                let in_own = walls(&worked_own);
-                let in_later = walls(&worked_later);
+                let in_own = walls(&worked_own, &own);
+                let in_later = walls(&worked_later, &later);
                 let own_age = routes.iter().any(Vec::is_empty);
                 for (i, walls) in routes.iter().enumerate().filter(|(_, walls)| !walls.is_empty()) {
                     let line = format!("{}: route {} walled by {}", quest.name, i + 1, walls.join(", "));
