@@ -636,6 +636,20 @@
             ".kwwdwwwk.",
             ".kkkkkkkk.",
         ])]),
+        // A kitchen: a dresser with plates on show, and a pot crane's arm over the fire, its pot
+        // hung on the hook.
+        "ui/effect/kitchen": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'w': "#a06a3a", 'd': "#6a4222", 'p': "#f0ece0", 'b': "#4a64b0", 'f': "#e07020"}, rows: [
+            "dddd......",
+            "dpbd.wwww.",
+            "dbpd....w.",
+            "dpbd....w.",
+            "dddd...kkk",
+            "dwwd...kkk",
+            "dwwd......",
+            "dwwd..f.f.",
+            "dwwd.fffff",
+            "dddd.kkkkk",
+        ])]),
         // A bedchamber: a bed with its pillow and blanket, a chest at its foot, a jug on a stand.
         "ui/effect/bedchamber": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'w': "#a06a3a", 'p': "#f0ece0", 'b': "#4a64b0", 'j': "#d08850"}, rows: [
             "........j.",
@@ -662,6 +676,20 @@
             "wd..dwreer",
             "wd..dweeee",
             "kk..kkkkkk",
+        ])]),
+        // A lived-in hearth: a mantel shelf with a jug and a candle on it over the fire, and a
+        // low bench with its fleece before it.
+        "ui/effect/lived_in_hearth": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'w': "#a06a3a", 'd': "#6a4222", 'j': "#d08850", 'c': "#f0e8d0", 'f': "#e07020", 'p': "#f0ece0"}, rows: [
+            "..j....c..",
+            "..j....c..",
+            "dddddddddd",
+            ".d......d.",
+            ".k......k.",
+            ".k.f.f..k.",
+            ".kfffff.k.",
+            ".kkkkkkkk.",
+            "pppppppp..",
+            "w.w....w.w",
         ])]),
         // A four-paned window with the sun in its corner.
         "ui/effect/bright_room": (size: (10, 10), layers: [Grid(legend: {'k': "#3a2410", 'w': "#a0703a", 's': "#ffe070", 'b': "#9ad0f0", 'c': "#d8f0ff"}, rows: [

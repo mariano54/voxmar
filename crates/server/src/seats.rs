@@ -174,13 +174,13 @@ fn a_footstool_before_a_seat_puts_your_feet_up() {
 }
 
 /// Every meal effect on at once (the larder, the herb nook, the kitchen garden, home
-/// cooking, the table) would make a meal's good last 2.27 times as long: survival's
-/// meal_most holds it to 2. The heal (1.82 times) is under it and stays whole.
+/// cooking, the kitchen, the table) would make a meal's good last 2.27 times as long:
+/// survival's meal_most holds it to 2. The heal (1.91 times) is under it and stays whole.
 #[test]
 fn every_meal_effect_together_stops_at_meal_most() {
     let mut server = fixture();
     let effects = server.content.effects.clone();
-    let all: Vec<_> = ["larder", "herb_nook", "kitchen_garden", "home_cooking", "at_table"]
+    let all: Vec<_> = ["larder", "herb_nook", "kitchen_garden", "home_cooking", "kitchen", "at_table"]
         .iter()
         .map(|name| voxmar_engine::effect::ActiveEffect { effect: effects.id(&format!("base:{name}")).expect(name), seconds_left: None })
         .collect();

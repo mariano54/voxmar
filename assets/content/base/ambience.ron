@@ -48,8 +48,10 @@
 // within 192), settlement_edge (blocks outside the nearest settlement's bounds, the ground
 // its buildings stand on and six blocks round, 0 within, 10000 with none), settlement_people
 // (how many live there: its size), sheltered (how much a roof overhead muffles the open
-// rain), home (how far up `home`'s ladder the player stands), the groups below, and the
-// roof patters.
+// rain), home (how far up `home`'s ladder the player stands), the groups below, the
+// roof patters, and `effect:NAME` for any effect (effects.ron): 1 while the player holds
+// it, else 0, so a home is heard as the server judged it (a door shut, an evening in).
+// Each must be an effect, or the game does not start.
 //
 // home: the home ladder's effects (effects.ron), lowest first: the `home` axis is 0 away
 //   from home, 1 holding the first, 2 the second, and so on, by the highest held. Each
@@ -103,6 +105,9 @@
         // A kiln or a hearth just gone out (the server no longer says it burns): its bricks
         // or stones ticking as they cool, the kiln's for two minutes, a hearth's for one. They
         // select no blocks of their own: the cores of the lit group named, cooling.
+        // A small flame burning down (`tended`: a candle, an oil lamp, a rushlight, a torch),
+        // a lit room's light; spent, it has no tag and no sound. Fully within two blocks.
+        (name: "flame", tags: ["tended"], range: (0, 2)),
         (name: "kiln_cooling", cools: ("kiln", 120), range: (1, 4)),
         (name: "fire_cooling", cools: ("fire", 60), range: (1, 4)),
         // Lava and falling water sound like water to the step, so they come first.
@@ -166,16 +171,17 @@
         // way. Out in the open, a patter on leaves and ground that grows with the rain, then
         // gives way to the roar of a downpour; under a roof close overhead, indoors or on a
         // porch, the drumming on it; under trees while they are wet, drops falling from the
-        // leaves.
+        // leaves. With the door shut (`door_shut`) the rain and wind outside drop away further,
+        // and the drum on the roof carries on.
         (
             name: "rain", recording: ["sounds/rain_light_1.mp3", "sounds/rain_light_2.mp3", "sounds/rain_light_3.mp3"], volume: 0.5, fade: 3,
             when: {"rain": (min: 0.45, max: 0.75, fade: 0.42)},
-            duck: {"hail": 0.7, "sleet": 0.4, "sheltered": 1, "shelter": 0.75},
+            duck: {"hail": 0.7, "sleet": 0.4, "sheltered": 1, "shelter": 0.75, "effect:door_shut": 0.5},
         ),
         (
             name: "downpour", recording: ["sounds/rain_heavy_1.mp3", "sounds/rain_heavy_2.mp3", "sounds/rain_heavy_3.mp3"], volume: 0.75, fade: 3,
             when: {"rain": (min: 0.85, fade: 0.4)},
-            duck: {"hail": 0.7, "sheltered": 1, "shelter": 0.75},
+            duck: {"hail": 0.7, "sheltered": 1, "shelter": 0.75, "effect:door_shut": 0.5},
         ),
         // Rain on the roof overhead, by what it is made of (`roofs`), heard near the surface
         // (not through the rock over a cave).
@@ -204,29 +210,29 @@
         (
             name: "breeze", sound: Wind, volume: 0.2,
             when: {"sky": (min: 0.4, fade: 0.4), "air": (min: 0.3, fade: 0.3), "wind": (min: 8, fade: 12)},
-            duck: {"sheltered": 1, "rain": 0.5, "high_wind": 0.7, "shelter": 0.85},
+            duck: {"sheltered": 1, "rain": 0.5, "high_wind": 0.7, "shelter": 0.85, "effect:door_shut": 0.5},
         ),
         // Wind on peaks and ridges, and in storms.
         (
             name: "high_wind", sound: Gale, volume: 0.4, fade: 6,
             when: {"relief": (min: 30, fade: 25), "sky": (min: 0.6, fade: 0.3), "wind": (min: 10, fade: 14)},
-            duck: {"sheltered": 1, "shelter": 0.8},
+            duck: {"sheltered": 1, "shelter": 0.8, "effect:door_shut": 0.5},
         ),
         (
             name: "storm_wind", sound: Gale, volume: 0.32,
             when: {"storm": (min: 0.6, fade: 0.5), "sky": (min: 0.3, fade: 0.4)},
-            duck: {"sheltered": 1, "shelter": 0.75},
+            duck: {"sheltered": 1, "shelter": 0.75, "effect:door_shut": 0.5},
         ),
         // Ice falling: hail rattling on everything, sleet's fine patter.
         (
             name: "hail", recording: ["sounds/hail_1.mp3", "sounds/hail_2.mp3", "sounds/hail_3.mp3"], volume: 0.55, fade: 2,
             when: {"hail": (min: 0.25, fade: 0.25)},
-            duck: {"sheltered": 0.5, "shelter": 0.6},
+            duck: {"sheltered": 0.5, "shelter": 0.6, "effect:door_shut": 0.4},
         ),
         (
             name: "sleet", sound: Sleet, volume: 0.3, fade: 3,
             when: {"sleet": (min: 0.2, fade: 0.2)},
-            duck: {"sheltered": 0.6, "shelter": 0.7},
+            duck: {"sheltered": 0.6, "shelter": 0.7, "effect:door_shut": 0.4},
         ),
         // Sand and dust driven by a strong wind.
         (
@@ -561,6 +567,13 @@
             name: "fire_snap", sound: Snap, volume: 0.3, at: Block("fire"), per_minute: 6, cooldown: 3,
             pitch: (0.85, 1.2), reach: 5,
             when: {"fire": (min: 0.25, fade: 0.2)},
+        ),
+        // A small flame's wick spitting now and then, faint and close: a candle on the table,
+        // the lamp by the bed, a torch on the wall.
+        (
+            name: "wick_spit", sound: Snap, volume: 0.12, at: Block("flame"), per_minute: 3, cooldown: 6,
+            pitch: (1.5, 1.9), reach: 3,
+            when: {"flame": (min: 0.3, fade: 0.25)},
         ),
         // Rain falling into a fire with the sky over it: drops hissing on the embers, from
         // that fire, wherever the player stands; a hearth under its roof never.

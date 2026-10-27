@@ -1365,8 +1365,11 @@ impl Server {
                 if n.x < min.x || n.x > max.x || n.z < min.y || n.z > max.y {
                     continue;
                 }
-                // Up one if there is room overhead to jump, else level, else down.
-                let Some(next) = [n, n + IVec3::Y, n - IVec3::Y, n - IVec3::Y * 2].into_iter().find(|&m| self.stands(m) && (m.y <= c.y || self.passable(c + IVec3::Y * 2))) else { continue };
+                // Up one if there is room overhead to jump, else level, else down: down only
+                // where it walks across at its own height first, its head clear (not off a
+                // table under a doorway's lintel).
+                let across = || self.passable(n) && self.passable(n + IVec3::Y);
+                let Some(next) = [n, n + IVec3::Y, n - IVec3::Y, n - IVec3::Y * 2].into_iter().find(|&m| self.stands(m) && if m.y > c.y { self.passable(c + IVec3::Y * 2) } else { m.y == c.y || across() }) else { continue };
                 // No cutting corners past walls.
                 if dx != 0 && dz != 0 && !(self.passable(c + IVec3::new(dx, 0, 0)) && self.passable(c + IVec3::new(0, 0, dz)) && self.passable(c + IVec3::new(dx, 1, 0)) && self.passable(c + IVec3::new(0, 1, dz))) {
                     continue;
@@ -1529,6 +1532,35 @@ mod tests {
             }
         }
         panic!("never out of doors in a day");
+    }
+
+    /// A way down off a block (a table) into a doorway whose lintel is too low to walk
+    /// under at the block's height is no way: there is none here, in a lane a block wide
+    /// the block stops. Before: the way went over the table and down under the lintel, and
+    /// whoever took it stood on the table for good. Without the lintel, it is a way.
+    #[test]
+    fn no_way_goes_down_off_a_block_under_a_lintel() {
+        let mut server = fixture("base:villager", 1);
+        let stone = server.content.blocks.expect("base:stone");
+        // A lane a block wide along z = 20, walled to its head and shut at both ends, from
+        // x = 18 to 24; a stone (the table) at x = 21 in it; a doorway at x = 20, two high
+        // under a lintel.
+        for x in 18..=24 {
+            for y in 200..=202 {
+                server.world.set_block(IVec3::new(x, y, 19), stone);
+                server.world.set_block(IVec3::new(x, y, 21), stone);
+            }
+        }
+        for y in 200..=202 {
+            server.world.set_block(IVec3::new(17, y, 20), stone);
+            server.world.set_block(IVec3::new(25, y, 20), stone);
+        }
+        server.world.set_block(IVec3::new(21, 200, 20), stone);
+        server.world.set_block(IVec3::new(20, 202, 20), stone);
+        let (from, to) = (IVec3::new(23, 200, 20), IVec3::new(18, 200, 20));
+        assert!(server.way(from, to, 1, 8000).0.is_none(), "a way down off the stone under the lintel");
+        server.world.set_block(IVec3::new(20, 202, 20), BlockId::AIR);
+        assert!(server.way(from, to, 1, 8000).0.is_some(), "no way over the stone with no lintel");
     }
 
     /// Someone out of doors with a player stepping up to them stops where they stand, turns
