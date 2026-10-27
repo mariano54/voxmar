@@ -295,6 +295,14 @@
             rewards: [Xp("farming", 110.0)],
         ),
         (
+            name: "a_basket_of_mushrooms", age: "nomad", branch: "cooking", title: "A Basket of Mushrooms",
+            side: true,
+            why: "Mushroom pickers comb the woods and wet ground after rain. Ask and they point you to where mushrooms grow; bring them four and they trade a loaf of bread for the basket.",
+            tasks: [[Dealt("mushroom_pickers", "basket", 1)]],
+            after: ["wild_harvest"],
+            rewards: [Xp("cooking", 40.0)],
+        ),
+        (
             name: "herb_lore", age: "nomad", branch: "cooking", title: "Herb Lore",
             why: "Alchemy is knowing what each herb carries. Brewing comes in a later age, but folk on the road teach the first of it now: an old herb gatherer shares lore for a herb, a wandering healer makes a salve of three, and a travelling alchemist wants two each of six kinds. Carry herbs on your rounds and deal with one of them.",
             tasks: [[Met("herb_gatherer", 1)], [Met("travelling_alchemist", 1)], [Met("wandering_healer", 1)]],
