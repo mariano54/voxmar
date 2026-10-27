@@ -897,16 +897,18 @@ fn shut_lines(content: &Content) -> Vec<String> {
                     Some(Want::Tag(tag)) if !ways.keys().any(|&id| content.blocks.def(id).has_tag(tag)) => shut.push(format!("{}: {kind}/{name} wants tag:{tag}, which nothing given has", quest.name)),
                     _ => {}
                 }
-                // A line or party for a player with a home (or without one) is for one whose
-                // books surely made one (or surely did not yet).
+                // A line or party for a player with a home is for one whose books surely made
+                // one; one for a player without a home is shut like a below-level gate, since
+                // a player may have made one by then.
                 let homed = books.chain(&quest.name).iter().any(|q| content.quests.get(q).unwrap().tasks.iter().all(|t| t.contains(&Goal::Home)));
                 let home = line.needs.iter().find_map(|n| match n {
                     ResolvedNeed::Home(want) => Some(*want),
                     _ => None,
                 });
-                if let Some(want) = home.or(event.def.needs.home).filter(|&want| want != homed) {
-                    let has = if want { "with" } else { "without" };
-                    shut.push(format!("{}: {kind}/{name} is for a player {has} a home, and its books do not surely leave one so", quest.name));
+                match home.or(event.def.needs.home) {
+                    Some(true) if !homed => shut.push(format!("{}: {kind}/{name} is for a player with a home, and its books do not surely make one", quest.name)),
+                    Some(false) => shut.push(format!("{}: {kind}/{name} is only for a player without a home", quest.name)),
+                    _ => {}
                 }
                 for need in &line.needs {
                     match need {

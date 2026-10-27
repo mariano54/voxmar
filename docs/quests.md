@@ -633,9 +633,14 @@ netters), **A Sweep's Luck** (Nomad, after Homestead Hearth: shake a chimney swe
 and **A Tale by Night** (Farm, after A Place to Pray: a storyteller's tale of something
 strange near). The Scarecrow's Pockets now says how to reach it (it stands still while
 watched), and a server test walks a watching player up to it until the trade fires The Dealt-line check
-now also holds a line or party that comes only to a player with a home (or without one) to
-quests whose books surely leave the player so, and a line wanting something held to a tag
+now also holds a line or party that comes only to a player with a home to quests whose
+books surely make one (one only for a player without a home is shut, like a below-level gate), and a line wanting something held to a tag
 something given carries.
+
+Four more: **A Pilgrims' Blessing** (Nomad, after Folk of the Road), **The Fox and the Hens**
+(Nomad, after Something to Swing: turn the fox with a blow and the farmer pays in eggs),
+**The Sleepwalker** (Nomad, after Homestead Hearth: wake a sleepwalking neighbour) and **The
+Hermit's Riddle** (Farm, after A Place to Pray: bring the hermit what it asks).
 
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).
