@@ -148,6 +148,31 @@ fn a_seat_by_a_window_and_books_is_a_reading_nook() {
     assert!(!has(&server), "a Reading Nook standing up");
 }
 
+/// Sat with a footstool before the seat, the player has their Feet Up and heals a quarter
+/// faster. Sat on the footstool itself is no feet up, and nor is standing by it.
+#[test]
+fn a_footstool_before_a_seat_puts_your_feet_up() {
+    let mut server = fixture();
+    let feet_up = server.content.effects.id("base:feet_up").expect("base's feet_up");
+    let has = |server: &Server| server.players[&1].vitals.effects.iter().any(|a| a.effect == feet_up);
+    sit(&mut server, STOOL);
+    crate::process::Survival.run(&mut server);
+    assert!(!has(&server), "feet up with no footstool");
+    let footstool = STOOL + IVec3::new(0, 0, 1);
+    server.set_block(footstool, id(&server, "base:oak_footstool"));
+    crate::process::Survival.run(&mut server);
+    assert!(has(&server), "sat with a footstool before the stool, feet not up");
+    assert_eq!(server.players[&1].modifiers.heal, 1.25);
+    let player = server.players.get_mut(&1).unwrap();
+    player.position = Vec3::new(8.5, (FLOOR + 1) as f32, 9.5);
+    crate::process::Survival.run(&mut server);
+    assert!(!has(&server), "feet up standing by the footstool");
+    sit(&mut server, footstool);
+    crate::process::Survival.run(&mut server);
+    assert_eq!(server.players[&1].vitals.seated, Some(footstool), "not sat on the footstool");
+    assert!(!has(&server), "feet up sat on the footstool itself");
+}
+
 /// Every meal effect on at once (the larder, the herb nook, the kitchen garden, home
 /// cooking, the table) would make a meal's good last 2.27 times as long: survival's
 /// meal_most holds it to 2. The heal (1.82 times) is under it and stays whole.
