@@ -46,7 +46,10 @@ every way) of the player's feet. A tag no block carries is refused at launch. `S
 while the player sits on a seat (`base:sit`, right click on a stool, chair, bench or cushion
 with no block in hand; they sit until they move off it); base's `fireside` (Fireside: heal
 x1.5, 4° warmer) asks for it with a fire or the hearth within 3, and `at_table` (At the Table:
-a meal heals x1.25 and its good lasts x1.25, as `meal_heal`/`meal_time`) with a table within 2. **Effects that
+a meal heals x1.25 and its good lasts x1.25, as `meal_heal`/`meal_time`) with a table within 2.
+`SeatedOn("tag")` holds while the seat sat on carries the tag (a tag no seat carries is refused
+at launch); base's `feet_up` (Feet Up: heal x1.25) asks for a footstool within 1 and
+`Not(SeatedOn("footstool"))`, so sat on the footstool itself is no feet up. **Effects that
 cling:** `lingers: SECONDS` makes an effect stay that long after its `when` stops holding (it
 is kept topped up while it holds, as a timed effect). Base's `smoky`: a torch in hand or a
 fire within 2 blocks leaves the player Smoky for 30 s, and bees treat a Smoky player as
