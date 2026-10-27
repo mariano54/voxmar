@@ -727,6 +727,9 @@ impl Arena {
     }
 }
 
+/// Slots of the origin table written together when any of them changes: 1 KiB.
+const ORIGIN_REGION: usize = 64;
+
 /// A distant terrain tile (see `lod`).
 struct TileRecord {
     slot: u32,
@@ -815,6 +818,10 @@ pub(super) struct TerrainGpu {
     origins: Vec<IVec4>,
     origins_buffer: Option<Buffer>,
     origins_dirty: bool,
+    /// Which runs of `ORIGIN_REGION` slots have a changed origin since the table was
+    /// written, one bit each, so a frame that adds a few chunks writes those runs and not
+    /// the whole table.
+    origin_regions: Vec<u64>,
     distant_view: Option<Buffer>,
     coverage: Option<Buffer>,
     seeds: Arena,
@@ -861,6 +868,7 @@ impl Default for TerrainGpu {
             origins: Vec::new(),
             origins_buffer: None,
             origins_dirty: false,
+            origin_regions: Vec::new(),
             distant_view: None,
             coverage: None,
             seeds: Arena::new("blade_seeds"),
@@ -888,7 +896,30 @@ impl TerrainGpu {
             self.origins[slot as usize] = origin;
         }
         self.origins_dirty = true;
+        let region = slot as usize / ORIGIN_REGION;
+        if region / 64 >= self.origin_regions.len() {
+            self.origin_regions.resize(region / 64 + 1, 0);
+        }
+        self.origin_regions[region / 64] |= 1 << (region % 64);
         slot
+    }
+
+    /// The runs of slots whose origins changed since the table was last written, joined
+    /// where they touch, and the regions marked clean.
+    fn take_origin_writes(&mut self) -> Vec<Range<usize>> {
+        let mut writes: Vec<Range<usize>> = Vec::new();
+        for (word, bits) in self.origin_regions.iter_mut().enumerate() {
+            while *bits != 0 {
+                let region = word * 64 + bits.trailing_zeros() as usize;
+                *bits &= *bits - 1;
+                let slots = region * ORIGIN_REGION..((region + 1) * ORIGIN_REGION).min(self.origins.len());
+                match writes.last_mut() {
+                    Some(last) if last.end == slots.start => last.end = slots.end,
+                    _ => writes.push(slots),
+                }
+            }
+        }
+        writes
     }
 
     /// The chunk's record, made if it has none.
@@ -1141,8 +1172,10 @@ impl TerrainGpu {
             return;
         }
         self.origins_dirty = false;
+        let writes = self.take_origin_writes();
         let needed = (self.origins.len().max(1) * size_of::<IVec4>()) as u64;
-        if self.origins_buffer.as_ref().is_none_or(|b| b.size() < needed) {
+        let replaced = self.origins_buffer.as_ref().is_none_or(|b| b.size() < needed);
+        if replaced {
             self.origins_buffer = Some(device.create_buffer(&BufferDescriptor {
                 label: Some("terrain_chunk_origins"),
                 size: needed.next_power_of_two().max(64 << 10),
@@ -1152,8 +1185,14 @@ impl TerrainGpu {
             self.bind_group_dirty = true;
         }
         let buffer = self.origins_buffer.as_ref().expect("origin buffer was just ensured");
-        if !self.origins.is_empty() {
-            queue.write_buffer(buffer, 0, bytemuck::cast_slice(&self.origins));
+        if replaced {
+            if !self.origins.is_empty() {
+                queue.write_buffer(buffer, 0, bytemuck::cast_slice(&self.origins));
+            }
+            return;
+        }
+        for slots in writes {
+            queue.write_buffer(buffer, (slots.start * size_of::<IVec4>()) as u64, bytemuck::cast_slice(&self.origins[slots]));
         }
     }
 
@@ -2605,6 +2644,53 @@ mod tests {
             }
         }
         assert!(covered > 100 && uncovered > 100, "{covered} covered, {uncovered} not");
+    }
+
+    /// The runs written each frame leave the GPU's table just as writing the whole table
+    /// did, through slots taken, freed and taken again, the table growing, and a clear;
+    /// a frame that changes one slot writes only its region.
+    #[test]
+    fn writing_changed_origins_keeps_the_whole_table() {
+        let mut gpu = TerrainGpu::default();
+        let mut table: Vec<IVec4> = Vec::new(); // The GPU's, which a new buffer starts as zeros.
+        let mut seed = 0x9e37_79b9u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut taken: Vec<u32> = Vec::new();
+        for frame in 0..400 {
+            if frame == 250 {
+                gpu.clear();
+                taken.clear();
+            }
+            for _ in 0..next() % 300 {
+                let r = next();
+                if r % 3 == 0 && !taken.is_empty() {
+                    gpu.free_slots.push(taken.swap_remove(r as usize / 3 % taken.len()));
+                } else {
+                    taken.push(gpu.new_slot(IVec4::new(r as i32, frame, (r >> 7) as i32, 1)));
+                }
+            }
+            if !gpu.origins_dirty {
+                continue;
+            }
+            gpu.origins_dirty = false;
+            let writes = gpu.take_origin_writes();
+            if table.len() < gpu.origins.len() {
+                table = gpu.origins.clone();
+                table.resize(gpu.origins.len().next_power_of_two(), IVec4::ZERO);
+            } else {
+                for slots in writes {
+                    table[slots.clone()].copy_from_slice(&gpu.origins[slots]);
+                }
+            }
+            assert_eq!(&table[..gpu.origins.len()], &gpu.origins[..], "frame {frame}");
+        }
+        let slot = gpu.new_slot(IVec4::ONE);
+        assert_eq!(gpu.take_origin_writes().into_iter().map(|slots| slots.len()).sum::<usize>(), ORIGIN_REGION.min(gpu.origins.len() - slot as usize / ORIGIN_REGION * ORIGIN_REGION));
     }
 
     #[test]
