@@ -221,6 +221,7 @@ pub fn struck_sounds(damage: u16, blow: Blow, killed: bool, style: Style, shell:
         Blow::Beat => sounds.push(("beat".into(), 1.0)),
         Blow::Flourish => sounds.extend([("beat".into(), 1.0), ("flourish".into(), 1.0)]),
         Blow::Counter => sounds.push(("counter".into(), 1.0)),
+        Blow::Unaware => sounds.push(("unaware".into(), 1.0)),
         Blow::Plain | Blow::Bleed => {}
     }
     if killed {
@@ -1052,7 +1053,7 @@ mod tests {
         assert!(stop_for(&look, Blow::Flourish, 0.05, false) > small, "a flourish freezes longer than a plain blow");
         assert!(stop_for(&look, Blow::Plain, 0.05, true) >= look.death.stop, "a killing blow freezes as a death does");
         // Never past a few frames, and bleeding not at all.
-        for blow in [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed] {
+        for blow in [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed, Blow::Unaware] {
             assert!(stop_for(&look, blow, 1.0, true) <= 0.25);
         }
         assert_eq!(stop_for(&look, Blow::Bleed, 0.5, false), 0.0);
@@ -1139,7 +1140,7 @@ mod tests {
     #[test]
     fn every_blow_and_outcome_has_its_sounds() {
         let look = look();
-        let blows = [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed];
+        let blows = [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed, Blow::Unaware];
         let styles = [Style::Stab, Style::Slash, Style::Crush, Style::Ranged, Style::Magic];
         for blow in blows {
             for style in styles {

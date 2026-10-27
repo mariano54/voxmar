@@ -467,6 +467,7 @@
     "combat.splat.blow.beat": "{damage}",
     "combat.splat.blow.flourish": "{damage}！",
     "combat.splat.blow.counter": "反撃 {damage}",
+    "combat.splat.blow.unaware": "不意打ち {damage}",
     "combat.splat.blow.bleed": "出血 {damage}",
     "combat.splat.defended.hit": "-{damage}",
     "combat.splat.defended.missed": "ミス",

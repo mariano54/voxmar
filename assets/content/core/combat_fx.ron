@@ -33,6 +33,8 @@
         "flourish": (stop: 2.0, sparks: 3.0, punch: 1.1),
         "counter": (stop: 1.8, sparks: 2.6, punch: 0.9),
         "bleed": (stop: 0.0, sparks: 0.0, punch: 0.0),
+        // Caught unaware (asleep, looking away, stalked): it lands hard, as a counter does.
+        "unaware": (stop: 1.8, sparks: 2.4, punch: 0.9),
     },
     // A killing blow: a longer freeze and a heavier dip, then the body tips over and lies
     // there a beat (each creature's `death` says how long), and over the last `shrink` of its
@@ -185,6 +187,12 @@
             Click(gain: 0.8),
             Ring(freq: 1560, partials: [1.0, 2.76, 5.4], seconds: 0.35, gain: 0.5),
             Tone(from: 150, to: 50, seconds: 0.18, gain: 0.8),
+        ]),
+        // A blow on one caught unaware: a dull, heavy thud with a low ring under it.
+        "unaware": (gain: 0.55, drive: 1.7, room: 0.18, layers: [
+            Click(gain: 0.6),
+            Tone(from: 180, to: 60, seconds: 0.2, gain: 0.9),
+            Ring(freq: 880, partials: [1.0, 2.4], seconds: 0.25, gain: 0.3),
         ]),
         // The killing blow: a deep thump and a soft breath of air.
         "kill": (gain: 0.62, drive: 1.8, room: 0.26, layers: [

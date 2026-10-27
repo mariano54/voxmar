@@ -442,6 +442,8 @@ pub enum Blow {
     Flourish,
     Counter,
     Bleed,
+    /// On a creature that had not noticed the striker (`Stroke::unaware`): sure, and harder.
+    Unaware,
 }
 
 /// One swing: when it starts and lands, how hard, and whether it is on the beat.
@@ -631,9 +633,11 @@ impl Stroke {
     }
 
     /// This stroke landing on a creature that has not noticed the striker: it cannot miss,
-    /// and hits up to `Feel::unaware_max_hit` harder.
+    /// and hits up to `Feel::unaware_max_hit` harder. A plain or on-beat blow shows as an
+    /// unaware one (`Blow::Unaware`); a flourish or counter keeps its own kind.
     pub fn unaware(self, feel: &Feel) -> Stroke {
-        Stroke { max_hit: self.max_hit + feel.unaware_max_hit, certain: true, ..self }
+        let blow = if matches!(self.blow, Blow::Plain | Blow::Beat) { Blow::Unaware } else { self.blow };
+        Stroke { max_hit: self.max_hit + feel.unaware_max_hit, certain: true, blow, ..self }
     }
 
     /// The most this stroke's blow does with a weapon whose max hit is `max_hit`, the bonus
@@ -1513,9 +1517,11 @@ mod tests {
     fn an_unaware_target_is_struck_surely_and_harder() {
         let feel = Feel::default();
         let plain = Stroke::of(Blow::Plain, 1.0, false, false, false, false, &feel).unaware(&feel);
-        assert_eq!((plain.certain, plain.max_hit, plain.blow), (true, 0.5, Blow::Plain));
+        assert_eq!((plain.certain, plain.max_hit, plain.blow), (true, 0.5, Blow::Unaware));
+        let beat = Stroke::of(Blow::Beat, 1.0, true, false, false, false, &feel).unaware(&feel);
+        assert_eq!(beat.blow, Blow::Unaware);
         let flourish = Stroke::of(Blow::Flourish, 1.0, false, false, false, false, &feel).unaware(&feel);
-        assert!((flourish.max_hit - 0.7).abs() < 1e-6 && flourish.certain, "{flourish:?}");
+        assert!((flourish.max_hit - 0.7).abs() < 1e-6 && flourish.certain && flourish.blow == Blow::Flourish, "{flourish:?}");
         // With a sword's 9: 13.5 at most, on average.
         let mean = (0..1000).map(|i| plain.max_hit(9, i as f32 / 1000.0) as f32).sum::<f32>() / 1000.0;
         assert!((mean - 13.5).abs() < 0.01, "{mean}");

@@ -35,6 +35,7 @@
             "flourish": (color: (242, 193, 78), scale: 5),
             "counter": (color: (242, 193, 78), scale: 5),
             "bleed": (color: (110, 206, 98)),
+            "unaware": (color: (242, 193, 78), scale: 5),
         },
         // Blows at the player, by what came of them (and a blow of the player's that did
         // nothing, or a hit on the player that did no harm, shows as `missed`).

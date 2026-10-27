@@ -239,7 +239,7 @@ impl CombatStyle {
     }
 }
 
-const BLOWS: [Blow; 5] = [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed];
+const BLOWS: [Blow; 6] = [Blow::Plain, Blow::Beat, Blow::Flourish, Blow::Counter, Blow::Bleed, Blow::Unaware];
 const DEFENDED: [Defended; 6] = [Defended::Hit, Defended::Missed, Defended::Blocked, Defended::Perfect, Defended::Dodged, Defended::Evaded];
 
 pub fn blow_name(blow: Blow) -> &'static str {
@@ -249,6 +249,7 @@ pub fn blow_name(blow: Blow) -> &'static str {
         Blow::Flourish => "flourish",
         Blow::Counter => "counter",
         Blow::Bleed => "bleed",
+        Blow::Unaware => "unaware",
     }
 }
 
@@ -1062,7 +1063,7 @@ mod tests {
         )
     }
 
-    const KINDS: &str = r#"blows: { "plain": (color: (0,0,0)), "beat": (color: (0,0,0)), "flourish": (color: (0,0,0)), "counter": (color: (0,0,0)), "bleed": (color: (0,0,0)) },
+    const KINDS: &str = r#"blows: { "plain": (color: (0,0,0)), "beat": (color: (0,0,0)), "flourish": (color: (0,0,0)), "counter": (color: (0,0,0)), "bleed": (color: (0,0,0)), "unaware": (color: (0,0,0)) },
         defended: { "hit": (color: (0,0,0)), "missed": (color: (0,0,0)), "blocked": (color: (0,0,0)), "perfect": (color: (0,0,0)), "dodged": (color: (0,0,0)), "evaded": (color: (0,0,0)) }"#;
 
     #[test]
