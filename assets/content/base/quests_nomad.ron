@@ -326,8 +326,8 @@
         (
             name: "a_varied_table", age: "nomad", branch: "cooking", title: "A Varied Table",
             capstone: true,
-            why: "One food grows dull and heals little. Beside the meat you cook at the fire, cook four fish and bake three bread: every kind comes from a different part of the land, and together they keep you going.",
-            tasks: [[Cook("tag:fish", 4), Craft("bread", 3)], [Cook("tag:fish", 4), Cook("bread", 3)]],
+            why: "One food grows dull and heals little. Beside the meat you cook at the fire, cook four fish and bake bread to eight loaves in all: every kind comes from a different part of the land, and together they keep you going.",
+            tasks: [[Cook("tag:fish", 4), Craft("bread", 8)], [Cook("tag:fish", 4), Cook("bread", 8)]],
             after: ["a_fish_supper", "daily_bread", "trail_rations", "wild_harvest", "break_ground"],
             rewards: [Xp("cooking", 180.0), Xp("hitpoints", 40.0)],
         ),
@@ -552,8 +552,8 @@
         ),
         (
             name: "found_and_thanked", age: "nomad", branch: "explore", title: "Found and Thanked",
-            why: "A child lost far from home wanders one spot. Food in your hand and they follow you to the nearest settlement. Days later the parents come looking for you near your home, with coins and bread for your trouble. Bring the child home, then meet the parents.",
-            tasks: [[Met("lost_child", 1), Met("grateful_parents", 1)]],
+            why: "A child lost far from home wanders one spot. Food in your hand and they follow you to the nearest settlement. Days later the parents come looking for you near your home, with coins and bread for your trouble. Once the child is home, meet the parents.",
+            tasks: [[Met("grateful_parents", 1)]],
             after: ["a_kind_turn"],
             side: true,
             rewards: [Xp("hitpoints", 100.0)],

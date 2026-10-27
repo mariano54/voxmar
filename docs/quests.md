@@ -576,12 +576,16 @@ player to that line.
 No goal opens done (Oct 21): goals count over a life, so a goal asking no more than a quest
 surely done before it already asked is met on opening, and a task of such goals opens done
 (Fuel to Hand's coal way after Coal and Cinders did). `no_early_goal_is_met_as_its_quest_opens`
-checks every counted goal kind, not only `Level`; Fuel to Hand now asks 24 coal in all, and
+checks every counted goal kind, not only `Level`; Fuel to Hand now asks 18 coal in all (Charcoal's coal way asks 24), and
 ten goals the chain had always met went (Seed Mix's wheat, A Silvery Ore's copper, Food
 Enough's wheat, An Ore Run's coal, Fired Whole's clay, The Last Sheaf's wheat, Mice in the
 Stores' larder, Catch Up the Shrine's shrine bearer, A Varied Table's meat, A Stone's Throw's
 kills). `no_two_early_quests_teach_the_same_lesson` holds each quest's first way (its lesson)
-its own.
+its own. The check reads each way of the chain: a player who took Fuel to Hand's
+coal way has done what any way asking that much coal asks, so A Varied Table's bread is eight
+in all (Daily Bread bakes four) and Found and Thanked asks only the parents (A Kind Turn brings
+the child home). A chain way that is another quest's first way (Snug for Winter taking a
+homely home) is that quest's lesson taken early, not a repeat.
 
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).

@@ -630,13 +630,15 @@ fn tally(goal: &Goal) -> Option<(String, u32)> {
 /// A goal the player surely meets already when its quest opens asks nothing, and a task of
 /// such goals opens done. A `Level` goal is above what the books surely give by then
 /// (`Books::sure`, the gap check's count); a tally goal (things made, picked, met, dealt
-/// with, all counted over a life) asks more than any quest surely done before it: a quest of
-/// its sure chain whose every task asks the same thing at least as often has already had it
-/// done (First Ore's coal after Coal and Cinders' was one).
+/// with, all counted over a life) asks more than any quest surely done before it: a player
+/// who took a way of its sure chain asking the same thing at least as often has already done
+/// it (First Ore's coal after Coal and Cinders' was one).
 fn met_on_opening(content: &Content) -> Vec<String> {
     let books = Books { content };
+    let early = || content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm");
+    let firsts: Vec<(&str, Vec<(String, u32)>)> = early().filter_map(|q| Some((q.name.as_str(), lesson(q.tasks.first()?)))).collect();
     let mut met = Vec::new();
-    for quest in content.quests.iter().filter(|q| q.age == "nomad" || q.age == "farm") {
+    for quest in early() {
         let chain = books.chain(&quest.name);
         for goal in quest.tasks.iter().flatten() {
             if let Goal::Level(skill, level) = goal {
@@ -647,11 +649,24 @@ fn met_on_opening(content: &Content) -> Vec<String> {
                     met.push(format!("{}: {skill} {level} ({:.0} xp) is surely had on opening ({sure:.0}); {skill} {first} is not", quest.name, books.xp_for(*level)));
                 }
             } else if let Some((what, n)) = tally(goal) {
-                // The most any sure-done quest before it surely did: its least-asking task's count.
+                // The most any way of a sure-done quest before it asked: a player who took that
+                // way has done it (Charcoal's coal way after Fuel to Hand's, both 24, was one).
+                // A way that is another quest's first way is that quest's lesson taken early
+                // (Snug for Winter taking a homely home), not a repeat of it.
                 let done = chain
                     .iter()
                     .map(|c| content.quests.get(c).unwrap())
-                    .filter_map(|c| c.tasks.iter().map(|t| t.iter().filter_map(tally).filter(|(w, _)| *w == what).map(|(_, m)| m).max().unwrap_or(0)).min().map(|m| (m, &c.name)))
+                    .filter_map(|c| {
+                        c.tasks
+                            .iter()
+                            .filter(|t| !firsts.iter().any(|(q, first)| *q != c.name && *first == lesson(t)))
+                            .flatten()
+                            .filter_map(tally)
+                            .filter(|(w, _)| *w == what)
+                            .map(|(_, m)| m)
+                            .max()
+                            .map(|m| (m, &c.name))
+                    })
                     .max_by_key(|(m, _)| *m);
                 if let Some((done, by)) = done.filter(|(m, _)| *m >= n) {
                     met.push(format!("{}: {goal:?} is already done by {by} ({done}), which comes before it", quest.name));
@@ -685,6 +700,24 @@ fn a_tally_goal_its_chain_already_did_is_caught() {
     content.quests = std::sync::Arc::new(QuestRegistry::new(vec![core, QuestRegistry::read("base", &again).unwrap(), nomad]).unwrap());
     let met = met_on_opening(&content);
     assert!(met.iter().any(|m| m.starts_with("base:where_roots_grow") && m.contains("base:simples")), "{met:#?}");
+}
+
+/// The check reads each way, not only a quest's least-asking one: Fuel to Hand's coal way at
+/// Charcoal's 24 leaves Charcoal's coal way done for a player who took it.
+#[test]
+fn a_way_its_chain_already_did_is_caught() {
+    use voxmar_engine::quest::QuestRegistry;
+    let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content/base");
+    let source = std::fs::read_to_string(base.join("quests.ron")).unwrap();
+    let nomad = QuestRegistry::read_named("base", "quests_nomad.ron", &std::fs::read_to_string(base.join("quests_nomad.ron")).unwrap()).unwrap();
+    let fuel = r#"tasks: [[Have("tag:log", 32)], [Mine("coal_ore", 18)]],"#;
+    assert!(source.contains(fuel), "Fuel to Hand's ways");
+    let same = source.replace(fuel, r#"tasks: [[Have("tag:log", 32)], [Mine("coal_ore", 24)]],"#);
+    let mut content = content();
+    let core = QuestRegistry::read("core", &std::fs::read_to_string(base.join("../core/quests.ron")).unwrap()).unwrap();
+    content.quests = std::sync::Arc::new(QuestRegistry::new(vec![core, QuestRegistry::read("base", &same).unwrap(), nomad]).unwrap());
+    let met = met_on_opening(&content);
+    assert!(met.iter().any(|m| m.starts_with("base:charcoal") && m.contains("base:fuel_to_hand")), "{met:#?}");
 }
 
 /// What a task teaches: the tallies it asks, by what they count, with how many (a `Level`

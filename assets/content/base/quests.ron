@@ -46,8 +46,8 @@
         // Fuel: logs to char or coal from a seam, two ways to the Crucible Kiln's charge.
         (
             name: "fuel_to_hand", age: "farm", branch: "fuel", title: "Fuel to Hand",
-            why: "Every fire of this age eats fuel: the kilns, the clamps, the copper and at last the Crucible Kiln's charge. Take either way. Fell trees and carry thirty-two logs, to char later; or dig to a coal seam (a small black-flecked stone lying on the ground marks one below) and mine coal until you have dug twenty-four coal ore in all. Both ways go on to Charcoal.",
-            tasks: [[Have("tag:log", 32)], [Mine("coal_ore", 24)]],
+            why: "Every fire of this age eats fuel: the kilns, the clamps, the copper and at last the Crucible Kiln's charge. Take either way. Fell trees and carry thirty-two logs, to char later; or dig to a coal seam (a small black-flecked stone lying on the ground marks one below) and mine coal until you have dug eighteen coal ore in all. Both ways go on to Charcoal.",
+            tasks: [[Have("tag:log", 32)], [Mine("coal_ore", 18)]],
             after: ["the_farm_age"],
             rewards: [Xp("mining", 60.0), Xp("engineering", 40.0)],
         ),
