@@ -1130,7 +1130,8 @@ pub fn life(content: &voxmar_engine::content::Content, item: voxmar_engine::bloc
 }
 
 /// Whether a tool worn by `wear` (a firebrand burnt by it, a light picked up burning) is
-/// down to the share where it warns (`tool::Wear::warn`).
+/// down to where it warns (`tool::Wear::warn_at`). For what burns down held the count is
+/// seconds of burning, not uses, so a firebrand reddens with `warn_uses` seconds left.
 pub fn worn_low(content: &voxmar_engine::content::Content, item: voxmar_engine::block::BlockId, wear: u16) -> bool {
     let uses = life(content, item);
     uses > 0 && wear > 0 && uses.saturating_sub(wear) <= content.tools.wear().warn_at(uses)

@@ -257,7 +257,7 @@ pub enum ServerMessage {
     /// Blocks smouldering, about to catch fire (`fire.ron`), in order: sent whenever that
     /// changes, to everyone.
     Smoulders { at: Vec<IVec3> },
-    /// What the player holds wore down past its warning (`tool::Wear::warn`), or with
+    /// What the player holds wore down past its warning (`tool::Wear::warn_at`), or with
     /// `broke` wore out and broke: the hand hears it, and a break shows a puff of chips.
     ToolWore { item: BlockId, broke: bool },
     /// What stands on each block in `column` that shows what it holds (`BlockDef::shows`:

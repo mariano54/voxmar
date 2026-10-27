@@ -245,8 +245,9 @@ early_quests still holds that a quest names only quests open beside it.
 ### Each path a chain (Oct 14)
 
 Ten starts still fanned out a few steps in: one column held 21 quests. Now each path runs
-as a chain, with a fork only where a quest's text sends the player two ways (A Kiln Load
-names Earthenware and Fired Whole; Herb Garden names Carrot Patch and A Kitchen Garden;
+as a chain, with a fork only where a quest's text sends the player two ways (The Potter
+opens A Kiln Load and Earthenware, which A Kiln Load's text sends the player to between
+loads, and A Kiln Load leads to Fired Whole; Herb Garden names Carrot Patch and A Kitchen Garden;
 Fresh Eggs names A Woolly Flock). Examples: the bees run Humming in the Meadow, A Bee
 Garden, then Smoke That Clings beside Sweet Relief and The Beekeeper Calls; the home runs A Table for
 Two, Shelves and Cupboards, A Proper Bed, Candlelight, Snug for Winter, then the door and
