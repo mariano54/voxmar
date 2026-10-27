@@ -459,7 +459,8 @@ fn show(
 /// What breaking `block` wants that the player lacks, in red under its name before they try,
 /// in the words its refusal would say (`refusals.ron`): the tool, if what is in hand is not
 /// one good enough ("Needs a Stone Pickaxe or better" on coal held with flint), and the level,
-/// once the server has said the player's skills. Nothing when they have both.
+/// once the server has said the player's skills, counting what their effects boost it by as
+/// the break does (`level::check_level`). Nothing when they have both.
 fn wants(locale: &Locale, content: &voxmar_engine::content::Content, player: &LocalPlayer, block: BlockId) -> Vec<(String, Color)> {
     use voxmar_engine::action::Requirement;
     let Some(rule) = content.tools.rule(block) else { return Vec::new() };
@@ -471,7 +472,7 @@ fn wants(locale: &Locale, content: &voxmar_engine::content::Content, player: &Lo
         lines.push((locale.format(key, &[("tool", &locale.block(content.blocks.def(tool)))]), ERROR));
     }
     if let (true, Some(skill), Some(key)) = (player.skills_known, rule.skill, content.refusals.says(Requirement::BlockLevel))
-        && content.skills.level(player.skills.xp(skill)) < rule.level
+        && voxmar_engine::level::check_level(&content.skills, &content.effects, &player.skills, &player.vitals.effects, skill) < rule.level
     {
         lines.push((locale.format(key, &[("skill", &locale.skill(content.skills.get(skill))), ("level", &rule.level)]), ERROR));
     }
@@ -588,6 +589,27 @@ mod tests {
             player.skills.grant(mining, content.skills.xp_for(5));
             assert_eq!(wants(&locale, &content, &player, id("base:copper_ore")), [], "{code}");
         }
+    }
+
+    /// An effect that boosts Mining counts as the break counts it: four levels short of
+    /// copper's 5 with a boost of four, nothing is wanted; with a boost of three, still the level.
+    #[test]
+    fn a_boosted_level_wants_nothing_the_break_would_allow() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets");
+        let mut content = voxmar_server::load_content(&assets).unwrap();
+        let source = r#"(effects: [(name: "keen", kind: Buff, title: "Keen", description: "Keen.", boosts: [("mining", 4)]), (name: "dull", kind: Buff, title: "Dull", description: "Dull.", boosts: [("mining", 3)])])"#;
+        content.effects = std::sync::Arc::new(voxmar_engine::effect::EffectRegistry::new(vec![voxmar_engine::effect::EffectRegistry::read("core", source).unwrap()]).unwrap());
+        let locale = Locale::load(&assets.join("content"), "en");
+        let mut player = LocalPlayer { skills_known: true, ..LocalPlayer::default() };
+        player.inventory.slots[0] = Some(ItemStack::new(content.blocks.id("base:stone_pickaxe").unwrap(), 1));
+        let copper = content.blocks.id("base:copper_ore").unwrap();
+        let mining = content.skills.id("core:mining").unwrap();
+        assert_eq!(content.skills.level(player.skills.xp(mining)), 1);
+        let with = |player: &mut LocalPlayer, name: &str| player.vitals.effects = vec![voxmar_engine::effect::ActiveEffect { effect: content.effects.id(&format!("core:{name}")).unwrap(), seconds_left: None }];
+        with(&mut player, "dull");
+        assert_eq!(wants(&locale, &content, &player, copper).len(), 1, "boosted to 4, still short");
+        with(&mut player, "keen");
+        assert_eq!(wants(&locale, &content, &player, copper), [], "boosted to 5");
     }
 
     #[test]
