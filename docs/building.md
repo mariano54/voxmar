@@ -55,6 +55,7 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Landing | `<timber>_landing` | boards across the top of the cell on two joists, level with a stair's top | joists run away from the placer | 3 slabs on 2 beams make 3 (3) |
 | Balcony door | `balcony_door` (`_top`, `_open`, `_open_top`) | a plank door whose upper half is a lattice | placed whole, as a door; a right click opens and shuts it | a lattice window on a wooden door makes 1 (4) |
 | Arrow slit | `stone_arrow_slit` | dressed stone with an upright slit three texels wide through it | the slit runs away from the placer | 2 stone bricks, a brick slab make 2 (6) |
+| Arch | `cobblestone_arch`, `stone_brick_arch`; `_wide_arch` (and `_wide_arch_half`, its second half) | a block of stone over an opening, its underside curving up from narrow jambs to the crown; the wide one spans two cells | the way through runs away from the placer; the wide one's second half goes in to the placer's right with it, and the two break together (`beside`) | 3 slabs over 2 blocks make 2 (cobbles 3, bricks 6); 2 arches side by side make a wide one |
 
 The home's ladder runs from a hide lean-to through wattle and daub and timber to stone and
 brick. Every piece on it carries a shelter tag for how well it keeps the weather out of a
