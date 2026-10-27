@@ -225,3 +225,28 @@ fn an_arch_curves_alike_from_both_its_jambs() {
         }
     }
 }
+
+/// A door hood is an awning of wood for the dooryard (`awning`, not `yard`), in every timber:
+/// walked under, made of slabs and sticks with no cloth, its boards highest at the wall behind
+/// it and sloping out over the step.
+#[test]
+fn a_door_hood_is_an_awning_of_wood_in_every_timber() {
+    let content = content();
+    let blocks = &content.blocks;
+    let top = |name: &str, z: f32| {
+        let shape = blocks.shape(blocks.expect(name)).unwrap_or_else(|| panic!("{name} has no shape"));
+        shape.bounds.iter().filter(|&&(min, max)| min.z < z && z < max.z && max.x - min.x > 0.5).map(|&(_, max)| max.y).fold(0.0_f32, f32::max)
+    };
+    let stick = blocks.expect("base:stick");
+    for wood in ["birch", "oak", "dark_oak"] {
+        let name = format!("base:{wood}_door_hood");
+        let id = blocks.expect(&name);
+        let def = blocks.def(id);
+        assert!(def.has_tag("awning") && !def.has_tag("yard") && !def.solid, "{name} is an awning walked under");
+        assert_eq!(def.tags.iter().filter(|t| t.starts_with("shelter:")).count(), 1, "{name} roofs a step once");
+        assert!(top(&name, 15.0 / 16.0) > top(&name, 9.0 / 16.0) && top(&name, 9.0 / 16.0) > top(&name, 3.0 / 16.0), "{name} slopes down and out from the wall");
+        let recipe = content.recipes.iter().find(|r| r.output == id).unwrap_or_else(|| panic!("a player cannot make {name}"));
+        assert!(recipe.cells().iter().flatten().any(|&cell| cell == stick), "{name} stands on stick brackets");
+        assert!(recipe.cells().iter().flatten().all(|&cell| !blocks.def(cell).has_tag("cloth")), "{name} needs no cloth");
+    }
+}

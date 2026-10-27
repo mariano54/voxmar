@@ -49,6 +49,8 @@
         (pattern: [["stone_bricks", "", "stone_bricks"], ["stone_bricks", "", "stone_bricks"]], output: "chimney_stack", count: 2, skill: "core:construction", level: 6, xp: 4.0),
         // A town's house: jetties carry an upper floor out over the street on beams and posts;
         // a doorway without a door has a frame of the same timber.
+        // A door hood: three slabs over a stick at either end for its brackets.
+        (pattern: [["{name}_slab", "{name}_slab", "{name}_slab"], ["stick", "", "stick"]], output: "{name}_door_hood", count: 2, skill: "core:construction", level: 2, xp: 2.0),
         (pattern: [["{name}_beam", "{name}_beam"], ["", "{name}_post"]], output: "{name}_jetty_beam", count: 2, skill: "core:construction", level: 4, xp: 4.0),
         // Two posts laid corner to corner, cut into braces.
         (pattern: [["", "{name}_post"], ["{name}_post", ""]], output: "{name}_brace", count: 4, skill: "core:construction", level: 3, xp: 2.0),

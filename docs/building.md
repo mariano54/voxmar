@@ -22,6 +22,7 @@ and a pixel, `core/movement.ron`) without jumping; a whole block still takes a j
 | Daub | `daub` | a whole block | | 2 clay, a twine and a wattle panel make 2 (2) |
 | Half-timber | `half_timber` | a whole block: daub in a braced timber frame | | 2 beams, 2 daub make 4 (4) |
 | Shutters | `wooden_shutters` (`_open`) | two plank leaves across the middle; open, folded back to the jambs and stopping nothing | face the placer; a right click opens and shuts them | 4 planks, 2 sticks make 2 (2) |
+| Door hood | `<timber>_door_hood` | a little pitched roof of boards on two brackets, set on the wall over a door; walked under; an awning for the dooryard (`awning`) without a dye | its boards slope out toward the placer from the wall behind | 3 slabs over 2 sticks make 2 (2) |
 | Chimney | `chimney_stack`, `chimney_pot` | a brick flue 3/4 of a block across; a clay pot with a rim | | 4 stone bricks make 2 (6); 4 fired clay round a flue make 2 (3) |
 | Stone flue, hood | `stone_flue`, `chimney_hood` | a cobble flue as the brick one; a brick skirt round a hearth narrowing to a flue | | 4 cobblestone and clay make 2 (2); 5 stone bricks make 1 (6) |
 | Jetty beam | `<timber>_jetty_beam` | a joist along the top of the cell, out past the wall, a brace stepping down to the wall | overhang towards the placer | 2 beams, a post make 2 (4) |

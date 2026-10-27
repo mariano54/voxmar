@@ -179,7 +179,7 @@
         // sky about it (`yard`: a bench, bunting, a hay bale, a dry-stone wall), counted only
         // where they stand in the open (`outdoors` below). Out in the yard, not under the
         // roof, the home is a place to sit a while.
-        (name: "dooryard", kind: Buff, title: "Dooryard", description: "An awning at your door, a bench, bunting, bales or a dry-stone wall out in the open about it: in the yard you heal a twentieth faster.", announce: true,
+        (name: "dooryard", kind: Buff, title: "Dooryard", description: "An awning or a door hood at your door, a bench, bunting, bales or a dry-stone wall out in the open about it: in the yard you heal a twentieth faster.", announce: true,
             when: Some(All([AtHome, Not(Indoors), HomeHas("awning", 1), HomeHas("yard", 2)])),
             replaces: [], modifiers: (heal: 1.05)),
         // Reactions: a home answers what is around it. A roof and a fire in a storm, animals

@@ -1044,7 +1044,7 @@
         ),
         (
             name: "a_dooryard", age: "farm", branch: "crafting", title: "A Dooryard",
-            why: "A home is more than its walls. Three cloths over three sticks make awnings (Crafting 8); hang one over your door. Twine over two cloths makes bunting (Crafting 7). Set two things out under the open sky about the door, bunting, a bench or a hay bale, and stand in your yard: there you heal a little faster.",
+            why: "A home is more than its walls. Three cloths over three sticks make awnings (Crafting 8), or three slabs over two sticks door hoods (Construction 2); hang one over your door. Twine over two cloths makes bunting (Crafting 7). Set two things out under the open sky about the door, bunting, a bench or a hay bale, and stand in your yard: there you heal a little faster.",
             tasks: [[Craft("tag:awning", 1), Craft("tag:bunting", 2), Felt("dooryard")]],
             after: ["lanterns_of_cloth"],
             side: true,
