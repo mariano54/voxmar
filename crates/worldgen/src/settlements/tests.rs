@@ -1833,7 +1833,13 @@ fn people_numbers_that_would_not_play_are_refused() {
     let def = &world.settlements.def;
     let sizes: Vec<String> = def.sizes.iter().map(|s| s.name.clone()).collect();
     assert!(def.people.check(&sizes).is_ok());
-    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 17] = [
+    let spoilt: [(&str, fn(&mut super::people::PeopleDef)); 23] = [
+        ("more than every stay at home sat at the table", |p| p.sit = 1.5),
+        ("less than none sat at the table", |p| p.sit = -0.1),
+        ("no wait between telling off a player who breaks a village's things", |p| p.react.scold_every = 0.0),
+        ("telling off from below nothing", |p| p.react.scold = -1.0),
+        ("no wait between treats", |p| p.react.treat_every = 0.0),
+        ("treats seen from below nothing", |p| p.react.treat = -1.0),
         ("a talk as long as the wait to talk again", |p| p.react.chat_for = p.react.chat_every),
         ("a talk from farther than a greeting", |p| p.react.chat = p.react.greet + 1.0),
         ("a talk for no time", |p| p.react.chat_for = 0.0),

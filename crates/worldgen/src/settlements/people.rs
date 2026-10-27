@@ -125,6 +125,7 @@ pub(super) struct PeopleFile {
     routines: Vec<RoutineFile>,
     jitter: Option<f32>,
     linger: Option<(f32, f32)>,
+    sit: Option<f32>,
     newcomer: Option<f32>,
     newcomers_per_day: Option<f32>,
     shrine: Option<String>,
@@ -262,6 +263,9 @@ pub struct PeopleDef {
     pub jitter: f32,
     /// Seconds one stands at a spot before moving to another spot of the same place.
     pub linger: (f32, f32),
+    /// The share of stays about the house spent sitting at the table, each on a seat of
+    /// their own (`Building::seats`, in the order they live there), when there is one.
+    pub sit: f32,
     /// Days before a newcomer takes the place of someone who died.
     pub newcomer: f32,
     /// Newcomers a settlement takes in a day at most: several dead come back one by one.
@@ -283,6 +287,7 @@ impl Default for PeopleDef {
             routines: Vec::new(),
             jitter: 0.03,
             linger: (12.0, 50.0),
+            sit: 0.4,
             newcomer: 5.0,
             newcomers_per_day: 1.0,
             shrine: "shrine".into(),
@@ -482,6 +487,10 @@ impl PeopleDef {
             self.note_setter(at, package, "linger");
             self.linger = linger;
         }
+        if let Some(sit) = file.sit {
+            self.note_setter(at, package, "sit");
+            self.sit = sit;
+        }
         if let Some(newcomer) = file.newcomer {
             self.note_setter(at, package, "newcomer");
             self.newcomer = newcomer;
@@ -552,8 +561,8 @@ impl PeopleDef {
                 return fail(format!("guards of `{}` need a size there is, routines and a count low to high", g.size));
             }
         }
-        if self.jobs.iter().any(|j| j.count.0 > j.count.1) || !(0.0..0.2).contains(&self.jitter) || self.linger.0 < 0.0 || self.linger.0 > self.linger.1 {
-            return fail("counts low to high, a jitter under 0.2 and linger from nothing or more, low to high".into());
+        if self.jobs.iter().any(|j| j.count.0 > j.count.1) || !(0.0..0.2).contains(&self.jitter) || self.linger.0 < 0.0 || self.linger.0 > self.linger.1 || !(0.0..=1.0).contains(&self.sit) {
+            return fail("counts low to high, a jitter under 0.2, linger from nothing or more, low to high, and a share sitting within 0 to 1".into());
         }
         if self.jobs.iter().any(|j| !(0.0..=1.0).contains(&j.chance)) || self.folk.iter().any(|f| f.weight < 0.0) || self.routines.iter().any(|r| r.slots.iter().any(|s| s.go.iter().any(|g| g.weight < 0.0))) {
             return fail("job chances within 0 to 1 and weights of nothing or more".into());
