@@ -736,6 +736,14 @@
             rewards: [Xp("magic", 120.0)],
         ),
         (
+            name: "a_tale_by_night", age: "farm", branch: "prayer", title: "A Tale by Night",
+            side: true,
+            why: "After dark a storyteller sits by the road with a tale to tell. Sit and listen: the tale is of something strange not far off, and you leave it with a clear head.",
+            tasks: [[Dealt("story_teller", "tale", 1)]],
+            after: ["a_place_to_pray"],
+            rewards: [Xp("magic", 30.0)],
+        ),
+        (
             name: "paying_respects", age: "farm", branch: "prayer", title: "Paying Respects",
             side: true,
             why: "Now and then a funeral walks slowly across open land, bearing its dead. Hold out a flower and lay it with them: honouring the dead is Magic too, not only prayer at an altar. Find the procession by day and pay your respects.",
