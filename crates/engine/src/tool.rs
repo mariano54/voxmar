@@ -249,6 +249,49 @@ pub struct ToolRegistry {
     mend_by_tag: Vec<Option<String>>,
     /// Each item that burns: what it leaves once burnt out (`burns_to:ITEM`), if anything.
     burnt: Vec<Option<BlockId>>,
+    /// Each tool: what it breaks that a lesser one of its kind cannot (`ToolRegistry::opens`).
+    opens: Vec<Vec<BlockId>>,
+}
+
+/// Each item's [`ToolRegistry::opens`], found once at load: for a tool, one block for each
+/// rule asking for its kind at a tier above the next lower tier any tool of its kind has and
+/// up to its own (so a rule at a tier no tool has shows on the first tool past it), taking
+/// the plainest block (shortest name, then fewest tags: plain ore stands for its deepslate
+/// form and its sample), in
+/// the order of the level each asks. Nothing for the lowest tier of a kind, which opens
+/// nothing a lesser one kept shut, nor for a tool another of its kind and tier ranks below
+/// (slower, or as fast and listed first: a bronze pickaxe opens nothing copper did not).
+fn opened(blocks: &BlockRegistry, rules: &[Rule], tools: &[Tool], covered: &[Option<usize>]) -> Vec<Vec<BlockId>> {
+    let mut plainest: Vec<Option<BlockId>> = vec![None; rules.len()];
+    for (b, rule) in covered.iter().enumerate() {
+        if let Some(i) = *rule {
+            let id = BlockId(b as u16);
+            let plain = |b: BlockId| (blocks.def(b).name.len(), blocks.def(b).tags.len());
+            if plainest[i].is_none_or(|f| plain(id) < plain(f)) {
+                plainest[i] = Some(id);
+            }
+        }
+    }
+    tools
+        .iter()
+        .enumerate()
+        .map(|(i, tool)| {
+            let Some(kind) = tool.kind else { return Vec::new() };
+            let same = || tools.iter().enumerate().filter(|(_, t)| t.kind == Some(kind));
+            let Some(lower) = same().map(|(_, t)| t.tier).filter(|&t| t < tool.tier).max() else { return Vec::new() };
+            if same().any(|(j, t)| t.tier == tool.tier && (t.speed < tool.speed || (t.speed == tool.speed && j < i))) {
+                return Vec::new();
+            }
+            let mut shown: Vec<(u8, usize, BlockId)> = rules
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| r.tool == Some(kind) && r.tier > lower && r.tier <= tool.tier)
+                .filter_map(|(r, rule)| plainest[r].map(|b| (rule.level, r, b)))
+                .collect();
+            shown.sort();
+            shown.into_iter().map(|(_, _, b)| b).collect()
+        })
+        .collect()
 }
 
 /// Seconds the hand waits after a break where no package says (Minecraft's five ticks).
@@ -423,7 +466,8 @@ impl ToolRegistry {
             covered.push(rules.iter().position(|rule| rule.tags.iter().all(has)));
             suited.push(kinds.iter().enumerate().filter(|(_, k)| k.mines.iter().any(has)).map(|(i, _)| i).collect());
         }
-        Ok(Self { kinds, rules, tools, covered, suited, wear, break_wait, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag, burnt })
+        let opens = opened(blocks, &rules, &tools, &covered);
+        Ok(Self { kinds, rules, tools, covered, suited, wear, break_wait, savers, heads, mends, mended_near, mend_share: Vec::new(), mend_skill: Vec::new(), mend_firm: Vec::new(), mend_by_tag, burnt, opens })
     }
 
     /// How tools and weapons wear.
@@ -716,6 +760,12 @@ impl ToolRegistry {
             }
         }
         best.map(|(_, id)| id)
+    }
+
+    /// What `item` breaks that a lesser tool of its kind cannot, nearest level first (see
+    /// [`opened`]); none for what is no tool.
+    pub fn opens(&self, item: BlockId) -> &[BlockId] {
+        self.opens.get(item.0 as usize).map_or(&[], Vec::as_slice)
     }
 }
 
@@ -1175,6 +1225,27 @@ mod tests {
             }
         }
         assert_eq!(unfelt, UNFELT, "the steps soil leaves no room to feel");
+    }
+
+    /// A better pickaxe names what it opens up, plain ore standing for its deepslate form and
+    /// its sample, nearest level first; the first of a kind opens nothing a lesser one kept
+    /// shut, and a tier no rule asks for opens nothing.
+    #[test]
+    fn a_better_tool_names_what_it_opens() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        let opens = |tool: &str| content.tools.opens(id(tool)).iter().map(|&b| content.blocks.def(b).name.trim_start_matches("base:").to_owned()).collect::<Vec<_>>();
+        assert_eq!(opens("flint_pickaxe"), Vec::<String>::new());
+        assert_eq!(opens("flint_axe"), Vec::<String>::new());
+        assert_eq!(opens("stone_pickaxe")[..3], ["coal_ore", "copper_ore", "tin_ore"]);
+        assert!(opens("stone_pickaxe").contains(&"iron_ore".to_owned()));
+        assert_eq!(opens("copper_pickaxe"), ["cobalt_ore", "silver_ore", "gold_ore"]);
+        assert_eq!(opens("stone_axe"), Vec::<String>::new());
+        // Bronze is copper's tier and faster: it opens nothing copper did not.
+        assert_eq!(opens("bronze_pickaxe"), Vec::<String>::new());
+        assert_eq!(opens("iron_pickaxe"), ["ruby_ore", "sapphire_ore", "lodestone", "emerald_ore", "graphite_ore", "diamond_ore", "aetherite_ore", "bauxite"]);
+        assert_eq!(opens("oak_log"), Vec::<String>::new());
     }
 
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower

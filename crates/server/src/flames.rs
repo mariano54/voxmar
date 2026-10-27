@@ -216,6 +216,13 @@ impl Server {
         let before: Vec<HomeSurvey> = homes.iter().map(|&(id, anchor, _)| self.survey_around(anchor, Some(id))).collect();
         for pos in out {
             let Some(here) = self.block(pos) else { continue };
+            // A spare kept at home for it (a candle box's candles) is set out in its place.
+            if let Some(full) = self.full_burn(here)
+                && self.take_spare(pos, here)
+            {
+                self.burn_from(pos, here, full);
+                continue;
+            }
             if let Some((_, stub)) = self.content.flames.burns_out(&self.content.blocks, here) {
                 self.set_block(pos, stub);
             }
@@ -251,6 +258,26 @@ impl Server {
             .filter(|tag| lights.iter().any(|&b| blocks.def(b).has_tag(tag) && flames.burns_out(blocks, b).is_some_and(|(_, stub)| !blocks.def(stub).has_tag(tag))))
             .cloned()
             .collect()
+    }
+
+    /// Takes one of `light` (in its own form, not its facing) out of a store tagged
+    /// `spare_lights` in a home holding `pos`, its owner's or nobody's: whether one was
+    /// there to set out in its place.
+    fn take_spare(&mut self, pos: IVec3, light: BlockId) -> bool {
+        let blocks = &self.content.blocks;
+        let item = blocks.def(light).form_of().and_then(|base| blocks.id(base)).unwrap_or(light);
+        for (id, anchor) in self.homes_holding(pos) {
+            let name = self.players[&id].name.clone();
+            let spares: Vec<IVec3> = self
+                .stores_around(anchor)
+                .into_iter()
+                .filter(|&at| self.factory.get(at).is_some_and(|(block, state)| self.content.blocks.def(block).has_tag(voxmar_engine::flame::SPARE_LIGHTS) && state.owner.as_deref().is_none_or(|owner| owner == name)))
+                .collect();
+            if self.take_from_stores(&spares, item, 1) == 1 {
+                return true;
+            }
+        }
+        false
     }
 
     /// The players here whose homes hold `pos`, and where each home is.
@@ -700,6 +727,53 @@ mod tests {
         assert_eq!(server.players[&1].home_steps, had, "left for the return check");
         server.check_home_return(1);
         assert_eq!(heard(&client), vec!["flame.home_short_away".to_owned()], "told once, on the check");
+    }
+
+    /// A candle burning out at home is replaced from a candle box there (`spare_lights`): one
+    /// candle comes out of the box and the light burns on, in its facing, and the home is
+    /// short of nothing. With the box empty, or the spares in a plain barrel, it burns out.
+    #[test]
+    fn a_candle_box_at_home_keeps_its_candles_lit() {
+        let (mut server, client) = told_fixture();
+        let bed = TORCH + IVec3::new(-2, 0, 0);
+        let blocks = &server.content.blocks;
+        let sleeping = blocks.ids().find(|&b| blocks.def(b).has_tag("bed") && blocks.upper(b).is_none()).unwrap();
+        server.set_block(bed, sleeping);
+        server.players.get_mut(&1).unwrap().bed = Some(bed.as_vec3() + Vec3::new(0.5, 0.0, 0.5));
+        let candle = id(&server, "base:candle");
+        let machines = server.content.machines.clone();
+        let store = |server: &mut Server, pos: IVec3, name: &str, count: u8| {
+            let block = id(server, name);
+            server.set_block(pos, block);
+            if server.factory.get(pos).is_none() {
+                server.factory.insert(pos, block, &machines);
+            }
+            server.factory.state_mut(pos).unwrap().bin[0] = (count > 0).then(|| ItemStack::new(candle, count));
+        };
+        let held = |server: &Server, pos: IVec3| server.factory.get(pos).and_then(|(_, state)| state.bin[0]).map_or(0, |s| s.count);
+        // Spares in a plain barrel are only kept, not set out.
+        let barrel = TORCH + IVec3::new(-1, 0, 2);
+        store(&mut server, barrel, "base:barrel", 2);
+        server.set_block(TORCH, candle);
+        server.day += 3.0 * TICKS_PER_DAY as f64;
+        server.burn_flames();
+        assert_eq!(at(&server, TORCH), "base:candle_end", "a barrel sets no candle out");
+        assert_eq!(held(&server, barrel), 2);
+        // A candle box sets one out in its place.
+        let candle_box = TORCH + IVec3::new(-1, 1, 1);
+        store(&mut server, candle_box, "base:oak_candle_box", 1);
+        server.set_block(TORCH, candle);
+        while client.try_recv().ok().flatten().is_some() {}
+        server.day += 3.0 * TICKS_PER_DAY as f64;
+        server.burn_flames();
+        assert_eq!(at(&server, TORCH), "base:candle", "a candle from the box set out");
+        assert_eq!(held(&server, candle_box), 0, "taken from the box");
+        assert!(server.flames.get(&TORCH).is_some_and(|f| f.out > server.day.floor() as u64), "burning afresh");
+        assert!(!heard(&client).iter().any(|k| k == "flame.home_short"), "the home was short of nothing");
+        // The box empty, it burns out.
+        server.day += 3.0 * TICKS_PER_DAY as f64;
+        server.burn_flames();
+        assert_eq!(at(&server, TORCH), "base:candle_end", "no spare left");
     }
 
     /// The keys of the lines player 1 was told since last asked.

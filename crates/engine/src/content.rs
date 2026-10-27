@@ -562,6 +562,10 @@ impl Content {
                 }
             }
         }
+        // What keeps spare lights for a home keeps them in its store.
+        if let Some(id) = blocks.ids().find(|&id| blocks.def(id).has_tag(crate::flame::SPARE_LIGHTS) && !machines.get(id).is_some_and(|m| m.is_store())) {
+            return Err(RegistryError(format!("blocks: `{}` keeps spare lights (`{}`) but is no store (machines.ron)", blocks.def(id).name, crate::flame::SPARE_LIGHTS)));
+        }
         if let Some(unknown) = machines.walkers().iter().find(|w| creatures.id(w).is_none()) {
             return Err(RegistryError(format!("machines.ron: no creature `{unknown}` to walk a treadwheel")));
         }
