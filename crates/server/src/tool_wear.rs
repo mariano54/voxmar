@@ -107,6 +107,23 @@ impl Server {
         }
     }
 
+    /// Tells `agent`, who has just made their first `made`, what it breaks that a lesser one
+    /// of its kind cannot (`ToolRegistry::opens`), as its tooltip says: a first stone pickaxe
+    /// names coal, copper and tin, so the step up is felt when it is made. Nothing for a tool
+    /// that opens nothing.
+    pub(crate) fn tell_first_tool(&mut self, agent: PlayerId, made: voxmar_engine::block::BlockId) {
+        let opens = self.content.tools.opens(made);
+        if opens.is_empty() {
+            return;
+        }
+        let blocks = &self.content.blocks;
+        let named = |b: voxmar_engine::block::BlockId| voxmar_engine::lang::Words::Block(blocks.def(b).name.clone());
+        let text = voxmar_engine::lang::Words::key("tool.first_opens").with("tool", named(made)).with("list", voxmar_engine::lang::Words::List(opens.iter().map(|&b| named(b)).collect()));
+        if let Some(player) = self.players.get(&agent) {
+            player.connection.send(ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Info, text });
+        }
+    }
+
     /// Tells `agent`, breaking the block at `pos` with `held`, that a tool they carry breaks
     /// it much faster (`tools.ron`'s `faster_carried`): a stone pickaxe in the pack while
     /// cobblestone is broken by hand. Once a kind of tool each time they join, so it teaches
@@ -426,6 +443,49 @@ mod tests {
         server.players.get_mut(&1).unwrap().selected = 1;
         mine(&mut server);
         assert!(said(&client).is_empty());
+    }
+
+    /// A first stone pickaxe made at a table names, in chat, what it breaks that a flint one
+    /// cannot, as its tooltip does; the second says nothing, nor does a first flint one.
+    #[test]
+    fn a_first_better_tool_made_says_what_it_opens() {
+        use voxmar_engine::lang::Words;
+        let (mut server, client) = holding("base:stick", 0);
+        let table = put(&mut server, "base:crafting_table");
+        server.players.get_mut(&1).unwrap().station = Some(table);
+        let craft = server.content.actions.expect("core:craft");
+        let make = |server: &mut Server, cells: &[(usize, &str)]| {
+            let cells: Vec<(usize, voxmar_engine::block::BlockId)> = cells.iter().map(|&(c, n)| (c, server.content.blocks.expect(n))).collect();
+            let inventory = &mut server.players.get_mut(&1).unwrap().inventory;
+            inventory.craft = [None; voxmar_engine::craft::GRID];
+            for (cell, item) in cells {
+                inventory.craft[cell] = Some(ItemStack::new(item, 1));
+            }
+            server.propose(1, craft, voxmar_engine::action::ActionTarget::Slot(0), std::time::Instant::now());
+        };
+        let stone = [(0, "base:stone_head"), (1, "base:stone_head"), (2, "base:stone_head"), (4, "base:stick"), (7, "base:stick")];
+        let told = |client: &ClientConnection| {
+            std::iter::from_fn(|| client.try_recv().ok().flatten())
+                .filter_map(|m| match m {
+                    ServerMessage::Chat { text: Words::Key(key, args), .. } if key == "tool.first_opens" => Some(args),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let pick = server.content.blocks.expect("base:stone_pickaxe");
+        make(&mut server, &stone);
+        assert_eq!(server.players[&1].tallies.get("crafted:base:stone_pickaxe"), Some(&1), "made");
+        let said = told(&client);
+        let [args] = &said[..] else { panic!("told {said:?}") };
+        let arg = |name: &str| args.iter().find(|(n, _)| n == name).map(|(_, w)| w.clone());
+        let opens = server.content.tools.opens(pick).iter().map(|&b| Words::Block(server.content.blocks.def(b).name.clone())).collect();
+        assert_eq!((arg("tool"), arg("list")), (Some(Words::Block("base:stone_pickaxe".into())), Some(Words::List(opens))));
+        make(&mut server, &stone);
+        assert_eq!(server.players[&1].tallies.get("crafted:base:stone_pickaxe"), Some(&2), "made again");
+        assert!(told(&client).is_empty(), "only the first");
+        make(&mut server, &[(0, "base:flint"), (1, "base:flint"), (3, "base:stick"), (4, "base:stick")]);
+        assert_eq!(server.players[&1].tallies.get("crafted:base:flint_pickaxe"), Some(&1), "made");
+        assert!(told(&client).is_empty(), "a flint one opens nothing");
     }
 
     /// Nearly worn out, a tool says in words how it is mended, by what and where, as its

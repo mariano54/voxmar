@@ -723,7 +723,11 @@ impl Server {
             }
             // For quests that ask for things made.
             let name = self.content.blocks.def(output).name.clone();
+            let first = self.players[&agent].tallies.get(&format!("crafted:{name}")).is_none_or(|&n| n == 0);
             self.tally(agent, "crafted", &name, made * count as u32);
+            if first {
+                self.tell_first_tool(agent, output);
+            }
             // And by the block it was made near, for a quest's `CraftNear`.
             if let Some(tag) = made_near {
                 self.tally(agent, &format!("crafted_near:{tag}"), &name, made * count as u32);
