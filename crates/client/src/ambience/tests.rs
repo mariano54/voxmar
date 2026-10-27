@@ -1051,15 +1051,17 @@ fn a_fire_gone_out_ticks_as_it_cools() {
     let (a, b) = (IVec3::new(1, 2, 3), IVec3::new(4, 5, 6));
     let mut out = super::GoneOut::default();
     let set = |cores: &[IVec3]| cores.iter().copied().collect::<rustc_hash::FxHashSet<IVec3>>();
-    out.note(0.0, &set(&[a, b]), 120.0);
+    out.note(0.0, &set(&[a, b]), 1, 120.0);
     assert!(out.ago(1.0).is_empty(), "both burning");
-    out.note(10.0, &set(&[b]), 120.0);
+    out.note(10.0, &set(&[b]), 2, 120.0);
     assert_eq!(out.ago(15.0).get(&a), Some(&5.0));
-    out.note(20.0, &set(&[a, b]), 120.0);
+    out.note(20.0, &set(&[a, b]), 3, 120.0);
     assert!(out.ago(21.0).is_empty(), "lit again");
-    out.note(30.0, &set(&[]), 120.0);
+    out.note(25.0, &set(&[]), 3, 120.0);
+    assert!(out.ago(26.0).is_empty(), "not told anew, not looked at");
+    out.note(30.0, &set(&[]), 4, 120.0);
     assert_eq!(out.ago(40.0).len(), 2);
-    out.note(151.0, &set(&[]), 120.0);
+    out.note(151.0, &set(&[]), 4, 120.0);
     assert!(out.ago(151.0).is_empty(), "cooled and forgotten");
 }
 
@@ -1328,10 +1330,10 @@ fn leaving_forgets_the_fires_seen_burning() {
     use bevy::ecs::system::RunSystemOnce;
     let mut world = left_world();
     let hearth = IVec3::new(1, 2, 3);
-    world.resource_mut::<super::Ambient>().gone_out.note(10.0, &[hearth].into_iter().collect(), 120.0);
+    world.resource_mut::<super::Ambient>().gone_out.note(10.0, &[hearth].into_iter().collect(), 1, 120.0);
     world.run_system_once(super::leave).unwrap();
     let mut ambient = world.resource_mut::<super::Ambient>();
-    ambient.gone_out.note(20.0, &Default::default(), 120.0);
+    ambient.gone_out.note(20.0, &Default::default(), 2, 120.0);
     assert!(ambient.gone_out.ago(21.0).is_empty(), "a fire of the world left cools in the next");
 }
 
@@ -1501,6 +1503,54 @@ fn big_town_sound_cost() {
     let (p99, worst) = (costs[costs.len() * 99 / 100], costs[costs.len() - 1]);
     let cap = crate::sfx::Recordings::load(&voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap().files).map(|r| r.mix.voices.get(&crate::mix::Category::Ambience).copied()).ok().flatten();
     println!("big town: mixer {mean:.1} us mean, p99 {p99:.1}, worst {worst:.1} a frame; {:.1} one-shots a minute; at most {most} at once (Ambience cap {cap:?})", started as f32 / (seconds / 60.0));
+}
+
+/// What the server finds of the player's home is heard: an effect a bed or sound names as
+/// `effect:NAME` is an axis, 1 while the player holds it and 0 otherwise, so the ambience
+/// answers the room survey rather than judging the room a second time. A name that is no
+/// effect fails the load.
+#[test]
+fn an_effect_held_is_an_axis() {
+    use voxmar_engine::effect::ActiveEffect;
+    let content = voxmar_server::load_content(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets")).unwrap();
+    let effects = &content.effects;
+    let file = |source: &str| ContentFile { package: "mod".into(), name: FILE.into(), source: source.into() };
+    let source = r#"(beds: [(name: "in", sound: Embers, volume: 0.2, when: {"effect:evening_in": (min: 1, fade: 1)}, duck: {"effect:door_shut": 0.5}),
+        (name: "out", sound: Wind, volume: 0.2, duck: {"effect:door_shut": 0.6})])"#;
+    let ambience = Ambience::load(&[file(source)]).unwrap();
+    assert_eq!(ambience.held, ["door_shut", "evening_in"]);
+    assert_eq!(ambience.check_home(effects), Ok(()));
+    let held = ambience.held_effects(effects);
+    let mut env = Environment::new(ambience.axes());
+    let holding = |names: &[&str]| names.iter().map(|name| ActiveEffect { effect: effects.find(name).unwrap(), seconds_left: None }).collect::<Vec<_>>();
+    let (shut, evening) = (ambience.held_axis(0), ambience.held_axis(1));
+    super::defs::set_held(&mut env, &ambience, &held, &holding(&["door_shut", "snug"]));
+    assert_eq!((env.values[shut], env.values[evening]), (1.0, 0.0));
+    assert_eq!(ambience.beds[0].when.weight(&env), 0.0, "not an evening in");
+    super::defs::set_held(&mut env, &ambience, &held, &holding(&["evening_in"]));
+    assert_eq!((env.values[shut], env.values[evening]), (0.0, 1.0), "let go when no longer held");
+    assert_eq!(ambience.beds[0].when.weight(&env), 1.0);
+    assert!(ambience.beds[1].duck.contains(&(super::defs::DuckBy::Axis(shut), 0.6)));
+    // The effect axes come after every other, so no group or patter moves.
+    assert_eq!(shut, Fixed::ALL.len() + ambience.groups.len() + ambience.roofs.patters.len());
+    let mistyped = Ambience::load(&[file(r#"(beds: [(name: "x", sound: Wind, volume: 0.2, when: {"effect:palace": (min: 1)})])"#)]).unwrap();
+    assert!(mistyped.check_home(effects).unwrap_err().contains("palace"));
+}
+
+/// A door shut on the weather (effects.ron's `door_shut`, the server's room survey): the
+/// rain, wind, hail and sleet outside drop further, to a murmur through the walls, while
+/// the rain on the roof overhead and the fire keep on.
+#[test]
+fn the_weather_drops_away_with_the_door_shut() {
+    let ambience = base();
+    let shut = ambience.held.iter().position(|e| e == "door_shut").map(|i| ambience.held_axis(i)).expect("the door is heard shut");
+    let ducks = |name: &str| ambience.beds.iter().find(|b| b.name == format!("base:{name}")).unwrap_or_else(|| panic!("{name}")).duck.iter().any(|&(by, amount)| by == super::defs::DuckBy::Axis(shut) && amount >= 0.4);
+    for outside in ["rain", "downpour", "breeze", "high_wind", "storm_wind", "hail", "sleet"] {
+        assert!(ducks(outside), "{outside} keeps on through the shut door");
+    }
+    for inside in ["rain_on_roof", "rain_on_thatch", "rain_on_stone", "rain_on_glass", "fire", "embers"] {
+        assert!(!ducks(inside), "{inside} drops with the door shut");
+    }
 }
 
 /// A smouldering structure sounds as it smoulders from lighting to the end: each stage its
