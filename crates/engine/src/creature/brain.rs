@@ -344,6 +344,9 @@ pub struct Mind {
     pub sprinted: f32,
     /// Seconds left of running winded (`creature::Tires::rest`), slowed.
     pub winded: f32,
+    /// The player it is huffing at, too near its young (`creature::Guards::huff`), and for
+    /// how many seconds.
+    pub huff: Option<(u32, f32)>,
 }
 
 impl Mind {
@@ -367,6 +370,7 @@ impl Mind {
             startled_at: None,
             sprinted: 0.0,
             winded: 0.0,
+            huff: None,
             held_off: None,
             noticed: Vec::new(),
             looking: false,
@@ -602,10 +606,6 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
     for p in at.players {
         let d = p.position.distance(at.position);
         let smelt = p.tempting && d < def.senses.hearing;
-        // Too near its young (`creature::Guards`): it goes for them, with no warning.
-        if p.by_young && !p.friend && !p.creative {
-            mind.provoked(p.id);
-        }
         if let Some(sleeps) = asleep {
             let hurt = mind.recalls(Memory::HurtBy(p.id));
             let startled = p.loud && d < sleeps.wakes && !p.friend && !hurt;
@@ -645,6 +645,27 @@ pub fn think(creature: &Creature, mind: &mut Mind, at: &Situation) -> Decision {
         lapse_warning(mind, dt);
         rest(mind, dt);
         return Decision { pose: Pose::Resting, ..Default::default() };
+    }
+    // One it has noticed too near its young (`creature::Guards`): it huffs at them, facing
+    // them, for its `huff`, then goes for them if they are still there; backed off, they
+    // are let be.
+    if let Some(guards) = def.guards {
+        let near_young = at.players.iter().find(|p| p.by_young && !p.friend && !p.creative && known(p) && !mind.recalls(Memory::HurtBy(p.id)));
+        match near_young {
+            Some(p) => {
+                let huffed = mind.huff.filter(|h| h.0 == p.id).map_or(0.0, |h| h.1) + dt;
+                if huffed < guards.huff {
+                    mind.huff = Some((p.id, huffed));
+                    mind.doing = None;
+                    lapse_warning(mind, dt);
+                    rest(mind, dt);
+                    return Decision { face: Some(p.position), pose: Pose::Warning, ..Default::default() };
+                }
+                mind.huff = None;
+                mind.provoked(p.id);
+            }
+            None => mind.huff = None,
+        }
     }
     let ctx = Ctx { creature, mind, at, lively, sight };
 
@@ -1129,26 +1150,56 @@ pub(super) mod tests {
         assert_ne!(doing(&badger, &mind), "warn");
     }
 
-    /// A mother that guards her young (`creature::Guards`) goes for a player too near one,
-    /// with no warning, though it warns anyone else first; a friend, or one who gives the
-    /// young room, it lets be. Its `guards` is checked at load.
+    /// A mother that guards her young (`creature::Guards`), noticing a player too near one,
+    /// huffs at them for her `huff`, facing them, then goes for them if they stay; backed
+    /// off, they are let be. One she has not noticed (out of view, or she is asleep) she
+    /// lets be, and a friend, or one in creative. Anyone else she warns first, as ever. Her
+    /// `guards` is checked at load.
     #[test]
-    fn a_mother_goes_for_one_too_near_her_young() {
+    fn a_mother_huffs_then_goes_for_one_too_near_her_young() {
         let sow = species(&format!(
-            "(creatures: [(name: \"sow\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (radius: 5.0, near: 1.5, seconds: 1.0), guards: (near: 6.0, young: 0.3), behaviours: [(do: Defend)])])"
+            "(creatures: [(name: \"sow\", health: 10, level: 5, {BODY}, attack: (damage: (1, 3), reach: 1.0), warn: (radius: 5.0, near: 1.5, seconds: 1.0), guards: (near: 6.0, young: 0.3, huff: 1.0), habitat: (active: Night), sleeps: (quiet: 2.0, wakes: 12.0), behaviours: [(do: Defend)])])"
         ));
+        fn dusk(players: &[Seen]) -> Situation<'_> {
+            Situation { daylight: 0.0, ..situation(players) }
+        }
         // Giving her young room, a player at four blocks gets her warning, as ever.
         let mut mind = Mind::new(&sow.def.temperament, 2);
-        let _ = think(&sow, &mut mind, &situation(&[player(Vec3::new(4.0, 0.0, 0.0))]));
+        let _ = think(&sow, &mut mind, &dusk(&[player(Vec3::new(4.0, 0.0, 0.0))]));
         assert_eq!((doing(&sow, &mind), mind.attacker()), ("warn", None), "one giving her young room");
-        // Too near them, at eight blocks from her, she goes for them at once.
+        // Too near them, at eight blocks from her: she huffs, facing them, then goes for them.
+        let near = [Seen { by_young: true, ..player(Vec3::new(8.0, 0.0, 0.0)) }];
         let mut mind = Mind::new(&sow.def.temperament, 2);
-        let _ = think(&sow, &mut mind, &situation(&[Seen { by_young: true, ..player(Vec3::new(8.0, 0.0, 0.0)) }]));
-        assert_eq!((doing(&sow, &mind), mind.attacker()), ("defend", Some(1)), "one too near her young");
+        for _ in 0..4 {
+            let decision = think(&sow, &mut mind, &dusk(&near));
+            assert_eq!((decision.pose, decision.face, mind.attacker()), (Pose::Warning, Some(near[0].position), None), "huffing");
+        }
+        let _ = think(&sow, &mut mind, &dusk(&near));
+        assert_eq!((doing(&sow, &mind), mind.attacker()), ("defend", Some(1)), "one who stayed too near her young");
+        // Backed off at the huff, they are let be, and her huff starts over.
+        let mut mind = Mind::new(&sow.def.temperament, 2);
+        let _ = think(&sow, &mut mind, &dusk(&near));
+        let _ = think(&sow, &mut mind, &dusk(&[player(Vec3::new(8.0, 0.0, 0.0))]));
+        assert_eq!((mind.huff, mind.attacker()), (None, None), "one who backed off");
+        // One she has not noticed: out of her view and beyond her close, or while she sleeps.
+        let unseen = [Seen { in_view: false, ..near[0] }];
+        let mut mind = Mind::new(&sow.def.temperament, 2);
+        for _ in 0..10 {
+            let _ = think(&sow, &mut mind, &dusk(&unseen));
+        }
+        assert_eq!((mind.huff, mind.attacker()), (None, None), "one she never saw");
+        let mut mind = Mind::new(&sow.def.temperament, 2);
+        for _ in 0..10 {
+            let decision = think(&sow, &mut mind, &situation(&near));
+            assert_eq!(decision.pose, Pose::Resting, "asleep at noon");
+        }
+        assert_eq!((mind.huff, mind.attacker()), (None, None), "one she slept through");
         // Her keeper's friend, or one in creative, she lets be.
-        for seen in [Seen { by_young: true, friend: true, ..player(Vec3::new(8.0, 0.0, 0.0)) }, Seen { by_young: true, creative: true, ..player(Vec3::new(8.0, 0.0, 0.0)) }] {
+        for seen in [Seen { friend: true, ..near[0] }, Seen { creative: true, ..near[0] }] {
             let mut mind = Mind::new(&sow.def.temperament, 2);
-            let _ = think(&sow, &mut mind, &situation(&[seen]));
+            for _ in 0..10 {
+                let _ = think(&sow, &mut mind, &dusk(&[seen]));
+            }
             assert_eq!(mind.attacker(), None, "{seen:?}");
         }
 
@@ -1157,12 +1208,12 @@ pub(super) mod tests {
             CreatureRegistry::new(defs, Default::default(), &BlockRegistry::new(vec![]).unwrap(), &SkillRegistry::default()).map(|_| ()).map_err(|e| e.to_string())
         };
         let fighter = "attack: (damage: (1, 2)), behaviours: [(do: Defend)]";
-        assert_eq!(build(&format!("{fighter}, guards: (near: 6.0, young: 0.3)")), Ok(()));
-        for bad in ["(near: 1.0, young: 0.3)", "(near: 13.0, young: 0.3)", "(near: 6.0, young: 0.0)", "(near: 6.0, young: 0.7)"] {
+        assert_eq!(build(&format!("{fighter}, guards: (near: 6.0, young: 0.3, huff: 1.0)")), Ok(()));
+        for bad in ["(near: 1.0, young: 0.3, huff: 1.0)", "(near: 13.0, young: 0.3, huff: 1.0)", "(near: 6.0, young: 0.0, huff: 1.0)", "(near: 6.0, young: 0.7, huff: 1.0)", "(near: 6.0, young: 0.3, huff: 0.2)", "(near: 6.0, young: 0.3, huff: 2.5)"] {
             assert!(build(&format!("{fighter}, guards: {bad}")).is_err_and(|e| e.contains("`guards` needs")), "{bad}");
         }
         for bad in ["behaviours: [(do: Flee(radius: 4.0))]", "attack: (damage: (1, 2)), behaviours: [(do: Defend)], boss: true", "attack: (damage: (1, 2)), behaviours: [(do: Defend)], kind: Monster"] {
-            assert!(build(&format!("{bad}, guards: (near: 6.0, young: 0.3)")).is_err_and(|e| e.contains("guards its young")), "{bad}");
+            assert!(build(&format!("{bad}, guards: (near: 6.0, young: 0.3, huff: 1.0)")).is_err_and(|e| e.contains("guards its young")), "{bad}");
         }
     }
 

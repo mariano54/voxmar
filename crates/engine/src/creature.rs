@@ -358,21 +358,25 @@ impl Sleeps {
 }
 
 /// How a mother guards her young (docs/creature-ai.md, "Young"): a wild group of its
-/// kind comes with young by `young` (the chance, 0 to 0.6), and a grown one of it goes for
-/// a player who comes within `near` blocks (2 to 12) of a young one of its kind, or strikes
-/// one, with no warning. A player who gives the young room is let be.
+/// kind comes with young by `young` (the chance, 0 to 0.6). A grown one that notices a
+/// player within `near` blocks (2 to 12) of a young one of its kind huffs at them for
+/// `huff` seconds (0.3 to 2), facing them, then goes for them if they are still there; one
+/// who strikes a young one it goes for at once. A player who gives the young room, or backs
+/// off at the huff, is let be.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Guards {
     pub near: f32,
     pub young: f32,
+    pub huff: f32,
 }
 
 impl Guards {
-    /// Room enough to be seen coming and kept to, and young now and then, not in every herd.
+    /// Room enough to be seen coming and kept to, young now and then, not in every herd,
+    /// and a huff long enough to back off in, too short to stroll on past.
     pub fn check(&self) -> Result<(), String> {
-        if !(2.0..=12.0).contains(&self.near) || !(0.0..=0.6).contains(&self.young) || self.young == 0.0 {
-            return Err(format!("`guards` needs near 2 to 12 blocks and young a chance above 0 up to 0.6, not {self:?}"));
+        if !(2.0..=12.0).contains(&self.near) || !(0.0..=0.6).contains(&self.young) || self.young == 0.0 || !(0.3..=2.0).contains(&self.huff) {
+            return Err(format!("`guards` needs near 2 to 12 blocks, young a chance above 0 up to 0.6 and huff 0.3 to 2 seconds, not {self:?}"));
         }
         Ok(())
     }
