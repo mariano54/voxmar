@@ -1468,6 +1468,7 @@
     "treat.unwanted": "それはほしくないようだ。",
     "treat.not_now": "さっきもらったばかりだ。また後でね。",
     "treat.thanks": "くれるの？ありがとう！",
+    "villager.scold": "ちょっと！それはうちのだよ。勝手に壊さないで！",
     "inspect.shows": "表れている形質:{traits}。",
     "inspect.carries": "隠れて持っている形質:{alleles}。",
     "inspect.carries_nothing": "隠れた形質はありません。",

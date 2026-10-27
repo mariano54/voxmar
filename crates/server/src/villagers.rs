@@ -207,6 +207,9 @@ struct Person {
     coaxed: Option<u32>,
     /// Given a treat, they want another no sooner than this tick.
     treated_after: u64,
+    /// Each player seen breaking their things, by `player_key`, is told off again no
+    /// sooner than this tick.
+    scolded: BTreeMap<String, u64>,
 }
 
 /// What came of looking for a way.
@@ -831,6 +834,46 @@ impl Server {
             self.bark(id, Bark::Content);
         }
         true
+    }
+
+    /// A player broke the furnishing at `cell` that the world set there (`drop_loot`): each
+    /// of the people whose home or work the building it stood in is (in a settlement near
+    /// players), out of bed, who sees it within `people.react.scold` and their sight, cries
+    /// out and tells the player it was theirs, to each player again no sooner than
+    /// `scold_every`.
+    pub(crate) fn furnishing_broken(&mut self, player: voxmar_protocol::PlayerId, cell: IVec3) {
+        use voxmar_engine::lang::Words;
+        let react = self.overworld.settlement_people().react.clone();
+        let Some(key) = self.players.get(&player).map(|p| crate::player_key(&p.name)) else { return };
+        if react.scold <= 0.0 {
+            return;
+        }
+        let tick = self.tick;
+        let seen = cell.as_vec3() + Vec3::splat(0.5);
+        let mut owners = Vec::new();
+        for (&town, t) in &self.villagers.towns {
+            let Some(b) = t.info.buildings.iter().position(|b| cell.y > b.floor && cell.xz().cmpge(b.min).all() && cell.xz().cmple(b.max).all()) else { continue };
+            for (i, resident) in t.info.people.iter().enumerate() {
+                let person = &t.people[i];
+                let theirs = resident.home == b || resident.work == Some(b);
+                let abed = person.trip.as_ref().is_some_and(|trip| trip.place == Place::Sleep);
+                let due = person.scolded.get(&key).is_none_or(|&after| tick >= after);
+                let Some(c) = person.creature.and_then(|id| self.creatures.live.get(&id).map(|c| (id, c))).filter(|_| theirs && !abed && due) else { continue };
+                let senses = &self.content.creatures.get(c.1.species).def.senses;
+                if c.1.body.position.distance(seen) <= react.scold.min(senses.sight) && self.in_view(&c.1.body, senses.field, seen) {
+                    owners.push((town, i, c.0));
+                }
+            }
+        }
+        for (town, i, id) in owners {
+            let person = &mut self.villagers.towns.get_mut(&town).expect("listed").people[i];
+            person.scolded.retain(|_, after| *after > tick);
+            person.scolded.insert(key.clone(), tick + ticks(react.scold_every));
+            if let (Some(p), Some(who)) = (self.players.get(&player), self.speaker_name(id)) {
+                p.connection.send(voxmar_protocol::ServerMessage::Chat { kind: voxmar_protocol::ChatKind::Chat, text: Words::key("wander.said").with("who", who).with("text", Words::key("villager.scold")) });
+            }
+            self.bark(id, Bark::Alarm);
+        }
     }
 
     /// `base:treat`: the player gives creature `id`, one of a settlement's people who likes
@@ -1731,6 +1774,69 @@ mod tests {
         assert!(server.villagers.towns[&1].people[0].coaxed.is_none(), "a grown-up came to bread");
         server.treat(1, id);
         assert_eq!(server.players[&1].inventory.count(bread), 3, "a grown-up took a treat");
+    }
+
+    /// One whose home it is who sees a player break a furnishing the world set there (a
+    /// village's barrel) within `people.react.scold` cries out and tells them it is theirs:
+    /// not for one the player set down, not unseen behind a wall, not for a house that is
+    /// not theirs, and to the same player again no sooner than `scold_every`.
+    #[test]
+    fn one_who_sees_their_furnishing_broken_speaks_up() {
+        let mut server = fixture("base:villager", 2);
+        // Person 1 lives in another house, out of the way.
+        server.villagers.towns.get_mut(&1).unwrap().info.people[1].home = 1;
+        {
+            use voxmar_worldgen::{SettlementBuilding, SettlementFacing};
+            server.villagers.towns.get_mut(&1).unwrap().info.buildings.push(SettlementBuilding { kind: BuildingKind::House, min: IVec2::new(20, 20), max: IVec2::new(26, 26), floor: 199,
+                room: (21..=25).flat_map(|x| (21..=25).map(move |z| IVec2::new(x, z))).collect(), byre: Vec::new(),
+                door: Some(IVec3::new(23, 200, 27)), facing: SettlementFacing::South, what: "cottage".into(), work: None, beds: Vec::new(), seats: Vec::new() });
+        }
+        out_in_the_open(&mut server);
+        server.bring_out(1, 0);
+        let id = server.villagers.towns[&1].people[0].creature.expect("out");
+        let react = server.overworld.settlement_people().react.clone();
+        assert!(react.scold > 0.0);
+        server.tick = 1_000;
+        let (client, connection) = voxmar_protocol::local_pair();
+        let mut player = crate::player::Player::new(1, connection, Vec3::new(8.0, 200.0, 8.0), 2, server.tick, server.survival.max_health, &server.config.limits);
+        player.joined = true;
+        player.name = "Tëster".into();
+        server.players.insert(1, player);
+        // Their own home, in front of them.
+        let at = Vec3::new(8.5, 200.0, 8.5);
+        server.creatures.live.get_mut(&id).unwrap().body.position = at;
+        let barrel = server.content.blocks.expect("base:barrel");
+        let cell = at.floor().as_ivec3() + IVec3::new(2, 0, 0);
+        let scolded = |server: &mut Server, placed: bool| {
+            while let Ok(Some(_)) = client.try_recv() {}
+            server.set_block(cell, barrel);
+            let placed: Vec<IVec3> = if placed { vec![cell] } else { Vec::new() };
+            server.drop_loot(1, &[cell], &placed);
+            server.set_block(cell, BlockId::AIR);
+            std::iter::from_fn(|| client.try_recv().ok().flatten()).any(|m| format!("{m:?}").contains("\"villager.scold\""))
+        };
+        // One the player set down: theirs to take.
+        assert!(!scolded(&mut server, true), "scolded for the player's own barrel");
+        // Behind a wall: unseen.
+        let stone = server.content.blocks.expect("base:stone");
+        let wall: Vec<IVec3> = (0..3).map(|y| at.floor().as_ivec3() + IVec3::new(1, y, 0)).collect();
+        wall.iter().for_each(|&c| server.set_block(c, stone));
+        assert!(!scolded(&mut server, false), "scolded for a barrel broken out of sight");
+        wall.iter().for_each(|&c| server.set_block(c, BlockId::AIR));
+        // Seen: they speak up, and cry out.
+        assert!(scolded(&mut server, false), "said nothing seeing their barrel broken");
+        // Again straight away: not twice.
+        assert!(!scolded(&mut server, false), "scolded again within scold_every");
+        server.tick += (react.scold_every * TICKS_PER_SECOND as f32) as u64 + 1;
+        assert!(scolded(&mut server, false), "never scolded again after scold_every");
+        // Another's house: not theirs, and its own folk are not about.
+        server.tick += (react.scold_every * TICKS_PER_SECOND as f32) as u64 + 1;
+        let other = IVec3::new(22, 200, 22);
+        server.creatures.live.get_mut(&id).unwrap().body.position = other.as_vec3() + Vec3::new(-1.5, 0.0, 0.5);
+        server.set_block(other, barrel);
+        while let Ok(Some(_)) = client.try_recv() {}
+        server.drop_loot(1, &[other], &[]);
+        assert!(!std::iter::from_fn(|| client.try_recv().ok().flatten()).any(|m| format!("{m:?}").contains("\"villager.scold\"")), "scolded for another's barrel");
     }
 
     /// The wait to greet again is each player's own; and one struck stops greeting the

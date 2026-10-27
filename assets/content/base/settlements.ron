@@ -108,6 +108,9 @@
 //   again no sooner than `intruder_every`. One who likes a food (their kind's
 //   `diet.favourite`: children) and sees a player within `treat` holding it comes to stand
 //   by them while it is held; given one, they want another no sooner than `treat_every`.
+//   One whose home or work a building is who sees a player within `scold` break a
+//   furnishing the world set there cries out that it was theirs, to each player again no
+//   sooner than `scold_every`.
 (
     grid: (spacing: 1024, chance: 0.45, margin: 160),
     // site: where a settlement stands (design wiki, settlements, draft 60).
@@ -817,6 +820,9 @@
             // Bread or a roast carrot held out within 8: the children come; given one, they
             // want another five minutes on.
             treat: 8.0, treat_every: 300.0,
+            // A village's barrel or bed broken in sight of whose it is, within 12: they speak
+            // up, to each player once a minute.
+            scold: 12.0, scold_every: 60.0,
         ),
         jobs: [
             (at: "bakery", species: "baker", count: (1, 2), routine: "worker", lean: {"crowding": 0.5}),
