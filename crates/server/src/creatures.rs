@@ -2638,6 +2638,9 @@ mod combat_tests {
                 .map(|_| {
                     let full = server.content.creatures.get(wolf).def.health;
                     server.creatures.live.get_mut(&a).unwrap().health = full;
+                    // It has seen them, in both runs alike: a blow on one unaware cannot miss
+                    // (`Server::unaware_of`), and the first run's blows leave it knowing them.
+                    server.creatures.live.get_mut(&a).unwrap().mind.noticed = vec![(player, 10.0, 5.0)];
                     server.players.get_mut(&player).unwrap().health = traits::Health::full(server.survival.max_health);
                     let struck = server.land_blow(player, a, &fist, plain);
                     let taken = server.creature_strikes(a, wolf, player, 1.0);
