@@ -813,6 +813,31 @@
             (from: (6.5, 0, 0), to: (9.5, 3, 16), cull: true),
             (from: (6.5, 13, 0), to: (9.5, 16, 16), cull: true),
         ]),
+        // An arch over a one-cell opening, a full block of stone above with its underside
+        // stepped up from narrow jambs at either side to the crown, the way through running
+        // north-south. Set over a gap two high, it leaves a doorway for anyone.
+        "arch": (boxes: [
+            (from: (0, 11, 0), to: (16, 16, 16), cull: true),
+            (from: (0, 6, 0), to: (3.5, 11, 16), cull: true),
+            (from: (12.5, 6, 0), to: (16, 11, 16), cull: true),
+            (from: (0, 0, 0), to: (1.5, 6, 16), cull: true),
+            (from: (14.5, 0, 0), to: (16, 6, 16), cull: true),
+        ]),
+        // A wide arch over two cells: this half springs from its east side (the placer's
+        // left) and the half set beside it, to the west, from its west, mirrored, meeting
+        // at the crown between them.
+        "wide_arch": (boxes: [
+            (from: (0, 12, 0), to: (16, 16, 16), cull: true),
+            (from: (6, 7, 0), to: (16, 12, 16), cull: true),
+            (from: (11, 3, 0), to: (16, 7, 16), cull: true),
+            (from: (14, 0, 0), to: (16, 3, 16), cull: true),
+        ]),
+        "wide_arch_half": (boxes: [
+            (from: (0, 12, 0), to: (16, 16, 16), cull: true),
+            (from: (0, 7, 0), to: (10, 12, 16), cull: true),
+            (from: (0, 3, 0), to: (5, 7, 16), cull: true),
+            (from: (0, 0, 0), to: (2, 3, 16), cull: true),
+        ]),
         // A railing along the back (south) of its cell: a bottom rail, a handrail and four
         // balusters between them, a block high in all. The corner has a second run along
         // its east side, and a hull of the two runs, so a blow at one in its open part
