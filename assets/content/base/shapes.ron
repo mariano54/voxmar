@@ -963,6 +963,26 @@
             (from: (2.5, 6, 7.5), to: (13.5, 7.5, 8.5)),
             (from: (2.5, 9.5, 7.5), to: (13.5, 11, 8.5)),
         ]),
+        // A dry-stone wall across the middle of its cell, running east to west: courses of
+        // cobbles narrowing to a cap, a block high (a railing).
+        "dry_stone_wall": (boxes: [
+            (from: (0, 0, 3), to: (16, 6, 13), cull: true),
+            (from: (0, 6, 3.5), to: (16, 12, 12.5), cull: true),
+            (from: (0, 12, 4), to: (16, 16, 12), cull: true),
+        ]),
+        // A dry-stone wall's corner: its courses out to the west and the north, crossing in
+        // the middle.
+        "dry_stone_wall_corner": (boxes: [
+            (from: (0, 0, 3), to: (13, 6, 13), cull: true),
+            (from: (0, 6, 3.5), to: (13, 12, 12.5), cull: true),
+            (from: (0, 12, 4), to: (13, 16, 12), cull: true),
+            (from: (3, 0, 0), to: (13, 6, 13), cull: true),
+            (from: (3.5, 6, 0), to: (12.5, 12, 13), cull: true),
+            (from: (4, 12, 0), to: (12, 16, 13), cull: true),
+        ], hull: [
+            (from: (0, 0, 3), to: (13, 16, 13)),
+            (from: (3, 0, 0), to: (13, 16, 3)),
+        ]),
         "roof_ridge": (boxes: [
             (from: (0, 0, 0), to: (16, 4, 16), cull: true),
             (from: (0, 4, 4), to: (16, 8, 12), cull: true),

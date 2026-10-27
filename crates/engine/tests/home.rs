@@ -295,8 +295,8 @@ fn two_windows_at_home_make_a_bright_room() {
 
 /// Things set out in the yard count at home: an awning and two yard pieces out under the
 /// sky make a dooryard; fewer do not, nor no awning, nor the same under the roof. The yard
-/// pieces are a bench, bunting and a hay bale (`yard`), counted only in the open
-/// (`outdoors`); an awning is not one, nor anything sat on indoors only.
+/// pieces are a bench, bunting, a hay bale and a dry-stone wall (`yard`), counted only in
+/// the open (`outdoors`); an awning is not one, nor anything sat on indoors only.
 #[test]
 fn an_awning_and_yard_pieces_out_of_doors_make_a_dooryard() {
     let content = content();
@@ -309,7 +309,7 @@ fn an_awning_and_yard_pieces_out_of_doors_make_a_dooryard() {
     let yard = effects.get(effects.id("base:dooryard").unwrap());
     assert_eq!((yard.modifiers.heal, yard.modifiers.xp), (1.05, 1.0), "one small multiplier");
     assert!(effects.outdoor("yard") && !effects.outdoor("awning"), "yard pieces count only in the open");
-    for name in ["base:oak_bench", "base:red_bunting", "base:hay_bale"] {
+    for name in ["base:oak_bench", "base:red_bunting", "base:hay_bale", "base:dry_stone_wall"] {
         assert!(content.blocks.def(content.blocks.expect(name)).has_tag("yard"), "{name} is a yard piece");
     }
     for name in ["base:red_awning", "base:oak_chair", "base:red_rug"] {
