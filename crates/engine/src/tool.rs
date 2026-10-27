@@ -697,6 +697,23 @@ impl ToolRegistry {
         }
         best.map(|(_, id)| id)
     }
+
+    /// What a `kind` of `tier` breaks that one of a lower tier cannot: one block for each
+    /// rule asking for just that tier (the one with fewest tags, so plain ore stands for its
+    /// deepslate form and its sample), in the order of the level each asks. None for the
+    /// lowest tier of a kind, which opens nothing a lesser one of its kind kept shut.
+    pub fn opens(&self, blocks: &BlockRegistry, kind: usize, tier: u8) -> Vec<BlockId> {
+        if !self.tools.iter().any(|t| t.kind == Some(kind) && t.tier < tier) {
+            return Vec::new();
+        }
+        let mut shown: Vec<(u8, usize, BlockId)> = Vec::new();
+        for (i, rule) in self.rules.iter().enumerate().filter(|(_, r)| r.tool == Some(kind) && r.tier == tier) {
+            let fewest = blocks.ids().filter(|b| self.covered.get(b.0 as usize).copied().flatten() == Some(i)).min_by_key(|b| blocks.def(*b).tags.len());
+            shown.extend(fewest.map(|b| (rule.level, i, b)));
+        }
+        shown.sort();
+        shown.into_iter().map(|(_, _, b)| b).collect()
+    }
 }
 
 #[cfg(test)]
@@ -1140,6 +1157,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A better pickaxe names what it opens up, plain ore standing for its deepslate form and
+    /// its sample, nearest level first; the first of a kind opens nothing a lesser one kept
+    /// shut, and a tier no rule asks for opens nothing.
+    #[test]
+    fn a_better_tool_names_what_it_opens() {
+        let assets = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/content");
+        let content = crate::content::Content::load(&assets).unwrap();
+        let id = |n: &str| content.blocks.expect(&format!("base:{n}"));
+        let opens = |tool: &str| {
+            let t = content.tools.tool(Some(id(tool)));
+            content.tools.opens(&content.blocks, t.kind.unwrap(), t.tier).into_iter().map(|b| content.blocks.def(b).name.trim_start_matches("base:").to_owned()).collect::<Vec<_>>()
+        };
+        assert_eq!(opens("flint_pickaxe"), Vec::<String>::new());
+        assert_eq!(opens("flint_axe"), Vec::<String>::new());
+        assert_eq!(opens("stone_pickaxe")[..3], ["coal_ore", "copper_ore", "tin_ore"]);
+        assert!(opens("stone_pickaxe").contains(&"iron_ore".to_owned()));
+        assert_eq!(opens("copper_pickaxe"), ["cobalt_ore", "silver_ore", "gold_ore"]);
+        assert_eq!(opens("stone_axe"), Vec::<String>::new());
     }
 
     /// What Mining teaches rises with the level it asks (design draft 63): nothing a lower
