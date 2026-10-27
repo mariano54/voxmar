@@ -636,6 +636,20 @@
             ".kwwdwwwk.",
             ".kkkkkkkk.",
         ])]),
+        // A lived-in hearth: a mantel shelf with a jug and a candle on it over the fire, and a
+        // low bench with its fleece before it.
+        "ui/effect/lived_in_hearth": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'w': "#a06a3a", 'd': "#6a4222", 'j': "#d08850", 'c': "#f0e8d0", 'f': "#e07020", 'p': "#f0ece0"}, rows: [
+            "..j....c..",
+            "..j....c..",
+            "dddddddddd",
+            ".d......d.",
+            ".k......k.",
+            ".k.f.f..k.",
+            ".kfffff.k.",
+            ".kkkkkkkk.",
+            "pppppppp..",
+            "w.w....w.w",
+        ])]),
         // A bedchamber: a bed with its pillow and blanket, a chest at its foot, a jug on a stand.
         "ui/effect/bedchamber": (size: (10, 10), layers: [Grid(legend: {'k': "#2a1406", 'w': "#a06a3a", 'p': "#f0ece0", 'b': "#4a64b0", 'j': "#d08850"}, rows: [
             "........j.",

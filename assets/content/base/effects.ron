@@ -156,6 +156,12 @@
         (name: "bedchamber", kind: Buff, title: "Bedchamber", description: "A bed, a blanket chest at its foot, a washstand and a rug under one roof: 1° warmer here, and you heal a tenth faster.", announce: true,
             when: Some(All([AtHome, Indoors, HomeHas("bed", 1), HomeHas("blanket_chest", 1), HomeHas("washstand", 1), HomeHas("rug", 1)])),
             replaces: [], modifiers: (home_warmth: 1.0, heal: 1.1)),
+        // A lived-in hearth, the Farm age's: the hearth under the home's roof with a mantel
+        // shelf over it, things set out on it (`mantel_shelf`), and a fireside bench before
+        // it (`fireside_bench`), the evening's seat.
+        (name: "lived_in_hearth", kind: Buff, title: "Lived-in hearth", description: "A mantel shelf over the hearth and a fireside bench before it: 1° warmer here, and you learn a twentieth more.", announce: true,
+            when: Some(All([AtHome, Indoors, HomeHas("hearth", 1), HomeHas("mantel_shelf", 1), HomeHas("fireside_bench", 1)])),
+            replaces: [], modifiers: (home_warmth: 1.0, xp: 1.05)),
         // A bee garden, the Farm age's: a skep with bees in it among flowers at home
         // (bees.ron). Its bees make the crops about it grow a quarter faster, which the
         // apiary does; the home itself heals a tenth faster and is sweeter to come back to.

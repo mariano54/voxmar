@@ -140,6 +140,7 @@ announced in chat with a **Next:** line, and the better one hides the other:
 | Soft furnishings | a roof, a rug and a drape (`drape`: a wall hanging or a curtain) | 1° warmer |
 | Hearth corner | a roof, the hearth, a settle (`settle`) and a woodpile (`woodpile`) | 1° warmer, heal x1.05 (test `a_settle_and_a_woodpile_by_the_hearth_make_a_hearth_corner`) |
 | Bedchamber | a roof, a bed, a blanket chest (`blanket_chest`), a washstand (`washstand`) and a rug | 1° warmer, heal x1.1 (test `a_blanket_chest_and_a_washstand_by_the_bed_make_a_bedchamber`) |
+| Lived-in hearth | a roof, the hearth, a mantel shelf (`mantel_shelf`) and a fireside bench (`fireside_bench`) | 1° warmer, learn x1.05 (test `a_mantel_shelf_and_a_fireside_bench_make_a_lived_in_hearth`) |
 | Dooryard | out under the sky, an awning and 2 yard pieces in the open (`yard`: a bench, bunting, a hay bale) | heal x1.05 |
 
 Bedside is a Nomad's first comfort: a stool (Construction 1) and two candles (Crafting 3)
