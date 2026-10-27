@@ -138,7 +138,7 @@
         ),
         (
             name: "a_clay_store", age: "farm", branch: "main", title: "Clay in Store",
-            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: put thirty-two clay into a chest, a barrel or a crate and leave it there. Clay keeps for ever, and the next load is a step away.",
+            why: "Digging clay a trip at a time keeps the kilns waiting. Keep a store by the pit kiln: right-click a chest, a barrel or a crate to open it beside your pack, put thirty-two clay in and leave it there. Clay keeps for ever, and the next load is a step away.",
             tasks: [[Stocked("clay", "chest", 32)], [Stocked("clay", "barrel", 32)], [Stocked("clay", "crate", 32)]],
             after: ["clay_banks", "fire_the_clay"],
             rewards: [Xp("crafting", 80.0), Item("bread", 2)],
@@ -330,7 +330,7 @@
         ),
         (
             name: "a_trough_for_the_pen", age: "farm", branch: "husbandry", title: "A Trough for the Pen",
-            why: "Kept animals graze within seven blocks of home, and a full pen strips its grass and goes hungry. A feed trough is five planks in a low U (Construction 4). Set it by the pen and stock it with eight wheat: a hungry animal with nothing to graze walks to it and eats one of its foods, so the pen is fed while you are away.",
+            why: "Kept animals graze within seven blocks of home, and a full pen strips its grass and goes hungry. A feed trough is five planks in a low U (Construction 4). Set it by the pen, right-click it to open it beside your pack and stock it with eight wheat: a hungry animal with nothing to graze walks to it and eats one of its foods, so the pen is fed while you are away.",
             tasks: [[Placed("feed_trough", 1), Stocked("wheat", "feed_trough", 8)]],
             after: ["hens_in_a_row"],
             rewards: [Xp("construction", 80.0), Xp("farming", 60.0)],
