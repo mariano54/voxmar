@@ -3927,7 +3927,9 @@ fn villagers_sleep_at_night_and_go_about_their_day() {
     for &(seed, ref species, position) in &resting {
         let cell = position.floor().as_ivec3();
         let home = towns.iter().flat_map(|t| &t.buildings)
-            .find(|b| b.floor + 1 == cell.y && b.room.contains(&cell.xz()))
+            // On its floor in a room, or lying on one of its beds, upstairs too
+            // (`Server::own_bed`).
+            .find(|b| (b.floor + 1 == cell.y && b.room.contains(&cell.xz())) || b.beds.contains(&cell))
             .unwrap_or_else(|| panic!("{species} seed{seed} resting outside a room at {position:?}"));
         eprintln!("VILLAGER resting home seed{seed}: {home:?}");
     }
