@@ -336,6 +336,8 @@ pub struct Creatures {
 /// id and species never change once it is spawned.
 pub(crate) struct Neighbours {
     cells: FxHashMap<(i32, i32), Vec<(u32, CreatureId)>>,
+    /// The cell each is listed in, which its body may have walked out of since.
+    listed: FxHashMap<u32, (i32, i32)>,
     /// Those of a kind in the nine cells around a cell, in id order, for each cell and kind
     /// asked about so far: in a full pen every one of a kind asks for the same cell at each
     /// think, so a pass gathers and sorts them once.
@@ -345,25 +347,28 @@ pub(crate) struct Neighbours {
 impl Neighbours {
     pub(crate) fn of(live: &BTreeMap<u32, Live>) -> Self {
         let mut cells: FxHashMap<(i32, i32), Vec<(u32, CreatureId)>> = FxHashMap::default();
+        let mut listed = FxHashMap::default();
         for (&id, creature) in live {
-            cells.entry(Self::cell(creature.body.position)).or_default().push((id, creature.species));
+            let cell = Self::cell(creature.body.position);
+            cells.entry(cell).or_default().push((id, creature.species));
+            listed.insert(id, cell);
         }
-        Self { cells, kinds: Default::default() }
+        Self { cells, listed, kinds: Default::default() }
     }
 
     fn cell(at: Vec3) -> (i32, i32) {
         ((at.x / CELL).floor() as i32, (at.z / CELL).floor() as i32)
     }
 
-    /// Creature `id` went from `from` to `to` in a pass further than a walk takes it (a
-    /// blink): it is looked for in its new cell from then on.
-    pub(crate) fn moved(&mut self, id: u32, from: Vec3, to: Vec3) {
-        let (old, new) = (Self::cell(from), Self::cell(to));
-        if old == new {
-            return;
-        }
+    /// Creature `id` went to `to` in a pass further than a walk takes it (a blink): it is
+    /// looked for in its new cell from then on, whichever cell it was listed in (it may have
+    /// walked over a cell's edge earlier in the pass).
+    pub(crate) fn moved(&mut self, id: u32, to: Vec3) {
+        let new = Self::cell(to);
+        let Some(old) = self.listed.get(&id).copied().filter(|&old| old != new) else { return };
         let Some(at) = self.cells.get_mut(&old).and_then(|ids| ids.iter().position(|&(other, _)| other == id).map(|i| ids.remove(i))) else { return };
         self.cells.entry(new).or_default().push(at);
+        self.listed.insert(id, new);
         self.kinds.get_mut().clear();
     }
 
@@ -1506,7 +1511,7 @@ impl Server {
                 creature.body.position = cell + Vec3::new(0.5, 0.0, 0.5);
                 creature.body.velocity = Vec3::ZERO;
                 creature.changed = true;
-                neighbours.moved(id, position, cell + Vec3::new(0.5, 0.0, 0.5));
+                neighbours.moved(id, cell + Vec3::new(0.5, 0.0, 0.5));
             }
         }
         if let Some(at) = decision.leap {
@@ -2545,25 +2550,32 @@ mod neighbour_tests {
 
     /// One that blinks over a cell's edge is found where it landed for the rest of that
     /// pass: kin a block from the far side of its new cell count it among theirs and their
-    /// alarm frightens it. Before: it was still listed in the cell it left, two cells from
-    /// theirs, and so not looked at.
+    /// alarm frightens it. So too one that walked over the edge earlier in the pass and then
+    /// blinked on inside its new cell. Before: it was still listed in the cell it left, two
+    /// cells from theirs, and so not looked at.
     #[test]
     fn one_that_blinks_over_a_cells_edge_is_kin_where_it_lands() {
-        let mut server = crate::test_server();
-        let c = super::cornered_tests::pen(&mut server, 24).as_vec3();
-        let edge = (c.x / CELL).floor() * CELL;
-        let species = server.content.creatures.id("base:moonhare").expect("species");
-        let at = |x: f32| Vec3::new(edge + x, c.y, c.z + 0.5);
-        let hare = server.spawn_creature(species, at(-1.5), 1).expect("room");
-        let kin = server.spawn_creature(species, at(16.5), 2).expect("room");
-        let mut neighbours = Neighbours::of(&server.creatures.live);
-        server.carry_out(hare, Decision { blink: Some(at(5.5)), ..Default::default() }, &mut neighbours);
-        let landed = server.creatures.live[&hare].body.position;
-        assert!(landed.distance(at(5.5)) < 0.1, "the blink went to {landed}, not {}", at(5.5));
-        assert_eq!(server.kin_of(kin, &neighbours), vec![landed], "its kin over the cell's edge missed it");
-        server.creatures.live.get_mut(&hare).unwrap().mind.fear = 0.0;
-        server.carry_out(kin, Decision { alarm: true, ..Default::default() }, &mut neighbours);
-        assert!(server.creatures.live[&hare].mind.fear > 0.0, "its kin's alarm missed it");
+        for walked in [false, true] {
+            let mut server = crate::test_server();
+            let c = super::cornered_tests::pen(&mut server, 24).as_vec3();
+            let edge = (c.x / CELL).floor() * CELL;
+            let species = server.content.creatures.id("base:moonhare").expect("species");
+            let at = |x: f32| Vec3::new(edge + x, c.y, c.z + 0.5);
+            let hare = server.spawn_creature(species, at(-1.5), 1).expect("room");
+            let kin = server.spawn_creature(species, at(16.5), 2).expect("room");
+            let mut neighbours = Neighbours::of(&server.creatures.live);
+            if walked {
+                // Over the edge on foot after the pass began, as bodies move between thinks.
+                server.creatures.live.get_mut(&hare).unwrap().body.position = at(0.5);
+            }
+            server.carry_out(hare, Decision { blink: Some(at(6.5)), ..Default::default() }, &mut neighbours);
+            let landed = server.creatures.live[&hare].body.position;
+            assert!(landed.distance(at(6.5)) < 0.1, "walked {walked}: the blink went to {landed}, not {}", at(6.5));
+            assert_eq!(server.kin_of(kin, &neighbours), vec![landed], "walked {walked}: its kin over the cell's edge missed it");
+            server.creatures.live.get_mut(&hare).unwrap().mind.fear = 0.0;
+            server.carry_out(kin, Decision { alarm: true, ..Default::default() }, &mut neighbours);
+            assert!(server.creatures.live[&hare].mind.fear > 0.0, "walked {walked}: its kin's alarm missed it");
+        }
     }
 }
 

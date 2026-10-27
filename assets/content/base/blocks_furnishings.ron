@@ -53,7 +53,8 @@
             (name: "{name}_fingerpost", render: Model, shape: "fingerpost", facing: true, upper: "{name}_fingerpost_top", sound: Wood, textures: All("furniture_grain"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "fingerpost", "decor", "wood", "yard", "fuel"]),
             (name: "{name}_table", render: Model, shape: "table", sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "table", "decor", "wood"]),
             (name: "{name}_bed", render: Model, shape: "bed", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "bed", "decor", "wood"]),
-            (name: "{name}_shelf", render: Model, shape: "shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"]),
+            (name: "{name}_shelf", render: Model, shape: "shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "decor", "wood"],
+                shows: [(0.3, 0.125, 0.5), (0.7, 0.125, 0.5), (0.3, 0.5625, 0.5), (0.7, 0.5625, 0.5)]),
             (name: "{name}_bookshelf", render: Model, shape: "bookshelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "books", "decor", "wood"]),
             (name: "{name}_cupboard", render: Model, shape: "cupboard", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "cupboard", "storage", "decor", "wood"]),
             (name: "{name}_wardrobe", render: Model, shape: "wardrobe", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.5, color: (160, 120, 70), tags: ["furniture", "cupboard", "storage", "decor", "wood"]),
@@ -65,8 +66,10 @@
             // at (`seat`) with things kept in it (`storage`).
             (name: "{name}_window_seat", render: Model, shape: "window_seat", facing: true, solid: false, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "seat", "cushioned", "storage", "decor", "wood"]),
             // A deep sill: a board on two brackets along the wall at the top of its cell, set
-            // under a window inside, for a pot or a candle.
-            (name: "{name}_sill", render: Model, shape: "deep_sill", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "sill", "decor", "wood"]),
+            // under a window inside, for a pot or a candle: it shows two things in front of the
+            // window (a store kept for show, `display`, not a home's storage).
+            (name: "{name}_sill", render: Model, shape: "deep_sill", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.0, color: (160, 120, 70), tags: ["furniture", "sill", "display", "decor", "wood"],
+                shows: [(0.3, 1.0, 0.69), (0.7, 1.0, 0.69)]),
             // Pantry shelves: a shelf stood with crocks and a keg, a store for the home's food
             // (`storage`, counted by a pantry and a larder).
             (name: "{name}_pantry_shelf", render: Model, shape: "pantry_shelf", facing: true, sound: Wood, textures: All("furniture_wood"), hardness: 1.2, color: (160, 120, 70), tags: ["furniture", "shelf", "storage", "pantry", "decor", "wood"]),

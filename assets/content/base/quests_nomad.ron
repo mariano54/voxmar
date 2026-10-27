@@ -183,6 +183,14 @@
             rewards: [Xp("construction", 250.0), Xp("mining", 75.0), Item("seed_pouch", 1), Item("bread", 1)],
         ),
         (
+            name: "the_sleepwalker", age: "nomad", branch: "home", title: "The Sleepwalker",
+            side: true,
+            why: "Some nights a neighbour walks in their sleep, in a nightshirt, near folk's homes. Wake them gently (walk up and talk): they give a coin for the kindness and go home to bed.",
+            tasks: [[Dealt("sleepwalker", "wake", 1)]],
+            after: ["homestead_hearth"],
+            rewards: [Xp("construction", 30.0)],
+        ),
+        (
             name: "a_sweeps_luck", age: "nomad", branch: "home", title: "A Sweep's Luck",
             side: true,
             why: "Once you have a home, a chimney sweep and a lad come round the homes near it by day. Shake the sweep's hand for luck: a coin found, a lighter step, or word of a wonder near.",
@@ -454,6 +462,14 @@
             rewards: [Xp("crafting", 40.0)],
         ),
         (
+            name: "the_fox_and_the_hens", age: "nomad", branch: "combat", title: "The Fox and the Hens",
+            side: true,
+            why: "Now and then a fox runs by with a hen's feathers on its whiskers, a farmer after it with a rake. Strike the fox as it passes so the farmer catches it, and talk to the farmer: they pay in eggs.",
+            tasks: [[Dealt("fox_and_farmer", "reward", 1)]],
+            after: ["something_to_swing"],
+            rewards: [Xp("attack", 30.0)],
+        ),
+        (
             name: "sharpening_up", age: "nomad", branch: "combat", title: "Sharpening Up",
             why: "Every blow you land trains Attack, and a higher level hits harder and truer. Hunt until you reach Attack 4. Five kills along the way.",
             tasks: [[Level("attack", 4), Kill("any", 5)]],
@@ -597,6 +613,14 @@
             tasks: [[Met("any", 1)]],
             after: ["where_to_settle"],
             rewards: [Xp("crafting", 60.0), Item("bread", 2)],
+        ),
+        (
+            name: "a_pilgrims_blessing", age: "nomad", branch: "explore", title: "A Pilgrims' Blessing",
+            side: true,
+            why: "Pilgrims walk the far roads by day, well away from where the world began. Greet them and they bless you for the road: a blessing that keeps hunger off a while, and a hurt traveller is mended first.",
+            tasks: [[Dealt("pilgrims", "blessing", 1)]],
+            after: ["folk_of_the_road"],
+            rewards: [Xp("hitpoints", 30.0)],
         ),
         (
             name: "a_kind_turn", age: "nomad", branch: "explore", title: "A Kind Turn",

@@ -739,6 +739,14 @@
             rewards: [Xp("magic", 120.0)],
         ),
         (
+            name: "the_hermits_riddle", age: "farm", branch: "prayer", title: "The Hermit's Riddle",
+            side: true,
+            why: "Far from where the world began, a hermit camps off the path. Each one asks for something of the land: feathers, bones, flint, eggs, mint or nettles. Bring what yours asks and it tells of a wonder near and teaches a little Magic.",
+            tasks: [[Dealt("hermit", "riddle", 1)]],
+            after: ["a_place_to_pray"],
+            rewards: [Xp("magic", 30.0)],
+        ),
+        (
             name: "a_tale_by_night", age: "farm", branch: "prayer", title: "A Tale by Night",
             side: true,
             why: "After dark a storyteller sits by the road with a tale to tell. Sit and listen: the tale is of something strange not far off, and you leave it with a clear head.",

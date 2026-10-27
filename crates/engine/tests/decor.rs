@@ -251,6 +251,46 @@ fn a_jug_keeps_flowers_standing_in_it() {
     }
 }
 
+/// The plain wall shelf and the sill under a window keep what is put on them, anything,
+/// and show it: two things on each of the shelf's lower boards, two on the sill's board in
+/// front of the window over it. The shelf is a home's storage; the sill, kept for show, is not.
+#[test]
+fn a_shelf_and_a_sill_show_what_is_put_on_them() {
+    let content = content();
+    let blocks = &content.blocks;
+    for (name, shown, storage) in [("base:oak_shelf", 4, true), ("base:birch_shelf_east", 4, true), ("base:oak_sill", 2, false), ("base:dark_oak_sill_west", 2, false)] {
+        let id = blocks.expect(name);
+        assert_eq!(blocks.def(id).shows.len(), shown, "{name} shows {shown}");
+        assert!(content.machines.get(id).is_some_and(|m| m.is_store() && m.bin_slots() == shown && m.holds.is_none()), "{name} keeps what it shows, anything");
+        // A sill, half a slab and a stick, is kept for show: no home's storage for a room.
+        assert_eq!(blocks.def(id).has_tag("storage"), storage, "{name} a home's storage: {}", !storage);
+    }
+    // An oak mantel shelf is oak's mantel shelf, not `oak_mantel`'s shelf.
+    let mantel = blocks.expect("base:oak_mantel_shelf");
+    assert!(content.machines.get(mantel).is_some_and(|m| m.bin_slots() == 3), "a mantel shelf taken for a plain shelf");
+}
+
+/// Whatever counts as a home's storage keeps things: every block tagged `storage` is a store
+/// (a machine of machines.ron), so a family entry that stops fitting a block (an oak stair
+/// cupboard is no `oak_stair` cupboard, `{name}_cupboard` is each wood's own) is caught here,
+/// before a save's cupboard loses what was kept in it. The only others are the pieces whose
+/// model is full already: a bookshelf of books, a pantry shelf of crocks, a pot shelf of
+/// pots, a window seat's box under its cushion.
+#[test]
+fn every_storage_block_is_a_store() {
+    let content = content();
+    let blocks = &content.blocks;
+    let full = ["_bookshelf", "_pantry_shelf", "_pot_shelf", "_window_seat"];
+    let missed: Vec<&str> = blocks
+        .ids()
+        .filter(|&id| blocks.def(id).has_tag("storage") && content.machines.get(id).is_none())
+        .map(|id| blocks.def(id).name.as_str())
+        .filter(|name| !full.iter().any(|kind| ["", "_east", "_south", "_west"].iter().any(|facing| name.ends_with(&format!("{kind}{facing}")))))
+        .collect();
+    assert!(missed.is_empty(), "a home's storage, yet no store: {missed:?}");
+    assert!(content.machines.get(blocks.expect("base:dark_oak_stair_cupboard_west")).is_some_and(|m| m.is_store() && m.bin_slots() == 9), "a stair cupboard keeps nine");
+}
+
 /// The sack of grain a village's farmers and millers keep is one a player can weave and
 /// fill at home: a store of grain alone, home storage, given back whole where a player set
 /// it and nothing where a village did (`furnishing`).

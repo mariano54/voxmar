@@ -574,6 +574,16 @@ pub fn step(body: &mut Body, world: &impl Surroundings, movement: &Movement, wat
     let moving = drive.wish.length_squared() > 1e-4;
     let heading = if moving { Some(drive.wish) } else { drive.face };
     let wanted = heading.filter(|h| h.x.abs() + h.z.abs() > 1e-4).map(yaw_of);
+    // Standing with its head in something (leaves over a block it stood up onto, a block
+    // set before its face) and nowhere to go, or only a facing its head stays in there at,
+    // it turns to the nearest facing its head is clear at, within its lift, rather than
+    // stand with its head in there for good.
+    let clear_at = |yaw: f32| [0.0, HEAD_LIFT * 0.5, HEAD_LIFT].into_iter().any(|lift| !Body { yaw, lift, ..*body }.head_blocked(world));
+    let wanted = if head_was_blocked && !moving && !wanted.is_some_and(clear_at) {
+        (1..=12).flat_map(|k| [1.0, -1.0].map(|sign| body.yaw + sign * (15.0 * k as f32).to_radians())).find(|&yaw| clear_at(yaw)).or(wanted)
+    } else {
+        wanted
+    };
     if let Some(to) = wanted {
         let most = movement.turn.to_radians() * dt;
         if body.turn_way != 0.0 && angle_between(to, body.turn_to) > 45f32.to_radians() {
@@ -1390,6 +1400,17 @@ mod tests {
             step(&mut body, &wall, &movement, Water::Land, Drive { wish: -Vec3::X, speed: 2.0, face: None }, 0.05);
         }
         assert!(!body.head_blocked(&wall) && body.position.x < 1.5, "it stayed with its head in the block at {}", body.position);
+        // Standing, with nowhere to go, or only something to look at that its head cannot
+        // face, it turns its head out of the block all the same.
+        for face in [None, Some(Vec3::new(4.0, 0.0, 0.5))] {
+            let mut body = Body::new(Vec3::new(2.2, 0.0, 0.5), yaw_of(Vec3::X), (0.6, 1.4));
+            body.reach = 0.9;
+            body.head = 1.4;
+            for _ in 0..30 {
+                step(&mut body, &wall, &movement, Water::Land, Drive { wish: Vec3::ZERO, speed: 0.0, face }, 0.05);
+            }
+            assert!(!body.head_blocked(&wall), "standing, looking at {face:?}, it kept its head in the block facing {}", body.forward());
+        }
         // Turning about from facing along the wall, the short way would sweep its head into
         // the wall: it turns the other way round, and its head never goes in.
         let mut body = Body::new(Vec3::new(2.6, 0.0, 0.5), yaw_of(-Vec3::Z), (0.6, 1.4));
