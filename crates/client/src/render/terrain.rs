@@ -727,12 +727,30 @@ impl Arena {
     }
 }
 
+/// Slots of the origin table written together when any of them changes: 1 KiB.
+const ORIGIN_REGION: usize = 64;
+
 /// A distant terrain tile (see `lod`).
 struct TileRecord {
     slot: u32,
     mesh: Allocation,
     min: Vec3,
     max: Vec3,
+    /// Columns under the tile that have real chunks, kept as they come and go so that
+    /// culling need not look each one up every frame.
+    real_columns: u32,
+}
+
+// A tile's side is a whole number of columns, every ring's (the sizes double), so each
+// column lies under exactly one tile of each ring.
+const _: () = assert!(super::lod::FIRST_CELL * super::lod::CELLS % CHUNK_SIZE == 0);
+
+impl TileRecord {
+    /// Whether every column under the tile has real chunks, so it need not be drawn.
+    fn covered_by_real(&self, key: TileKey) -> bool {
+        let side = (key.size() / CHUNK_SIZE) as u32;
+        key.size() <= CHUNK_SIZE * COVERAGE_SIZE && self.real_columns == side * side
+    }
 }
 
 /// Columns around the camera that have real chunks, one bit each, for distant terrain to
@@ -783,6 +801,8 @@ pub(super) struct TerrainGpu {
     /// first.
     bounds: Vec<(Vec3, bool)>,
     tiles: FxHashMap<TileKey, TileRecord>,
+    /// One more than the highest ring a tile has been uploaded for.
+    tile_levels: u8,
     /// Chunks with a mesh, per column.
     columns: FxHashMap<IVec2, u32>,
     visible: VisibleChunks,
@@ -798,6 +818,10 @@ pub(super) struct TerrainGpu {
     origins: Vec<IVec4>,
     origins_buffer: Option<Buffer>,
     origins_dirty: bool,
+    /// Which runs of `ORIGIN_REGION` slots have a changed origin since the table was
+    /// written, one bit each, so a frame that adds a few chunks writes those runs and not
+    /// the whole table.
+    origin_regions: Vec<u64>,
     distant_view: Option<Buffer>,
     coverage: Option<Buffer>,
     seeds: Arena,
@@ -833,6 +857,7 @@ impl Default for TerrainGpu {
             free_records: Vec::new(),
             bounds: Vec::new(),
             tiles: FxHashMap::default(),
+            tile_levels: 0,
             columns: FxHashMap::default(),
             visible: VisibleChunks::default(),
             real_columns: 0,
@@ -843,6 +868,7 @@ impl Default for TerrainGpu {
             origins: Vec::new(),
             origins_buffer: None,
             origins_dirty: false,
+            origin_regions: Vec::new(),
             distant_view: None,
             coverage: None,
             seeds: Arena::new("blade_seeds"),
@@ -870,7 +896,30 @@ impl TerrainGpu {
             self.origins[slot as usize] = origin;
         }
         self.origins_dirty = true;
+        let region = slot as usize / ORIGIN_REGION;
+        if region / 64 >= self.origin_regions.len() {
+            self.origin_regions.resize(region / 64 + 1, 0);
+        }
+        self.origin_regions[region / 64] |= 1 << (region % 64);
         slot
+    }
+
+    /// The runs of slots whose origins changed since the table was last written, joined
+    /// where they touch, and the regions marked clean.
+    fn take_origin_writes(&mut self) -> Vec<Range<usize>> {
+        let mut writes: Vec<Range<usize>> = Vec::new();
+        for (word, bits) in self.origin_regions.iter_mut().enumerate() {
+            while *bits != 0 {
+                let region = word * 64 + bits.trailing_zeros() as usize;
+                *bits &= *bits - 1;
+                let slots = region * ORIGIN_REGION..((region + 1) * ORIGIN_REGION).min(self.origins.len());
+                match writes.last_mut() {
+                    Some(last) if last.end == slots.start => last.end = slots.end,
+                    _ => writes.push(slots),
+                }
+            }
+        }
+        writes
     }
 
     /// The chunk's record, made if it has none.
@@ -904,7 +953,11 @@ impl TerrainGpu {
                     }
                 };
                 self.chunks.insert(chunk, index);
-                *self.columns.entry(column).or_default() += 1;
+                let chunks = self.columns.entry(column).or_default();
+                *chunks += 1;
+                if *chunks == 1 {
+                    self.count_real_column(column, true);
+                }
                 index
             }
         };
@@ -933,6 +986,7 @@ impl TerrainGpu {
             *count -= 1;
             if *count == 0 {
                 self.columns.remove(&column);
+                self.count_real_column(column, false);
             }
         }
     }
@@ -1021,17 +1075,28 @@ impl TerrainGpu {
         let corner = corner.as_vec2();
         let min = Vec3::new(corner.x, tile.heights.start as f32, corner.y);
         let max = Vec3::new(corner.x + size, tile.heights.end as f32, corner.y + size);
-        self.tiles.insert(tile.key, TileRecord { slot, mesh, min, max });
+        self.insert_tile(tile.key, TileRecord { slot, mesh, min, max, real_columns: 0 });
     }
 
-    /// Whether every column under a tile has real chunks, so it need not be drawn.
-    fn covered_by_real(&self, key: TileKey) -> bool {
-        if key.size() > CHUNK_SIZE * COVERAGE_SIZE {
-            return false;
-        }
+    /// Keeps a distant tile, counting the columns under it that have real chunks.
+    fn insert_tile(&mut self, key: TileKey, mut tile: TileRecord) {
         let first = key.origin().div_euclid(IVec2::splat(CHUNK_SIZE));
-        let side = (key.size() / CHUNK_SIZE).max(1);
-        (0..side * side).all(|i| self.columns.contains_key(&(first + IVec2::new(i % side, i / side))))
+        let side = key.size() / CHUNK_SIZE;
+        tile.real_columns = (0..side * side).filter(|i| self.columns.contains_key(&(first + IVec2::new(i % side, i / side)))).count() as u32;
+        self.tile_levels = self.tile_levels.max(key.level + 1);
+        self.tiles.insert(key, tile);
+    }
+
+    /// Counts `column` in or out of the tiles over it, as it gains its first real chunk
+    /// or loses its last.
+    fn count_real_column(&mut self, column: IVec2, gained: bool) {
+        for level in 0..self.tile_levels {
+            let side = TileKey { level, x: 0, z: 0 }.size() / CHUNK_SIZE;
+            let at = column.div_euclid(IVec2::splat(side));
+            if let Some(tile) = self.tiles.get_mut(&TileKey { level, x: at.x, z: at.y }) {
+                if gained { tile.real_columns += 1 } else { tile.real_columns -= 1 }
+            }
+        }
     }
 
     fn clear(&mut self) {
@@ -1107,8 +1172,10 @@ impl TerrainGpu {
             return;
         }
         self.origins_dirty = false;
+        let writes = self.take_origin_writes();
         let needed = (self.origins.len().max(1) * size_of::<IVec4>()) as u64;
-        if self.origins_buffer.as_ref().is_none_or(|b| b.size() < needed) {
+        let replaced = self.origins_buffer.as_ref().is_none_or(|b| b.size() < needed);
+        if replaced {
             self.origins_buffer = Some(device.create_buffer(&BufferDescriptor {
                 label: Some("terrain_chunk_origins"),
                 size: needed.next_power_of_two().max(64 << 10),
@@ -1118,8 +1185,14 @@ impl TerrainGpu {
             self.bind_group_dirty = true;
         }
         let buffer = self.origins_buffer.as_ref().expect("origin buffer was just ensured");
-        if !self.origins.is_empty() {
-            queue.write_buffer(buffer, 0, bytemuck::cast_slice(&self.origins));
+        if replaced {
+            if !self.origins.is_empty() {
+                queue.write_buffer(buffer, 0, bytemuck::cast_slice(&self.origins));
+            }
+            return;
+        }
+        for slots in writes {
+            queue.write_buffer(buffer, (slots.start * size_of::<IVec4>()) as u64, bytemuck::cast_slice(&self.origins[slots]));
         }
     }
 
@@ -1547,7 +1620,7 @@ fn cull_view(gpu: &TerrainGpu, view: &CulledBy, draws: &mut TerrainDraws) {
     draws.distant.clear();
     if !is_light {
         for (&key, tile) in &gpu.tiles {
-            if frustum.intersects(tile.min, tile.max) && !gpu.covered_by_real(key) {
+            if frustum.intersects(tile.min, tile.max) && !tile.covered_by_real(key) {
                 draws.distant.push(TileDraw {
                     page: tile.mesh.page,
                     indices: tile.mesh.indices.clone(),
@@ -2360,6 +2433,24 @@ mod tests {
                     gpu.bounds.push((chunk.origin().as_vec3(), drawn));
                     gpu.chunks.insert(chunk, index);
                 }
+                *gpu.columns.entry(IVec2::new(x, z)).or_default() += 12;
+            }
+        }
+        // And the distant rings around the camera: those over the real chunks given way to.
+        for level in 0..crate::render::lod::LEVELS as u8 {
+            for z in -6..=6 {
+                for x in -6..=6 {
+                    let key = TileKey { level, x, z };
+                    let index = gpu.tiles.len() as u32;
+                    let (corner, size) = (key.origin().as_vec2(), key.size() as f32);
+                    let low = 30 + (index * 37) % 40;
+                    let quads = 200 + (index * 7919) % 900;
+                    let start = (index % 16) * 4096;
+                    let mesh = Allocation { page: index / 16, vertices: start..start + quads * 4, reserved: quads * 4, indices: start * 3 / 2..(start + quads * 4) * 3 / 2 };
+                    let min = Vec3::new(corner.x, low as f32, corner.y);
+                    let max = Vec3::new(corner.x + size, (low + 20 + (index * 13) % 90) as f32, corner.y + size);
+                    gpu.insert_tile(key, TileRecord { slot: 5000 + index, mesh, min, max, real_columns: 0 });
+                }
             }
         }
         gpu
@@ -2432,11 +2523,11 @@ mod tests {
 
     /// The hash of every view's draws over 40 frames of `culling_a_loaded_world`'s flight,
     /// as culling makes them now.
-    const CULLED: u64 = 0x78fe8194a4532109;
+    const CULLED: u64 = 0x4437ee9c14e7edc2;
 
     /// Culling stays exactly as it was: each view's draws (stream, page and indices, in
-    /// order), the copies that gather their indices, and the grass blades, over a flight
-    /// across `loaded_gpu` with the camera and four sun cascades.
+    /// order), the copies that gather their indices, the grass blades and the distant
+    /// tiles, over a flight across `loaded_gpu` with the camera and four sun cascades.
     #[test]
     fn culling_is_unchanged() {
         let mut gpu = loaded_gpu();
@@ -2460,7 +2551,11 @@ mod tests {
                 for blade in &draws.blades {
                     hash = [blade.seeds.start, blade.seeds.end, blade.blades, blade.slot].into_iter().fold(hash, |h, v| mix(h, v as u64));
                 }
+                for tile in &draws.distant {
+                    hash = [tile.page, tile.indices.start, tile.indices.end, tile.base_vertex as u32, tile.slot].into_iter().fold(hash, |h, v| mix(h, v as u64));
+                }
                 hash = mix(hash, draws.passes.iter().map(Vec::len).sum::<usize>() as u64);
+                hash = mix(hash, draws.distant.len() as u64);
             }
         }
         assert_eq!(hash, CULLED, "culling changed. If that is deliberate, set CULLED to {hash:#018x}");
@@ -2487,6 +2582,115 @@ mod tests {
             }
             assert!(held > 1000 && culled > 1000, "{held} held, {culled} culled");
         }
+        // A chunk exactly touching a plane is held, as `intersects` holds it; a hair
+        // beyond, it is not.
+        let frustum = Frustum::new(Mat4::orthographic_rh(-64.0, 64.0, -64.0, 64.0, 0.0, 1000.0), true);
+        let size = CHUNK_SIZE as f32;
+        for min in [Vec3::new(64.0, 0.0, -100.0), Vec3::new(-64.0 - size, 0.0, -100.0), Vec3::new(0.0, 64.0, -100.0), Vec3::new(0.0, -64.0 - size, -100.0)] {
+            assert!(frustum.intersects(min, min + CHUNK_SIZE as f32) && frustum.holds_chunk(min), "{min}");
+            let beyond = min + min.signum() * Vec3::new(1.0, 1.0, 0.0) * 1e-3;
+            assert!(!frustum.intersects(beyond, beyond + CHUNK_SIZE as f32) && !frustum.holds_chunk(beyond), "{beyond}");
+        }
+        // A degenerate view (a camera matrix gone NaN, or a chunk at NaN) holds nothing,
+        // the same as `intersects`.
+        let broken = Frustum::new(Mat4::from_cols_array(&[f32::NAN; 16]), false);
+        let min = Vec3::new(0.0, 64.0, 0.0);
+        assert!(!broken.intersects(min, min + CHUNK_SIZE as f32) && !broken.holds_chunk(min));
+        let nan = Vec3::splat(f32::NAN);
+        assert_eq!(frustum.holds_chunk(nan), frustum.intersects(nan, nan + CHUNK_SIZE as f32));
+        assert!(!frustum.holds_chunk(nan));
+    }
+
+    /// Each distant tile's count of real columns follows them as they come and go, in any
+    /// order with the tiles themselves: it is the count under the tile, looked up column by
+    /// column, and the tile is covered exactly where every one of them is real.
+    #[test]
+    fn distant_tiles_count_the_real_columns_under_them() {
+        use crate::render::lod::LEVELS;
+        let mut gpu = TerrainGpu::default();
+        let under = |gpu: &TerrainGpu, key: TileKey| {
+            let first = key.origin().div_euclid(IVec2::splat(CHUNK_SIZE));
+            let side = key.size() / CHUNK_SIZE;
+            (0..side * side).filter(|i| gpu.columns.contains_key(&(first + IVec2::new(i % side, i / side)))).count() as u32
+        };
+        let keys: Vec<TileKey> = (0..LEVELS as u8).flat_map(|level| (-3..3).flat_map(move |z| (-3..3).map(move |x| TileKey { level, x, z }))).collect();
+        let mut seed = 0x2545_f491u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let (mut covered, mut uncovered) = (0, 0);
+        for step in 0..40_000 {
+            let r = next();
+            let key = keys[(r >> 8) as usize % keys.len()];
+            match r % 16 {
+                0 => gpu.insert_tile(key, TileRecord { slot: 0, mesh: Allocation { page: 0, vertices: 0..0, reserved: 0, indices: 0..0 }, min: Vec3::ZERO, max: Vec3::ZERO, real_columns: 0 }),
+                1 => drop(gpu.tiles.remove(&key)),
+                _ => {
+                    let chunk = ChunkPos(IVec3::new((r >> 8) as i32 % 13, (r >> 16) as i32 % 3, (r >> 20) as i32 % 13) - IVec3::new(6, 0, 6));
+                    if r % 4 == 2 { gpu.forget_if_empty(chunk) } else { gpu.record(chunk); }
+                }
+            }
+            if step % 50 == 0 {
+                for (&key, tile) in &gpu.tiles {
+                    let real = under(&gpu, key);
+                    assert_eq!(tile.real_columns, real, "{key:?} at step {step}");
+                    let side = (key.size() / CHUNK_SIZE) as u32;
+                    assert_eq!(tile.covered_by_real(key), real == side * side);
+                    if tile.covered_by_real(key) { covered += 1 } else { uncovered += 1 }
+                }
+            }
+        }
+        assert!(covered > 100 && uncovered > 100, "{covered} covered, {uncovered} not");
+    }
+
+    /// The runs written each frame leave the GPU's table just as writing the whole table
+    /// did, through slots taken, freed and taken again, the table growing, and a clear;
+    /// a frame that changes one slot writes only its region.
+    #[test]
+    fn writing_changed_origins_keeps_the_whole_table() {
+        let mut gpu = TerrainGpu::default();
+        let mut table: Vec<IVec4> = Vec::new(); // The GPU's, which a new buffer starts as zeros.
+        let mut seed = 0x9e37_79b9u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut taken: Vec<u32> = Vec::new();
+        for frame in 0..400 {
+            if frame == 250 {
+                gpu.clear();
+                taken.clear();
+            }
+            for _ in 0..next() % 300 {
+                let r = next();
+                if r % 3 == 0 && !taken.is_empty() {
+                    gpu.free_slots.push(taken.swap_remove(r as usize / 3 % taken.len()));
+                } else {
+                    taken.push(gpu.new_slot(IVec4::new(r as i32, frame, (r >> 7) as i32, 1)));
+                }
+            }
+            if !gpu.origins_dirty {
+                continue;
+            }
+            gpu.origins_dirty = false;
+            let writes = gpu.take_origin_writes();
+            if table.len() < gpu.origins.len() {
+                table = gpu.origins.clone();
+                table.resize(gpu.origins.len().next_power_of_two(), IVec4::ZERO);
+            } else {
+                for slots in writes {
+                    table[slots.clone()].copy_from_slice(&gpu.origins[slots]);
+                }
+            }
+            assert_eq!(&table[..gpu.origins.len()], &gpu.origins[..], "frame {frame}");
+        }
+        let slot = gpu.new_slot(IVec4::ONE);
+        assert_eq!(gpu.take_origin_writes().into_iter().map(|slots| slots.len()).sum::<usize>(), ORIGIN_REGION.min(gpu.origins.len() - slot as usize / ORIGIN_REGION * ORIGIN_REGION));
     }
 
     #[test]
