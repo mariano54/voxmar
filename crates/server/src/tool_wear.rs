@@ -399,7 +399,8 @@ mod tests {
     /// A worn tool and a piece of what it is made of in the grid by a chopping block: back
     /// whole when it is made of that one piece (a flint knife, a stone shovel), else half
     /// (a flint axe, a stone pickaxe, a digging stick), as A Mended Edge says; and that
-    /// Nomad side quest, open once the block is, is done.
+    /// Nomad side quest, open once the block is, is done (a stone tool's way once a
+    /// grindstone, where its heads are ground, is set down too).
     #[test]
     fn a_tool_mended_by_the_chopping_block_does_the_mending_quest() {
         for (tool, by, whole) in [("base:flint_axe", "base:flint", false), ("base:flint_knife", "base:flint", true), ("base:stone_pickaxe", "base:stone_head", false), ("base:stone_shovel", "base:stone_head", true), ("base:digging_stick", "base:stick", false)] {
@@ -412,6 +413,9 @@ mod tests {
             player.inventory.slots[0] = None;
             (player.inventory.craft[0], player.inventory.craft[1]) = (Some(ItemStack { wear: uses - 1, ..ItemStack::new(item, 1) }), Some(ItemStack::new(by, 1)));
             player.quests_done = vec!["base:a_chopping_block".into()];
+            if by == server.content.blocks.expect("base:stone_head") {
+                server.tally(1, "placed", "base:grindstone", 1);
+            }
             server.propose(1, craft, voxmar_engine::action::ActionTarget::Slot(1), std::time::Instant::now());
             let left = if whole { 0 } else { uses - 1 - uses / 2 };
             assert_eq!(server.players[&1].inventory.cursor.map(|s| (s.item, s.wear)), Some((item, left)), "{tool}: whole {whole}, on the pointer");
