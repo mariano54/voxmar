@@ -68,6 +68,9 @@ pub struct Player {
     pub home_steps: Vec<EffectId>,
     pub home_anchor: Option<voxmar_engine::glam::IVec3>,
     pub home_unchecked: bool,
+    /// The day (since the world began) they last traded at a market stall: one trade a
+    /// day, whichever stall (`Server::trade`).
+    pub traded_on: Option<u64>,
     /// Healing and hurting under way, in seconds (`process::Survival`).
     pub heal_clock: f32,
     pub hurt_clock: f32,
@@ -221,6 +224,7 @@ impl Player {
             home_steps: Vec::new(),
             home_anchor: None,
             home_unchecked: false,
+            traded_on: None,
             modifiers: Modifiers::default(),
             recent_food: Default::default(),
             health_base: 0,
@@ -359,6 +363,7 @@ impl Player {
             draws: self.draws,
             home_steps: self.home_steps.iter().map(|&id| effects.get(id).name.clone()).collect(),
             home_anchor: self.home_anchor.map(|at| at.to_array()),
+            traded_on: self.traded_on,
             spilled: Vec::new(),
         }
     }
@@ -625,6 +630,7 @@ impl Server {
                 player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
                 player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
                 player.home_unchecked = !player.home_steps.is_empty();
+                player.traded_on = saved.traded_on;
             }
             // Players who left dead come back to life at home, or else the spawn point.
             Some(saved) => {
@@ -643,6 +649,7 @@ impl Server {
                 player.home_steps = saved.home_steps.iter().filter_map(|name| effect_ids.id(name)).collect();
                 player.home_anchor = saved.home_anchor.map(voxmar_engine::glam::IVec3::from_array);
                 player.home_unchecked = !player.home_steps.is_empty();
+                player.traded_on = saved.traded_on;
             }
             // The coin purse in the pack's last slot, out of the hotbar's way, and the kit
             // unless this address has had its share.
