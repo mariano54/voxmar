@@ -120,6 +120,8 @@
         // shutters are none. A window or two near counts fully. By tag alone: a pane laid in
         // a floor or set as decor counts too, as no wall is asked of it.
         (name: "window", tags: ["window"], range: (0, 2)),
+        // A dresser with its plates on show (`dresser`), where the supper things are kept.
+        (name: "dresser", tags: ["dresser"], range: (0, 2)),
         (name: "falls", materials: [Water], falling: true, range: (6, 90)),
         (name: "water", materials: [Water], range: (20, 300)),
         // Bees at a skep or a wild nest (`bees`): one close by is heard fully.
@@ -635,6 +637,13 @@
             name: "simmer", sound: Simmer, volume: 0.3, at: Block("pot"), per_minute: 14, cooldown: 1.5,
             pitch: (0.85, 1.2), reach: 4,
             when: {"pot": (min: 0.3, fade: 0.3)},
+        ),
+        // Supper at home: while a pot simmers indoors, the bowls and ladle on the dresser
+        // knock now and then as supper is got out, from the dresser itself.
+        (
+            name: "home_supper", sound: Clatter, volume: 0.16, at: Block("dresser"), per_minute: 1.5, cooldown: 15,
+            pitch: (0.95, 1.1), reach: 6,
+            when: {"dresser": (min: 0.3, fade: 0.25), "pot": (min: 0.3, fade: 0.3), "shelter": (min: 0.6, fade: 0.3)},
         ),
         // A settlement at work by day: its people hammering, sawing and drawing water, its
         // hens about. Heard fully within 24 blocks of its square or green, fading out by 80,
