@@ -412,7 +412,7 @@ only crafted.
 
 | Path | Quests to the kiln | Ways round |
 |---|---|---|
-| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | |
+| Main | A Pit Kiln (made and set down), Fire the Clay, The Potter, Clay in Store (thirty-two clay put by in a chest, a barrel or a crate), First Bricks, Brick by Brick, The Kiln Ring (twelve bricks set down), The Crucible (made and set down), Crucible Kiln; then Red Metal, smelted in the lit kiln, and First Bronze | the store a chest, a barrel or a crate |
 | Fuel (new) | Fuel to Hand, Charcoal, Plans for the Kiln (the crucible and kiln bricks looked up), A Full Charge (capstone); side quests Opened Too Soon (four part-burnt wood from a clamp opened early, after A Second Clamp) and, after A Table for Two on the Home path, A Woodpile (a woodpile set down by the hearth, half a Hearth corner) | logs carried or coal mined; charcoal burnt or coal mined; the charge in charcoal or coal |
 | Pottery | A Kiln Load, then Fired Whole (capstone) after Clay Banks, Earthenware and An Earth Clamp; side quests A Lamp of Clay (two oil lamps made and set down) and A Pot on the Chimney (chimney pots made, one set down), both after Earthenware | |
 | Mining | Copper Kit, A Silvery Ore, Rock Collector and An Ore Run (capstone), all after the lit kiln; side quests A Keen Edge (a copper tool mended at the grindstone, after Copper Kit) and A Bronze Edge (a bronze pickaxe, after First Bronze and A Keen Edge) | |
