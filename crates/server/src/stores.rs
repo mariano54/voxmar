@@ -619,6 +619,7 @@ mod tests {
         open(&mut server);
         act(&mut server, "core:transfer", ActionTarget::Slots { from: 0, to: STORE as u8, count: 40 });
         server.close_store(1);
+        assert_eq!(held(&server), vec![(id(&server, "base:oak_planks"), 41)], "the forty went in by hand");
         server.update_quests(1);
         assert!(!server.players[&1].quests_done.iter().any(|q| q == "base:put_it_away"), "done by moving planks in by hand");
         give(&mut server, 12, "base:oak_planks", 20);
