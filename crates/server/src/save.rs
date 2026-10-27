@@ -523,6 +523,8 @@ pub struct SavedPlayer {
     /// them on return what lights burnt out while they were away cost (none in older saves).
     pub home_steps: Vec<String>,
     pub home_anchor: Option<[i32; 3]>,
+    /// The day they last traded at a market stall (none in older saves).
+    pub traded_on: Option<u64>,
     /// What an older save carried in stacks that now come one at a time (tools), with no
     /// empty slot left for it: dropped at the player's feet when they join. Never saved.
     pub spilled: Vec<ItemStack>,
@@ -602,6 +604,8 @@ struct PlayerFile {
     home_steps: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     home_anchor: Option<[i32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    traded_on: Option<u64>,
 }
 
 /// A column file, generic so that saving can borrow the column.
@@ -889,7 +893,7 @@ impl WorldSave {
         }
         let health = Health { current: file.health.current.min(file.health.max), max: file.health.max };
         let yaw = if file.yaw.is_finite() { file.yaw } else { 0.0 };
-        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, draws: file.draws, home_steps: file.home_steps, home_anchor: file.home_anchor, spilled }))
+        Ok(Some(SavedPlayer { position, yaw, mode: file.mode, flying: file.flying, health, inventory, skills: file.skills, effects: file.effects, home: file.home, bed: file.bed, kindled: file.kindled, journal: merge_journal(file.journal, registry), quests_claimed: file.quests_claimed.unwrap_or_else(|| file.quests.clone()), quests: file.quests, tallies: renamed_tallies(file.tallies, registry), prayer_points: file.prayer_points, casts: file.casts, draws: file.draws, home_steps: file.home_steps, home_anchor: file.home_anchor, traded_on: file.traded_on, spilled }))
     }
 
     /// Moves the file of the player called `name` aside, as unreadable (`set_aside`).
@@ -937,6 +941,7 @@ impl WorldSave {
             draws: player.draws,
             home_steps: player.home_steps.clone(),
             home_anchor: player.home_anchor,
+            traded_on: player.traded_on,
         };
         let text = ron::ser::to_string_pretty(&file, ron::ser::PrettyConfig::default()).map_err(io::Error::other)?;
         let path = self.player_path(name);
@@ -1473,6 +1478,7 @@ mod tests {
             draws: Draws::default(),
             home_steps: Vec::new(),
             home_anchor: None,
+            traded_on: None,
             spilled: Vec::new(),
         };
         save.write_player("ada", &player, &registry).unwrap();
@@ -1529,6 +1535,7 @@ mod tests {
             draws: Draws { strikes: 31, blows: 9, feeds: 4, cooks: 17, recovers: 5, flourishes: 2, mines: 40, yields: 3, forages: 6, harvests: 11, locks: 1, catches: 8, wakes: 2, rewards: 7, frees: 3, kills: 12, greets: 4, strays: 6, wears: 12 },
             home_steps: Vec::new(),
             home_anchor: None,
+            traded_on: Some(41),
             spilled: Vec::new(),
         };
         for name in ["steve", "Steve", "a/b", "../x", "ünï cödé"] {
@@ -1595,7 +1602,7 @@ mod tests {
         let save = WorldSave::new(&dir);
         let registry = registry(false);
         let draws = Draws { strikes: 31, mines: 40, frees: 3, kills: 12, greets: 4, strays: 6, ..Draws::default() };
-        let player = SavedPlayer { position: Vec3::new(1.5, 80.0, -20.25), yaw: 1.25, mode: None, flying: false, health: Health { current: 13, max: 20 }, inventory: Inventory::default(), skills: Vec::new(), effects: Vec::new(), home: None, bed: None, kindled: false, journal: Vec::new(), quests: Vec::new(), quests_claimed: Vec::new(), tallies: Vec::new(), prayer_points: None, casts: 0, draws, home_steps: Vec::new(), home_anchor: None, spilled: Vec::new() };
+        let player = SavedPlayer { position: Vec3::new(1.5, 80.0, -20.25), yaw: 1.25, mode: None, flying: false, health: Health { current: 13, max: 20 }, inventory: Inventory::default(), skills: Vec::new(), effects: Vec::new(), home: None, bed: None, kindled: false, journal: Vec::new(), quests: Vec::new(), quests_claimed: Vec::new(), tallies: Vec::new(), prayer_points: None, casts: 0, draws, home_steps: Vec::new(), home_anchor: None, traded_on: None, spilled: Vec::new() };
         save.write_player("ada", &player, &registry).unwrap();
         let file = dir.join("players/ada.ron");
         let mut text = std::fs::read_to_string(&file).unwrap();
@@ -1672,6 +1679,7 @@ mod tests {
             draws: Draws::default(),
             home_steps: Vec::new(),
             home_anchor: None,
+            traded_on: None,
             spilled: Vec::new(),
         };
         save.write_player("herbalist", &player, &registry).unwrap();

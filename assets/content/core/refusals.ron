@@ -77,5 +77,7 @@
         "refusal.someone_there", "refusal.doorway",
         // A station recipe's tool not carried (an axe to split a log on a chopping block).
         "cooking.needs_tool",
+        // A trade at a market stall: none away from it, once a day, today's want in hand.
+        "trade.no_stall", "trade.done_today", "trade.wants",
     ],
 )
