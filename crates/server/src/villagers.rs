@@ -2120,6 +2120,38 @@ mod tests {
         assert!(kinds.len() > 1 || offered == 1, "the same trade every day: {kinds:?}");
     }
 
+    /// Every stall trade wants something the first two ages teach a player to make (a Craft,
+    /// Cook or Pick goal of a nomad or farm quest names it), and gives nothing any quest asks
+    /// a player to hold or hand over (a Have or Offered goal), so a trade skips no lesson.
+    #[test]
+    fn stall_trades_want_what_the_first_ages_teach_and_skip_no_lesson() {
+        use voxmar_engine::quest::Goal;
+        let server = crate::test_server();
+        let content = &server.content;
+        let blocks = &content.blocks;
+        let named = |name: &str| -> Vec<BlockId> {
+            match name.strip_prefix("tag:") {
+                Some(tag) => blocks.tagged(tag).collect(),
+                None => blocks.id(name).or_else(|| blocks.id(&format!("base:{name}"))).into_iter().collect(),
+            }
+        };
+        let goals = |early: bool| content.quests.iter().filter(move |q| !early || q.age == "nomad" || q.age == "farm").flat_map(|q| q.tasks.iter().flatten());
+        let taught: Vec<BlockId> = goals(true).filter(|g| matches!(g, Goal::Craft(..) | Goal::Cook(..) | Goal::CookAt(..) | Goal::Pick(..))).filter_map(Goal::item).flat_map(named).collect();
+        let asked: Vec<BlockId> = goals(false).filter(|g| matches!(g, Goal::Have(..) | Goal::Offered(..))).filter_map(Goal::item).flat_map(named).collect();
+        let mut trades = 0;
+        for (_, species) in content.creatures.iter() {
+            for trade in &species.trades {
+                trades += 1;
+                let want = &blocks.def(trade.wants.0).name;
+                assert!(taught.contains(&trade.wants.0), "{} wants {want}, which no nomad or farm quest teaches a player to make", species.def.name);
+                for &(item, _) in &trade.gives {
+                    assert!(!asked.contains(&item), "{} gives {} for {want}, which a quest asks a player to hold or hand over", species.def.name, blocks.def(item).name);
+                }
+            }
+        }
+        assert!(trades > 0, "no stall trades to check");
+    }
+
     /// A villager a player kills in one blow calls the guards as one wounded does: they
     /// come for whoever killed them.
     #[test]

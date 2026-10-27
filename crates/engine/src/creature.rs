@@ -1292,6 +1292,10 @@ impl CreatureRegistry {
                 def.diet.eats.iter_mut().chain(&mut def.diet.favourite).for_each(qualify);
                 def.loot.iter_mut().for_each(|loot| qualify(&mut loot.item));
                 def.products.iter_mut().for_each(|p| qualify(&mut p.item));
+                for trade in &mut def.trades {
+                    qualify(&mut trade.wants.0);
+                    trade.gives.iter_mut().for_each(|(item, _)| qualify(item));
+                }
                 if let Some(taming) = &mut def.taming {
                     taming.food.iter_mut().for_each(qualify);
                 }

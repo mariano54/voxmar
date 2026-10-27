@@ -51,12 +51,13 @@
             senses: (sight: 16.0, hearing: 16.0),
             barking: (greet: 24.0, alarm: 48.0, content: 10.0, every: 6.0),
             // Kept at a market stall (the keeper's routine), one a day: something the first
-            // two ages teach for a meal no quest asks for (checked by the content test).
+            // two ages teach to make, for bread, which no quest asks a player to hand over
+            // (both checked by the content test).
             trades: [
-                (wants: ("torch", 4), gives: [("roast_carrot", 3)]),
-                (wants: ("twine", 3), gives: [("baked_potato", 3)]),
-                (wants: ("fired_clay", 4), gives: [("roast_carrot", 4)]),
-                (wants: ("candle", 2), gives: [("baked_potato", 4)]),
+                (wants: ("torch", 4), gives: [("bread", 2)]),
+                (wants: ("twine", 3), gives: [("bread", 2)]),
+                (wants: ("fired_clay", 4), gives: [("bread", 3)]),
+                (wants: ("candle", 2), gives: [("bread", 3)]),
             ],
             xp: (combat: 0.0),
             behaviours: [(do: Routine(arrive: 0.5, look: 4.0)), (do: Flee(radius: 1.0)), (do: LookAround)],

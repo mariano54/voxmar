@@ -2011,6 +2011,9 @@ pub fn aim(
             let food = species.tame_food.contains(&item) || species.breed_food.contains(&item) || tags.iter().any(|t| t == "breeding_feed");
             (!view.kept && species.tame_food.contains(&item)) || (mine && (food || tool))
         });
+        // One keeping a market stall wants what is held, some day: the server judges whether
+        // they are at it and want it today.
+        let trades = held.is_some_and(|item| species.trades.iter().any(|t| t.wants.0 == item));
         let guards = combat.guard_of(held, &player.inventory.worn, |skill| launch.content.skills.level(player.skills.xp(skill))).is_some();
         let engaged = !view.kept && (matches!(view.pose, Pose::Attacking | Pose::Warning) || fighting.engaged(id, time.elapsed_secs_f64(), &combat.feel));
         let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
@@ -2018,6 +2021,8 @@ pub fn aim(
             Some("base:release")
         } else if accepts {
             Some("base:tend")
+        } else if trades {
+            Some("base:trade")
         } else if !(guards && engaged) {
             Some("base:inspect")
         } else {

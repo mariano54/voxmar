@@ -474,6 +474,15 @@ their bed for the night, they sigh content once a night. A guard sent after a pl
 struck a villager (or killed one, in one blow or many) knows who they are after, whatever
 stands between them.
 
+One keeping a market stall trades there, and only there (`trades` on their species in
+creatures_villagers.ron, checked at load): while at work within a block of their stall,
+they want one thing a day (by the day and who they are) that the first two ages teach a
+player to make, and give bread for it. Looking at them closely says today's want. Holding
+it, a player trades once a day with each stallholder; away from the stall, with the wrong
+thing or too few in hand, or traded already that day, they say why. A content test keeps
+every want taught by a nomad or farm quest and every gift out of any quest's Have or
+Offered goals.
+
 Field tending stays deferred until P54 theft and crime rules: unsown village fields stay
 unripe in P50b so a village is not a free food source. Settlement witnesses and hunter
 roles remain follow-ups. Single-valued people data and same-named routines follow the
