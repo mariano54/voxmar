@@ -44,7 +44,7 @@ impl Server {
         // lying as long as a grave).
         let rest = (stack.count > 1).then(|| ItemStack { count: stack.count - 1, ..stack });
         stack.count = 1;
-        let worn = wear_down(&mut stack, uses, total, tools.wear().warn);
+        let worn = wear_down(&mut stack, uses, total, tools.wear().warn_at(total));
         let now = match worn {
             Worn::Broke => tools.head(item).map(|head| ItemStack::new(head, 1)),
             _ => Some(stack),
@@ -56,13 +56,7 @@ impl Server {
         // Broken in the hand with nothing left there, a spare of its kind comes up from the
         // pack: its like first, else the one of its kind with most uses left.
         if worn == Worn::Broke && now.is_none() && slot == player.selected && tools.wear().spare {
-            let kind = tools.tool(Some(item)).kind.filter(|_| !blocks.def(item).has_tag("weapon"));
-            let spare = (0..player.inventory.slots.len())
-                .filter_map(|i| player.inventory.slots[i].map(|s| (i, s)))
-                .filter(|&(i, s)| i != slot && (s.item == item || kind.is_some() && tools.tool(Some(s.item)).kind == kind) && tools.uses(s.item) > 0)
-                .max_by_key(|&(i, s)| (s.item == item, tools.uses(s.item).saturating_sub(s.wear), std::cmp::Reverse(i)))
-                .map(|(i, _)| i);
-            if let Some(i) = spare {
+            if let Some(i) = tools.spare(&blocks, item, &player.inventory.slots, slot) {
                 player.inventory.slots[slot] = player.inventory.slots[i].take();
             }
         }
@@ -229,7 +223,7 @@ mod tests {
         assert_eq!(wear(&server), Some(3), "grass breaks at a touch");
         assert_eq!(told(&client), (0, 0));
         // Down to a tenth left, it warns once.
-        let warn_at = (uses as f32 * server.content.tools.wear().warn).ceil() as u16;
+        let warn_at = server.content.tools.wear().warn_at(uses);
         server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - warn_at - 1;
         let stone = put(&mut server, "base:stone");
         server.wear_on_block(1, stone, false, server.tool_in_hand(1));
@@ -291,6 +285,29 @@ mod tests {
         server.wear_held(1, 1);
         let slots = &server.players[&1].inventory.slots;
         assert_eq!((slots[0], slots[7], slots[8]), (Some(ItemStack::new(club, 1)), Some(ItemStack::new(tusk, 1)), None));
+        // Broken on the pointer, not in the hand: nothing comes up.
+        let (mut server, _client) = holding("base:flint_axe", 0);
+        let player = server.players.get_mut(&1).unwrap();
+        player.inventory.cursor = player.inventory.slots[0].take().map(|s| ItemStack { wear: server.content.tools.uses(flint_axe) - 1, ..s });
+        player.inventory.slots[3] = Some(ItemStack::new(stone_axe, 1));
+        server.wear_slot(1, voxmar_engine::inventory::CURSOR, 1);
+        let inventory = &server.players[&1].inventory;
+        assert_eq!((inventory.cursor, inventory.slots[0], inventory.slots[3]), (None, None, Some(ItemStack::new(stone_axe, 1))));
+    }
+
+    /// A first tool warns with uses enough left to walk back and mend it: a flint one, of
+    /// fifty, creaks with ten left, not the five a tenth would leave; a long-lived one still
+    /// warns at a tenth of its uses.
+    #[test]
+    fn a_flint_tool_warns_with_uses_enough_left_to_mend_it() {
+        for (tool, left) in [("base:flint_pickaxe", 10), ("base:iron_pickaxe", 60)] {
+            let (mut server, client) = holding(tool, 0);
+            let uses = server.content.tools.uses(server.content.blocks.expect(tool));
+            server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - left - 1;
+            let stone = put(&mut server, "base:stone");
+            server.wear_on_block(1, stone, false, server.tool_in_hand(1));
+            assert_eq!(told(&client), (1, 0), "{tool}: warned crossing {left} of {uses} left");
+        }
     }
 
     /// Nearly worn out, a tool says in words how it is mended, by what and where, as its
@@ -312,7 +329,7 @@ mod tests {
             let item = server.content.blocks.expect(tool);
             let uses = server.content.tools.uses(item);
             assert_eq!(server.content.tools.mend_near(item), near, "{tool}");
-            let warn_at = (uses as f32 * server.content.tools.wear().warn).ceil() as u16;
+            let warn_at = server.content.tools.wear().warn_at(uses);
             server.players.get_mut(&1).unwrap().inventory.slots[0].as_mut().unwrap().wear = uses - warn_at - 2;
             let stone = put(&mut server, "base:stone");
             server.wear_on_block(1, stone, false, server.tool_in_hand(1));
@@ -333,7 +350,7 @@ mod tests {
     /// A worn tool and a piece of what it is made of in the grid by a chopping block: back
     /// whole when it is made of that one piece (a flint knife, a stone shovel), else half
     /// (a flint axe, a stone pickaxe, a digging stick), as A Mended Edge says; and that
-    /// Nomad side quest, open once the block and the first flint tools are, is done.
+    /// Nomad side quest, open once the block is, is done.
     #[test]
     fn a_tool_mended_by_the_chopping_block_does_the_mending_quest() {
         for (tool, by, whole) in [("base:flint_axe", "base:flint", false), ("base:flint_knife", "base:flint", true), ("base:stone_pickaxe", "base:stone_head", false), ("base:stone_shovel", "base:stone_head", true), ("base:digging_stick", "base:stick", false)] {
@@ -345,7 +362,7 @@ mod tests {
             let player = server.players.get_mut(&1).unwrap();
             player.inventory.slots[0] = None;
             (player.inventory.craft[0], player.inventory.craft[1]) = (Some(ItemStack { wear: uses - 1, ..ItemStack::new(item, 1) }), Some(ItemStack::new(by, 1)));
-            player.quests_done = vec!["base:a_chopping_block".into(), "base:flint_first".into()];
+            player.quests_done = vec!["base:a_chopping_block".into()];
             server.propose(1, craft, voxmar_engine::action::ActionTarget::Slot(1), std::time::Instant::now());
             let left = if whole { 0 } else { uses - 1 - uses / 2 };
             assert_eq!(server.players[&1].inventory.cursor.map(|s| (s.item, s.wear)), Some((item, left)), "{tool}: whole {whole}, on the pointer");

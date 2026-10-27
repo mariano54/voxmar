@@ -218,6 +218,9 @@ pub enum Condition {
     Near(String, i32),
     /// Sitting on a seat (`core:sit`).
     Seated,
+    /// Sitting on a seat carrying this tag (`Not(SeatedOn("footstool"))`: in a chair, not
+    /// on the footstool before it).
+    SeatedOn(String),
     /// After dark: the sun below the horizon (`calendar::sun_height`), from sunset to
     /// sunrise, a third of the day. An evening in by the fire, and a night's sleep.
     Night,
@@ -305,14 +308,16 @@ impl Condition {
     }
 
     /// The tags and reaches `Near` asks about, the tags `Holding` asks of what the player
-    /// has in hand, and those `Wearing` asks of what they wear, anywhere in this condition.
-    fn asks<'a>(&'a self, near: &mut Vec<(&'a str, i32)>, held: &mut Vec<&'a str>, worn: &mut Vec<&'a str>) {
+    /// has in hand, those `Wearing` asks of what they wear, and those `SeatedOn` asks of
+    /// what they sit on, anywhere in this condition.
+    fn asks<'a>(&'a self, near: &mut Vec<(&'a str, i32)>, held: &mut Vec<&'a str>, worn: &mut Vec<&'a str>, seat: &mut Vec<&'a str>) {
         match self {
             Condition::Near(tag, reach) => near.push((tag, *reach)),
             Condition::Holding(tag) => held.push(tag),
             Condition::Wearing(tag) => worn.push(tag),
-            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.asks(near, held, worn)),
-            Condition::Not(c) | Condition::Sheltered(c) => c.asks(near, held, worn),
+            Condition::SeatedOn(tag) => seat.push(tag),
+            Condition::All(list) | Condition::Any(list) => list.iter().for_each(|c| c.asks(near, held, worn, seat)),
+            Condition::Not(c) | Condition::Sheltered(c) => c.asks(near, held, worn, seat),
             _ => {}
         }
     }
@@ -414,6 +419,8 @@ pub struct Situation<'a> {
     pub worn: &'a [String],
     /// The player sits on a seat.
     pub seated: bool,
+    /// The tags of the seat they sit on (of those `EffectRegistry::seat_tags` asks after).
+    pub seat: &'a [String],
     /// The sun is down (`Condition::Night`).
     pub night: bool,
 }
@@ -627,6 +634,7 @@ impl Condition {
             Condition::AtHome => s.home.is_some(),
             Condition::Indoors => !s.outdoors,
             Condition::Seated => s.seated,
+            Condition::SeatedOn(tag) => s.seated && s.seat.contains(tag),
             Condition::Night => s.night,
             Condition::HomeHas(tag, n) => s.home.is_some_and(|h| h.count(tag) >= *n),
             Condition::HomeWalls(shelter, share) => s.home.is_some_and(|h| h.walls.share(*shelter) >= *share),
@@ -717,6 +725,7 @@ pub struct EffectRegistry {
     near_asks: Vec<(String, i32)>,
     held_tags: Vec<String>,
     worn_tags: Vec<String>,
+    seat_tags: Vec<String>,
 }
 
 impl EffectRegistry {
@@ -835,7 +844,7 @@ impl EffectRegistry {
                 quests.push(quest.to_owned());
             }
         }
-        let (mut near, mut held, mut worn) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut near, mut held, mut worn, mut seat) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for def in &defs {
             if !(def.modifiers.store_room.is_finite() && (1.0..=6.0).contains(&def.modifiers.store_room)) {
                 return Err(RegistryError(format!("effect `{}` gives store_room {}: it takes 1 to 6", def.name, def.modifiers.store_room)));
@@ -850,7 +859,7 @@ impl EffectRegistry {
                 return Err(RegistryError(format!("effect `{}` has `ends` but does not linger: only what lingers can end early", def.name)));
             }
             for when in def.when.iter().chain(&def.ends) {
-                when.asks(&mut near, &mut held, &mut worn);
+                when.asks(&mut near, &mut held, &mut worn, &mut seat);
             }
         }
         if let Some((tag, reach)) = near.iter().find(|(_, reach)| !(1..=8).contains(reach)) {
@@ -871,12 +880,12 @@ impl EffectRegistry {
             }
             once
         };
-        let (held_tags, worn_tags) = (once(held), once(worn));
+        let (held_tags, worn_tags, seat_tags) = (once(held), once(worn), once(seat));
         if let Some(tag) = outdoors.iter().find(|tag| !home_tags.contains(tag)) {
             return Err(RegistryError(format!("effects.ron: `outdoors` names `{tag}`, which no `HomeHas` asks")));
         }
         let outdoor_tags = once(outdoors.iter().map(String::as_str).collect());
-        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, outdoor_tags, home_walls, quests, near_asks, held_tags, worn_tags })
+        Ok(Self { defs, by_name, replaces, foods, sleeps, home_tags, outdoor_tags, home_walls, quests, near_asks, held_tags, worn_tags, seat_tags })
     }
 
     pub fn get(&self, id: EffectId) -> &EffectDef {
@@ -980,7 +989,15 @@ impl EffectRegistry {
         // One thing at a time in hand, one charm worn: each set of the tags effects ask, once.
         let mut helds: Vec<Vec<String>> = vec![Vec::new()];
         let mut worns: Vec<Vec<String>> = vec![Vec::new()];
+        // Sat, on one of the seats of `means`: each set of the tags effects ask of it, once.
+        let mut seats: Vec<Vec<String>> = Vec::new();
         for &(id, _) in means.items {
+            if blocks.def(id).has_tag(crate::action::SEAT_TAG) {
+                let seat = self.seat_by(blocks.def(id));
+                if !seats.contains(&seat) {
+                    seats.push(seat);
+                }
+            }
             let held = self.held_by(blocks.def(id));
             if !helds.contains(&held) {
                 helds.push(held);
@@ -1008,13 +1025,16 @@ impl EffectRegistry {
                 if (seated && !has(crate::action::SEAT_TAG)) || (at_home && !means.home) {
                     continue;
                 }
-                for held in &helds {
-                    for worn in &worns {
-                        let situation = Situation { felt, warmed, outdoors, weather: &weather, biome: "", biome_tags: &[], home: at_home.then_some(&survey), done: means.done, held, near: &near, worn, seated, night };
-                        let mut timed = Vec::new();
-                        self.linger(&situation, &mut timed);
-                        if self.active(&situation, &timed).iter().any(|a| a.effect == effect) {
-                            return true;
+                let standing = [Vec::new()];
+                for seat in if seated { &seats[..] } else { &standing[..] } {
+                    for held in &helds {
+                        for worn in &worns {
+                            let situation = Situation { felt, warmed, outdoors, weather: &weather, biome: "", biome_tags: &[], home: at_home.then_some(&survey), done: means.done, held, near: &near, worn, seated, seat, night };
+                            let mut timed = Vec::new();
+                            self.linger(&situation, &mut timed);
+                            if self.active(&situation, &timed).iter().any(|a| a.effect == effect) {
+                                return true;
+                            }
                         }
                     }
                 }
@@ -1119,6 +1139,16 @@ impl EffectRegistry {
     /// The tags effects ask of what is worn with `Wearing`.
     pub fn worn_tags(&self) -> &[String] {
         &self.worn_tags
+    }
+
+    /// What effects ask (`SeatedOn`) of `seat` sat on: those of its tags they ask after.
+    pub fn seat_by(&self, seat: &crate::block::BlockDef) -> Vec<String> {
+        self.seat_tags.iter().filter(|tag| seat.has_tag(tag)).cloned().collect()
+    }
+
+    /// The tags effects ask of the seat sat on with `SeatedOn`.
+    pub fn seat_tags(&self) -> &[String] {
+        &self.seat_tags
     }
 
     pub fn home_tags(&self) -> &[String] {
@@ -1322,7 +1352,7 @@ mod tests {
     }
 
     fn situation(weather: &Weather, warmed: bool, felt: f32, outdoors: bool) -> Situation<'_> {
-        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[], worn: &[], seated: false, night: false }
+        Situation { felt, warmed, outdoors, weather, biome: "base:plains", biome_tags: &[], home: None, done: &[], held: &[], near: &[], worn: &[], seated: false, seat: &[], night: false }
     }
 
     #[test]

@@ -283,6 +283,19 @@
             "..kclkcl..",
             "wwwwwwwwww",
         ])]),
+        // Feet Up: a chair, and a rush-topped footstool before it.
+        "ui/effect/feet_up": (size: (10, 10), layers: [Grid(legend: {'w': "#a06a3a", 'd': "#6a4222", 'r': "#c8b060"}, rows: [
+            "w.........",
+            "w.........",
+            "w.........",
+            "w.........",
+            "wwww......",
+            "w..w......",
+            "w..w.rrrr.",
+            "w..w.dddd.",
+            "w..w.d..d.",
+            "w..w.d..d.",
+        ])]),
         // At the Table: a bowl on a table, a stool drawn up.
         "ui/effect/at_table": (size: (10, 10), layers: [Grid(legend: {'b': "#8a5a2a", 'c': "#e8d8b0", 's': "#d0a060", 'w': "#a06a3a", 'd': "#6a4222"}, rows: [
             "..........",
