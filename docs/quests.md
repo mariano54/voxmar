@@ -628,6 +628,16 @@ a dance circle) and **The Scarecrow's Pockets** (Farm, after Seed Mix: the seed 
 carries). The Dealt-line check now also reports, without failing, an alternative way whose
 skill gate the books never surely reach, the same way the gap check reports one.
 
+Four more: **A Bone for the Dog** (Nomad, after Small Game: a bone for a dog out walking, for
+twine), **Moths to the Flame** (Nomad, after Torchlight: a torch held up for the moth
+netters), **A Sweep's Luck** (Nomad, after Homestead Hearth: shake a chimney sweep's hand)
+and **A Tale by Night** (Farm, after A Place to Pray: a storyteller's tale of something
+strange near). The Scarecrow's Pockets now says how to reach it (it stands still while
+watched), and a server test walks a watching player up to it until the trade fires The Dealt-line check
+now also holds a line or party that comes only to a player with a home (or without one) to
+quests whose books surely leave the player so, and a line wanting something held to a tag
+something given carries.
+
 Ranged had no weapon at all; it now has two, and a quest for each (see "First ranged
 weapons" below).
 
