@@ -44,13 +44,13 @@ the gate's Home step, "home: icons", shot `home-chips`).
 | Cosy | Farm | + 9 in 10 faces sound, 2 rugs, 2 curtains, 1 cushion, 3 crockery, 4 lights | heal x1.75, warmth +9, xp x1.1 |
 | Heart of the Home | Farm end | + half the faces fine, books, cooking, workshop, banner | heal x2, warmth +10, xp x1.125 |
 
-Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, footstools,
-cushions and window seats; tables include desks and counters; storage is whatever a home
+Seats are stools, chairs, rocking chairs, benches, settles, fireside benches, log benches,
+footstools, cushions and window seats; tables include desks and counters; storage is whatever a home
 keeps things in or on: chests, blanket chests, cupboards, dressers and wardrobes, mantel
 shelves, plate racks, spice racks, candle boxes, bread bins, kindling boxes, bedside
 tables, stair cupboards, window seats, shelves (pot shelves, pantry shelves and bookshelves
-too), crate stacks, barrel racks, jars and baskets, and a village's barrels and crates
-(every store a player opens counts but the feed trough, which is the pen's: test
+too), crate stacks, barrel racks, jars, baskets and grain sacks, and a village's barrels,
+crates and sacks (every store a player opens counts but the feed trough, which is the pen's: test
 `every_store_shelf_and_cupboard_counts_as_storage`; the gate's Nest step finds a Pantry made
 of a chest and a barrel by a campfire, "home: storage"); crockery is plates, bowls, jars,
 jugs, baskets and a dresser's plates on show; rugs include a rush mat (4 rushes, Crafting 1,

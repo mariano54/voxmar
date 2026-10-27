@@ -1156,12 +1156,13 @@ fn a_village_hay_bale_gives_nothing_but_a_players_breaks_into_nine_straw_across_
     furnishing_drops_across_restarts("hay-bale", "hay_bale", "straw", 9);
 }
 
-/// Every village prop (settlements.ron's furnishings) that a player's own copy breaks into
-/// something gives nothing where the world set it: each is set as a village sets it and
-/// broken, and nothing of what it drops comes to hand or lies loose.
+/// Every village prop (settlements.ron's furnishings, and the furnishings its `blocks` props
+/// are made of) that a player's own copy breaks into something gives nothing where the
+/// world set it: each is set as a village sets it and broken, and nothing of what it drops
+/// comes to hand or lies loose.
 #[test]
 fn village_props_set_by_the_world_give_nothing() {
-    use voxmar_worldgen::{Select, WorldContent};
+    use voxmar_worldgen::{Select, SettlementPropKind, WorldContent};
     let mut client = Client::join();
     let world = WorldContent::load(&client.content).expect("world content");
     let f = &world.settlements.furnishings;
@@ -1175,6 +1176,12 @@ fn village_props_set_by_the_world_give_nothing() {
             }
         }
     }
+    // The furnishings a package's own props are made of (the log bench) too.
+    for prop in &world.settlements.props {
+        if let SettlementPropKind::Blocks(_, cells) = &prop.kind {
+            props.extend(cells.iter().map(|(_, name)| blocks.expect(name)).filter(|&id| blocks.def(id).has_tag("furnishing")));
+        }
+    }
     props.sort();
     props.dedup();
     let giving: Vec<(String, BlockId)> = props
@@ -1183,6 +1190,7 @@ fn village_props_set_by_the_world_give_nothing() {
         .map(|id| (blocks.def(id).name.trim_start_matches("base:").to_owned(), blocks.info(id).drops))
         .collect();
     assert!(giving.iter().any(|(name, _)| name == "hay_bale"), "no village prop gives anything: {giving:?}");
+    assert!(giving.iter().any(|(name, _)| name == "oak_log_bench"), "the log bench is not among the props: {giving:?}");
     let spot = client.position.floor().as_ivec3() + IVec3::new(1, 0, 1);
     for line in ["/clear", "/fill ~1 ~-1 ~1 ~1 ~-1 ~1 stone", "/fill ~1 ~ ~1 ~1 ~1 ~1 air"] {
         client.ok(line);
@@ -4143,15 +4151,17 @@ fn guards_come_for_a_player_who_strikes_a_villager() {
     // This checks whom the alarm calls the guards to, not a novice's fist: one that lands
     // a third of its blows, at part strength when the clock bunches them under load, now
     // and then hurt no one in all of its ten seconds. A practised fist lands nearly every
-    // blow and kills no grown villager in one (its max hit 8 against their 12; a sword
+    // blow and kills no grown villager in one (at most 10 against their 12; a sword
     // did).
     client.ok("/skill attack 60");
     let guards = |c: &Client| -> Vec<voxmar_protocol::CreatureView> { villagers(c).into_iter().filter(|v| species_name(c, v) == "base:guard").collect() };
     // The closest pair, with a stable tie-break: hash-map order used to pick a distant
     // worker whose guard had no way through the intervening buildings.
-    // Grown folk only: one the practised fist (max hit 8) cannot kill in one blow, so it is
-    // seen hurt.
-    let pick = |c: &Client| villagers(c).into_iter().filter(|v| species_name(c, v) != "base:guard" && c.content.creatures.get(v.species).def.health > 8)
+    // Grown folk only: one the practised fist cannot kill in one blow, so it is seen hurt.
+    // Its max hit at Attack 60 is 8 (1, and one for every eight levels above the first),
+    // and a flourish (the one bonus for a player who neither blocks nor falls: 20%) raises a
+    // blow to at most 10.
+    let pick = |c: &Client| villagers(c).into_iter().filter(|v| species_name(c, v) != "base:guard" && c.content.creatures.get(v.species).def.health > 10)
         .flat_map(|v| guards(c).into_iter().map(move |g| { let d = g.position.distance(v.position); (v.clone(), g, d) }))
         .filter(|(_, _, d)| *d < 30.0)
         .min_by(|a, b| a.2.total_cmp(&b.2).then(a.0.id.cmp(&b.0.id)).then(a.1.id.cmp(&b.1.id)));

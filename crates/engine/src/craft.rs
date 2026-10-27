@@ -459,10 +459,16 @@ impl RecipeRegistry {
     }
 
     /// The recipe the grid holds where `near` says which tags' blocks are within reach: one
-    /// made near such a block first, else one made anywhere.
+    /// made near such a block first, else one made anywhere. Of each, a shaped recipe before
+    /// a shapeless one, whichever file loaded first: the shape a player laid out asks more
+    /// than the same things anyhow (a sling's hide between two twine is no coin purse).
     pub fn find_near(&self, grid: &[Option<BlockId>; GRID], near: impl Fn(&str) -> bool) -> Option<&Recipe> {
-        let nearby = self.recipes.iter().filter(|r| r.near.as_deref().is_some_and(&near)).find(|r| r.matches(grid));
-        nearby.or_else(|| self.recipes.iter().filter(|r| r.near.is_none()).find(|r| r.matches(grid)))
+        let first = |made_here: &dyn Fn(&Recipe) -> bool| {
+            let mut fits = self.recipes.iter().filter(|r| made_here(r) && r.matches(grid));
+            let shaped = fits.clone().find(|r| r.pattern.is_some());
+            shaped.or_else(|| fits.next())
+        };
+        first(&|r| r.near.as_deref().is_some_and(&near)).or_else(|| first(&|r| r.near.is_none()))
     }
 
     /// What each craft of the grid makes while it still holds `first`, the recipe it held
